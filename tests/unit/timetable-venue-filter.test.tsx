@@ -11,7 +11,7 @@ import React from "react";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 function makeClass(id: string, name: string, locationId: string | null): ClassRow {

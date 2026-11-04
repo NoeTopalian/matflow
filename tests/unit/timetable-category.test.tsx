@@ -19,7 +19,7 @@ import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS } from "@/lib/class-category";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/member/schedule",
 }));
 vi.mock("next-auth/react", () => ({ signOut: vi.fn() }));

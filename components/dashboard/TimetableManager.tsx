@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/select";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
@@ -1498,13 +1498,31 @@ function ClassForm({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function TimetableManager({ initialClasses, initialInactiveClasses = [], rankSystems, coachUsers, membershipTiers = [], primaryColor, role, currentUserId }: Props) {
+// One array for "none passed": a `= []` default is a new array every render,
+// which the snapshot check below would read as a new server snapshot.
+const NO_CLASSES: ClassRow[] = [];
+
+export default function TimetableManager({ initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [], primaryColor, role, currentUserId }: Props) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const openedFromQuery = useRef(false);
   const [classes, setClasses] = useState<ClassRow[]>(initialClasses);
   // T6b: paused and archived classes, kept whole (roster included) so Resume /
   // Restore puts the exact row back on the timetable.
   const [inactiveClasses, setInactiveClasses] = useState<ClassRow[]>(initialInactiveClasses);
+  // A route refresh re-renders the server page and passes a new snapshot while
+  // this component stays mounted. `useState` only reads its initial value once,
+  // so a day saved in another tab (Gi on Tuesday) stayed hidden, and a class
+  // paused elsewhere stayed on the grid. Adopt each new snapshot — both lists
+  // together, because pause/archive/restore move a class between them — during
+  // render, as React recommends for state that follows a prop. Local changes
+  // stay until the next snapshot; every save below asks for one.
+  const [snapshot, setSnapshot] = useState({ active: initialClasses, inactive: initialInactiveClasses });
+  if (snapshot.active !== initialClasses || snapshot.inactive !== initialInactiveClasses) {
+    setSnapshot({ active: initialClasses, inactive: initialInactiveClasses });
+    setClasses(initialClasses);
+    setInactiveClasses(initialInactiveClasses);
+  }
   const [lifecycleBusy, setLifecycleBusy] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
@@ -1724,6 +1742,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         setClasses((prev) => [...prev, createdClassRow(created, membershipTiers)]);
         showToast(`Class created · ${instancesCreated} sessions added to the timetable`, "success");
       }
+      // The page's cached copy predates this save; without a refresh, browser
+      // Back re-mounts the timetable from it and the change is not shown.
+      router.refresh();
       setDrawerOpen(false);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Something went wrong", "error");
@@ -1757,13 +1778,14 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         setClasses((prev) => prev.filter((c) => c.id !== cls.id));
         setInactiveClasses((prev) => [...prev.filter((c) => c.id !== cls.id), { ...cls, lifecycle: "paused", archivedAt: null }]);
         showToast("Class paused. Resume it from Paused and archived.", "success");
+        router.refresh();
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not pause the class. Try again.", "error");
       } finally {
         setLifecycleBusy(null);
       }
     },
-    [ask, showToast]
+    [ask, showToast, router]
   );
 
   // T6b: Archive — a counted confirmation instead of the old 409. The counts
@@ -1807,13 +1829,14 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           { ...cls, lifecycle: "archived", archivedAt: body?.archivedAt ?? new Date().toISOString() },
         ]);
         showToast("Class archived. Its history is kept — restore it from Paused and archived.", "success");
+        router.refresh();
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not archive the class. Try again.", "error");
       } finally {
         setLifecycleBusy(null);
       }
     },
-    [ask, showToast]
+    [ask, showToast, router]
   );
 
   // T6b: Resume (paused) / Restore (archived) — both clear the state and put
@@ -1835,6 +1858,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         const n = body?.sessionsCreatedOnResume ?? 0;
         const verb = wasArchived ? "Class restored" : "Class resumed";
         showToast(n > 0 ? `${verb} · ${plural(n, "session", "sessions")} added to the timetable` : `${verb} — it's back on the timetable`, "success");
+        router.refresh();
       } catch (err) {
         showToast(
           err instanceof Error && err.message ? err.message : `Could not ${wasArchived ? "restore" : "resume"} the class. Try again.`,
@@ -1844,7 +1868,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         setLifecycleBusy(null);
       }
     },
-    [showToast]
+    [showToast, router]
   );
 
   const handleGenerate = useCallback(
