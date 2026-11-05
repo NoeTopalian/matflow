@@ -13,6 +13,7 @@ import {
   packLanes,
   sessionProgress,
   sessionStateLabel,
+  hourWindow as sharedHourWindow,
   sessionStates,
   spanMinutes,
   type SessionState,
@@ -68,16 +69,6 @@ const DAY_FULL   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sat
 
 const HOUR_H = 64;
 
-// Active-hours clamp: instead of fixed 07:00–22:00 rails, the day grid spans
-// min(class start)−1h → max(class end)+1h across the week's classes, clamped
-// inside 06:00–23:00, never narrower than 8 hours. A week with no classes
-// falls back to 09:00–21:00.
-const CLAMP_START    = 6;
-const CLAMP_END      = 23;
-const MIN_WINDOW     = 8;
-const FALLBACK_START = 9;
-const FALLBACK_END   = 21;
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalizeHex(value: string | null | undefined) {
@@ -114,19 +105,10 @@ function topPx(time: string, startHour: number) {
   return ((timeToMinutes(time) - startHour * 60) / 60) * HOUR_H;
 }
 
+// The clamp itself lives in lib/schedule-state (shared with the staff Day
+// view, so both show the same hours for the same club).
 function hourWindow(classes: ScheduleClass[]): { startHour: number; endHour: number } {
-  if (classes.length === 0) return { startHour: FALLBACK_START, endHour: FALLBACK_END };
-  const minStart = Math.min(...classes.map((c) => timeToMinutes(c.time)));
-  const maxEnd   = Math.max(...classes.map((c) => timeToMinutes(c.endTime)));
-  let start = Math.max(CLAMP_START, Math.floor(minStart / 60) - 1);
-  let end   = Math.min(CLAMP_END,   Math.ceil(maxEnd / 60) + 1);
-  // Widen to the minimum window without leaving the clamp.
-  while (end - start < MIN_WINDOW) {
-    if (end < CLAMP_END) end++;
-    else if (start > CLAMP_START) start--;
-    else break;
-  }
-  return { startHour: start, endHour: end };
+  return sharedHourWindow(classes.map((c) => ({ startTime: c.time, endTime: c.endTime })));
 }
 
 function heightPx(start: string, end: string) {
@@ -502,6 +484,7 @@ function DayGrid({
                 isSel={selected === cls.id}
                 primaryColor={primaryColor}
                 onSelect={onSelect}
+                showPlace={placement.lanes > 1}
                 layout={{
                   position: "absolute",
                   top,
@@ -534,6 +517,7 @@ function SessionBlock({
   primaryColor,
   onSelect,
   layout,
+  showPlace = false,
 }: {
   cls: ScheduleClass;
   state: SessionState;
@@ -543,6 +527,8 @@ function SessionBlock({
   primaryColor: string;
   onSelect: (id: string) => void;
   layout: React.CSSProperties;
+  /** Side by side with another session: the mat is what tells two of the same class apart. */
+  showPlace?: boolean;
 }) {
   const height = typeof layout.height === "number" ? layout.height : 44;
   const short  = height < 44;
@@ -591,6 +577,8 @@ function SessionBlock({
           }}
         >
           {cls.name}
+          {/* A short block has no second line; the mat still shows when it is the differentiator. */}
+          {short && showPlace && cls.location ? <span className="font-normal" style={{ color: muted }} data-testid="schedule-cell-place"> · {cls.location}</span> : null}
         </p>
         {cls.isKids && (
           <span
@@ -647,7 +635,8 @@ function SessionBlock({
         <p className="leading-tight truncate mt-0.5" style={{ color: muted, fontSize: 10 }}>
           {/* T6c: the category leads the line when the class has one. */}
           {classCategoryTag(cls) && <span data-testid="schedule-cell-category">{classCategoryTag(cls)} · </span>}
-          {cls.time}–{cls.endTime} · {cls.coach}
+          {/* Side by side with another session, the mat replaces the coach: it is what tells two of the same class apart. */}
+          {cls.time}–{cls.endTime} · {showPlace && cls.location ? <span data-testid="schedule-cell-place">{cls.location}</span> : cls.coach}
         </p>
       )}
       {isSub && !short && !live && (

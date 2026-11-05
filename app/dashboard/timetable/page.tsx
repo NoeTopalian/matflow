@@ -58,7 +58,7 @@ async function getClasses(tenantId: string, which: "live" | "inactive" = "live")
     const found = await tx.class.findMany({
       where: which === "live" ? liveClassWhere(tenantId) : inactiveClassWhere(tenantId),
       include: {
-        schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
+        schedules: { where: { isActive: true }, orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }] },
         requiredRank: true,
         maxRank: true,
         coachUser: { select: { id: true, name: true } },
