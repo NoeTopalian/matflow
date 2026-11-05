@@ -106,6 +106,32 @@ acts on is worse than an error they can see.
   imported without one and listed for the owner.
 - How it works: `docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md` §3.
 
+### 5b. Activity (Noe, 5 Nov 2026)
+
+- **One timeline, shown everywhere.** The club's history is read through one component and one
+  route: the Activity page (the whole club), a member's History, and later a class's and a
+  payment's. A member's history stays on the member's page.
+- **Who reads it.** The owner and managers. Only the owner undoes. Coaches never see it.
+- **What a manager sees is fixed, not a club setting.** A manager sees an activity type only if
+  they can already open the page those records live on: club life, including money. Never staff
+  changes, sign-in and security events, club settings, data exports and erasures, imports, plan
+  set-up, MatFlow support activity or Undo. The server enforces it on every request; a manager is
+  shown which fields changed, never the old and new values.
+- **A sentence says only what the record establishes.** It is built from the ids stored on the
+  audit row, never from a member's or class's current state. An action without a sentence of its
+  own shows its existing label; nothing is guessed.
+- **Erased is not the same as deleted.** A member erased under a data-protection request is
+  "Deleted member": no link, and their old values are shown to nobody. A member deleted in the
+  ordinary way keeps the name recorded on their deletion for the year the log is kept.
+- **It opens predictably.** The page opens on the standard view, or on the one view a person has
+  deliberately saved as their default on that device. It never silently restores the last
+  filters. The address bar is the only copy of the filters, so a link means what it shows.
+- **Not configurable, by decision:** row density, columns, time format and zone (always the
+  club's clock), page size, sort order, which roles see which types, a club-wide default view,
+  faces or initials in rows, a colour per group.
+- A check-in with a warning is still a check-in: it shows as "Check-in with a warning" and is
+  also found by the "Check-in" filter.
+
 ## 6. Verification
 
 - **Claims are measured, not asserted.** Contrast ratios come from computed styles in a
