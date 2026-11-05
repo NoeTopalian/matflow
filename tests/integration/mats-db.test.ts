@@ -339,7 +339,8 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
         withTenantContext(T, (tx) => executeUndo(tx, [{ row: edit, decision: decideUndo(edit, false) }], { tenantId: T, userId: "synthetic-owner" })),
         matPATCH(request(`/api/mats/${one.id}`, "PATCH", { name: "Main mat" }), params(one.id)),
       ]);
-      expect(undo.status).toBe("fulfilled");
+      // On failure, say why the undo was refused rather than only that it was.
+      expect(undo.status === "rejected" ? `rejected: ${String((undo.reason as Error)?.message ?? undo.reason)}` : undo.status).toBe("fulfilled");
       expect(rename.status === "fulfilled" && rename.value.status).toBe(200);
       expect((await classes(T))[0]).toMatchObject({ matId: one.id, location: "Main mat" });
     });
