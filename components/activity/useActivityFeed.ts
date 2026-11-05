@@ -151,9 +151,13 @@ export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debo
       const cursor = state.loaded?.url === target ? state.loaded.page.nextCursor : null;
       if (!target || !cursor) return null;
       // From here the person is paging: a refresh of page one would lose their place, or cancel this very request.
+      const before = paged.current;
       paged.current = true;
       setState((s) => ({ ...s, older: "loading" }));
-      return request(target, cursor);
+      const added = await request(target, cursor);
+      // It failed, or was dropped: they have not paged after all.
+      if (!added && current.current === target) paged.current = before;
+      return added;
     }, [request, state.loaded]),
     /** Page one again, keeping the rows on screen until it lands (after an undo). Skipped once the person has paged. */
     refresh: useCallback(() => {

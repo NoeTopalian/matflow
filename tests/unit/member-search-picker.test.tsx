@@ -177,6 +177,22 @@ describe("MemberSearchPicker", () => {
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Member 2m2@example.test"]);
   });
 
+  it("a space after the text is not new text: the matches stay, and Enter still picks", async () => {
+    render(<Harness />);
+    await type("me");
+    await answer(pending[0], 200, { members: [person(1)] });
+    fireEvent.change(field(), { target: { value: "me " } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    // Nothing new to search for, so nothing was asked and nothing was withdrawn.
+    expect(pending).toHaveLength(1);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.queryByText("Searching…")).toBeNull();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    expect(picks).toEqual([{ id: "m1", name: "Member 1" }]);
+  });
+
   it("a member who is no longer in the club is shown as removed, and can be cleared", () => {
     render(<MemberSearchPicker value={{ id: "gone", name: null }} onChange={(m) => picks.push(m)} />);
     expect(screen.getByTestId("member-picked").textContent).toContain("Removed member");

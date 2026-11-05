@@ -238,6 +238,32 @@ describe("the address bar is the filter", () => {
     expect((screen.getByRole("button", { name: "Next day" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("Jump to date does nothing until the club's day is known, and keeps a typed date inside the year the log holds", async () => {
+    let release: (answer: { status: number; body: unknown }) => void = () => {};
+    respond = () => new Promise((resolve) => (release = resolve));
+    renderPage();
+    await waitFor(() => expect(activityCalls()).toHaveLength(1));
+    // Before the first answer the controls are drawn, in place, and inert.
+    for (const name of ["Today", "Yesterday", "Previous day", "Next day"]) expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled, name).toBe(true);
+    expect((screen.getByLabelText("Jump to date") as HTMLInputElement).disabled).toBe(true);
+    await act(async () => {
+      release({ status: 200, body: body([entry()]) });
+      await Promise.resolve();
+    });
+    await loaded();
+    const date = screen.getByLabelText("Jump to date") as HTMLInputElement;
+    expect([date.min, date.max]).toEqual(["2025-11-05", "2026-11-05"]);
+    // Earlier than the log reaches: the first day it holds. Later than today: today, which is no day at all.
+    fireEvent.change(date, { target: { value: "2020-01-01" } });
+    expect(window.location.search).toBe("?day=2025-11-05");
+    expect((screen.getByRole("button", { name: "Previous day" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(date, { target: { value: "2030-01-01" } });
+    expect(window.location.search).toBe("");
+    // Half a date is not a choice.
+    fireEvent.change(date, { target: { value: "" } });
+    expect(window.location.search).toBe("");
+  });
+
   it("Reset filters is always there, disabled when there is nothing to reset", async () => {
     renderPage();
     await loaded();
@@ -558,7 +584,20 @@ describe("undo (owner)", () => {
     renderPage();
     await loaded();
     fireEvent.click(within(table()).getByRole("button", { name: /^Since here/ }));
-    expect(await screen.findByRole("dialog", { name: "Undo everything Jack Streeter did since 19:45?" })).toBeTruthy();
+    // The date as well as the time: "since 19:45" on a row from last week would read as today.
+    expect(await screen.findByRole("dialog", { name: "Undo everything Jack Streeter did since 5 Nov 2026, 19:45?" })).toBeTruthy();
+  });
+
+  it("when the list of what can be put back cannot be worked out, the dialog says so and offers nothing to confirm", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=all");
+    respond = (call) => (call.url === "/api/audit-log/undo-to" ? { status: 500, body: { error: "Couldn't work that out just now." } } : { status: 200, body: body([reversible({ id: "r1" })]) });
+    renderPage();
+    await loaded();
+    fireEvent.click(within(table()).getByRole("button", { name: /^Since here/ }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(dialog).getByText("Couldn't work that out just now.")).toBeTruthy());
+    expect((within(dialog).getByRole("button", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(calls.filter((c) => c.url === "/api/audit-log/undo-to")).toHaveLength(1);
   });
 });
 

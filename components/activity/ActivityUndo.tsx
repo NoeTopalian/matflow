@@ -133,7 +133,7 @@ export function useActivityUndo({
         onClose={() => {
           if (!busy) setMany(null);
         }}
-        title={many ? `Undo everything ${many.staff.name} did since ${formatTime(many.entry.at, timeZone)}?` : "Undo?"}
+        title={many ? `Undo everything ${many.staff.name} did since ${formatDateTime(many.entry.at, timeZone)}?` : "Undo?"}
         description={
           many?.planError
             ? many.planError

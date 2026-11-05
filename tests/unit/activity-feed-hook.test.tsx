@@ -199,6 +199,13 @@ describe("useActivityFeed", () => {
     expect(result.current.older).toBe("error");
     expect(result.current.phase).toBe("ready");
     expect(result.current.page?.entries.map((e) => e.id)).toEqual(["a1"]);
+    // Nothing was paged, so coming back to the tab after a while still refreshes page one.
+    await tick(61_000);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(pending.map((p) => p.url)).toEqual([A, `${A}&cursor=a1`, A]);
   });
 
   it("a Show older that answers after the filters changed appends nothing", async () => {

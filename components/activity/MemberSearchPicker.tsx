@@ -154,8 +154,9 @@ export function MemberSearchPicker({
           const next = event.target.value;
           setText(next);
           setOpen(true);
-          // The matches on screen are for what was typed before: never offer them for the new text.
-          setState(next.trim().length >= MIN_CHARS ? { kind: "searching" } : { kind: "idle" });
+          // The matches on screen are for what was typed before: never offer them for new text. A space at the end
+          // is not new text — the search does not run again for it, so the matches stay.
+          if (next.trim() !== term) setState(next.trim().length >= MIN_CHARS ? { kind: "searching" } : { kind: "idle" });
         }}
         onFocus={() => setOpen(true)}
         // Leaving the field closes the list; a click on an option lands first because options act on mousedown.

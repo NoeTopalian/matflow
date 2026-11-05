@@ -24,10 +24,10 @@ const contrast = (a: string, b: string) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
-/** `--sf-2` as app/globals.css declares it for the staff shell (jsdom loads no stylesheet). */
-const sf2 = () => /--sf-2:\s*(#[0-9a-f]{6})/i.exec(fs.readFileSync(path.join(process.cwd(), "app/globals.css"), "utf8"))![1];
+/** `--sf-0` (the navigation, the darkest surface) as app/globals.css declares it for the staff shell (jsdom loads no stylesheet). */
+const sf0 = () => /--sf-0:\s*(#[0-9a-f]{6})/i.exec(fs.readFileSync(path.join(process.cwd(), "app/globals.css"), "utf8"))![1];
 const ringFor = (accent: string) => {
-  document.documentElement.style.setProperty("--sf-2", sf2());
+  document.documentElement.style.setProperty("--sf-0", sf0());
   const view = render(
     <ThemeProvider primaryColor={accent} secondaryColor="#111111" textColor="#111111">
       <p>page</p>
@@ -38,11 +38,11 @@ const ringFor = (accent: string) => {
 };
 
 describe("the staff shell's focus ring", () => {
-  it.each(["#ffffff", "#ffe14d", "#f5f6f8"])("an accent that cannot be seen on a light surface (%s) is darkened until it can", (accent) => {
+  it.each(["#ffffff", "#ffe14d", "#f5f6f8", "#8b8b8b"])("an accent that cannot be seen on a light surface (%s) is darkened until it can", (accent) => {
     const { ring } = ringFor(accent);
     expect(ring).toMatch(/^#[0-9a-f]{6}$/i);
-    // Against a white card, the page grey, and the grey of a hovered or striped row.
-    for (const surface of ["#ffffff", "#f5f6f8", "#f0f2f5"]) expect(contrast(ring, surface), `${accent} on ${surface}`).toBeGreaterThanOrEqual(3);
+    // Against a white card, the page grey, a hovered or striped row, and the navigation.
+    for (const surface of ["#ffffff", "#f5f6f8", "#f0f2f5", "#eceef2"]) expect(contrast(ring, surface), `${accent} on ${surface}`).toBeGreaterThanOrEqual(3);
   });
 
   it.each(["#3b82f6", "#111111", "#b91c1c"])("an accent that already shows (%s) is the ring, unchanged", (accent) => {
@@ -56,7 +56,7 @@ describe("the staff shell's focus ring", () => {
   });
 
   it("without the surface token nothing is published, and the ring stays the accent", () => {
-    document.documentElement.style.removeProperty("--sf-2");
+    document.documentElement.style.removeProperty("--sf-0");
     render(
       <ThemeProvider primaryColor="#ffffff" secondaryColor="#111111" textColor="#111111">
         <p>page</p>

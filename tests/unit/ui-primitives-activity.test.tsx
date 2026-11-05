@@ -43,6 +43,14 @@ describe("DataTable sectionOf", () => {
     expect(order).toEqual(["2026-11-05", "first", "second", "2026-11-04", "third", "2026-11-03", "fourth"]);
   });
 
+  it("a row arriving at the top does not remount the sections below it (focus inside them is kept)", () => {
+    const { container, rerender } = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} sectionOf={sectionOf} />);
+    const yesterday = container.querySelectorAll("tbody")[1];
+    rerender(<DataTable columns={columns} rows={[{ id: "0", name: "newest", day: "2026-11-05" }, ...rows]} rowKey={(r) => r.id} sectionOf={sectionOf} />);
+    expect(container.querySelectorAll("tbody")[1]).toBe(yesterday);
+    expect(container.querySelectorAll("tbody")[0].querySelectorAll("tr:not([data-section])")).toHaveLength(3);
+  });
+
   it("gives the phone cards the same headings", () => {
     const { container } = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} sectionOf={sectionOf} renderCard={(r) => <p>{r.name}</p>} />);
     const cards = container.querySelector(".sm\\:hidden")!;

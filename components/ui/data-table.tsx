@@ -296,12 +296,22 @@ export function DataTable<T>({
     return index === 0 || sectionOf(sortedRows[index - 1]).key !== section.key ? section : null;
   };
 
-  /** The table's row groups: one per run of rows in the same section, or a single group when there are no sections. */
-  const rowGroups: { section: { key: string; label: string } | null; indexes: number[] }[] = [];
+  /**
+   * The table's row groups: one per run of rows in the same section, or a
+   * single group when there are no sections. A group is keyed by its section
+   * (and, should the same section come round again, by which time it is) —
+   * never by a row's position, so rows arriving above a group do not remount
+   * it and drop the focus inside it.
+   */
+  const rowGroups: { key: string; section: { key: string; label: string } | null; indexes: number[] }[] = [];
+  const timesSeen = new Map<string, number>();
   sortedRows.forEach((_, index) => {
     const section = sectionAt(index);
-    if (section || rowGroups.length === 0) rowGroups.push({ section, indexes: [index] });
-    else rowGroups[rowGroups.length - 1].indexes.push(index);
+    if (section || rowGroups.length === 0) {
+      const nth = section ? (timesSeen.get(section.key) ?? 0) : 0;
+      if (section) timesSeen.set(section.key, nth + 1);
+      rowGroups.push({ key: section ? (nth ? `${section.key}#${nth}` : section.key) : "rows", section, indexes: [index] });
+    } else rowGroups[rowGroups.length - 1].indexes.push(index);
   });
 
   return (
@@ -404,14 +414,14 @@ export function DataTable<T>({
             // (`scope="rowgroup"`) and a screen reader announces the day with
             // each row under it.
             rowGroups.map((group) => (
-              <tbody key={group.section ? `${group.section.key}-${group.indexes[0]}` : "rows"}>
+              <tbody key={group.key}>
                 {group.section ? (
                   <tr data-section={group.section.key}>
                     <th
                       scope="rowgroup"
                       colSpan={columns.length}
-                      // White with a rule above: the zebra rows are grey, so a grey header read as one more row.
-                      className="border-b border-t border-bd-default bg-sf-1 px-3 pb-1.5 pt-3 text-left text-xs font-semibold text-tx-1"
+                      // White, under the rule the row above draws: the zebra rows are grey, so a grey header read as one more row.
+                      className="border-b border-bd-default bg-sf-1 px-3 pb-1.5 pt-3 text-left text-xs font-semibold text-tx-1"
                     >
                       {group.section.label}
                     </th>
