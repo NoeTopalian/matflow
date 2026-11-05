@@ -651,6 +651,7 @@ try {
         await main.getByTestId("types-trigger").focus();
         await main.keyboard.press("Shift+Tab");
         await main.keyboard.press("Tab");
+        await sleep(400); // a button eases its outline colour in; measure the ring it settles on
         const ring = await style(main.getByTestId("types-trigger"));
         expect(ring.outlineWidth).toBe("2px");
         const ringContrast = await contrast(main, ring.outline, "rgb(255, 255, 255)");
