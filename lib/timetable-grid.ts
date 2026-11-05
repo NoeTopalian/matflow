@@ -257,42 +257,42 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
       layout = dayByTime(day, sessions, maxLanes, true);
     }
     days.push(layout.day);
-    const dayItems: (GridItem & { startMin: number })[] = [
+    const dayItems: { startMin: number; item: GridItem }[] = [
       ...layout.sessions.map((p) => ({
-        type: "session" as const,
-        key: p.session.key,
-        day,
-        col: p.col,
-        span: p.span,
-        rowStart: lineOf(p.session.startMin),
-        rowEnd: lineOf(p.session.endMin),
-        lane: p.lane,
-        lanes: p.lanes,
-        matId: p.session.matId,
         startMin: p.session.startMin,
+        item: {
+          type: "session" as const,
+          key: p.session.key,
+          day,
+          col: p.col,
+          span: p.span,
+          rowStart: lineOf(p.session.startMin),
+          rowEnd: lineOf(p.session.endMin),
+          lane: p.lane,
+          lanes: p.lanes,
+          matId: p.session.matId,
+        },
       })),
       ...layout.folds.map((f) => ({
-        type: "more" as const,
-        id: `more-${day}-${f.startMin}-${f.col}`,
-        day,
-        col: f.col,
-        span: f.span,
-        rowStart: lineOf(f.startMin),
-        rowEnd: lineOf(f.endMin),
         startMin: f.startMin,
-        endMin: f.endMin,
-        keys: f.keys,
-        clusterKeys: f.clusterKeys,
-        clusterRowStart: lineOf(f.clusterStartMin),
+        item: {
+          type: "more" as const,
+          id: `more-${day}-${f.startMin}-${f.col}`,
+          day,
+          col: f.col,
+          span: f.span,
+          rowStart: lineOf(f.startMin),
+          rowEnd: lineOf(f.endMin),
+          startMin: f.startMin,
+          endMin: f.endMin,
+          keys: f.keys,
+          clusterKeys: f.clusterKeys,
+          clusterRowStart: lineOf(f.clusterStartMin),
+        },
       })),
     ];
-    dayItems.sort((a, b) => a.startMin - b.startMin || a.col - b.col);
-    for (const item of dayItems) {
-      if (item.type === "session") {
-        const { startMin: _startMin, ...placement } = item;
-        items.push(placement);
-      } else items.push(item);
-    }
+    dayItems.sort((x, y) => x.startMin - y.startMin || x.item.col - y.item.col);
+    for (const { item } of dayItems) items.push(item);
   }
 
   return { days, items, rows, ticks, firstTimeLine: FIRST_TIME_LINE };
