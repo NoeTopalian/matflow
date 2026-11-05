@@ -422,28 +422,43 @@ export async function keepServerHtml(page, path) {
 }
 
 /**
- * Where the server's HTML and what the browser drew disagree, inside `selector` (default <main>): the first text
- * that differs, with 80 characters either side, and every accessible name of a button that differs. A NOTE.
+ * Where the server's HTML and what the browser drew disagree, over the whole document. Next streams most of the page
+ * in after the first bytes (as hidden blocks the browser moves into place), so positions mean nothing; this compares
+ * what is there: every accessible name, every session state, every short text. Returns what only the server had and
+ * what only the browser has (15 of each at most). A NOTE.
  */
-export function hydrationDiff(page, html, selector = "main") {
-  return page.evaluate(({ html, selector }) => {
-    const server = new DOMParser().parseFromString(html ?? "", "text/html").querySelector(selector);
-    const client = document.querySelector(selector);
-    if (!server || !client) return { error: `no ${selector} in ${server ? "the browser" : "the server HTML"}` };
-    const a = server.textContent ?? "", b = client.textContent ?? "";
-    let i = 0;
-    while (i < a.length && i < b.length && a[i] === b[i]) i++;
-    const names = (root) => [...root.querySelectorAll("button[aria-label]")].map((e) => e.getAttribute("aria-label"));
-    const sn = names(server), cn = names(client);
-    const differing = sn.map((n, k) => (n !== cn[k] ? { server: n, browser: cn[k] ?? null } : null)).filter(Boolean).slice(0, 8);
-    return {
-      sameText: a === b,
-      at: i,
-      server: a.slice(Math.max(0, i - 80), i + 80),
-      browser: b.slice(Math.max(0, i - 80), i + 80),
-      buttons: { server: sn.length, browser: cn.length, differing },
+export function hydrationDiff(page, html) {
+  return page.evaluate((html) => {
+    const sig = (root) => {
+      const out = [];
+      for (const el of root.querySelectorAll("[aria-label], [data-session-state], [data-testid]")) {
+        if (el.closest("script, style, template")) continue;
+        if (el.hasAttribute("aria-label")) out.push(`label:${el.getAttribute("aria-label")}`);
+        if (el.hasAttribute("data-session-state")) out.push(`state:${el.getAttribute("aria-label") ?? el.textContent?.slice(0, 40)}=${el.getAttribute("data-session-state")}`);
+      }
+      const walker = (root.ownerDocument ?? root).createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const t = (n.textContent ?? "").trim();
+        if (!t || t.length > 80 || n.parentElement?.closest("script, style, template, noscript")) continue;
+        out.push(`text:${t}`);
+      }
+      return out;
     };
-  }, { html, selector });
+    const minus = (a, b) => {
+      const left = new Map();
+      for (const x of b) left.set(x, (left.get(x) ?? 0) + 1);
+      const only = [];
+      for (const x of a) {
+        const n = left.get(x) ?? 0;
+        if (n > 0) left.set(x, n - 1);
+        else only.push(x);
+      }
+      return only;
+    };
+    const serverDoc = new DOMParser().parseFromString(html ?? "", "text/html");
+    const s = sig(serverDoc.body), c = sig(document.body);
+    return { serverItems: s.length, browserItems: c.length, onlyServer: minus(s, c).slice(0, 15), onlyBrowser: minus(c, s).slice(0, 15) };
+  }, html);
 }
 
 /**
