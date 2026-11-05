@@ -132,7 +132,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { cls, instancesCreated, tierIdsWritten, tiersWritten } = await withTenantContext(session.user.tenantId, async (tx) => {
+    const { cls, instancesCreated, tierIdsWritten, tiersWritten, rosterWritten } = await withTenantContext(session.user.tenantId, async (tx) => {
       // The club's zone is needed BEFORE the write, not only for the window
       // below: `startDate` is a day marker and the club's calendar date is what
       // it must say (see `scheduleStartMarker`).
@@ -169,6 +169,7 @@ export async function POST(req: Request) {
       // `allowedTiers`, so the timetable's row (and the form reopened on it)
       // shows the list without a refresh.
       let tiersWritten: { id: string; name: string; isActive: boolean }[] = [];
+      let rosterWritten: { memberId: string; name: string }[] = [];
       if (allowedTierIds && allowedTierIds.length > 0) {
         const tiers = await tx.membershipTier.findMany({
           where: { id: { in: allowedTierIds }, tenantId: session.user.tenantId },
@@ -195,8 +196,11 @@ export async function POST(req: Request) {
       if (roster && roster.length > 0) {
         const ours = await tx.member.findMany({
           where: { id: { in: roster.map((r) => r.memberId) }, tenantId: session.user.tenantId },
-          select: { id: true },
+          select: { id: true, name: true },
         });
+        // Reported back in the timetable page's shape, so the new class
+        // reopens as the squad it is rather than as open to everyone.
+        rosterWritten = ours.map((m) => ({ memberId: m.id, name: m.name }));
         if (ours.length > 0) {
           await tx.classRoster.createMany({
             data: ours.map((m) => ({
@@ -221,7 +225,7 @@ export async function POST(req: Request) {
         days: ROLLING_WINDOW_DAYS,
       });
       const minted = rows.length > 0 ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
-      return { cls, instancesCreated: minted.count, tierIdsWritten, tiersWritten };
+      return { cls, instancesCreated: minted.count, tierIdsWritten, tiersWritten, rosterWritten };
     });
     await logAudit({
       tenantId: session.user.tenantId,
@@ -233,7 +237,7 @@ export async function POST(req: Request) {
       req,
     });
     return NextResponse.json(
-      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten },
+      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten },
       { status: 201 },
     );
   } catch (e) {

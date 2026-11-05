@@ -14,7 +14,7 @@ import { DayGrid, MIN_BLOCK_PX, type DayGridItem } from "@/components/schedule/D
 import { clusterSessions, hourWindow } from "@/lib/schedule-state";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 let nextId = 0;

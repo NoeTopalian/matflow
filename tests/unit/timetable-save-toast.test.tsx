@@ -20,7 +20,7 @@ import type { ClassRow } from "@/app/dashboard/timetable/page";
 
 const toastSpy = vi.fn();
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
 
 const CLASS: ClassRow = {
