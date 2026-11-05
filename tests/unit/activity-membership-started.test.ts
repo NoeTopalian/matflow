@@ -11,18 +11,18 @@ const h = vi.hoisted(() => {
   const steps: string[] = [];
   return {
     steps,
-    logAudit: vi.fn(async (_args: Record<string, unknown>) => {
+    logAudit: vi.fn<(args: Record<string, unknown>) => Promise<void>>(async () => {
       steps.push("write");
     }),
-    memberLock: vi.fn(async (..._args: unknown[]): Promise<Found> => {
+    memberLock: vi.fn<(...args: unknown[]) => Promise<Found>>(async () => {
       steps.push("lock");
       return { id: "m1" };
     }),
-    earlier: vi.fn(async (_args: unknown): Promise<Found> => {
+    earlier: vi.fn<(args: unknown) => Promise<Found>>(async () => {
       steps.push("look for an earlier row");
       return null;
     }),
-    tier: vi.fn(async (_args: unknown): Promise<Found> => {
+    tier: vi.fn<(args: unknown) => Promise<Found>>(async () => {
       steps.push("look up the plan");
       return { id: "tier_on_sale" };
     }),
