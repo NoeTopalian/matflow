@@ -1,6 +1,7 @@
 // Activity events: the things a club does that the timeline can now show (synthetic data only).
 //   node run-journeys.mjs activity-events
-// A member books a class and gives the booking up, in their own app, and the owner reads both on the timeline.
+// A member signs in to the member app, books a class and gives the booking up (the calls go to the app’s API from
+// that session; the button itself is not pressed), and the owner reads both on the timeline.
 // The purchase rows (a membership start, a class pack, a shop order) are written by Stripe-driven code that a
 // browser journey cannot drive without Stripe, so rows of exactly the shape those writers produce are placed in the
 // log and read back (the writers themselves are exercised against the database in activity-events-db.test.ts).
@@ -53,7 +54,7 @@ try {
   const memberPass = randomBytes(18).toString("base64url");
   await q(`update "Member" set "passwordHash" = $2, "onboardingCompleted" = true, "waiverAccepted" = true, "waiverAcceptedAt" = now() where id = $1`, [s.mel.id, await bcrypt.hash(memberPass, 10)]);
 
-  await section("member-books", "a member books the class in their app, and gives the booking up: one row each, none for a repeat", async () => {
+  await section("member-books", "a member books the class and gives the booking up, through the member app's API from the member's own session: one row each, none for a repeat", async () => {
     const mctx = await context(browser, "10.94.10.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const app = await mctx.newPage();
     try {
@@ -105,7 +106,7 @@ try {
     const started = row(main, `${s.mel.name} started Adult Unlimited — awaiting first payment`);
     await expect(started).toHaveCount(1);
     await expect(started.getByText("Membership started", { exact: true })).toBeVisible();
-    const pack = row(main, `${s.mel.name} bought Ten classes`);
+    const pack = row(main, `${s.mel.name} bought the Ten classes`);
     await expect(pack).toHaveCount(1);
     await expect(pack.getByTestId("activity-detail")).toContainText("10 classes · £80.00");
     await expect(pack.getByText("Class pack bought", { exact: true })).toBeVisible();
@@ -127,9 +128,9 @@ try {
   await section("views-and-filters", "bookings are in Attendance and in the class's own history; the purchases are in Money and under their plan", async () => {
     await open(main, "/dashboard/activity?types=attendance");
     await expect(row(main, `${s.mel.name} booked ${s.className}`)).toHaveCount(1);
-    await expect(row(main, "bought Ten classes")).toHaveCount(0);
+    await expect(row(main, "bought the Ten classes")).toHaveCount(0);
     await open(main, "/dashboard/activity?types=money");
-    await expect(row(main, `${s.mel.name} bought Ten classes`)).toHaveCount(1);
+    await expect(row(main, `${s.mel.name} bought the Ten classes`)).toHaveCount(1);
     await expect(row(main, `${s.mel.name} started Adult Unlimited`)).toHaveCount(1);
     await expect(row(main, "ORD-JOURNEY")).toHaveCount(1);
     await expect(row(main, "booked")).toHaveCount(0);
@@ -138,7 +139,7 @@ try {
     await expect(row(main, `${s.mel.name} booked ${s.className}`)).toHaveCount(1);
     await expect(row(main, `${s.mel.name} cancelled their booking for ${s.className}`)).toHaveCount(1);
     await expect(row(main, `Sam Synthetic created ${s.className}`)).toHaveCount(1);
-    await expect(row(main, "bought Ten classes")).toHaveCount(0);
+    await expect(row(main, "bought the Ten classes")).toHaveCount(0);
     // What happened to one plan: the start on it, and the move onto it.
     await open(main, "/dashboard/activity?types=all");
     await changed(main, () => main.getByRole("combobox", { name: "Plan" }).selectOption({ label: "Adult Unlimited" }));
@@ -159,7 +160,7 @@ try {
     await visit(main, `/dashboard/members/${s.mel.id}`);
     const history = main.getByTestId("activity-embedded");
     await expect(history).toBeVisible(SLOW);
-    for (const said of [`${s.mel.name} booked ${s.className}`, `${s.mel.name} bought Ten classes`, `${s.mel.name} started Adult Unlimited — awaiting first payment`]) {
+    for (const said of [`${s.mel.name} booked ${s.className}`, `${s.mel.name} bought the Ten classes`, `${s.mel.name} started Adult Unlimited — awaiting first payment`]) {
       await expect(history.getByTestId("activity-card").filter({ hasText: said })).toHaveCount(1);
     }
     return { ok: true };
@@ -179,7 +180,7 @@ try {
       const started = row(mpage, `${s.mel.name} started Adult Unlimited — awaiting first payment`);
       await expect(started).toHaveCount(1);
       await expect(started.getByRole("link", { name: "Adult Unlimited" })).toHaveCount(0);
-      const pack = row(mpage, `${s.mel.name} bought Ten classes`);
+      const pack = row(mpage, `${s.mel.name} bought the Ten classes`);
       await expect(pack).toHaveCount(1);
       await expect(pack.getByRole("link", { name: "Ten classes" })).toHaveCount(0);
       await expect(mpage.getByRole("button", { name: /Undo|Since here/ })).toHaveCount(0);
@@ -197,7 +198,7 @@ try {
       const cards = phone.getByTestId("activity-card").filter({ visible: true });
       await expect(cards.filter({ hasText: `${s.mel.name} booked ${s.className}` })).toHaveCount(1);
       await expect(cards.filter({ hasText: "Can't undo: The member can cancel the booking from their app." })).toHaveCount(1);
-      await expect(cards.filter({ hasText: `${s.mel.name} bought Ten classes` })).toContainText("10 classes · £80.00");
+      await expect(cards.filter({ hasText: `${s.mel.name} bought the Ten classes` })).toContainText("10 classes · £80.00");
       expect(await noSideScroll(phone)).toBe(true);
       await shot(phone, "activity-events-390");
       return { ok: true };

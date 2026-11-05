@@ -131,16 +131,32 @@ acts on is worse than an error they can see.
   faces or initials in rows, a colour per group.
 - A check-in with a warning is still a check-in: it shows as "Check-in with a warning" and is
   also found by the "Check-in" filter.
-- **What the log holds about a person.** Activity rows hold ids, counts and amounts: never a
-  message, an address or free text about someone. One exception, by decision: when a member is
-  deleted in the ordinary way, their name is kept on that one deletion row for the year the log
-  is kept, so the timeline can say who was deleted. New events are written through
-  `lib/activity-events.ts`, which refuses any other shape.
-- **Nothing new is written about an erased member**, and rows already written about them stay for
-  the usual year, reading "Deleted member" with no link and no old values.
-- **A row is written once.** An event that can arrive twice (a retried request, a replayed
-  Stripe event) is keyed or written inside the transaction of the change it records, so the
-  timeline never shows a purchase or a booking twice.
+- **What the new events hold about a person.** The events added with the timeline (a membership
+  started, a class pack bought, a shop order paid, a class booked, a booking cancelled) hold ids,
+  counts and amounts only: no name, no message, no address, no free text. They are written
+  through `lib/activity-events.ts`, which checks each row against a closed shape. In tests and
+  development a row outside its shape is an error; in production the keys it does not know are
+  dropped and the event is still recorded.
+- **What older rows hold.** Rows that existed before the timeline keep more, and still do: a
+  member edit keeps the old and new value of each changed field (name, phone, date of birth,
+  emergency contact); a child's waiver and a removed child keep the child's name; a refund and a
+  desk-paid order keep the reason staff typed; a conversion credit keeps a typed name. By
+  decision, a member deleted in the ordinary way keeps their name on that one deletion row for
+  the year the log is kept, so the timeline can say who was deleted. The owner is shown these
+  values; a manager is shown which fields changed, never what they held.
+- **An erased member.** None of the five new events is written about a member who has been
+  erased (the writers that hold the member's address check it; a booking cannot come from an
+  erased member, who can no longer sign in). Other rows that name their id, such as a refund of
+  an old payment, are still written. Every row about them, old or new, is shown as "Deleted
+  member" with no link and no old values. The stored rows are not rewritten by the erasure: they
+  go when the log's year is up, or sooner by the runbook
+  (`docs/security/INCIDENT-AND-RESTORE-RUNBOOK.md` section 7).
+- **A new event is written once.** A class pack, a shop order and a booking are written inside
+  the transaction of the change they record: a replayed Stripe event or a repeated tap finds the
+  change already made and writes nothing, and a rollback takes the row with it. A membership
+  start is keyed by its Stripe subscription; the check for an earlier row and the write are one
+  transaction behind the Member row lock, so two requests take turns and the second writes
+  nothing.
 - **A membership "started" is not a payment.** The row is written when the subscription is
   created, before any money has moved, and says "awaiting first payment". The payment is its own
   row when it arrives.

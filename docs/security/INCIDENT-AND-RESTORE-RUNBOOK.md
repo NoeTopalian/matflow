@@ -277,24 +277,47 @@ triggers, migration checksums, per-table content hashes (`--content-hash`), and 
 
 ## 7. An erasure request from someone who was already deleted (Activity timeline, 5 Nov 2026)
 
-A member deleted in the ordinary way (Members → Delete) keeps their **name** on the one `member.delete` audit row
-(`metadata.name`), so the Activity timeline can say "Jane Smith (deleted)" for the 365 days the log is kept
-(`AUDIT_LOG_RETENTION_MS`, `lib/audit-log.ts`). A removed child's name is on its `member.child.delete` row
-(`metadata.childName`) in the same way. Nothing else about them is kept by name: every other row holds their id.
+The audit log is kept for 365 days (`AUDIT_LOG_RETENTION_MS`, `lib/audit-log.ts`) and is append-only through the
+app. A member deleted in the ordinary way (Members → Delete) leaves these rows behind, each holding something of
+theirs beyond an id:
+
+| Rows (all with `entityId` = the member's id) | What they hold | Keys to strip |
+|---|---|---|
+| `member.delete`, `member.child.delete` | their name, kept on purpose so the timeline can say "Jane Smith (deleted)" | `name`, `childName` |
+| `member.update`, `member.self_update` | the old and new value of each field that was edited: name, phone, date of birth, emergency contact | `changes`, `before`, `after` |
+| `waiver.sign-for-child` | the child's name | `childName` |
+
+Text that staff typed can also name them on rows filed under something else: the reason on a refund or a desk-paid
+order of theirs (`payment.refund`, `order.mark_paid`: `metadata.reason`, found by `metadata.memberId` on rows
+written since 5 Nov 2026 and through the Payment or Order record before that), and a conversion credit typed on
+another member's record (`member.attribution.update`: `metadata.values.creditedToLabel`). These are read and
+judged one by one; they are not stripped blind.
 
 Erasure under a data-protection request (`member.dsar_erase`) works on a member record. For someone already deleted
-there is no record left for it to act on, and the audit log is append-only through the app. If such a person asks to
-be erased before the year is up, the name is removed from that one row by hand:
+there is no record left for it to act on. If such a person asks to be erased before the year is up, their data is
+taken out of these rows by hand. **There is no script for this yet. It is written, and reviewed, when the first
+request arrives; until it has run, the request is not complete.**
 
-1. Find the member's id: it is the `entityId` of the `member.delete` row for that club, on the date the owner says
-   the member was deleted, whose `metadata.name` is the name in the request. Confirm the club and the date with
-   the owner before anything is changed.
-2. **[NOE]** Remove the name with a reviewed, one-off script under `scripts/`, run against production by Noe only.
-   **No such script exists yet: write it when the first request arrives.** It is one statement, scoped to the club
-   and the row:
-   `UPDATE "AuditLog" SET metadata = metadata - 'name' - 'childName' WHERE "tenantId" = $1 AND "entityId" = $2 AND action IN ('member.delete', 'member.child.delete')`,
-   with a dry run that prints the count (expect exactly 1) before it writes.
-3. Check: the row on the Activity timeline now reads "… deleted a member", and every earlier row about them reads
-   "a deleted member".
-4. Record the request and the date wherever the club's other data requests are recorded. Nothing is restored by this and nothing else
-   changes: the released-address digest on the row stays, because the attendance import still needs it.
+1. **[NOE]** Everything below is one reviewed, one-off script under `scripts/`, run against production by Noe only
+   (finding the row is itself a production read). It takes the club, the date the owner says the member was deleted
+   and the name in the request, and prints the `member.delete` rows that match (id, date, name). Confirm the club,
+   the date and the row with the owner before anything is changed. The row's `entityId` is the member's id.
+2. Dry run: the script prints, for that club and that member id, the number of rows each statement would change, one
+   count per kind. Expect exactly 1 for the deletion row; the other counts are whatever that member's history holds,
+   and 0 is a valid answer.
+   - `UPDATE "AuditLog" SET metadata = metadata - 'name' - 'childName' WHERE "tenantId" = $1 AND "entityType" = 'Member' AND "entityId" = $2 AND action IN ('member.delete', 'member.child.delete')`
+   - `UPDATE "AuditLog" SET metadata = metadata - 'changes' - 'before' - 'after' WHERE "tenantId" = $1 AND "entityType" = 'Member' AND "entityId" = $2 AND action IN ('member.update', 'member.self_update')`
+   - `UPDATE "AuditLog" SET metadata = metadata - 'childName' WHERE "tenantId" = $1 AND "entityType" = 'Member' AND "entityId" = $2 AND action = 'waiver.sign-for-child'`
+   - a listing (not an update) of the typed text named above, for Noe to read: any that names them is cleared by
+     its row id in the same script.
+3. Write run: the same statements in one transaction; the script stops and rolls back if any count differs from
+   its dry run.
+4. Check on the Activity timeline: the deletion row reads "… deleted a member"; every earlier row about them reads
+   "a deleted member"; their edit rows list no field values (the timeline already hid them; now they are gone).
+5. Record the request and the date wherever the club's other data requests are recorded. Nothing is restored by
+   this. The released-address digest on the deletion row stays, because the attendance import still needs it; it is
+   a keyed digest, not the address.
+
+The same stored values remain for a member erased through the app (`member.dsar_erase`): the erasure empties the
+member record and the timeline then shows no name and no old values, but the rows written before it are not
+rewritten. If a request requires them gone before the year is up, the same script is used with that member's id.

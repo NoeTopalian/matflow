@@ -3,14 +3,16 @@
 //
 // What only the database can prove:
 //  - each event is written once: a repeated booking, a retried membership
-//    start, a replayed Stripe event and the completed + async-succeeded pair
-//    leave exactly one row;
+//    start, two membership starts at the same moment, a replayed Stripe event
+//    and the completed + async-succeeded pair leave exactly one row;
 //  - the purchase rows are written inside the webhook's own transaction, as
-//    the restricted role, under row-level security;
-//  - the rows are filed under the member, so the member's History and their
-//    subject-access export find them;
-//  - the timeline finds them by plan, by class and by member, for the owner
-//    and for a manager, and nothing is written about an erased member.
+//    the restricted role, under row-level security: a failure after the row
+//    takes the row and the purchase back together, and the retry writes one;
+//  - the rows are filed under the member, which is how the member's History
+//    and their subject-access export both read the log;
+//  - the timeline finds them by plan (a cancellation included), by class
+//    (check-ins included) and by member, for the owner and for a manager, and
+//    nothing is written about an erased member.
 //
 // Stripe events are signed locally with a synthetic secret (no network). Email,
 // Sentry and the account-status refresh are stubbed; the audit log is REAL.
@@ -25,6 +27,21 @@ vi.mock("@/lib/rate-limit", async (original) => ({ ...(await original<typeof imp
 vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: true })) }));
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 vi.mock("@/lib/stripe-account-status", () => ({ refreshStripeAccountStatus: vi.fn(async () => {}) }));
+// The real writer, with one switch: fail once AFTER the row has been written, to prove the row and the purchase
+// share a transaction. (logMembershipStarted calls the real function directly and is not affected.)
+const fail = vi.hoisted(() => ({ afterNextWrite: false }));
+vi.mock("@/lib/activity-events", async (original) => {
+  const real = await original<typeof import("@/lib/activity-events")>();
+  const logActivityEvent: typeof real.logActivityEvent = async (action, metadata, base) => {
+    const wrote = await real.logActivityEvent(action, metadata, base);
+    if (wrote && fail.afterNextWrite) {
+      fail.afterNextWrite = false;
+      throw new Error("synthetic failure after the activity row was written");
+    }
+    return wrote;
+  };
+  return { ...real, logActivityEvent };
+});
 
 import Stripe from "stripe";
 import { auth } from "@/auth";
@@ -32,6 +49,8 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { GET as activityGET } from "@/app/api/activity/route";
 import { POST as bookingPOST, DELETE as bookingDELETE } from "@/app/api/member/class-subscriptions/[classId]/route";
 import { POST as stripeWebhook } from "@/app/api/stripe/webhook/route";
+import { POST as checkinPOST } from "@/app/api/checkin/route";
+import { PATCH as memberPATCH } from "@/app/api/members/[id]/route";
 import { logActivityEvent, logMembershipStarted } from "@/lib/activity-events";
 import type { ActivityResponse } from "@/lib/activity-types";
 
@@ -66,9 +85,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity events — written onc
     return (await res.json()) as ActivityResponse;
   }
 
-  async function deliver(type: string, object: Record<string, unknown>) {
+  /** `eventId`: pass the same one twice to deliver the same event again, as Stripe's retry does. */
+  async function deliver(type: string, object: Record<string, unknown>, eventId = `evt_evt_${STAMP}_${++seq}`) {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2026-03-25.dahlia" as never });
-    const payload = JSON.stringify({ id: `evt_evt_${STAMP}_${++seq}`, object: "event", type, account, livemode: false, created: Math.floor(Date.now() / 1000), data: { object } });
+    const payload = JSON.stringify({ id: eventId, object: "event", type, account, livemode: false, created: Math.floor(Date.now() / 1000), data: { object } });
     const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET, timestamp: Math.floor(Date.now() / 1000) } as Parameters<typeof stripe.webhooks.generateTestHeaderString>[0]);
     const res = (await stripeWebhook(new Request("http://localhost/api/stripe/webhook", { method: "POST", headers: new Headers({ "content-type": "application/json", "stripe-signature": signature }), body: payload }) as never)) as unknown as { status: number };
     return res.status;
@@ -116,6 +136,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity events — written onc
       await tx.memberClassPack.deleteMany({ where: { tenantId: T } });
       await tx.classPack.deleteMany({ where: { tenantId: T } });
       await tx.order.deleteMany({ where: { tenantId: T } });
+      await tx.attendanceRecord.deleteMany({ where: { tenantId: T } });
+      await tx.classInstance.deleteMany({ where: { classId: cls } });
       await tx.classSubscription.deleteMany({ where: { classId: cls } });
       await tx.class.deleteMany({ where: { tenantId: T } });
       await tx.member.deleteMany({ where: { tenantId: T } });
@@ -198,7 +220,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity events — written onc
     expect((await withRlsBypass((tx) => tx.order.findFirst({ where: { id: order } })))?.status).toBe("paid");
   });
 
-  it("the member's own record holds every one of them (their History, and their subject-access export, read it by member)", async () => {
+  // The member's History and the subject-access export (app/api/admin/dsar/export) both read the log with this
+  // where clause. The export route itself is not called here: it needs an operator session.
+  it("every one of them is filed under the member: found by entity, as their History and their export read the log", async () => {
     const mine = await withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId: T, entityType: "Member", entityId: mel }, select: { action: true } }));
     const actions = new Set(mine.map((r) => r.action));
     for (const action of ["class.booking.created", "class.booking.cancelled", "member.subscription.purchased", "class_pack.purchased", "order.paid"]) expect(actions, action).toContain(action);
@@ -214,7 +238,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity events — written onc
       expect(said, role).toContain("membership_started: Melody Orekoya started Adult Unlimited — awaiting first payment");
       expect(said, role).toContain("membership_started: Melody Orekoya started a membership — awaiting first payment");
       expect(said, role).toContain("membership_started: Olive Owner started Adult Unlimited for Melody Orekoya — awaiting first payment");
-      expect(said, role).toContain("pack_purchased: Melody Orekoya bought Ten classes · 10 classes · £80.00");
+      expect(said, role).toContain("pack_purchased: Melody Orekoya bought the Ten classes · 10 classes · £80.00");
       expect(said, role).toContain(`payment: Melody Orekoya paid £25.00 for shop order ${ORDER_REF}`);
       // None of it can be undone from here, and a manager is offered no undo at all.
       for (const e of page.entries) {
@@ -246,5 +270,133 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity events — written onc
     const money = await plain("?types=money");
     expect(money).toHaveLength(5);
     expect(money.some((p) => /booked|booking/.test(p))).toBe(false);
+  });
+
+  // ── Added after review. These write further rows, so they come after the counts above. ──────────────────────────
+
+  it("membership starts arriving at the same moment for one subscription write one row between them", async () => {
+    for (const n of [1, 2, 3, 4]) {
+      const sub = `sub_${STAMP}race${n}`;
+      const start = () => logMembershipStarted({ tenantId: T, memberId: mel, tierId: tier, stripePriceId: PRICE, stripeSubscriptionId: sub, userId: mel, memberEmail: `mel-${STAMP}@example.test` });
+      const wrote = await Promise.all([start(), start(), start()]);
+      expect(wrote.filter(Boolean), sub).toHaveLength(1);
+      expect(await withRlsBypass((tx) => tx.auditLog.count({ where: { tenantId: T, requestId: `sub-purchased:${sub}` } })), sub).toBe(1);
+    }
+    // The plan the caller resolved is the plan on the row, whatever the price would have found.
+    const resolved = `sub_${STAMP}resolved`;
+    expect(await logMembershipStarted({ tenantId: T, memberId: mel, tierId: tier, stripePriceId: "price_unmapped", stripeSubscriptionId: resolved, userId: mel })).toBe(true);
+    const row = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: T, requestId: `sub-purchased:${resolved}` } }));
+    expect(meta(row!)).toMatchObject({ tierId: tier });
+  });
+
+  it("two plans on one price: the one on sale is the one that was started, not the archived one", async () => {
+    const SHARED = `price_${STAMP}shared`;
+    const archived = id("tierold");
+    const onSale = id("tiernew");
+    await withRlsBypass(async (tx) => {
+      // The archived plan is edited last, so "newest" alone would pick it.
+      await tx.membershipTier.create({ data: { id: onSale, tenantId: T, name: "Twice a week", stripePriceId: SHARED } });
+      await tx.membershipTier.create({ data: { id: archived, tenantId: T, name: "Twice a week (OLD)", stripePriceId: SHARED, isActive: false } });
+    });
+    const sub = `sub_${STAMP}shared`;
+    expect(await logMembershipStarted({ tenantId: T, memberId: mel, stripePriceId: SHARED, stripeSubscriptionId: sub, userId: OWNER })).toBe(true);
+    const row = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: T, requestId: `sub-purchased:${sub}` } }));
+    expect(meta(row!)).toMatchObject({ tierId: onSale });
+  });
+
+  it("a failure after the pack's row is written takes the row and the credits back together; Stripe's retry then writes one of each", async () => {
+    const count = () =>
+      withRlsBypass(async (tx) => ({
+        rows: await tx.auditLog.count({ where: { tenantId: T, action: "class_pack.purchased" } }),
+        packs: await tx.memberClassPack.count({ where: { tenantId: T, memberId: mel } }),
+      }));
+    const before = await count();
+    const eventId = `evt_evt_${STAMP}_rollback_pack`;
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    fail.afterNextWrite = true;
+    expect(await deliver("checkout.session.completed", packSession("rollback", mel), eventId)).toBe(500);
+    quiet.mockRestore();
+    // The switch was used: the row really was written inside the transaction before the failure.
+    expect(fail.afterNextWrite).toBe(false);
+    expect(await count()).toEqual(before);
+    expect(await deliver("checkout.session.completed", packSession("rollback", mel), eventId)).toBe(200);
+    expect(await count()).toEqual({ rows: before.rows + 1, packs: before.packs + 1 });
+    expect(await deliver("checkout.session.completed", packSession("rollback", mel), eventId)).toBe(200);
+    expect(await count()).toEqual({ rows: before.rows + 1, packs: before.packs + 1 });
+  });
+
+  it("the same for a shop order: no row without the order paid, no paid order without the row", async () => {
+    const order2 = id("order2");
+    const REF2 = `ORD-${STAMP.toUpperCase()}B`;
+    await withRlsBypass((tx) => tx.order.create({ data: { id: order2, tenantId: T, memberId: mel, orderRef: REF2, items: [], totalPence: 1200, paymentMethod: "stripe" } }));
+    const state = () =>
+      withRlsBypass(async (tx) => ({
+        rows: await tx.auditLog.count({ where: { tenantId: T, action: "order.paid", metadata: { path: ["orderId"], equals: order2 } } }),
+        status: (await tx.order.findFirst({ where: { id: order2 } }))?.status,
+      }));
+    const before = await state();
+    expect(before.rows).toBe(0);
+    expect(before.status).not.toBe("paid");
+    const session = { id: `cs_evt_${STAMP}_order2`, object: "checkout.session", mode: "payment", payment_status: "paid", payment_intent: `pi_evt_${STAMP}_order2`, amount_total: 1200, currency: "gbp", metadata: { matflowKind: "shop_order", tenantId: T, orderRef: REF2 } };
+    const eventId = `evt_evt_${STAMP}_rollback_order`;
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    fail.afterNextWrite = true;
+    expect(await deliver("checkout.session.completed", session, eventId)).toBe(500);
+    quiet.mockRestore();
+    expect(fail.afterNextWrite).toBe(false);
+    expect(await state()).toEqual(before);
+    expect(await deliver("checkout.session.completed", session, eventId)).toBe(200);
+    expect(await state()).toEqual({ rows: 1, status: "paid" });
+  });
+
+  it("a class's history has its check-ins as well as its bookings: a check-in written now names its class", async () => {
+    const guest = id("checkedin");
+    const instance = id("session");
+    const now = new Date();
+    const hhmm = (d: Date) => `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+    await withRlsBypass(async (tx) => {
+      await tx.member.create({ data: { id: guest, tenantId: T, name: "Casey Checkin", email: `casey-${STAMP}@example.test`, waiverAccepted: true, paymentStatus: "paid", membershipTierId: tier } });
+      await tx.classInstance.create({
+        data: { id: instance, classId: cls, date: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())), startTime: hhmm(now), endTime: hhmm(new Date(now.getTime() + 60 * 60_000)) },
+      });
+    });
+    asStaff("owner");
+    const res = await checkinPOST(new Request("https://test.local/api/checkin", { method: "POST", body: JSON.stringify({ classInstanceId: instance, memberId: guest }) }));
+    expect([200, 201], JSON.stringify(await res.clone().json())).toContain(res.status);
+    const written = await rowsOf("attendance.mark");
+    expect(written).toHaveLength(1);
+    expect(meta(written[0])).toMatchObject({ memberId: guest, classId: cls, classInstanceId: instance });
+    const byClass = (await feed(`?types=all&classId=${cls}`)).entries;
+    const checkin = byClass.find((e) => e.type === "checkin");
+    expect(checkin?.plain.startsWith("Olive Owner checked Casey Checkin in to Advanced No-Gi")).toBe(true);
+    // Its bookings are still there beside it, and another class's filter finds none of this.
+    expect(byClass.map((e) => e.plain)).toEqual(expect.arrayContaining(["Melody Orekoya booked Advanced No-Gi"]));
+    expect((await feed(`?types=all&classId=${id("nosuchclass")}`)).entries).toEqual([]);
+  });
+
+  it("what happened to a plan includes who left it: cancelled on one plan, then moved to another", async () => {
+    const pat = id("pat");
+    const other = id("tierother");
+    await withRlsBypass(async (tx) => {
+      await tx.membershipTier.create({ data: { id: other, tenantId: T, name: "Mornings only" } });
+      await tx.member.create({ data: { id: pat, tenantId: T, name: "Pat Planmover", email: `pat-${STAMP}@example.test`, membershipTierId: tier } });
+    });
+    asStaff("owner");
+    const patch = (body: object) =>
+      memberPATCH(new Request(`http://localhost/api/members/${pat}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: pat }) });
+    const cancelled = await patch({ status: "cancelled" });
+    expect(cancelled.status, JSON.stringify(await cancelled.clone().json())).toBe(200);
+    const moved = await patch({ status: "active", membershipTierId: other });
+    expect(moved.status, JSON.stringify(await moved.clone().json())).toBe(200);
+    // The cancellation row names the plan she held when she was cancelled.
+    const row = (await rowsOf("member.update")).find((r) => r.entityId === pat && (meta(r).changes as { status?: { to?: string } } | undefined)?.status?.to === "cancelled");
+    expect(meta(row!)).toMatchObject({ tierId: tier });
+    const plain = async (query: string) => (await feed(query)).entries.map((e) => e.plain);
+    const onFirst = await plain(`?types=all&tierId=${tier}`);
+    expect(onFirst).toContain("Olive Owner cancelled Pat Planmover's Adult Unlimited membership");
+    expect(onFirst).toContain("Olive Owner moved Pat Planmover from Adult Unlimited to Mornings only");
+    // The plan she moved to has the move, and not the cancellation that happened on the other plan.
+    const onSecond = await plain(`?types=all&tierId=${other}`);
+    expect(onSecond).toEqual(["Olive Owner moved Pat Planmover from Adult Unlimited to Mornings only"]);
   });
 });
