@@ -27,12 +27,40 @@ export const dayLabel = (date) => new Intl.DateTimeFormat("en-GB", { timeZone: "
 export const isFeed = (r) => new URL(r.url()).pathname === "/api/activity";
 
 /**
+ * Requests for the timeline that failed on the wire (not ones the page cancelled itself), as the browser named them.
+ * A journey reports these as a NOTE: they are faults between the test browser and the local proxy, not answers.
+ */
+export const networkFaults = [];
+export function watchNetwork(page) {
+  page.on("requestfailed", (request) => {
+    const why = request.failure()?.errorText ?? "unknown";
+    if (isFeed(request) && !/ERR_ABORTED/.test(why)) networkFaults.push(`${why} at ${new Date().toISOString().slice(11, 19)}`);
+  });
+}
+
+/**
  * The timeline has loaded the rows for the filters in the address. The status line is empty while it loads or
  * reloads, so this is the one thing to wait for after opening the page — the skeleton rows and the server-rendered
  * controls are on screen long before the page can be used.
+ *
+ * If the request never reached the server ("Couldn't reach MatFlow…": the page's own words for a network failure),
+ * the page's Try again is pressed, once, and the fault is counted — the page did the right thing and the journey
+ * goes on, but it is reported, never hidden.
  */
-export async function ready(page) {
-  await expect(page.getByTestId("activity-status")).not.toHaveText("", SLOW);
+export async function ready(page, retried = false) {
+  const status = page.getByTestId("activity-status");
+  const unreachable = page.getByText("Couldn't reach MatFlow. Check your connection and try again.");
+  const outcome = await Promise.race([
+    expect(status).not.toHaveText("", SLOW).then(() => "ready"),
+    unreachable.waitFor({ state: "visible", timeout: SLOW.timeout }).then(() => "unreachable", () => "never"),
+  ]);
+  if (outcome === "ready") return;
+  if (outcome === "unreachable" && !retried) {
+    networkFaults.push(`retried a first load at ${new Date().toISOString().slice(11, 19)}`);
+    await page.getByRole("button", { name: "Try again", exact: true }).first().click();
+    return ready(page, true);
+  }
+  await expect(status).not.toHaveText("", { timeout: 1000 });
 }
 
 /** Do something that changes the filters, and wait for the rows that answer it. */

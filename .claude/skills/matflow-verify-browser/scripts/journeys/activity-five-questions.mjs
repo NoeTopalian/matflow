@@ -6,7 +6,7 @@
 //   5. Tap any name and land on that exact record.
 import { createRequire } from "node:module";
 import { chromium, state, ledger, shot, context, ownerSignIn } from "../lib.mjs";
-import { seedActivity, SLOW, noSideScroll, ready, changed } from "./activity-seed.mjs";
+import { seedActivity, SLOW, noSideScroll, ready, changed, watchNetwork, networkFaults } from "./activity-seed.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -41,6 +41,7 @@ try {
   const mobile = await context(browser, "10.94.8.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await desk.storageState() });
   phone = await mobile.newPage();
   phone.on("pageerror", (e) => errors.push(e.message));
+  watchNetwork(phone);
   const cards = () => phone.getByTestId("activity-card").filter({ visible: true });
   const card = (text) => cards().filter({ hasText: text });
   const open = async (path) => {
@@ -165,6 +166,7 @@ try {
     return { landed: "timetable, the paused class marked" };
   });
 
+  if (networkFaults.length) L.note("network", "timeline requests that failed on the wire between the test browser and the local proxy (the page showed its error state; retried once)", networkFaults);
   L.check("errors", "no uncaught browser errors", errors.length === 0, errors);
   if (errors.length) process.exitCode = 1;
 } catch (e) {

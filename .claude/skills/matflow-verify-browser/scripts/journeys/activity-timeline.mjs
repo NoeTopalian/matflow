@@ -3,7 +3,7 @@
 // Owner at 1440 (and 1280 / 1024 / 390 for layout), then the same club as a manager and as a coach.
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, sleep, BASE } from "../lib.mjs";
-import { seedActivity, SLOW, noSideScroll, clubDay, clubTime, id, isFeed, ready, changed } from "./activity-seed.mjs";
+import { seedActivity, SLOW, noSideScroll, clubDay, clubTime, id, isFeed, ready, changed, watchNetwork, networkFaults } from "./activity-seed.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -72,6 +72,7 @@ try {
   const ctx = await context(browser, "10.94.9.1", { permissions: ["clipboard-read", "clipboard-write"] });
   main = await ctx.newPage();
   main.on("pageerror", (e) => errors.push(e.message));
+  watchNetwork(main);
   await ownerSignIn(main, club);
   const s = await seedActivity(main, club, "Timeline Gi");
   const today = clubDay(new Date(s.now), s.timeZone);
@@ -330,7 +331,7 @@ try {
     await expect(plan).toBeVisible(SLOW);
     await expect(plan).toContainText(`updated ${s.mel.name}'s details`);
     await expect(main.getByRole("dialog").last()).toContainText("This covers everything Sam Synthetic has done across the club since");
-    await expect(main.getByRole("dialog", { name: /^Undo everything Sam Synthetic did since \d\d:\d\d\?$/ })).toBeVisible();
+    await expect(main.getByRole("dialog", { name: /^Undo everything Sam Synthetic did since \d{1,2} \w{3} \d{4}, \d\d:\d\d\?$/ })).toBeVisible();
     await main.keyboard.press("Escape");
     await expect(main.getByRole("dialog")).toHaveCount(0);
     // A row that cannot be undone says why, one keyboard press away.
@@ -502,6 +503,7 @@ try {
   const mctx = await context(browser, "10.94.9.3");
   const mpage = await mctx.newPage();
   mpage.on("pageerror", (e) => errors.push(e.message));
+  watchNetwork(mpage);
   await section(
     "manager",
     "a manager: the page opens; no Undo; no owner-only rows or types by any link; no values in edits; a plan is not a link; every link opens; the undo routes refuse them by role",
@@ -564,16 +566,21 @@ try {
       await open(mpage, "/dashboard/activity?types=all");
       const hrefs = [...new Set(await mpage.locator("table a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))))].filter(Boolean);
       const refused = [];
-      for (const href of hrefs) {
+      // A refusal arrives as a redirect once the page has streamed, so wait for the page that finally renders its
+      // heading (the destination's, or the dashboard's after a refusal) and only then read the address.
+      const landed = async (href) => {
         await mpage.goto(href);
-        await mpage.waitForLoadState("domcontentloaded");
-        await sleep(1500); // a refusal arrives as a redirect once the page has streamed
-        if (/denied=1|\/login/.test(mpage.url())) refused.push(`${href} -> ${new URL(mpage.url()).pathname}${new URL(mpage.url()).search}`);
+        await mpage.locator("main").getByRole("heading").first().waitFor({ state: "visible", timeout: 30_000 });
+        await sleep(500);
+        return `${new URL(mpage.url()).pathname}${new URL(mpage.url()).search}`;
+      };
+      for (const href of hrefs) {
+        const at = await landed(href);
+        if (/denied=1|\/login/.test(at)) refused.push(`${href} -> ${at}`);
       }
       expect(refused, refused.join("; ")).toEqual([]);
-      // The check above can see a refusal: a page managers may not open does turn them away.
-      await mpage.goto("/dashboard/memberships");
-      await expect(mpage).toHaveURL(/denied=1/, SLOW);
+      // The same check does see a refusal: a page managers may not open turns them away.
+      expect(await landed("/dashboard/memberships")).toMatch(/denied=1/);
       await open(mpage, "/dashboard/activity");
       await shot(mpage, "activity-manager-1440");
       return { linksFollowed: hrefs.length, undo: [one.status(), many.status()] };
@@ -749,6 +756,7 @@ try {
     const mobile = await context(browser, "10.94.9.6", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
+    watchNetwork(phone);
     try {
       await open(phone, "/dashboard/activity");
       const cards = phone.getByTestId("activity-card").filter({ visible: true });
@@ -837,6 +845,8 @@ try {
     }
   });
 
+  // The forced failures in the "failures" section are answers the journey itself gave (500s), not wire faults; these are.
+  if (networkFaults.length) L.note("network", "timeline requests that failed on the wire between the test browser and the local proxy (the page showed its error state; retried once)", networkFaults);
   L.check("errors", "no uncaught browser errors", errors.length === 0, errors);
   if (errors.length) process.exitCode = 1;
 } catch (e) {
