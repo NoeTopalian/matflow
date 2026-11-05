@@ -49,6 +49,7 @@ export function DayGrid({
   onActivate,
   emptyText = "No sessions",
   openCluster = null,
+  onOpenClusterHandled,
 }: {
   items: DayGridItem[];
   startHour: number;
@@ -67,6 +68,12 @@ export function DayGrid({
    * classes it folded are on screen, not behind a second button.
    */
   openCluster?: string | null;
+  /**
+   * Called once `openCluster` has been acted on, so the caller can drop the
+   * request. Without that, coming back to this day (the grid mounts afresh)
+   * would open the group again and take focus from whatever was pressed.
+   */
+  onOpenClusterHandled?: () => void;
 }) {
   const spans = items.map((i) => spanMinutes(i.startTime, i.endTime));
   const packed = packLanes(spans, { maxLanes: 3 });
@@ -91,10 +98,13 @@ export function DayGrid({
   const requestedCluster = requestedIndex === -1 ? undefined : packed.clusters[packed.placements[requestedIndex].cluster];
   const requested = requestedCluster?.dense ? requestedCluster.startMin : null;
   useEffect(() => {
-    if (requested === null) return;
-    setExpanded((prev) => new Set(prev).add(requested));
-    setFocusAfter({ open: true, startMin: requested });
-  }, [requested, openCluster]);
+    if (openCluster === null) return;
+    if (requested !== null) {
+      setExpanded((prev) => new Set(prev).add(requested));
+      setFocusAfter({ open: true, startMin: requested });
+    }
+    onOpenClusterHandled?.();
+  }, [requested, openCluster, onOpenClusterHandled]);
   // Keep keyboard focus with the group as it opens (first row) or closes (the group button).
   useEffect(() => {
     if (!focusAfter || !root.current) return;

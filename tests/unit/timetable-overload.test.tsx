@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import React from "react";
-import TimetableManager, { DENSE_DAY, groupSessions, groupLabel } from "@/components/dashboard/TimetableManager";
+import TimetableManager, { groupSessions, groupLabel } from "@/components/dashboard/TimetableManager";
 import { duplicateSessionKeys } from "@/lib/schedule-state";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 import { weekCells, weekChips, weekDay, weekGrid } from "./helpers/week";
@@ -93,7 +93,6 @@ describe("a busy day on the week grid", () => {
   it("14 sessions on Monday: every one is a chip, in time order, and the header counts them", () => {
     const { container } = render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
     expect(BUSY.flatMap((c) => c.schedules).filter((s) => s.dayOfWeek === 1)).toHaveLength(14);
-    expect(14).toBeGreaterThanOrEqual(DENSE_DAY);
     const monday = weekDay(container, "mon");
     expect(weekChips(monday)).toHaveLength(14);
     const starts = weekCells(monday).map((c) => c.textContent?.slice(0, 5));

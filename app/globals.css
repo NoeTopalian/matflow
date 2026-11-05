@@ -742,6 +742,8 @@ option {
   overflow: auto;
   max-height: max(320px, calc(100dvh - var(--staff-topbar-h) - 12rem));
   border-radius: var(--r-md);
+  /* The pinned cells' z-index values stay inside the box: nothing on the page can slip between them. */
+  isolation: isolate;
 }
 .pg-box:focus-visible,
 .pg-cell > :focus-visible {

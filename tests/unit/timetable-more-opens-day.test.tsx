@@ -97,6 +97,25 @@ describe("'+N more' on the week", () => {
     expect(document.activeElement).toBe(open.querySelector("[data-day-grid-block]"));
   });
 
+  it("is used once: after collapsing the group, leaving Saturday and coming back does not reopen it or take focus", () => {
+    const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
+    fireEvent.click(within(weekDay(container, "sat")).getByTestId("week-more"));
+    const day = screen.getByTestId("day-view");
+    fireEvent.click(within(day).getByRole("button", { name: "Collapse" }));
+    expect(within(day).queryByTestId("day-grid-cluster-open")).toBeNull();
+    const friday = within(day).getByRole("button", { name: /^Friday 6\b/ });
+    fireEvent.click(friday);
+    friday.focus();
+    fireEvent.click(within(day).getByRole("button", { name: /^Saturday 7, 5 sessions$/ }));
+    expect(within(day).getByTestId("day-grid-cluster").textContent).toContain("5 classes at once");
+    expect(within(day).queryByTestId("day-grid-cluster-open")).toBeNull();
+    expect(document.activeElement).toBe(friday);
+    // Week, then Day again: the same.
+    fireEvent.click(screen.getByTestId("timetable-view-week"));
+    fireEvent.click(screen.getByTestId("timetable-view-day"));
+    expect(within(screen.getByTestId("day-view")).queryByTestId("day-grid-cluster-open")).toBeNull();
+  });
+
   it("is there for a coach too: seeing what is on is not editing", () => {
     const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} role="coach" />);
     const more = within(weekDay(container, "sat")).getByTestId("week-more") as HTMLButtonElement;

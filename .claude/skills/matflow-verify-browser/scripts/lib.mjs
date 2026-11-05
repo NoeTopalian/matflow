@@ -229,6 +229,24 @@ export function gridInvariants(page, { sessions }) {
         if (early.start === late.start && Math.abs(early.r.top - late.r.top) > 1) problems.push(`${early.label} and ${late.label}: same start, tops ${early.r.top.toFixed(1)} and ${late.r.top.toFixed(1)}`);
         if (late.start > early.start && late.r.top < early.r.top - 1) problems.push(`${late.label} starts later than ${early.label} but sits higher`);
         if (late.start - early.start > 10 && late.r.top <= early.r.top + 1) problems.push(`${late.label} starts over ten minutes after ${early.label} but is not lower`);
+      }
+    }
+    // "+N more" buttons take a place on the grid like any chip: tall enough, inside their day, on top of nothing.
+    const mores = [...grid.querySelectorAll("[data-cell-more]")].map((cell) => {
+      const button = cell.querySelector("button");
+      return { button, label: button?.getAttribute("aria-label") ?? "+N more", day: cell.closest("[data-day]")?.getAttribute("data-day"), r: button ? R(button) : null };
+    });
+    for (const m of mores) {
+      if (!m.button || !m.r) { problems.push("a '+N more' cell has no button"); continue; }
+      if (m.r.height < 43.5) problems.push(`${m.label}: ${m.r.height.toFixed(1)} px tall`);
+      if (cut(m.button)) problems.push(`${m.label}: its text is cut`);
+      const head = grid.querySelector(`[data-day-head="${m.day}"]`);
+      if (!head || m.r.left < R(head).left - 1 || m.r.right > R(head).right + 1) problems.push(`${m.label}: outside its day`);
+    }
+    const boxes = [...placed, ...mores.filter((m) => m.r)];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
         const x = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
         const y = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
         if (x > 1 && y > 1) problems.push(`${a.label} and ${b.label} intersect (${x.toFixed(1)} x ${y.toFixed(1)} px)`);
@@ -251,27 +269,28 @@ export function gridInvariants(page, { sessions }) {
 
 /**
  * Nothing but the box of the week scrolls sideways: not <main> (the scrollport of the shell at 768 px and wider),
- * not the document; and every chip can be reached inside the scrollable area of the box.
+ * not the document; and no chip hangs outside the grid itself (a chip pushed past the grid's own edge would be in
+ * the box's scrollable area by definition, so the grid's rectangle is what it is measured against).
  */
 export function noSidewaysScroll(page) {
   return page.evaluate(() => {
     const main = document.querySelector("main");
     const box = document.querySelector('[data-testid="week-scroller"]');
+    const grid = document.querySelector('[data-testid="week-grid"]');
     const out = {
       mainScrolls: !!main && main.scrollWidth > main.clientWidth + 1,
       documentScrolls: document.documentElement.scrollWidth > window.innerWidth + 1,
       boxScrolls: !!box && box.scrollWidth > box.clientWidth + 1,
-      chipsOutsideBox: 0,
+      chipsOutsideGrid: 0,
     };
-    if (box) {
-      const b = box.getBoundingClientRect();
-      for (const chip of box.querySelectorAll("[data-cell-key] button, [data-cell-more] button")) {
+    if (grid) {
+      const g = grid.getBoundingClientRect();
+      for (const chip of grid.querySelectorAll("[data-cell-key] button, [data-cell-more] button")) {
         const r = chip.getBoundingClientRect();
-        const left = r.left - b.left + box.scrollLeft, right = r.right - b.left + box.scrollLeft;
-        if (left < -1 || right > box.scrollWidth + 1) out.chipsOutsideBox += 1;
+        if (r.left < g.left - 1 || r.right > g.right + 1) out.chipsOutsideGrid += 1;
       }
     }
-    return { ...out, ok: !out.mainScrolls && !out.documentScrolls && out.chipsOutsideBox === 0 };
+    return { ...out, ok: !!grid && !out.mainScrolls && !out.documentScrolls && out.chipsOutsideGrid === 0 };
   });
 }
 

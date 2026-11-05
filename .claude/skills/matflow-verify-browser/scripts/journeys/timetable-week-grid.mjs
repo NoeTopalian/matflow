@@ -100,6 +100,8 @@ try {
     expect(where.belowBand).toBe(true);
     expect(where.insideBox).toBe(true);
     expect(where.focusOnBody).toBe(true);
+    // The week is taller than its box, so being on the 18:40 class means the box did scroll.
+    expect(where.scrollTop).toBeGreaterThan(0);
     const labels = await weekChips(weekDay(main, "thu")).evaluateAll((els) => els.map((e) => e.dataset.sessionState ?? ""));
     const expected = sessionsOn(POSTER, FROZEN_DAY).map((s) => (s.end <= FROZEN_MIN ? "ended" : s.start <= FROZEN_MIN ? "live" : ""));
     expect(labels.map((s) => (s === "next" || s === "upcoming" ? "" : s))).toEqual(expected);
@@ -107,7 +109,27 @@ try {
     return { ...inv, problems: inv.problems.length, ...where, thursday: labels };
   });
 
-  await section("side-by-side", "Monday 06:30: the two classes share a top edge and do not overlap; the class alone at 07:20 is as wide as the day", async () => {
+  await section("stays-put", "the box is positioned once: scrolled back to the morning, it stays there when the clock passes 19:00 (another class is now live) and the page re-renders", async () => {
+    const scroller = box(main);
+    await scroller.evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
+    const hide = main.getByTestId("timetable-hide-menu");
+    await ctx.clock.setFixedTime(new Date("2026-11-05T19:05:00Z"));
+    await hide.click(); // any state change re-renders the page on the new time
+    await expect(hide).toHaveText("Show menu");
+    const liveNow = weekDay(main, "thu").locator('[data-session-state="live"]');
+    await expect(liveNow.first()).toHaveAccessibleName(/Thursday 19:00 to 20:30/);
+    const at = await scroller.evaluate((el) => ({ top: el.scrollTop, left: el.scrollLeft }));
+    expect(at).toEqual({ top: 0, left: 0 });
+    // Back to 18:45 for the steps that follow, and the menu back on show.
+    await ctx.clock.setFixedTime(new Date(FROZEN));
+    await hide.click();
+    await expect(hide).toHaveText("Hide menu");
+    await expect(liveNow.first()).toHaveAccessibleName(/Thursday 18:40 to 19:00/);
+    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(0);
+    return { scrollAfterTheClockMovedOn: at };
+  });
+
+  await section("side-by-side","Monday 06:30: the two classes share a top edge and do not overlap; the class alone at 07:20 is as wide as the day", async () => {
     const mon = weekDay(main, "mon");
     const pair = MONDAY.filter((s) => s.startTime === "06:30");
     const alone = MONDAY.filter((s) => MONDAY.every((o) => o === s || o.end <= s.start || o.start >= s.end));

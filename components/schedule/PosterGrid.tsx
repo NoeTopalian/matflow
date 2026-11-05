@@ -38,6 +38,7 @@ export function PosterGrid({
   renderMore,
   breakLabel,
   scrollTarget = null,
+  scrollToken = 0,
   onOverflowChange,
 }: {
   grid: TimetableGrid;
@@ -60,6 +61,14 @@ export function PosterGrid({
    * animation, and focus does not move.
    */
   scrollTarget?: { key: string | null; day: number | null } | null;
+  /**
+   * The box is positioned ONCE for each value of this (the week on show), on
+   * mount and when it changes — never again on an ordinary re-render. The
+   * target moves as the clock does (the live class ends, the next begins); a
+   * box that followed it would jump away from where the reader had scrolled
+   * the moment they opened a class or saved one.
+   */
+  scrollToken?: string | number;
   /** Told whenever the grid becomes wider, or stops being wider, than its box. */
   onOverflowChange?: (wider: boolean) => void;
 }) {
@@ -103,6 +112,8 @@ export function PosterGrid({
     const el = box.current;
     if (!el) return;
     const main = el.closest("main");
+    // What sits above the box inside the page (a filter line, a banner) can change height without resizing the box.
+    const above = el.parentElement?.parentElement ?? null;
     const measure = () => {
       if (main) {
         const top = el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
@@ -117,20 +128,32 @@ export function PosterGrid({
     observer.observe(el);
     if (el.firstElementChild) observer.observe(el.firstElementChild);
     if (main) observer.observe(main);
+    if (above && above !== main) observer.observe(above);
     return () => observer.disconnect();
   }, [onOverflowChange]);
 
   const targetKey = scrollTarget?.key ?? null;
   const targetDay = scrollTarget?.day ?? null;
+  // A target folded behind "+N more" has no cell of its own: the box opens on that button instead.
+  const foldedInto = targetKey === null ? null : (grid.items.find((i) => i.type === "more" && i.keys.includes(targetKey)) ?? null);
+  const targetMore = foldedInto && foldedInto.type === "more" ? foldedInto.id : null;
+  const positioned = useRef<{ token: string | number } | null>(null);
   useEffect(() => {
     const el = box.current;
     if (!el) return;
+    if (positioned.current && positioned.current.token === scrollToken) return;
+    positioned.current = { token: scrollToken };
     const within = (node: Element) => {
       const a = node.getBoundingClientRect();
       const b = el.getBoundingClientRect();
       return { top: a.top - b.top + el.scrollTop, left: a.left - b.left + el.scrollLeft, right: a.right - b.left + el.scrollLeft };
     };
-    const cell = targetKey === null ? null : Array.from(el.querySelectorAll("[data-cell-key]")).find((n) => n.getAttribute("data-cell-key") === targetKey);
+    const cell =
+      targetKey === null
+        ? null
+        : (Array.from(el.querySelectorAll("[data-cell-key]")).find((n) => n.getAttribute("data-cell-key") === targetKey) ??
+          Array.from(el.querySelectorAll("[data-cell-more]")).find((n) => n.getAttribute("data-cell-more") === targetMore) ??
+          null);
     const head = targetDay === null ? null : el.querySelector(`[data-day-head="${DAY_SLUG[targetDay]}"]`);
     el.scrollTop = cell ? Math.max(0, within(cell).top - band - 4) : 0;
     const across = cell ?? head;
@@ -140,7 +163,7 @@ export function PosterGrid({
     }
     const { left, right } = within(across);
     if (left - GUTTER_PX < el.scrollLeft || right > el.scrollLeft + el.clientWidth) el.scrollLeft = Math.max(0, left - GUTTER_PX - DAY_GAP_PX);
-  }, [targetKey, targetDay, band]);
+  }, [scrollToken, targetKey, targetMore, targetDay, band]);
 
   return (
     <div
@@ -150,7 +173,8 @@ export function PosterGrid({
       role="region"
       aria-label={label}
       data-testid="week-scroller"
-      style={{ scrollPaddingTop: band + 2, scrollPaddingLeft: GUTTER_PX }}
+      // 6 px beyond the pinned band and gutter: a focused chip's ring (3 px out) is never half under them.
+      style={{ scrollPaddingTop: band + 6, scrollPaddingLeft: GUTTER_PX + 4 }}
     >
       <div
         className="pg-grid"
