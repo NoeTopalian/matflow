@@ -113,3 +113,43 @@ export async function ownerSignIn(page, club) {
   await page.keyboard.press("Enter");
   await page.waitForURL(/\/(dashboard|onboarding)/, { timeout: 60000 });
 }
+
+/**
+ * A staff user in the fixture club, by role: created (or reset) with a known password and, for the roles that must
+ * have one, an enrolled authenticator. Synthetic address (example.test). Returns what staffSignIn needs.
+ */
+export async function seedStaff(club, role, { name = `Fixture ${role}` } = {}) {
+  const { randomUUID } = require("node:crypto");
+  const email = `${role}-${club.slug}@example.test`;
+  const password = `Fx-${randomUUID()}`;
+  // Owner, manager and admin must have an authenticator (lib/mfa-policy.ts); a coach signs in without one.
+  const secret = role === "coach" ? null : newSecret();
+  const rows = await q(
+    `insert into "User" (id, "tenantId", email, "passwordHash", name, role, "totpEnabled", "totpSecret", "updatedAt")
+     values ($1, $2, $3, $4, $5, $6, $7, $8, now())
+     on conflict ("tenantId", email) do update set "passwordHash" = excluded."passwordHash", role = excluded.role, name = excluded.name,
+       "totpEnabled" = excluded."totpEnabled", "totpSecret" = excluded."totpSecret", "totpLastUsedStep" = null,
+       "failedLoginCount" = 0, "lockedUntil" = null, "mustChangePassword" = false, "updatedAt" = now()
+     returning id`,
+    [randomUUID(), club.tenantId, email, await bcrypt.hash(password, 10), name, role, !!secret, secret],
+  );
+  return { id: rows[0].id, email, password, secret, role, name };
+}
+
+/** Any staff account through the real /login form; the authenticator step only when the server asks for it. */
+export async function staffSignIn(page, club, user) {
+  await page.goto("/login");
+  await page.getByLabel("Club code").fill(club.slug);
+  await page.keyboard.press("Enter");
+  await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
+  await page.getByLabel("Email address").first().fill(user.email);
+  await page.getByLabel("Password").fill(user.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL((u) => u.pathname !== "/login", { timeout: 60000 });
+  if (new URL(page.url()).pathname.startsWith("/login/totp")) {
+    if (!user.secret) throw new Error(`${user.email} was asked for an authenticator code but has none`);
+    await page.getByLabel("Six-digit authentication code").fill(await freshCode(user.secret));
+    await page.keyboard.press("Enter");
+  }
+  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60000 });
+}
