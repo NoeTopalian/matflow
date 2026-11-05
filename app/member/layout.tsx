@@ -347,9 +347,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           // strip revealed above it is painted by nothing — so the logo looks
           // like it slides away. `.member-topbar::before` (globals.css) extends
           // this same background upward to fill that strip. Kept as sticky
-          // rather than fixed: fixed would need a spacer element and would
-          // break the --member-header-clearance arithmetic every member page
-          // already relies on.
+          // rather than fixed: fixed would need a spacer element.
           ["--member-topbar-bg" as string]: appBg,
         }}
       >

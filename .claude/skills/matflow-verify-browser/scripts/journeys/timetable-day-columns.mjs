@@ -81,6 +81,19 @@ async function memberPage(browser, width, ip, member) {
   return { ctx, page, pane };
 }
 
+/**
+ * The staff Day view on Monday. A press before the page has hydrated is lost on the slow test link, so "Day" is
+ * pressed again until it reports pressed.
+ */
+async function openMondayDayView(page) {
+  const day = page.getByTestId("timetable-view-day");
+  await expect(async () => {
+    await day.click();
+    await expect(day).toHaveAttribute("aria-pressed", "true", { timeout: 2_000 });
+  }).toPass({ timeout: 45_000 });
+  await page.getByRole("button", { name: /^Monday 2, / }).click();
+}
+
 /** Pinned header check: after scrolling `scroller` down, the element at the middle of each mat name is that name. */
 const pinnedAfterScroll = (scrollerLoc) => scrollerLoc.evaluate((scroller) => {
   scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
@@ -119,8 +132,7 @@ try {
 
   await section("day-view", "1440 px: Monday in the Day view is one column per mat on the clock scale, every block inside its own mat's column; scrolled to the end the mat names are still at the top and on top; Shift+Tab back through Mat 2 never leaves a block under them", async () => {
     await main.goto("/dashboard/timetable");
-    await main.getByTestId("timetable-view-day").click();
-    await main.getByRole("button", { name: /^Monday 2, / }).click();
+    await openMondayDayView(main);
     const box = main.getByTestId("day-scroller");
     await expect(box).toBeVisible();
     await expect(box).toHaveAttribute("aria-label", "Day timetable");
@@ -256,10 +268,16 @@ try {
             const pane = document.querySelector('[data-testid="schedule-pane"]');
             const blocks = [...pane.querySelectorAll("[data-cell-key] button")];
             const last = blocks.reduce((a, b) => (b.getBoundingClientRect().bottom > a.getBoundingClientRect().bottom ? b : a));
-            const nav = document.querySelector("nav:last-of-type") ?? document.querySelector("nav");
-            return { lastBottom: Math.round(last.getBoundingClientRect().bottom), navTop: nav ? Math.round(nav.getBoundingClientRect().top) : window.innerHeight };
+            const nav = document.querySelector('nav[aria-label="Member navigation"]');
+            const scroller = pane.firstElementChild;
+            const r = (el) => (el ? Math.round(el.getBoundingClientRect().bottom) : null);
+            return {
+              lastBottom: r(last), navTop: nav ? Math.round(nav.getBoundingClientRect().top) : window.innerHeight,
+              headerBottom: r(document.querySelector("header")), paneBottom: r(pane),
+              scroll: scroller ? { top: Math.round(scroller.scrollTop), height: scroller.scrollHeight, client: scroller.clientHeight } : null,
+            };
           });
-          expect(above.lastBottom).toBeLessThanOrEqual(above.navTop);
+          expect(above.lastBottom, JSON.stringify(above)).toBeLessThanOrEqual(above.navTop);
           await shot(page, `timetable-day-columns-member-${shell}-${width}`);
           // A swipe right-to-left: Tuesday.
           await page.evaluate(() => {
@@ -318,8 +336,7 @@ try {
       await mctx.close();
     }
     await main.goto("/dashboard/timetable");
-    await main.getByTestId("timetable-view-day").click();
-    await main.getByRole("button", { name: /^Monday 2, / }).click();
+    await openMondayDayView(main);
     await expect(main.getByTestId("day-scroller")).toHaveCount(0);
     await main.getByTestId("timetable-view-week").click();
     return { stored: await storedLayout(), patches: 1 };

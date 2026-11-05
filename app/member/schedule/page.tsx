@@ -970,10 +970,10 @@ export default function MemberSchedulePage() {
   const selectedCls = allClasses.find((c) => c.id === selected);
 
   return (
-    // Audit U5: height derived from the real header + nav tokens — the old
-    // h-[calc(100dvh-56px-64px)] guessed both constants and spilled the
-    // grid ~18px under the fixed tab bar.
-    <div className="flex flex-col" style={{ height: "calc(100dvh - var(--member-header-clearance) - var(--member-nav-clearance))" }}>
+    // The height of the layout's content area, which already leaves room for the header, the two-factor
+    // banner when it shows, and the bottom tab bar. Sizing from fixed header and tab-bar heights instead
+    // (audit U5) put the end of the day under the tab bar whenever the banner was showing.
+    <div className="flex h-full flex-col">
 
       {/* ── Top controls ── */}
       <div className="px-4 pt-4 pb-2 shrink-0">

@@ -456,10 +456,6 @@ option {
   /* ── Member portal: clearance above the fixed bottom nav (Home/Schedule/Progress/Profile) ── */
   :root {
     --member-nav-clearance: calc(env(safe-area-inset-bottom) + 64px);
-    /* Sticky member header: max(safe-top,14px) top pad + 14px bottom pad +
-       44px logo row + 1px border — used by pages that size to the viewport
-       (schedule grid). Change the header, change this. */
-    --member-header-clearance: calc(max(env(safe-area-inset-top), 14px) + 59px);
   }
 
   /* ── Staff dashboard: chrome heights ──
