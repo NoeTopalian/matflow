@@ -9,8 +9,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Eye, EyeOff, Loader2, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
-import { lookupTenantWithAbort } from "@/lib/login-lookup";
-import type { GymBranding } from "@/lib/login-lookup";
+import { lookupTenantWithAbort, loginLogoPx, type GymBranding } from "@/lib/login-lookup";
 import { FONT_IMPORTS, extractFontName, isSafeFontFamily } from "@/lib/fonts";
 
 const codeSchema = z.object({ code: z.string().min(1, "Enter your club code") });
@@ -188,8 +187,10 @@ function getLoginTheme(gym?: GymBranding | null) {
   };
 }
 
-function LogoMark({ gym, size = 120 }: { gym: GymBranding; size?: number }) {
+function LogoMark({ gym, size: sizeProp }: { gym: GymBranding; size?: number }) {
   const theme = getLoginTheme(gym);
+  // T9b: an explicit size (the compact reset step) wins; otherwise the owner's choice.
+  const size = sizeProp ?? loginLogoPx(gym.logoSize);
 
   if (gym.logoUrl) {
     // Render image logos frameless — the gym's logo design carries its own

@@ -60,6 +60,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
           name: true,
           slug: true,
           logoUrl: true,
+          // T9b: the owner's logo-size choice, so the branded login renders the
+          // size they picked. Non-sensitive, like the rest of this payload.
+          logoSize: true,
           primaryColor: true,
           secondaryColor: true,
           textColor: true,

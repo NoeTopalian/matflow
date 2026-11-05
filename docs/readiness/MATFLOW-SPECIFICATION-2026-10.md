@@ -50,7 +50,7 @@ Roles `owner | manager | coach | admin` (DB CHECK). SHALL be unique per club (`@
 Platform super-admins; no `tenantId`. **Phase A ships a single shared-secret cookie** (`MATFLOW_ADMIN_SECRET`); the per-operator table + login + TOTP exist (v1.5) but the UI is deferred. **[OPEN]** whether per-operator operator identity is required before go-live.
 
 ### 2.4 Public / token principals
-Anonymous at public doors (apply, login, public club page `/[slug]`, leaderboard `/leaderboard/[token]`, kiosk). Token principals: kiosk token, leaderboard/display token, magic link, invite token. Provider principal: the Stripe webhook (signature).
+Anonymous at public doors (apply, login, club short URL `/[slug]`, leaderboard `/leaderboard/[token]`, kiosk). `/[slug]` (amended 17 Oct 2026, T9c, Q9): an **opt-in** public club page, OFF by default and switched on only by the club owner in Settings; while off, or while the club is suspended, cancelled or deleted, it SHALL answer exactly like an unknown slug (redirect to the branded login, noindex). When on it shows only the club's branding, owner-entered description and contact details, website/social links, the live weekly timetable (class, day, time, venue, coach) and the prices of tiers the owner marked public; never member data, capacity or rosters. Token principals: kiosk token, leaderboard/display token, magic link, invite token. Provider principal: the Stripe webhook (signature).
 
 ---
 

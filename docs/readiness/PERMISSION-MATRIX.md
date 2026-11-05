@@ -160,6 +160,7 @@ Columns: route | methods | who may call (from the guard the handler calls) | CSR
 | revenue/summary | GET | owner | - | - |
 | settings/display | POST,GET | any session (staff or member — see file) | csrf | - |
 | settings/kiosk | POST,GET | any session (staff or member — see file) | csrf | - |
+| settings/public-page | GET,PATCH | owner (PATCH refuses every support session) | csrf | - |
 | settings | GET,PATCH | owner | csrf | - |
 | staff/[id] | PATCH,DELETE | any session (staff or member — see file) | csrf | - |
 | staff/assignable | GET | any session (staff or member — see file) | - | - |
@@ -175,6 +176,7 @@ Columns: route | methods | who may call (from the guard the handler calls) | CSR
 | stripe/webhook | POST | provider signature | - | - |
 | tasks/[id]/complete | POST | any session (staff or member — see file) | csrf | - |
 | tasks | GET,POST | any session (staff or member — see file) | csrf | - |
+| tenant/[slug]/logo | GET | public (published clubs only; T9c) | - | rl |
 | tenant/[slug] | GET | public / own token | - | rl |
 | upload/delete-orphan | POST | any session (staff or member — see file) | csrf | - |
 | upload | POST | owner | csrf | - |
@@ -212,12 +214,13 @@ Columns: route | methods | who may call (from the guard the handler calls) | CSR
 - member/totp/verify
 - members/accept-invite
 - tenant/[slug]
+- tenant/[slug]/logo
 - waiver/kiosk-request
 - waiver/kiosk-status
 - waiver/open
 - webhooks/resend
 
-Each of the above is either a public door (`apply`, `auth/*`, `magic-link/*`, `tenant/[slug]`, `waiver/*`, `members/accept-invite`, `health`), a token door (`kiosk/[token]/*`), or a provider callback (`webhooks/resend`). `account/pending-tenant` reads its own signed cookie. Any new route appearing here that is not one of those kinds is a finding.
+Each of the above is either a public door (`apply`, `auth/*`, `magic-link/*`, `tenant/[slug]`, `tenant/[slug]/logo`, `waiver/*`, `members/accept-invite`, `health`), a token door (`kiosk/[token]/*`), or a provider callback (`webhooks/resend`). `account/pending-tenant` reads its own signed cookie. Any new route appearing here that is not one of those kinds is a finding.
 
 ## Addendum — family authority, 3 Oct 2026 (hand-written; keep when regenerating)
 
@@ -239,3 +242,7 @@ Who may create, confirm or remove a guardian link. "Suggested" = parentMemberId 
 | apply, members/accept-invite | POST | public / own token | no link column written | apply/route.ts:53; accept-invite/route.ts:157-176 |
 
 Known gaps (3 Oct, not yet fixed): lib/member-home.ts:422 (GET member/home children list) and blob-image/route.ts:133 (a child's photo) key on parentMemberId without CONFIRMED_GUARDIAN; kiosk/[token]/members lists a parent's children whether or not the link is confirmed (by decision — in-gym device).
+
+## Addendum — public club page, 17 Oct 2026 (hand-written; keep when regenerating)
+
+T9c (Q9, Noe 17 Oct 2026). The page `/[slug]` is an anonymous public door: an opted-in, admitted club renders its public page; every other slug (unknown, opted out, suspended, cancelled, deleted, or a failed lookup) redirects to `/login?club=<slug>` with identical noindex metadata. The signed-in owner of the club may add `?preview=1` to see the page before publishing; anyone else gets the same redirect. Only the owner switches publication on or off, through `PATCH /api/settings/public-page`; every support session (View and Edit) is refused there, and each change writes a durable audit row (`tenant.public_page.published` / `.unpublished` / `.update`). `GET /api/tenant/[slug]/logo` serves a published club's inline logo for link previews and answers one identical 404 otherwise.
