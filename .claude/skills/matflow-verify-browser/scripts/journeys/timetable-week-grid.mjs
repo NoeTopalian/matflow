@@ -27,7 +27,7 @@ const watch = (page) => page.on("pageerror", (e) => {
   // The server renders on the real clock and the browser on the frozen one, so React reports a text mismatch
   // (#418) and re-renders. Only that error, only while the clock is frozen, is counted instead of failed.
   if (frozen && /#418|Hydration failed|hydrat/i.test(e.message)) hydration += 1;
-  else errors.push(e.message);
+  else errors.push(`${new URL(page.url()).pathname}: ${e.message}`);
 });
 
 const SESSIONS = POSTER.rows.length;
@@ -73,6 +73,7 @@ try {
     await main.goto("/dashboard/timetable");
     await kept.stop();
     await main.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await main.waitForTimeout(3000); // a hydration error is reported a moment after the page settles
     if (errors.length > 0) L.note("first-load-hydration", "server HTML against the browser's render on the empty timetable", await hydrationDiff(main, await kept.html()));
   }
 
@@ -408,7 +409,7 @@ try {
       const before = errors.length;
       const wasFrozen = frozen;
       frozen = false;
-      phone.on("pageerror", (e) => errors.push(e.message));
+      phone.on("pageerror", (e) => errors.push(`${new URL(phone.url()).pathname}: ${e.message}`));
       try {
         await phone.goto("about:blank");
         const kept = await keepServerHtml(phone, "/dashboard/timetable");

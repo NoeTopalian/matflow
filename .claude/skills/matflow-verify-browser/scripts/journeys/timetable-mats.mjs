@@ -440,7 +440,9 @@ try {
     await main.getByRole("button", { name: "Add day", exact: true }).click();
     const mat = main.getByLabel("Mat", { exact: true });
     await expect(main.getByLabel("Location", { exact: true })).toHaveCount(0);
-    expect(await mat.locator("option").allTextContents()).toEqual(["No mat", "Mat 1", "Cage", LONG]);
+    // The page learns of the new mat through a refresh after the sheet closes; on a slow link it can land a few
+    // seconds after the form opens, and the select then gains the mat in place.
+    await expect.poll(() => mat.locator("option").allTextContents()).toEqual(["No mat", "Mat 1", "Cage", LONG]);
     await expect(mat).toHaveValue("");
     await expect(main.getByLabel("Place (not on a mat)")).toBeVisible();
     await mat.selectOption({ label: LONG });
