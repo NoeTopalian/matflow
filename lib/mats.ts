@@ -100,8 +100,11 @@ export function placeSuggestions(
   }
   const suggestions: PlaceSuggestion[] = [];
   for (const [key, seen] of spellings) {
-    // The commonest spelling; between equally common ones, the one that sorts first, so the answer never flips.
-    const [name] = [...seen].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0];
+    // The commonest spelling. Between equally common ones, the one that reads most like a name — mixed case
+    // ("Mat 1") before all lower ("mat 1") before all capitals ("MAT 1") — then the one that sorts first, so the
+    // answer never flips with the order the rows come back in.
+    const casing = (s: string) => (s !== s.toLowerCase() && s !== s.toUpperCase() ? 0 : s === s.toLowerCase() ? 1 : 2);
+    const [name] = [...seen].sort((a, b) => b[1] - a[1] || casing(a[0]) - casing(b[0]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0];
     let classCount = 0;
     for (const n of seen.values()) classCount += n;
     suggestions.push({ name, key, classCount, tooLong: name.length > MAT_NAME_MAX, matId: matByKey.get(key) ?? null });

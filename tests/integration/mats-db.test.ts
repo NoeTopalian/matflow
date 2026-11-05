@@ -59,6 +59,18 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
     withRlsBypass((tx) => tx.class.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, matId: true, location: true } }));
   const audits = (tenantId: string, action?: string) =>
     withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, ...(action ? { action } : { action: { in: ["mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update"] } }) }, orderBy: { createdAt: "asc" } }));
+  /**
+   * A class edit's `class.updated` row is written after the response, best effort (lib/audit-log.ts: no `tx`, not
+   * durable). Wait until a class has at least `n` of them before reading them as the edits to undo.
+   */
+  const classEdits = async (tenantId: string, classId: string, n: number) => {
+    for (let i = 0; i < 100; i++) {
+      const rows = (await audits(tenantId, "class.updated")).filter((r) => r.entityId === classId);
+      if (rows.length >= n) return rows as unknown as AuditRowLike[];
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error(`class ${classId} has fewer than ${n} class.updated rows after 10 s`);
+  };
   const addMat = async (tenantId: string, name: string) => {
     as("owner", tenantId);
     const res = await matsPOST(request("/api/mats", "POST", { name }));
@@ -240,8 +252,8 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       // Mat 1, then Gym floor: the second edit is the one to undo.
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: mat1.id }), params(cls.id))).status).toBe(200);
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: gym.id }), params(cls.id))).status).toBe(200);
-      const edits = (await audits(T, "class.updated")).filter((r) => r.entityId === cls.id);
-      const last = edits[edits.length - 1] as unknown as AuditRowLike;
+      const edits = await classEdits(T, cls.id, 2);
+      const last = edits[edits.length - 1];
       expect((last.metadata as { before: unknown }).before).toEqual({ location: "Mat 1", matId: mat1.id });
       // Mat 1 is renamed after the edit: the undo must take the NEW name.
       expect((await matPATCH(request(`/api/mats/${mat1.id}`, "PATCH", { name: "Main mat" }), params(mat1.id))).status).toBe(200);
@@ -251,8 +263,8 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       // but an undo that would put the class back onto the removed mat is refused.
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: gym.id }), params(cls.id))).status).toBe(200);
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: mat1.id }), params(cls.id))).status).toBe(200);
-      const again = (await audits(T, "class.updated")).filter((r) => r.entityId === cls.id);
-      const ontoGymGone = again[again.length - 1] as unknown as AuditRowLike; // before: Gym floor
+      const again = await classEdits(T, cls.id, 4);
+      const ontoGymGone = again[again.length - 1]; // before: Gym floor
       expect((await matDELETE(request(`/api/mats/${gym.id}`, "DELETE"), params(gym.id))).status).toBe(200);
       await expect(
         withTenantContext(T, (tx) => executeUndo(tx, [{ row: ontoGymGone, decision: decideUndo(ontoGymGone, false) }], { tenantId: T, userId: "synthetic-owner" })),
@@ -322,7 +334,7 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       const cls = await classRow(T, "Mover", "Mat 1", { matId: one.id });
       as("owner", T);
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: two.id }), params(cls.id))).status).toBe(200);
-      const [edit] = (await audits(T, "class.updated")) as unknown as AuditRowLike[];
+      const [edit] = await classEdits(T, cls.id, 1);
       const [undo, rename] = await Promise.allSettled([
         withTenantContext(T, (tx) => executeUndo(tx, [{ row: edit, decision: decideUndo(edit, false) }], { tenantId: T, userId: "synthetic-owner" })),
         matPATCH(request(`/api/mats/${one.id}`, "PATCH", { name: "Main mat" }), params(one.id)),
