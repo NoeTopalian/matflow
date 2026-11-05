@@ -2466,6 +2466,13 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         Today
                       </span>
                     );
+                    // An empty day is a 40 px column: the same pill, a size down and without its
+                    // border and letter-spacing, so "TODAY" stays inside 36 px.
+                    const todayPillNarrow = (
+                      <span className="rounded-full bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[8px] font-bold uppercase leading-[14px] text-[var(--hue-info-ink)]">
+                        Today
+                      </span>
+                    );
                     return (
                       <PosterGrid
                         grid={weekGrid}
@@ -2498,7 +2505,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                           );
                         }}
                         emptyDay={(day) => (
-                          <span className="flex justify-center pt-1.5 text-xs text-tx-2">{day.day === todayDow ? todayPill : <span aria-hidden="true">—</span>}</span>
+                          <span className="flex justify-center pt-1.5 text-xs text-tx-2">{day.day === todayDow ? todayPillNarrow : <span aria-hidden="true">—</span>}</span>
                         )}
                         renderSession={(item) => {
                           const session = sessionByKey.get(item.key);

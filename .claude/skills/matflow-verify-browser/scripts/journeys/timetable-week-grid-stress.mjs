@@ -8,7 +8,7 @@
 import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, launchWithScrollbars,
-  weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, setAccent, accentOf, focusRing,
+  weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, setAccent, accentOf, focusRing, weekOnFrozenClock,
 } from "../lib.mjs";
 import { STRESS, FROZEN, seedWeek, sessionsOn, countOn, classesOf } from "./data/timetable-weeks.mjs";
 
@@ -32,9 +32,11 @@ const FIVE = SATURDAY.filter((s) => s.startTime === "10:00");
 const FOLDED = FIVE.length - 2;
 const ACCENTS = [["#ffffff", "255,255,255"], ["#ffe14d", "255,225,77"], ["#111111", "17,17,17"]];
 const onGrid = SESSIONS - FOLDED;
-const openWeek = async (page) => {
+/** `thursday`: the page is on the frozen Thursday 18:45, so wait for the browser's own render (18:40 is live) first. */
+const openWeek = async (page, { thursday = frozen } = {}) => {
   await page.goto("/dashboard/timetable");
   await expect(weekChips(weekGrid(page))).toHaveCount(onGrid, { timeout: 30_000 });
+  if (thursday) await weekOnFrozenClock(page, "thu", "18:40");
 };
 const cellsAt = (page, day, start) => weekDay(page, day).locator("[data-cell-key]").filter({ has: page.locator('[data-chip-part="time"]', { hasText: `${start}–` }) });
 const geometry = (loc) => loc.evaluateAll((cells) => cells.map((c) => {
@@ -48,7 +50,8 @@ async function section(id, desc, fn) {
     L.check(id, desc, true, await fn());
   } catch (e) {
     const lines = String(e.message ?? e).split("\n");
-    L.check(id, desc, false, [lines[0], lines.find((l) => /waiting for|Expected|Received/.test(l))?.trim()].filter(Boolean).join(" — "));
+    const at = /timetable-week-grid-stress\.mjs:(\d+)/.exec(String(e.stack ?? ""))?.[1];
+    L.check(id, desc, false, [at ? `line ${at}` : null, lines[0], ...lines.filter((l) => /waiting for|Expected|Received/.test(l)).slice(0, 3).map((l) => l.trim())].filter(Boolean).join(" — "));
     process.exitCode = 1;
     if (main && !main.isClosed()) {
       await shot(main, `timetable-week-grid-stress-fail-${id}`);
@@ -189,11 +192,13 @@ try {
       const page = await sctx.newPage();
       watch(page);
       await sctx.clock.setFixedTime(new Date("2026-11-08T12:00:00Z"));
-      await openWeek(page);
+      await openWeek(page, { thursday: false });
+      const sun = weekDay(page, "sun");
+      // The browser's own render, on its Sunday: only then is Sunday the day marked as today.
+      await expect(sun).toHaveAttribute("data-today", "true");
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       const inv = await gridInvariants(page, { sessions: SESSIONS });
       expect(inv.problems).toEqual([]);
-      const sun = weekDay(page, "sun");
-      await expect(sun).toHaveAttribute("data-today", "true");
       await expect(sun).toHaveAccessibleName(/^Sunday 8 November, no sessions, today$/);
       const pill = sun.getByText("Today", { exact: true });
       await expect(pill).toBeVisible();
