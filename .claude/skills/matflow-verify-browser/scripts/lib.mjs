@@ -380,7 +380,12 @@ export const contrast = (locator) => locator.evaluate(measureInk, "text").then((
  * The focus outline an element shows: whether it has focus and shows it, the outline's style and width, and its
  * contrast against the surface around the element ({ focused, focusVisible, style, width, contrast, ink, surface }).
  */
-export const focusRing = (locator) => locator.evaluate(measureInk, "ring");
+export const focusRing = async (locator) => {
+  // The Button primitive's `transition-colors` covers outline-color too: just after focus the ring is still fading
+  // from the faint base ring to its own colour. Measure the ring it settles on, not a frame of the fade.
+  await locator.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)).then(() => null, () => null));
+  return locator.evaluate(measureInk, "ring");
+};
 
 /**
  * The page's next load of `path`, with the server's HTML kept: `load()` reloads and returns that HTML. Used to find
