@@ -131,6 +131,19 @@ acts on is worse than an error they can see.
   faces or initials in rows, a colour per group.
 - A check-in with a warning is still a check-in: it shows as "Check-in with a warning" and is
   also found by the "Check-in" filter.
+- **What the log holds about a person.** Activity rows hold ids, counts and amounts: never a
+  message, an address or free text about someone. One exception, by decision: when a member is
+  deleted in the ordinary way, their name is kept on that one deletion row for the year the log
+  is kept, so the timeline can say who was deleted. New events are written through
+  `lib/activity-events.ts`, which refuses any other shape.
+- **Nothing new is written about an erased member**, and rows already written about them stay for
+  the usual year, reading "Deleted member" with no link and no old values.
+- **A row is written once.** An event that can arrive twice (a retried request, a replayed
+  Stripe event) is keyed or written inside the transaction of the change it records, so the
+  timeline never shows a purchase or a booking twice.
+- **A membership "started" is not a payment.** The row is written when the subscription is
+  created, before any money has moved, and says "awaiting first payment". The payment is its own
+  row when it arrives.
 
 ## 6. Verification
 

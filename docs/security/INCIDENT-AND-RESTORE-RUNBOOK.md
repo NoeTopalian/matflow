@@ -274,3 +274,27 @@ every club past grace and would accept old kiosk tokens and Stripe account links
 policy expressions/roles/permissive flag, trigger definitions and enabled state, public function source/owner/
 SECURITY DEFINER/search_path/ACL, table owners and ACLs, role flags and memberships, schema ACL, extensions, event
 triggers, migration checksums, per-table content hashes (`--content-hash`), and ANY security-state difference.
+
+## 7. An erasure request from someone who was already deleted (Activity timeline, 5 Nov 2026)
+
+A member deleted in the ordinary way (Members → Delete) keeps their **name** on the one `member.delete` audit row
+(`metadata.name`), so the Activity timeline can say "Jane Smith (deleted)" for the 365 days the log is kept
+(`AUDIT_LOG_RETENTION_MS`, `lib/audit-log.ts`). A removed child's name is on its `member.child.delete` row
+(`metadata.childName`) in the same way. Nothing else about them is kept by name: every other row holds their id.
+
+Erasure under a data-protection request (`member.dsar_erase`) works on a member record. For someone already deleted
+there is no record left for it to act on, and the audit log is append-only through the app. If such a person asks to
+be erased before the year is up, the name is removed from that one row by hand:
+
+1. Find the member's id: it is the `entityId` of the `member.delete` row for that club, on the date the owner says
+   the member was deleted, whose `metadata.name` is the name in the request. Confirm the club and the date with
+   the owner before anything is changed.
+2. **[NOE]** Remove the name with a reviewed, one-off script under `scripts/`, run against production by Noe only.
+   **No such script exists yet: write it when the first request arrives.** It is one statement, scoped to the club
+   and the row:
+   `UPDATE "AuditLog" SET metadata = metadata - 'name' - 'childName' WHERE "tenantId" = $1 AND "entityId" = $2 AND action IN ('member.delete', 'member.child.delete')`,
+   with a dry run that prints the count (expect exactly 1) before it writes.
+3. Check: the row on the Activity timeline now reads "… deleted a member", and every earlier row about them reads
+   "a deleted member".
+4. Record the request and the date wherever the club's other data requests are recorded. Nothing is restored by this and nothing else
+   changes: the released-address digest on the row stays, because the attendance import still needs it.
