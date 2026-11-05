@@ -1119,7 +1119,30 @@ function display(field: string, value: unknown, r: Reader, ctx: FeedContext, cur
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) && Number.isFinite(new Date(value).getTime())) return formatDate(value, ctx.timeZone);
   // A bare record id that names nothing here says nothing to a reader.
   if (/^c[a-z0-9]{24}$/.test(value)) return "(changed)";
+  // A stored word ("past_due", "cancelled") is shown as a word ("Past due", "Cancelled").
+  if (WORD_FIELDS.has(field) && /^[a-z]+(?:_[a-z]+)*$/.test(value)) return (value[0].toUpperCase() + value.slice(1)).replace(/_/g, " ");
   return tidy(value, 80);
+}
+
+/** Fields that hold one of a fixed set of stored words, not text a person typed. */
+const WORD_FIELDS = new Set(["status", "paymentStatus", "accountType", "membershipType", "preferredPaymentMethod", "billingCycle", "classLimitBasis", "role"]);
+
+/**
+ * The one changed field the sentence has already told in full — "cancelled
+ * Melody's membership", "moved Melody from A to B". Said again after the
+ * sentence ("· Status: active → cancelled") it is only noise. It stays in
+ * `changes`, which is the complete list.
+ */
+function toldBySentence(row: FeedRow, m: Record<string, unknown>): string | null {
+  if (row.action !== "member.update") return null;
+  const type = typeOf(row);
+  if (type === "cancellation") return fieldLabel("status");
+  if (type === "membership_changed") {
+    const change = record(record(m.changes)?.membershipTierId);
+    // With neither plan named on the row the sentence is the general "updated … details", which tells nothing.
+    return change && (idOf(change.from) || idOf(change.to)) ? fieldLabel("membershipTierId") : null;
+  }
+  return null;
 }
 
 /**
@@ -1223,10 +1246,15 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
     if (emailChanged) alsoChanged.push(fieldLabel("email"));
     for (const field of UNDIFFED_MEMBER_FIELDS) if (sent.includes(field)) alsoChanged.push(fieldLabel(field));
   }
-  if (changes?.length) {
-    const shown = changes.every((c) => c.from != null && c.to != null);
-    add(shown ? changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(" · ") : `Fields: ${[...changes.map((c) => c.label), ...alsoChanged].join(", ")}`);
+  const told = toldBySentence(row, m);
+  const untold = changes?.filter((c) => c.label !== told) ?? [];
+  if (untold.length) {
+    const shown = untold.every((c) => c.from != null && c.to != null);
+    add(shown ? untold.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(" · ") : `Fields: ${[...untold.map((c) => c.label), ...alsoChanged].join(", ")}`);
     if (shown && alsoChanged.length) add(`Also changed: ${alsoChanged.join(", ")}`);
+  } else if (changes?.length) {
+    // Everything in the diff is in the sentence; only what the diff cannot hold is left to say.
+    if (alsoChanged.length) add(`Also changed: ${alsoChanged.join(", ")}`);
   } else if (MEMBER_EDITS.has(row.action)) {
     if (alsoChanged.length) add(`Fields: ${alsoChanged.join(", ")}`);
   } else if (sent.length) {
