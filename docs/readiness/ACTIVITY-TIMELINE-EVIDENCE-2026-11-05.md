@@ -45,6 +45,7 @@ Not changed: the schema (no migration), `GET /api/activity`'s contract, `GET /ap
 | Type check · `npm run lint` (eslint + UI-RULES ratchet) | 0 · passed, every ratchet at baseline | `e23700c9` |
 | Production build (`server.mjs build`, no database URL) | exit 0, tree clean | `e23700c9` |
 | Independent reviews (Opus, read-only) | Two on `d0a1d003` — design rules and accessibility: REJECT, 3 blockers; behaviour and access: REJECT, 2 blockers. All five fixed. A third reviewer re-checked the fixes: APPROVE WITH NITS, no blocker, every earlier blocker closed; four small should-fix items, all fixed in `232507b5`. That commit and `e23700c9` (the focus fix the phone journey led to) have not themselves been re-reviewed | `d0a1d003`, then `5c793d7b` |
+| Secret scan (GitGuardian, on the PR) | Flagged one "generic password" in `d0a1d003`: the line in the journey harness that makes a random password, at run time, for a synthetic fixture user (`.claude/skills/matflow-verify-browser/scripts/lib.mjs`). No credential is or was in the repository. The line now uses the form the fixture owner's already used (fixed the same way on `main` in `3bd8da37`); a manager and a coach made by it were signed in through the real form afterwards. The finding stays against the old commit until it is marked a false positive in GitGuardian, which is Noe's to do | fix after `e23700c9` |
 | CI | see the PR | head |
 
 ### What the timeline journey holds (`activity-timeline.mjs`, 1440 px unless said)

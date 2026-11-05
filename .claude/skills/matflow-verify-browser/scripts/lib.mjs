@@ -119,9 +119,10 @@ export async function ownerSignIn(page, club) {
  * have one, an enrolled authenticator. Synthetic address (example.test). Returns what staffSignIn needs.
  */
 export async function seedStaff(club, role, { name = `Fixture ${role}` } = {}) {
-  const { randomUUID } = require("node:crypto");
+  const { randomUUID, randomBytes } = require("node:crypto");
   const email = `${role}-${club.slug}@example.test`;
-  const password = `Fx-${randomUUID()}`;
+  // Random per run, as the fixture owner's is; it exists only in this process and as a hash on the test branch.
+  const staffPass = randomBytes(18).toString("base64url");
   // Owner, manager and admin must have an authenticator (lib/mfa-policy.ts); a coach signs in without one.
   const secret = role === "coach" ? null : newSecret();
   const rows = await q(
@@ -131,9 +132,9 @@ export async function seedStaff(club, role, { name = `Fixture ${role}` } = {}) {
        "totpEnabled" = excluded."totpEnabled", "totpSecret" = excluded."totpSecret", "totpLastUsedStep" = null,
        "failedLoginCount" = 0, "lockedUntil" = null, "mustChangePassword" = false, "updatedAt" = now()
      returning id`,
-    [randomUUID(), club.tenantId, email, await bcrypt.hash(password, 10), name, role, !!secret, secret],
+    [randomUUID(), club.tenantId, email, await bcrypt.hash(staffPass, 10), name, role, !!secret, secret],
   );
-  return { id: rows[0].id, email, password, secret, role, name };
+  return { id: rows[0].id, email, password: staffPass, secret, role, name };
 }
 
 /** Any staff account through the real /login form; the authenticator step only when the server asks for it. */
