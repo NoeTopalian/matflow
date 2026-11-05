@@ -6,7 +6,7 @@
 //   5. Tap any name and land on that exact record.
 import { createRequire } from "node:module";
 import { chromium, state, ledger, shot, context, ownerSignIn } from "../lib.mjs";
-import { seedActivity, SLOW, noSideScroll } from "./activity-seed.mjs";
+import { seedActivity, SLOW, noSideScroll, ready, changed } from "./activity-seed.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -43,14 +43,26 @@ try {
   phone.on("pageerror", (e) => errors.push(e.message));
   const cards = () => phone.getByTestId("activity-card").filter({ visible: true });
   const card = (text) => cards().filter({ hasText: text });
+  const open = async (path) => {
+    await phone.goto(path);
+    await ready(phone);
+  };
 
   await section("q1-today", "1. What happened today: Activity opens on today's rows under a Today heading, newest first (0 taps)", async () => {
-    await phone.goto("/dashboard/activity");
-    await expect(cards().first()).toBeVisible(SLOW);
-    // The first heading is Today, and the newest seeded row (the check-in, four minutes ago) is the first card.
+    await open("/dashboard/activity");
     await expect(phone.locator("[data-section]").filter({ visible: true }).first()).toHaveText("Today");
-    await expect(cards().first()).toContainText(`${s.mel.name} checked in to ${s.sessionLabel}`);
+    await expect(card(`${s.mel.name} checked in to ${s.sessionLabel}`).first()).toBeVisible();
     await expect(card(`updated ${s.mel.name}'s details`)).toHaveCount(1);
+    // Newest first: the check-in (4 minutes ago) above the edit (6) above the plan move (8) above the payment (20).
+    const order = await cards().evaluateAll((els) => els.map((el) => el.getAttribute("data-entry-id")));
+    const at = (key) => order.indexOf(s.rows[key].id);
+    expect([at("checkin"), at("edit"), at("plan"), at("paid")].every((i) => i >= 0)).toBe(true);
+    expect(at("checkin") < at("edit") && at("edit") < at("plan") && at("plan") < at("paid")).toBe(true);
+    // The card is Jump to date and Filters, and nothing else, on a phone.
+    const filters = phone.getByTestId("activity-filters");
+    await expect(filters.getByRole("button", { name: "Copy link", exact: true })).toBeHidden();
+    await expect(filters.getByRole("button", { name: "Reset filters", exact: true })).toBeHidden();
+    expect((await filters.boundingBox()).height).toBeLessThan(200);
     expect(await noSideScroll(phone)).toBe(true);
     await shot(phone, "activity-five-q1-today");
     return { taps: 0, first: await cards().first().getByTestId("activity-sentence").innerText() };
@@ -67,7 +79,8 @@ try {
     await expect(history.getByTestId("activity-card").filter({ hasText: s.other.name })).toHaveCount(0);
     await history.getByRole("link", { name: "See all activity" }).tap(); // tap 1
     await expect(phone).toHaveURL(new RegExp(`/dashboard/activity\\?memberId=${s.mel.id}&types=all$`), SLOW);
-    await expect(phone.getByRole("heading", { name: `Activity for ${s.mel.name}` })).toBeVisible(SLOW);
+    await ready(phone);
+    await expect(phone.getByRole("heading", { name: `Activity for ${s.mel.name}` })).toBeVisible();
     await expect(card(s.other.name)).toHaveCount(0);
     await expect(card(`${s.mel.name} paid £45.00`)).toHaveCount(1);
     expect(await noSideScroll(phone)).toBe(true);
@@ -75,14 +88,14 @@ try {
     return { taps: 1 };
   });
 
-  await section("q3-who-changed", "3. Who changed it: Staff changes names the staff member on the plan move and the settings change (1 tap)", async () => {
-    await phone.goto("/dashboard/activity");
-    await expect(cards().first()).toBeVisible(SLOW);
-    await phone.getByTestId("activity-views").getByRole("button", { name: "Staff changes", exact: true }).tap(); // tap 1
+  await section("q3-who-changed", "3. Who changed it: Staff changes names the staff member on the plan move, the class and the settings change (1 tap)", async () => {
+    await open("/dashboard/activity");
+    await changed(phone, () => phone.getByTestId("activity-views").getByRole("button", { name: "Staff changes", exact: true }).tap()); // tap 1
     await expect(phone).toHaveURL(/types=staff_changes/);
     const moved = card(`moved ${s.mel.name} from Twice a week (OLD) to Adult Unlimited`);
-    await expect(moved).toHaveCount(1, SLOW);
+    await expect(moved).toHaveCount(1);
     await expect(moved).toContainText("Sam Synthetic");
+    await expect(card(`Sam Synthetic created ${s.className}`)).toHaveCount(1);
     // Check-ins and payments are not staff changes.
     await expect(card("checked in to")).toHaveCount(0);
     await expect(card("paid £45.00")).toHaveCount(0);
@@ -93,26 +106,23 @@ try {
     return { taps: 1, settings: await settings.getByTestId("activity-sentence").innerText() };
   });
 
-  await section("q4-money", "4. Who paid, failed or cancelled: Money shows the payment and the failed payment with names and amounts; the cancellation is one more tap (1-2 taps)", async () => {
-    await phone.goto("/dashboard/activity");
-    await expect(cards().first()).toBeVisible(SLOW);
-    await phone.getByTestId("activity-views").getByRole("button", { name: "Money", exact: true }).tap(); // tap 1
+  await section("q4-money", "4. Who paid, failed or cancelled: Money shows the payment, the failed payment and the cancellation, with names and amounts (1 tap)", async () => {
+    await open("/dashboard/activity");
+    await changed(phone, () => phone.getByTestId("activity-views").getByRole("button", { name: "Money", exact: true }).tap()); // tap 1
     await expect(phone).toHaveURL(/types=money/);
-    await expect(card(`${s.mel.name} paid £45.00`)).toHaveCount(1, SLOW);
+    await expect(card(`${s.mel.name} paid £45.00`)).toHaveCount(1);
     const failed = card(`${s.other.name}'s payment of £30.00 failed`);
     await expect(failed).toHaveCount(1);
     await expect(failed.getByText("Payment failed or disputed", { exact: true })).toBeVisible();
-    const cancelled = card(`cancelled ${s.other.name}'s membership`);
-    await expect(cancelled).toHaveCount(1);
+    await expect(card(`cancelled ${s.other.name}'s membership`)).toHaveCount(1);
     await expect(card("checked in to")).toHaveCount(0);
     await shot(phone, "activity-five-q4-money");
     return { taps: 1, failed: await failed.getByTestId("activity-sentence").innerText() };
   });
 
   await section("q5-member-link", "5a. Tap a member's name: lands on that member's page (1 tap)", async () => {
-    await phone.goto("/dashboard/activity");
+    await open("/dashboard/activity");
     const row = card(`${s.mel.name} checked in to ${s.sessionLabel}`).first();
-    await expect(row).toBeVisible(SLOW);
     await row.getByRole("link", { name: s.mel.name, exact: true }).tap();
     await expect(phone).toHaveURL(new RegExp(`/dashboard/members/${s.mel.id}$`), SLOW);
     await expect(phone.getByRole("heading", { name: s.mel.name }).first()).toBeVisible(SLOW);
@@ -120,9 +130,8 @@ try {
   });
 
   await section("q5-session-link", "5b. Tap a session: lands on Attendance showing that session's check-ins (1 tap)", async () => {
-    await phone.goto("/dashboard/activity");
+    await open("/dashboard/activity");
     const row = card(`${s.mel.name} checked in to ${s.sessionLabel}`).first();
-    await expect(row).toBeVisible(SLOW);
     await row.getByRole("link", { name: s.sessionLabel, exact: true }).tap();
     await expect(phone).toHaveURL(new RegExp(`/dashboard/attendance\\?instance=${s.session}$`), SLOW);
     await expect(phone.getByTestId("attendance-session")).toContainText(s.sessionLabel, SLOW);
@@ -130,25 +139,25 @@ try {
   });
 
   await section("q5-payment-link", "5c. Tap a payment's amount: lands on that member's Payments with the payment marked (2 taps: Money, amount)", async () => {
-    await phone.goto("/dashboard/activity?types=money");
+    await open("/dashboard/activity?types=money");
     const row = card(`${s.mel.name} paid £45.00`);
-    await expect(row).toHaveCount(1, SLOW);
+    await expect(row).toHaveCount(1);
     await row.getByRole("link", { name: "£45.00", exact: true }).tap();
     await expect(phone).toHaveURL(new RegExp(`/dashboard/members/${s.mel.id}\\?tab=payments&paymentId=${s.payment}$`), SLOW);
     await expect(phone.locator('[aria-current="true"]').filter({ visible: true })).toHaveCount(1, SLOW);
     return { url: new URL(phone.url()).search };
   });
 
-  await section("q5-class-link", "5d. Tap a class: lands on the timetable with that class's sheet open (Staff changes, class name)", async () => {
+  await section("q5-class-link", "5d. Tap a class: lands on the timetable at that class (2 taps: Staff changes, class name)", async () => {
     // A real class change, so there is a class row to follow: pause it from the timetable (desktop), then read it on the phone.
     await main.goto("/dashboard/timetable");
     const paused = main.waitForResponse((r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${s.cls.id}`);
     await main.getByRole("button", { name: `Pause ${s.className}`, exact: true }).first().click();
     await main.getByRole("dialog").last().getByRole("button", { name: "Pause class", exact: true }).click();
     expect((await paused).status()).toBe(200);
-    await phone.goto("/dashboard/activity?types=staff_changes");
+    await open("/dashboard/activity?types=staff_changes");
     const row = card(`paused ${s.className}`);
-    await expect(row).toHaveCount(1, SLOW);
+    await expect(row).toHaveCount(1);
     await expect(row).toContainText("Sam Synthetic");
     await row.getByRole("link", { name: s.className, exact: true }).tap();
     // A paused class has no sheet: its row under Paused and archived is the exact record, marked.
