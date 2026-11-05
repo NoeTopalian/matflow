@@ -39,6 +39,21 @@ export function watchNetwork(page) {
 }
 
 /**
+ * Open a page. A navigation that fails on the wire (net::ERR_…: the local TLS proxy dropped it) is tried once more
+ * and counted with the other wire faults; anything else is an error.
+ */
+export async function visit(page, path) {
+  try {
+    return await page.goto(path);
+  } catch (e) {
+    const fault = /net::ERR_\w+/.exec(String(e))?.[0];
+    if (!fault) throw e;
+    networkFaults.push(`${fault} opening a page at ${new Date().toISOString().slice(11, 19)}`);
+    return page.goto(path);
+  }
+}
+
+/**
  * The timeline has loaded the rows for the filters in the address. The status line is empty while it loads or
  * reloads, so this is the one thing to wait for after opening the page — the skeleton rows and the server-rendered
  * controls are on screen long before the page can be used.
@@ -80,7 +95,7 @@ export async function seedActivity(main, club, className = "Activity Gi") {
 
   // A class through the real form (the row every "class" link points at), with one session on it. This also writes
   // a real "created a class" row, by the owner, a moment before the seeded history below.
-  await main.goto("/dashboard/timetable");
+  await visit(main, "/dashboard/timetable");
   await main.getByRole("button", { name: "Add class", exact: true }).first().click();
   await main.getByLabel("Class Name", { exact: true }).fill(className);
   await main.getByRole("button", { name: "Add day", exact: true }).click();

@@ -3,7 +3,7 @@
 // Owner at 1440 (and 1280 / 1024 / 390 for layout), then the same club as a manager and as a coach.
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, sleep, BASE } from "../lib.mjs";
-import { seedActivity, SLOW, noSideScroll, clubDay, clubTime, id, isFeed, ready, changed, watchNetwork, networkFaults } from "./activity-seed.mjs";
+import { seedActivity, SLOW, noSideScroll, clubDay, clubTime, id, isFeed, ready, changed, visit, watchNetwork, networkFaults } from "./activity-seed.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -42,7 +42,7 @@ const shiftDay = (dayKey, days) => {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 };
 const open = async (page, path) => {
-  await page.goto(path);
+  await visit(page, path);
   await ready(page);
 };
 /** WCAG contrast of two computed colours ("rgb(…)" / "rgba(…)"), measured in the page so any colour syntax works. */
@@ -374,7 +374,7 @@ try {
       if (calls === 1) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ ok: false, error: "Couldn't load activity." }) });
       return route.continue().catch(() => {});
     });
-    await main.goto("/dashboard/activity?types=attendance");
+    await visit(main, "/dashboard/activity?types=attendance");
     await expect(main.getByText("Couldn't load activity.").first()).toBeVisible(SLOW);
     await expect(main.getByText("Nothing matches these filters.")).toHaveCount(0);
     await expect(rows(main)).toHaveCount(0);
@@ -444,7 +444,7 @@ try {
     await expect(rows(main).first()).toBeVisible();
     // A type that no longer exists is left out, and the page says so (it never asks the server for it).
     const asked = main.waitForRequest(isFeed);
-    await main.goto("/dashboard/activity?types=checkin,bogus_type");
+    await visit(main, "/dashboard/activity?types=checkin,bogus_type");
     expect(new URL((await asked).url()).searchParams.get("types")).toBe("checkin");
     await ready(main);
     await expect(main.getByText("This link included activity types that no longer exist.")).toBeVisible();
@@ -523,7 +523,7 @@ try {
       await expect(row(mpage, `${s.mel.name} paid £45.00`)).toHaveCount(1);
       // Asking for an owner-only type by name: it is left out, and said; the request never carries it.
       const asked = mpage.waitForRequest(isFeed);
-      await mpage.goto("/dashboard/activity?types=checkin,staff,settings");
+      await visit(mpage, "/dashboard/activity?types=checkin,staff,settings");
       expect(new URL((await asked).url()).searchParams.get("types")).toBe("checkin");
       await ready(mpage);
       await expect(mpage.getByText("Some activity types in this link are only visible to the owner.")).toBeVisible();
@@ -569,7 +569,7 @@ try {
       // A refusal arrives as a redirect once the page has streamed, so wait for the page that finally renders its
       // heading (the destination's, or the dashboard's after a refusal) and only then read the address.
       const landed = async (href) => {
-        await mpage.goto(href);
+        await visit(mpage, href);
         await mpage.locator("main").getByRole("heading").first().waitFor({ state: "visible", timeout: 30_000 });
         await sleep(500);
         return `${new URL(mpage.url()).pathname}${new URL(mpage.url()).search}`;
@@ -705,7 +705,7 @@ try {
   });
 
   await section("member-history", "the member page: History shows their check-in, payment and edit as cards with the day; See all activity opens the page for them", async () => {
-    await main.goto(`/dashboard/members/${s.mel.id}`);
+    await visit(main, `/dashboard/members/${s.mel.id}`);
     const history = main.getByTestId("activity-embedded");
     await expect(history).toBeVisible(SLOW);
     await expect(history.getByTestId("activity-card").filter({ hasText: `${s.mel.name} paid £45.00` })).toHaveCount(1);
@@ -729,15 +729,15 @@ try {
     const page = await cctx.newPage();
     try {
       await staffSignIn(page, club, coach);
-      await page.goto("/dashboard");
+      await visit(page, "/dashboard");
       await expect(page.getByRole("link", { name: "Dashboard", exact: true }).first()).toBeVisible(SLOW);
       await expect(page.getByRole("link", { name: "Activity", exact: true })).toHaveCount(0);
-      await page.goto("/dashboard/activity");
+      await visit(page, "/dashboard/activity");
       await expect(page).toHaveURL(/\/dashboard\?denied=1$/, SLOW);
       const api = await page.request.get("/api/activity");
       expect(api.status()).toBe(403);
       expect(await api.text()).not.toContain(s.mel.name);
-      await page.goto(`/dashboard/members/${s.mel.id}`);
+      await visit(page, `/dashboard/members/${s.mel.id}`);
       await expect(page.getByRole("heading", { name: s.mel.name }).first()).toBeVisible(SLOW);
       await sleep(1500);
       await expect(page.getByTestId("activity-embedded")).toHaveCount(0);

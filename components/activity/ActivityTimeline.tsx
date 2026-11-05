@@ -18,7 +18,7 @@
  * so a link inside the timeline, Back, a pasted address and a reload all mean
  * the same thing, and nothing re-runs the server page.
  */
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronDown, History, RotateCcw, SlidersHorizontal, X } from "lucide-react";
@@ -235,21 +235,29 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
     }
   };
 
+  /** The first row the last "Show older" added, until it has been given the focus. */
+  const focusAfterOlder = useRef<string | null>(null);
   const loadOlder = async () => {
     const result = await feed.loadOlder();
     if (!result) return;
+    // Keyboard and screen-reader users continue from the first new row, not from the button (see the effect below).
+    focusAfterOlder.current = result.firstId;
     setAnnouncement(result.added === 0 ? "Nothing older to show" : `${result.added} more loaded`);
-    // Keyboard and screen-reader users continue from the first new row, not from the button.
-    const firstId = result.firstId;
-    if (firstId) {
-      requestAnimationFrame(() => {
-        const matches = [...(listRef.current?.querySelectorAll<HTMLElement>(`[data-entry-id="${CSS.escape(firstId)}"]`) ?? [])];
-        const shown = matches.find((el) => el.offsetParent !== null) ?? matches[0];
-        // Its first link when it has one; a row with nothing to follow takes the focus itself.
-        (shown?.querySelector<HTMLElement>("a") ?? shown)?.focus();
-      });
-    }
   };
+
+  // The first row "Show older" added takes the focus — once it is on the page. Waiting a frame was a guess: on a
+  // slow phone the rows were drawn after it, and the focus stayed on a button that was no longer there.
+  useEffect(() => {
+    const firstId = focusAfterOlder.current;
+    if (!firstId) return;
+    // The table and the cards are both in the page; one of them is hidden.
+    const matches = [...(listRef.current?.querySelectorAll<HTMLElement>(`[data-entry-id="${CSS.escape(firstId)}"]`) ?? [])];
+    if (matches.length === 0) return; // not drawn yet: the render that draws it comes back here
+    focusAfterOlder.current = null;
+    const shown = matches.find((el) => el.offsetParent !== null) ?? matches[0];
+    // Its first link when it has one; a row with nothing to follow takes the focus itself.
+    (shown.querySelector<HTMLElement>("a") ?? shown).focus();
+  }, [entries, announcement]);
 
   const undoCell = (entry: FeedEntry, card: boolean) => {
     if (!entry.undo || entry.type === "undo") return null;

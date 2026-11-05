@@ -6,7 +6,7 @@
 //   5. Tap any name and land on that exact record.
 import { createRequire } from "node:module";
 import { chromium, state, ledger, shot, context, ownerSignIn } from "../lib.mjs";
-import { seedActivity, SLOW, noSideScroll, ready, changed, watchNetwork, networkFaults } from "./activity-seed.mjs";
+import { seedActivity, SLOW, noSideScroll, ready, changed, visit, watchNetwork, networkFaults } from "./activity-seed.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -45,7 +45,7 @@ try {
   const cards = () => phone.getByTestId("activity-card").filter({ visible: true });
   const card = (text) => cards().filter({ hasText: text });
   const open = async (path) => {
-    await phone.goto(path);
+    await visit(phone, path);
     await ready(phone);
   };
 
@@ -70,7 +70,7 @@ try {
   });
 
   await section("q2-member", "2. What has this member done: the member page's History lists their check-in, payment and edit; See all activity opens the timeline for them (1 tap)", async () => {
-    await phone.goto(`/dashboard/members/${s.mel.id}`);
+    await visit(phone, `/dashboard/members/${s.mel.id}`);
     const history = phone.getByTestId("activity-embedded");
     await expect(history).toBeVisible(SLOW);
     await expect(history.getByTestId("activity-card").filter({ hasText: `${s.mel.name} checked in to` }).first()).toBeVisible();
@@ -151,7 +151,7 @@ try {
 
   await section("q5-class-link", "5d. Tap a class: lands on the timetable at that class (2 taps: Staff changes, class name)", async () => {
     // A real class change, so there is a class row to follow: pause it from the timetable (desktop), then read it on the phone.
-    await main.goto("/dashboard/timetable");
+    await visit(main, "/dashboard/timetable");
     const paused = main.waitForResponse((r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${s.cls.id}`);
     await main.getByRole("button", { name: `Pause ${s.className}`, exact: true }).first().click();
     await main.getByRole("dialog").last().getByRole("button", { name: "Pause class", exact: true }).click();

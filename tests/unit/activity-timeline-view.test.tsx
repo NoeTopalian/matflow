@@ -464,6 +464,9 @@ describe("what is drawn when there is nothing, or something went wrong", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(table().querySelectorAll("tbody tr:not([data-section])")).toHaveLength(3));
     expect(screen.getByTestId("activity-status").textContent).toBe("1 more loaded");
+    // The first new row takes the focus (its first link), so a keyboard carries on from there — the button has gone.
+    expect(document.activeElement?.closest("[data-entry-id]")?.getAttribute("data-entry-id")).toBe("a3");
+    expect(document.activeElement?.tagName).toBe("A");
     expect(screen.getByText("That's everything. Activity is kept for one year.")).toBeTruthy();
     expect(new URL(activityCalls().at(-1)!.url, "http://x").searchParams.get("cursor")).toBe("a2");
   });
