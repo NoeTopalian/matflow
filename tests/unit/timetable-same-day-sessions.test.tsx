@@ -12,7 +12,7 @@ import React from "react";
 import TimetableManager, { chipStatesFor } from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 const base = (over: Partial<ClassRow>): ClassRow => ({
