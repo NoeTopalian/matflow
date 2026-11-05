@@ -160,7 +160,7 @@ describe("something that was added says so, instead of blaming a missing snapsho
 
   // A task or a note cannot be removed at all: it is closed.
   it.each(["task.staff_task.create", "task.member_note.create"])("%s is closed, not removed", (action) => {
-    expect(reasonFor(action)).toBe("This added a task or a note, so there is nothing earlier to put back. Close it by marking it done on the Tasks page.");
+    expect(reasonFor(action)).toBe("This added a task or a note, so there is nothing earlier to put back. It is closed by marking it done.");
   });
 
   it("more specific reasons still win, and an edit recorded without its old values keeps the snapshot reason", () => {

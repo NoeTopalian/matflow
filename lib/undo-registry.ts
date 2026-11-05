@@ -107,7 +107,7 @@ export const REASON = {
   // A creation has no earlier state. It used to give the general "recorded before snapshots were kept" reason,
   // which is about something else and read as a fault.
   created: "This added something new, so there is nothing earlier to put back. If it was a mistake, remove or archive it where it lives.",
-  taskAdded: "This added a task or a note, so there is nothing earlier to put back. Close it by marking it done on the Tasks page.",
+  taskAdded: "This added a task or a note, so there is nothing earlier to put back. It is closed by marking it done.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
