@@ -22,6 +22,11 @@
 //     rolls back the write AND the spend;
 //   - never touched: externalRef, status, passwordHash, TOTP, memberships;
 //   - replay of a consumed grant → alreadyApplied, nothing changed.
+//
+// Also the staff route (POST …/staff/[userId]/login-email, 12 Oct 2026): its
+// cross-club 404 and wrong_target / wrong_change refusals, beside the member
+// route's (its full transaction is proven on Postgres in
+// tests/integration/operator-hub-staff-login-email-db.test.ts).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -142,6 +147,13 @@ const club = {
       const r = h.users.find((u) => matcher.matches(u, where));
       return r ? matcher.pick(r, select) : null;
     },
+    // The staff route's conditional write; present so a regression that reached
+    // it would really write (and be caught by the "nothing written" checks).
+    updateMany: async ({ where, data }: { where: Row; data: Row }) => {
+      let count = 0;
+      for (const u of h.users) if (matcher.matches(u, where)) { matcher.apply(u, data); count++; }
+      return { count };
+    },
   },
   member: {
     findFirst: async ({ where, select }: { where: Row; select?: Row }) => {
@@ -207,6 +219,7 @@ async function inTxNow<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
   const snap = {
     ops: clone<Map<string, Row>>(h.ops),
     members: clone<Map<string, Row>>(h.members),
+    users: h.users.map((u) => ({ ...u })),
     resets: h.resets.map((t) => ({ ...t })),
     links: h.links.map((t) => ({ ...t })),
     audit: h.audit.length,
@@ -216,6 +229,7 @@ async function inTxNow<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
   } catch (e) {
     h.ops.clear(); for (const [k, v] of snap.ops) h.ops.set(k, v);
     h.members.clear(); for (const [k, v] of snap.members) h.members.set(k, v);
+    h.users.splice(0, h.users.length, ...snap.users);
     h.resets.splice(0, h.resets.length, ...snap.resets);
     h.links.splice(0, h.links.length, ...snap.links);
     h.audit.length = snap.audit;
@@ -232,6 +246,7 @@ import { emailDigest } from "@/lib/login-email";
 import { STEP_UP_ACTIONS, STEP_UP_HEADER, canonicalStepUpChange, issueStepUpGrant, resolveStepUpVersionDigest } from "@/lib/operator-step-up";
 import { POST } from "@/app/api/admin/customers/[id]/members/[memberId]/contact-email/route";
 import { POST as CHECK } from "@/app/api/admin/customers/[id]/login-email/check/route";
+import { POST as STAFF } from "@/app/api/admin/customers/[id]/staff/[userId]/login-email/route";
 
 const ORIGIN = "http://localhost:3847";
 const OLD = "pat@club.example";
@@ -533,6 +548,133 @@ describe("grant bindings (verified before the spend)", () => {
   });
 });
 
+// The STAFF route (POST …/staff/[userId]/login-email, 12 Oct 2026) — the same
+// "never another club's" and grant-binding refusals as the member route above
+// (final whole-branch review, Important #1). Each answers with nothing written
+// and the grant unspent.
+describe("staff login-email: another club's account and grant bindings", () => {
+  const STAFF_NEW = "cole.personal@club.example";
+  const staffTarget = (tenant: string, userId: string) => `${tenant}/${userId}/change`;
+  const staffVersion = (tenant: string, userId: string) =>
+    resolveStepUpVersionDigest("staff.login_email", staffTarget(tenant, userId));
+  async function staffGrant(userId = "u-coach", newEmail = STAFF_NEW, tenant = "t-a") {
+    return (await issueStepUpGrant({ operatorId: "op-noe", action: "staff.login_email", targetId: staffTarget(tenant, userId), change: { newEmail } })).grant;
+  }
+  function callStaff(b: unknown, opts: { grant: string; tenant?: string; userId?: string }) {
+    const tenant = opts.tenant ?? "t-a";
+    const userId = opts.userId ?? "u-coach";
+    return STAFF(
+      new Request(`${ORIGIN}/api/admin/customers/${tenant}/staff/${userId}/login-email`, {
+        method: "POST",
+        headers: { origin: ORIGIN, host: "localhost:3847", "content-type": "application/json", [STEP_UP_HEADER]: opts.grant },
+        body: JSON.stringify(b),
+      }),
+      { params: Promise.resolve({ id: tenant, userId }) },
+    );
+  }
+  const users = () => JSON.stringify(h.users);
+  const staffOutcomes = () => h.audit.filter((a) => a.action === "admin.staff.login_email.changed");
+  const unspent = () => expect(nonce()).toMatch(/^[a-f0-9]{64}$/);
+
+  beforeEach(() => {
+    const coach = h.users.find((u) => u.id === "u-coach")!;
+    Object.assign(coach, { passwordHash: "$2a$hash", sessionVersion: 2 });
+    h.users.push(
+      { id: "u-mgr", tenantId: "t-a", role: "manager", name: "Mia Manager", email: "manager@club.example", passwordHash: "$2a$hash", sessionVersion: 0, createdAt: new Date(2) },
+      { id: "u-other", tenantId: "t-b", role: "manager", name: "Oli Elsewhere", email: "oli@club-b.example", passwordHash: "$2a$hash", sessionVersion: 0, createdAt: new Date(3) },
+    );
+  });
+
+  it("a staff account of ANOTHER club named under this club: 404, nothing written, grant unspent", async () => {
+    // A real grant for that account in its own club (t-b); a grant for
+    // t-a/u-other cannot even be issued (no such account in t-a, no version).
+    const version = (await staffVersion("t-b", "u-other"))!;
+    const grant = await staffGrant("u-other", STAFF_NEW, "t-b");
+    const before = users();
+    const res = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant, tenant: "t-a", userId: "u-other" });
+    expect(res.status).toBe(404);
+    expect((await body(res)).error).toBe("Staff account not found in this club.");
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+  });
+
+  it("a grant for ANOTHER staff account: 403 wrong_target, nothing written, grant unspent", async () => {
+    const version = (await staffVersion("t-a", "u-coach"))!;
+    const grant = await staffGrant("u-mgr");
+    const before = users();
+    const res = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant });
+    expect(res.status).toBe(403);
+    const b = await body(res);
+    expect(b.refusal).toBe("wrong_target");
+    expect(b.error).toBe("That confirmation was for a different club or person. Enter a new authenticator code.");
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+  });
+
+  it("a grant for a DIFFERENT new address: 403 wrong_change, nothing written, grant unspent", async () => {
+    const version = (await staffVersion("t-a", "u-coach"))!;
+    const grant = await staffGrant("u-coach", "someone.else@club.example");
+    const before = users();
+    const res = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant });
+    expect(res.status).toBe(403);
+    const b = await body(res);
+    expect(b.refusal).toBe("wrong_change");
+    expect(b.error).toBe("That confirmation was for a different change. Enter a new authenticator code.");
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+  });
+
+  it("the owner named as the staff account: 409 owner, pointing to the owner's card by its current name", async () => {
+    const grant = await staffGrant();
+    const res = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version: "a".repeat(64) }, { grant, userId: "u-owner" });
+    expect(res.status).toBe(409);
+    const b = await body(res);
+    expect(b.result).toBe("owner");
+    expect(b.error).toBe(
+      "This is the club owner's sign-in account. Use the \"Owner's sign-in email (back office)\" card; nothing was changed.",
+    );
+    expect(h.users.find((u) => u.id === "u-owner")!.email).toBe("owner.old@club.example");
+    unspent();
+  });
+
+  it("owner target with an otherwise-valid grant (real signer, owner target and change): 409 owner, grant unspent, nothing changed", async () => {
+    // The issuer resolves no version for an owner (null), so a fabricated digest is supplied; the signer itself is untouched.
+    const grant = (await issueStepUpGrant({ operatorId: "op-noe", action: "staff.login_email", targetId: staffTarget("t-a", "u-owner"), change: { newEmail: STAFF_NEW }, versionDigest: "a".repeat(64) })).grant;
+    const before = users();
+    const res = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version: "a".repeat(64) }, { grant, userId: "u-owner" });
+    expect(res.status).toBe(409);
+    expect((await body(res)).result).toBe("owner");
+    const owner = h.users.find((u) => u.id === "u-owner")!;
+    expect(owner.email).toBe("owner.old@club.example");
+    expect(owner.sessionVersion).toBeUndefined();
+    expect(owner.loginEmailProvisionalSince).toBeUndefined();
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+  });
+
+  it("a legitimately issued manager grant with the owner substituted in the URL: 409 owner, nothing changed; the same grant then succeeds on the manager", async () => {
+    const version = (await staffVersion("t-a", "u-mgr"))!;
+    const grant = await staffGrant("u-mgr");
+    const before = users();
+    const refused = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant, userId: "u-owner" });
+    expect(refused.status).toBe(409);
+    expect((await body(refused)).result).toBe("owner");
+    expect(users()).toBe(before);
+    expect(staffOutcomes()).toHaveLength(0);
+    unspent();
+
+    const ok = await callStaff({ newEmail: STAFF_NEW, reason: REASON, version }, { grant, userId: "u-mgr" });
+    expect(ok.status).toBe(200);
+    expect(h.users.find((u) => u.id === "u-mgr")!.email).toBe(STAFF_NEW);
+    expect(h.users.find((u) => u.id === "u-owner")!.email).toBe("owner.old@club.example");
+    expect(staffOutcomes()).toHaveLength(1);
+  });
+});
+
 describe("the change, in one transaction", () => {
   it("passwordless member: address moved; old + new sign-in tokens retired in THIS club; waiver kept; nothing else touched", async () => {
     const version = (await versionOf("t-a", "m-pat"))!;
@@ -814,16 +956,41 @@ describe("login-email/check: answers", () => {
     expect(b.holder).toMatchObject({ kind: "member", id: "m-quin", canSignIn: true, access: "password" });
   });
 
-  it("a staff account: kind user, its role as status", async () => {
+  it("a staff account: kind user, its role as status, and its staff.login_email version (12 Oct 2026)", async () => {
     const b = await body(await check({ email: "COACH@club.example" }));
-    expect(b.holder).toEqual({ kind: "user", id: "u-coach", name: "Cole Coach", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff" });
+    const version = await resolveStepUpVersionDigest("staff.login_email", target("t-a", "u-coach"));
+    expect(version).toMatch(/^[a-f0-9]{64}$/);
+    expect(b.holder).toEqual({ kind: "user", id: "u-coach", name: "Cole Coach", status: "coach", canSignIn: true, access: "password", link: "/dashboard/staff", version });
   });
 
-  it("a legacy duplicate (two rows on one canonical address): kind many with a count, nobody picked", async () => {
+  it("a staff account whose only password is an EXPIRED temporary one: access none, cannot sign in (R14)", async () => {
+    const coach = h.users.find((u) => u.id === "u-coach")!;
+    coach.mustChangePassword = true;
+    coach.tempPasswordExpiresAt = new Date(Date.now() - 60_000);
+    const b = await body(await check({ email: "coach@club.example" }));
+    expect(b.holder).toMatchObject({ kind: "user", id: "u-coach", canSignIn: false, access: "none" });
+    // Still movable: the version is offered; the panel asks for an extra tick.
+    expect((b.holder as Record<string, unknown>).version).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("a staff account on a temporary password that has NOT expired yet: still password access", async () => {
+    const coach = h.users.find((u) => u.id === "u-coach")!;
+    coach.mustChangePassword = true;
+    coach.tempPasswordExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    const b = await body(await check({ email: "coach@club.example" }));
+    expect(b.holder).toMatchObject({ kind: "user", id: "u-coach", canSignIn: true, access: "password" });
+  });
+
+  it("a legacy duplicate (two rows on one canonical address): kind many with a count and every holder listed, nobody picked", async () => {
     h.members.set("m-dup", { id: "m-dup", tenantId: "t-a", name: "Pat Duplicate", email: " PAT@club.example", passwordHash: null, status: "active", sessionVersion: 0 });
     const b = await body(await check({ email: OLD }));
     expect(b).toMatchObject({ free: false, holder: { kind: "many", count: 2 } });
-    expect(JSON.stringify(b.holder)).not.toMatch(/m-pat|m-dup/);
+    // Since 12 Oct 2026 the operator sees each holder (described as a single
+    // one, with its own version) so each can be moved; still no address echoed.
+    const holders = (b.holder as { holders: Array<{ id: string; version?: string }> }).holders;
+    expect(holders.map((x) => x.id).sort()).toEqual(["m-dup", "m-pat"]);
+    for (const x of holders) expect(x.version).toBe(await versionOf("t-a", x.id));
+    expect(JSON.stringify(b.holder)).not.toContain("@");
   });
 
   it("an address held only in ANOTHER club is free here (no cross-club answer)", async () => {
