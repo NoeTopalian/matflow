@@ -31,6 +31,13 @@ describe("AttendanceView — one session", () => {
     render(<AttendanceView records={ROWS} summary={SUMMARY} primaryColor="#3b82f6" />);
     expect(screen.queryByTestId("attendance-session")).toBeNull();
     expect(screen.getByText("Showing 2 of 2 records")).toBeTruthy();
+    expect(screen.getByText("This Month")).toBeTruthy();
+  });
+
+  it("leaves the club-wide stats out under a one-session heading", () => {
+    render(<AttendanceView records={ROWS} summary={SUMMARY} primaryColor="#3b82f6" session={SESSION} />);
+    expect(screen.queryByText("This Month")).toBeNull();
+    expect(screen.queryByText("Top Class")).toBeNull();
   });
 
   it("names the session, counts its check-ins and links back to the whole list", () => {

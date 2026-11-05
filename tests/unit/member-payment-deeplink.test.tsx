@@ -89,12 +89,12 @@ describe("member page ?tab=payments&paymentId=", () => {
     // The member's other payments are still listed.
     expect(screen.getAllByText("October membership").length).toBeGreaterThan(0);
     expect(scrollSpy).toHaveBeenCalled();
-    expect(screen.queryByText("That payment isn't in this member's list.")).toBeNull();
+    expect(screen.queryByText("That payment isn't among this member's latest payments.")).toBeNull();
   });
 
   it("says so when the payment is not in the member's list", async () => {
     await open("?tab=payments&paymentId=paymissing");
-    await screen.findByText("That payment isn't in this member's list.");
+    await screen.findByText("That payment isn't among this member's latest payments.");
     expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(0);
   });
 
@@ -102,6 +102,6 @@ describe("member page ?tab=payments&paymentId=", () => {
     await open("?tab=payments");
     await waitFor(() => expect(screen.getAllByText("Grading fee").length).toBeGreaterThan(0));
     expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(0);
-    expect(screen.queryByText("That payment isn't in this member's list.")).toBeNull();
+    expect(screen.queryByText("That payment isn't among this member's latest payments.")).toBeNull();
   });
 });

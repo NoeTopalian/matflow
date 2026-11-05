@@ -184,13 +184,15 @@ export default function AttendanceView({ records, summary, primaryColor, session
         </p>
       )}
 
-      {/* Stats */}
+      {/* Stats — club-wide, so not shown under a one-session heading. */}
+      {!session && (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <StatCard label="This Month" value={summary.totalThisMonth} sub="check-ins" icon={Calendar} primaryColor={primaryColor} />
         <StatCard label="This Week" value={summary.totalThisWeek} sub="check-ins" icon={TrendingUp} primaryColor={primaryColor} />
         <StatCard label="Members who trained" value={summary.uniqueMembersThisMonth} sub="distinct members checked in this month" icon={Users} primaryColor={primaryColor} />
         <StatCard label="Top Class" value={summary.topClass ?? "—"} sub="this month" icon={Award} primaryColor={primaryColor} />
       </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
@@ -234,7 +236,9 @@ export default function AttendanceView({ records, summary, primaryColor, session
           className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2 text-sm"
         >
           <span className="min-w-0 break-words font-medium text-tx-1">Session: {session.label}</span>
-          <Link href="/dashboard/attendance" className="ml-auto shrink-0 text-tx-2 underline underline-offset-2 hover:text-tx-1">
+          {/* inline-flex: the global 44px touch floor on links would otherwise
+              leave the text at the top of a tall box, above the label. */}
+          <Link href="/dashboard/attendance" className="ml-auto inline-flex shrink-0 items-center text-tx-2 underline underline-offset-2 hover:text-tx-1">
             Show all attendance
           </Link>
         </div>

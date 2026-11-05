@@ -171,7 +171,7 @@ export default async function AttendancePage({
       const focus = instanceId
         ? await tx.classInstance.findFirst({
             where: { id: instanceId, class: { tenantId: session!.user.tenantId } },
-            select: { id: true, date: true, startTime: true, class: { select: { name: true } } },
+            select: { id: true, date: true, startTime: true, isCancelled: true, class: { select: { name: true } } },
           })
         : null;
       const [recordRows, summaryData] = await Promise.all([
@@ -189,7 +189,11 @@ export default async function AttendancePage({
       records={records}
       summary={summary}
       primaryColor={session!.user.primaryColor}
-      session={focus ? { id: focus.id, label: sessionLabel(focus.class.name, focus.date, focus.startTime) } : null}
+      session={
+        focus
+          ? { id: focus.id, label: sessionLabel(focus.class.name, focus.date, focus.startTime) + (focus.isCancelled ? " (cancelled)" : "") }
+          : null
+      }
       sessionNotFound={instanceId !== null && !focus}
     />
   );

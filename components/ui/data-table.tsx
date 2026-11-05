@@ -110,8 +110,10 @@ export interface DataTableProps<T> {
   empty?: ReactNode;
   onRowClick?: (row: T) => void;
   /**
-   * The one row a deep link pointed at. It gets `aria-current="true"` and the
-   * same outline a focused row has, on the table row and on the card.
+   * The one row a deep link pointed at. It gets `aria-current="true"` and an
+   * outline in `--tx-2`, on the table row and on the card — darker than the
+   * `--bd-active` focus outline, which is too faint to say "this one" on a
+   * long table and would be indistinguishable from keyboard focus.
    */
   isRowCurrent?: (row: T) => boolean;
   /** Below `sm:`, render each row through this instead of the table. */
@@ -388,7 +390,7 @@ export function DataTable<T>({
                         // a keyboard-focused row showed nothing at all.
                         onRowClick &&
                           "cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--bd-active)]",
-                        current && "outline outline-2 -outline-offset-2 outline-[var(--bd-active)]",
+                        current && "outline outline-2 -outline-offset-2 outline-[var(--tx-2)]",
                       )}
                       {...(onRowClick
                         ? {
@@ -462,8 +464,9 @@ export function DataTable<T>({
                 </Card>
               );
               const current = isRowCurrent?.(row) === true;
-              const currentClass =
-                current && "rounded-[var(--r-md)] outline outline-2 outline-offset-2 outline-[var(--bd-active)]";
+              const currentClass = current
+                ? "rounded-[var(--r-md)] outline outline-2 outline-offset-2 outline-[var(--tx-2)]"
+                : undefined;
               return onRowClick ? (
                 <button
                   key={rowKey(row)}
@@ -475,7 +478,7 @@ export function DataTable<T>({
                   {content}
                 </button>
               ) : (
-                <div key={rowKey(row)} aria-current={current ? "true" : undefined} className={cn(currentClass)}>
+                <div key={rowKey(row)} aria-current={current ? "true" : undefined} className={currentClass}>
                   {content}
                 </div>
               );

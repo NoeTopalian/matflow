@@ -49,6 +49,7 @@ describe("AttendancePage ?instance=", () => {
       id: "inst1",
       date: new Date("2026-11-04T00:00:00.000Z"),
       startTime: "19:00",
+      isCancelled: false,
       class: { name: "Advanced No-Gi" },
     });
     const props = await run({ instance: "inst1" });
@@ -58,6 +59,26 @@ describe("AttendancePage ?instance=", () => {
     expect(arg.take).toBe(1000);
     expect(props.session).toEqual({ id: "inst1", label: "Advanced No-Gi · Wed 4 Nov, 19:00" });
     expect(props.sessionNotFound ?? false).toBe(false);
+  });
+
+  it("says when the session was cancelled", async () => {
+    tx.classInstance.findFirst.mockResolvedValue({
+      id: "inst1",
+      date: new Date("2026-11-04T00:00:00.000Z"),
+      startTime: "19:00",
+      isCancelled: true,
+      class: { name: "Advanced No-Gi" },
+    });
+    const props = await run({ instance: "inst1" });
+    expect(props.session?.label).toBe("Advanced No-Gi · Wed 4 Nov, 19:00 (cancelled)");
+  });
+
+  it("accepts the readable ids seeded data uses", async () => {
+    await run({ instance: "inst-seed-t1-AdvancedNoGi-2026-11-04-19:00" });
+    expect(tx.classInstance.findFirst.mock.calls[0][0].where).toEqual({
+      id: "inst-seed-t1-AdvancedNoGi-2026-11-04-19:00",
+      class: { tenantId: "t1" },
+    });
   });
 
   it("an id that is not this club's session falls back to the recent list and says so", async () => {

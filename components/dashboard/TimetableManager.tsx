@@ -720,7 +720,7 @@ function InactiveClassList({
               <li
                 key={cls.id}
                 className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border border-bd-default bg-sf-1 px-3 py-2${
-                  cls.id === currentId ? " outline outline-2 -outline-offset-2 outline-[var(--bd-active)]" : ""
+                  cls.id === currentId ? " outline outline-2 -outline-offset-2 outline-[var(--tx-2)]" : ""
                 }`}
                 data-testid={`inactive-class-${cls.id}`}
                 aria-current={cls.id === currentId ? "true" : undefined}
@@ -1927,28 +1927,36 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   // a paused or archived one has no sheet, so its row below is marked and
   // brought into view. The param is removed either way, so Back does not
   // repeat it.
-  const openedClassLink = useRef(false);
+  // The last value handled, not a flag: a second link to another class while
+  // this page stays mounted must work, and a re-run for the same value (strict
+  // mode, or the render before Next sees the replaceState) must not.
+  const handledClassLink = useRef<string | null>(null);
   const [linkedInactiveId, setLinkedInactiveId] = useState<string | null>(null);
   useEffect(() => {
     const raw = searchParams.get("classId");
-    if (raw === null || openedClassLink.current) return;
-    openedClassLink.current = true;
+    if (raw === null) {
+      handledClassLink.current = null;
+      return;
+    }
+    if (handledClassLink.current === raw) return;
+    handledClassLink.current = raw;
     const rest = new URLSearchParams(window.location.search);
     rest.delete("classId");
     const query = rest.toString();
-    window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+    window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
     if (!canManage) return;
     const id = parseIdParam(raw);
     const active = classes.find((c) => c.id === id);
     if (active) {
+      setLinkedInactiveId(null);
       setEditTarget(active);
       setSaveError(null);
       setDrawerOpen(true);
       return;
     }
     const inactive = inactiveClasses.find((c) => c.id === id);
-    if (inactive) setLinkedInactiveId(inactive.id);
-    else showToast("That class isn't on the timetable any more.", "info");
+    setLinkedInactiveId(inactive ? inactive.id : null);
+    if (!inactive) showToast("That class isn't on the timetable any more.", "info");
   }, [canManage, searchParams, classes, inactiveClasses, showToast]);
   useEffect(() => {
     if (!linkedInactiveId) return;

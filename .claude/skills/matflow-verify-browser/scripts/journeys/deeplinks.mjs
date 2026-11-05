@@ -16,6 +16,8 @@ const L = ledger("deeplinks");
 const errors = [];
 const id = () => randomUUID().replace(/-/g, ""); // record ids are letters and digits only
 const noSideScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+// Every page here crosses to the test database; the first assertion after a navigation waits for that.
+const SLOW = { timeout: 30_000 };
 
 let main;
 async function section(key, desc, fn) {
@@ -56,14 +58,14 @@ try {
 
   await section("class-active", "timetable?classId= opens that class's edit sheet and removes the param", async () => {
     await main.goto(`/dashboard/timetable?classId=${cls.id}`);
-    await expect(main.getByRole("dialog")).toHaveCount(1);
+    await expect(main.getByRole("dialog")).toHaveCount(1, SLOW);
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue("Deep Link Gi");
     await expect(main).toHaveURL(/\/dashboard\/timetable$/);
     await main.keyboard.press("Escape");
     await expect(main.getByRole("dialog")).toHaveCount(0);
-    // Back must not reopen it: the param is gone from this history entry.
+    // The param is gone from this history entry, so a reload does not reopen the sheet.
     await main.reload();
-    await expect(main.getByRole("button", { name: "Add class", exact: true }).first()).toBeVisible();
+    await expect(main.getByRole("button", { name: "Add class", exact: true }).first()).toBeVisible(SLOW);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     return { url: new URL(main.url()).pathname + new URL(main.url()).search };
   });
@@ -80,22 +82,29 @@ try {
   await section("session", "attendance?instance= shows that session's check-ins, names it, and links back to the whole list", async () => {
     await main.goto(`/dashboard/attendance?instance=${full}`);
     const chip = main.getByTestId("attendance-session");
-    await expect(chip).toContainText("Session: Deep Link Gi · Tue 3 Nov, 19:00");
+    await expect(chip).toContainText("Session: Deep Link Gi · Tue 3 Nov, 19:00", SLOW);
     await expect(main.getByText("2 check-ins for this session")).toBeVisible();
+    // The club-wide stat cards are not shown under a one-session heading.
+    await expect(main.getByText("Top Class")).toHaveCount(0);
+    // The link back sits on the label's line, not above it.
+    const [labelBox, linkBox] = await Promise.all([chip.locator("span").first().boundingBox(), main.getByRole("link", { name: "Show all attendance" }).boundingBox()]);
+    const centre = (b) => b.y + b.height / 2;
+    expect(Math.abs(centre(labelBox) - centre(linkBox))).toBeLessThanOrEqual(3);
     for (const m of members.slice(0, 2)) await expect(main.locator("tbody").getByText(m.name, { exact: true })).toHaveCount(1);
     await expect(main.locator("tbody tr")).toHaveCount(2);
     // Keyboard: the way back is a link reachable and operable without a pointer.
     const back = main.getByRole("link", { name: "Show all attendance" });
     await back.focus();
     await main.keyboard.press("Enter");
-    await expect(main).toHaveURL(/\/dashboard\/attendance$/);
-    await expect(main.getByTestId("attendance-session")).toHaveCount(0);
+    await expect(main).toHaveURL(/\/dashboard\/attendance$/, SLOW);
+    await expect(main.getByTestId("attendance-session")).toHaveCount(0, SLOW);
+    await expect(main.getByText("Top Class")).toHaveCount(1);
     return { chip: "Session: Deep Link Gi · Tue 3 Nov, 19:00", rows: 2 };
   });
 
   await section("session-empty", "a session nobody was checked in to says so, not 'no records found'", async () => {
     await main.goto(`/dashboard/attendance?instance=${empty}`);
-    await expect(main.getByTestId("attendance-session")).toContainText("Deep Link Gi · Tue 3 Nov, 06:30");
+    await expect(main.getByTestId("attendance-session")).toContainText("Deep Link Gi · Tue 3 Nov, 06:30", SLOW);
     await expect(main.getByText("No one was checked in to this session.").first()).toBeVisible();
     await expect(main.getByText("No attendance records found")).toHaveCount(0);
     return { message: "No one was checked in to this session." };
@@ -103,7 +112,7 @@ try {
 
   await section("session-unknown", "an id that is not this club's session says so and shows the recent list", async () => {
     await main.goto(`/dashboard/attendance?instance=${id()}`);
-    await expect(main.getByRole("status").filter({ hasText: "That session can't be found." })).toBeVisible();
+    await expect(main.getByRole("status").filter({ hasText: "That session can't be found." })).toBeVisible(SLOW);
     await expect(main.getByTestId("attendance-session")).toHaveCount(0);
     await expect(main.locator("tbody tr")).toHaveCount(2); // the two recent check-ins
     return { note: "That session can't be found." };
@@ -119,7 +128,7 @@ try {
     expect((await paused).status()).toBe(200);
     await main.goto(`/dashboard/timetable?classId=${cls.id}`);
     const row = main.getByTestId(`inactive-class-${cls.id}`);
-    await expect(row).toHaveAttribute("aria-current", "true");
+    await expect(row).toHaveAttribute("aria-current", "true", SLOW);
     await expect(row).toBeInViewport();
     await expect(main.getByRole("dialog")).toHaveCount(0);
     await expect(main).toHaveURL(/\/dashboard\/timetable$/);
@@ -128,7 +137,7 @@ try {
 
   await section("class-unknown", "an id that is no longer a class says so", async () => {
     await main.goto(`/dashboard/timetable?classId=${id()}`);
-    await expect(main.getByText("That class isn't on the timetable any more.")).toBeVisible();
+    await expect(main.getByText("That class isn't on the timetable any more.")).toBeVisible(SLOW);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     return { message: "That class isn't on the timetable any more." };
   });
@@ -146,20 +155,31 @@ try {
   await section("payment", "members/<id>?tab=payments&paymentId= opens Payments with that payment marked; the others stay", async () => {
     await main.goto(`/dashboard/members/${member.id}?tab=payments&paymentId=${pay2}`);
     const marked = main.locator('tbody tr[aria-current="true"]');
-    await expect(marked).toHaveCount(1);
+    await expect(marked).toHaveCount(1, SLOW);
     await expect(marked).toContainText("Grading fee");
     await expect(marked).toBeInViewport();
     await expect(main.locator("tbody").getByText("October membership")).toHaveCount(1);
-    await expect(main.getByText("That payment isn't in this member's list.")).toHaveCount(0);
-    return { marked: "Grading fee", listed: 2 };
+    await expect(main.getByText("That payment isn't among this member's latest payments.")).toHaveCount(0);
+    // The mark must be visible, not a hairline: its outline is the --tx-2 text colour, not the faint focus grey.
+    const outline = await marked.evaluate((el) => getComputedStyle(el).outlineColor);
+    const tx2 = await main.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--tx-2)";
+      document.body.append(probe);
+      const c = getComputedStyle(probe).color;
+      probe.remove();
+      return c;
+    });
+    expect(outline).toBe(tx2);
+    return { marked: "Grading fee", listed: 2, outline };
   });
 
   await section("payment-unknown", "a payment that is not in the member's list says so and marks nothing", async () => {
     await main.goto(`/dashboard/members/${member.id}?tab=payments&paymentId=${id()}`);
-    await expect(main.getByText("That payment isn't in this member's list.")).toBeVisible();
+    await expect(main.getByText("That payment isn't among this member's latest payments.")).toBeVisible(SLOW);
     await expect(main.locator('[aria-current="true"]')).toHaveCount(0);
     await expect(main.locator("tbody").getByText("Grading fee")).toHaveCount(1);
-    return { note: "That payment isn't in this member's list." };
+    return { note: "That payment isn't among this member's latest payments." };
   });
 
   await shot(main, "deeplinks-payment-desktop");
@@ -170,13 +190,13 @@ try {
     phone.on("pageerror", (e) => errors.push(e.message));
     try {
       await phone.goto(`/dashboard/attendance?instance=${full}`);
-      await expect(phone.getByTestId("attendance-session")).toContainText("Deep Link Gi · Tue 3 Nov, 19:00");
+      await expect(phone.getByTestId("attendance-session")).toContainText("Deep Link Gi · Tue 3 Nov, 19:00", SLOW);
       await expect(phone.getByRole("link", { name: "Show all attendance" })).toBeVisible();
       const a = await noSideScroll(phone);
       await shot(phone, "deeplinks-attendance-phone");
       await phone.goto(`/dashboard/members/${member.id}?tab=payments&paymentId=${pay2}`);
       const card = phone.locator('[aria-current="true"]').filter({ hasText: "Grading fee" }).filter({ visible: true });
-      await expect(card).toHaveCount(1);
+      await expect(card).toHaveCount(1, SLOW);
       await expect(card).toBeInViewport();
       const b = await noSideScroll(phone);
       await shot(phone, "deeplinks-payment-phone");

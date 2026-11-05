@@ -770,8 +770,11 @@ export default function MemberProfile({
     setLinkedPaymentId(parseIdParam(params.get("paymentId")));
   }, []);
   const linkedPaymentFound = linkedPaymentId !== null && payments.some((p) => p.id === linkedPaymentId);
+  // Once: coming back to the tab, or a retried load, must not yank the page.
+  const scrolledToPayment = useRef(false);
   useEffect(() => {
-    if (tab !== "payments" || paymentsLoading || !linkedPaymentFound) return;
+    if (tab !== "payments" || paymentsLoading || !linkedPaymentFound || scrolledToPayment.current) return;
+    scrolledToPayment.current = true;
     // The table row and the phone card are both in the DOM; scroll the shown one.
     const marked = [...(paymentsRef.current?.querySelectorAll<HTMLElement>('[aria-current="true"]') ?? [])];
     (marked.find((el) => el.offsetParent !== null) ?? marked[0])?.scrollIntoView({ block: "center" });
@@ -2006,7 +2009,7 @@ export default function MemberProfile({
           <div ref={paymentsRef}>
             {linkedPaymentId !== null && !paymentsLoading && !paymentsError && !linkedPaymentFound && (
               <p role="status" className="mb-3 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2 text-sm text-tx-2">
-                That payment isn&apos;t in this member&apos;s list.
+                That payment isn&apos;t among this member&apos;s latest payments.
               </p>
             )}
             <div className="mb-3 flex items-center gap-2">

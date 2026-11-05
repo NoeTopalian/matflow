@@ -102,6 +102,28 @@ describe("timetable ?classId=", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("handles a second link to another class while the page stays mounted", async () => {
+    const view = open("classId=c2");
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="inactive-class-c2"]')?.getAttribute("aria-current")).toBe("true"),
+    );
+    nav.search = "classId=c1";
+    window.history.pushState({}, "", "/dashboard/timetable?classId=c1");
+    view.rerender(<TimetableManager initialClasses={[LIVE]} initialInactiveClasses={[PAUSED]} role="owner" {...PROPS} />);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByDisplayValue("Fundamentals BJJ")).toBeTruthy();
+    // The earlier mark is cleared: only one record is "the one the link named".
+    expect(document.querySelector('[data-testid="inactive-class-c2"]')?.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("keeps a #hash when it removes the param", async () => {
+    nav.search = "classId=c2";
+    window.history.pushState({}, "", "/dashboard/timetable?classId=c2#inactive");
+    render(<TimetableManager initialClasses={[LIVE]} initialInactiveClasses={[PAUSED]} role="owner" {...PROPS} />);
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(window.location.hash).toBe("#inactive");
+  });
+
   it("does nothing for a coach, who cannot edit classes", async () => {
     open("classId=c1", "coach");
     await waitFor(() => expect(window.location.search).toBe(""));
