@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, launchWithScrollbars,
   weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare, setAccent, accentOf, contrast, focusRing, weekOnFrozenClock,
+  keepServerHtml, hydrationDiff,
 } from "../lib.mjs";
 import { POSTER, DAY, FROZEN, FROZEN_DAY, FROZEN_MIN, seedWeek, sessionsOn, countOn, chipName, classesOf } from "./data/timetable-weeks.mjs";
 
@@ -76,11 +77,17 @@ try {
   });
 
   await section("real-clock", "on the real clock the week loads with every session and no browser error", async () => {
-    await main.reload();
+    const before = errors.length;
+    const kept = await keepServerHtml(main, "/dashboard/timetable");
+    const html = await kept.load();
+    await kept.stop();
     await expect(weekChips(weekGrid(main))).toHaveCount(SESSIONS, { timeout: 30_000 });
+    await main.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    // A mismatch between the server's HTML and the browser's first render: say where before measuring.
+    if (errors.length > before) L.note("real-clock-hydration", "server HTML against the browser's render, first difference", await hydrationDiff(main, html));
+    expect(errors.map((e) => e.slice(0, 160))).toEqual([]);
     const inv = await gridInvariants(main, { sessions: SESSIONS });
-    expect(inv.problems).toEqual([]);
-    expect(errors).toEqual([]);
+    expect(inv.problems.slice(0, 5)).toEqual([]);
     return { chips: inv.chips, errors: errors.length };
   });
 
@@ -396,7 +403,12 @@ try {
       frozen = false;
       phone.on("pageerror", (e) => errors.push(e.message));
       try {
+        await phone.goto("about:blank");
+        const kept = await keepServerHtml(phone, "/dashboard/timetable");
         await phone.goto("/dashboard/timetable");
+        await kept.stop();
+        await phone.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        if (errors.length > before) L.note(`phone-${width}-hydration`, "server HTML against the browser's render, first difference", await hydrationDiff(phone, await kept.html()));
         await phone.getByRole("tab", { name: /^Mon/ }).click();
         const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
         const rows = agenda.getByRole("button", { name: /^Edit / });

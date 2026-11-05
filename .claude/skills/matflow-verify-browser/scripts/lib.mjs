@@ -93,7 +93,10 @@ export async function shot(page, name) {
 
 /** A browser context through the HTTPS proxy. laneIp separates rate-limit buckets between runs. */
 export async function context(browser, laneIp, opts = {}) {
-  const ctx = await browser.newContext({ baseURL: BASE, ignoreHTTPSErrors: true, extraHTTPHeaders: { "x-lane-ip": laneIp }, viewport: { width: 1440, height: 900 }, ...opts });
+  // Service workers blocked: the production build registers one (components/pwa/RegisterSW.tsx) that answers
+  // navigations and static files itself, and Playwright's page.route cannot see what a service worker fetches — a
+  // forced failure would silently not happen (smoke F1, 5 Nov 2026). Installability is not what a journey tests.
+  const ctx = await browser.newContext({ baseURL: BASE, ignoreHTTPSErrors: true, extraHTTPHeaders: { "x-lane-ip": laneIp }, viewport: { width: 1440, height: 900 }, serviceWorkers: "block", ...opts });
   ctx.setDefaultTimeout(60000);
   ctx.setDefaultNavigationTimeout(120000);
   return ctx;
@@ -324,6 +327,25 @@ function measureInk(el, what) {
       const p = m[1].split(/[\s/]+/).filter(Boolean).map(Number);
       if (p.length >= 3 && p.every(Number.isFinite)) return [p[0] * 255, p[1] * 255, p[2] * 255, p[3] ?? 1];
     }
+    // color-mix() with a translucent end is reported in OKLab (or OKLCH): converted to sRGB here.
+    m = /^(oklab|oklch)\(([^)]+)\)$/.exec(css);
+    if (m) {
+      const p = m[2].split(/[\s/]+/).filter(Boolean).map((v) => (v.endsWith("%") ? Number(v.slice(0, -1)) / 100 : Number(v)));
+      if (p.length >= 3 && p.every(Number.isFinite)) {
+        const [L, x, y] = p;
+        const [a, b] = m[1] === "oklch" ? [x * Math.cos((y * Math.PI) / 180), x * Math.sin((y * Math.PI) / 180)] : [x, y];
+        const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+        const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+        const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+        const lin = [
+          4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+          -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+          -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s,
+        ];
+        const enc = (v) => 255 * Math.min(1, Math.max(0, v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055));
+        return [...lin.map(enc), p[3] ?? 1];
+      }
+    }
     throw new Error(`measureInk cannot read the colour "${css}"`);
   };
   const over = (top, under) => top.slice(0, 3).map((c, i) => c * top[3] + under[i] * (1 - top[3]));
@@ -359,6 +381,50 @@ export const contrast = (locator) => locator.evaluate(measureInk, "text").then((
  * contrast against the surface around the element ({ focused, focusVisible, style, width, contrast, ink, surface }).
  */
 export const focusRing = (locator) => locator.evaluate(measureInk, "ring");
+
+/**
+ * The page's next load of `path`, with the server's HTML kept: `load()` reloads and returns that HTML. Used to find
+ * what a React hydration mismatch (#418) was about — see hydrationDiff.
+ */
+export async function keepServerHtml(page, path) {
+  let html = null;
+  await page.route(`**${path}`, async (route) => {
+    if (route.request().resourceType() !== "document") return route.fallback();
+    const res = await route.fetch();
+    html = await res.text();
+    await route.fulfill({ response: res, body: html });
+  });
+  return {
+    load: async () => { await page.reload(); return html; },
+    html: async () => html,
+    stop: () => page.unroute(`**${path}`),
+  };
+}
+
+/**
+ * Where the server's HTML and what the browser drew disagree, inside `selector` (default <main>): the first text
+ * that differs, with 80 characters either side, and every accessible name of a button that differs. A NOTE.
+ */
+export function hydrationDiff(page, html, selector = "main") {
+  return page.evaluate(({ html, selector }) => {
+    const server = new DOMParser().parseFromString(html ?? "", "text/html").querySelector(selector);
+    const client = document.querySelector(selector);
+    if (!server || !client) return { error: `no ${selector} in ${server ? "the browser" : "the server HTML"}` };
+    const a = server.textContent ?? "", b = client.textContent ?? "";
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    const names = (root) => [...root.querySelectorAll("button[aria-label]")].map((e) => e.getAttribute("aria-label"));
+    const sn = names(server), cn = names(client);
+    const differing = sn.map((n, k) => (n !== cn[k] ? { server: n, browser: cn[k] ?? null } : null)).filter(Boolean).slice(0, 8);
+    return {
+      sameText: a === b,
+      at: i,
+      server: a.slice(Math.max(0, i - 80), i + 80),
+      browser: b.slice(Math.max(0, i - 80), i + 80),
+      buttons: { server: sn.length, browser: cn.length, differing },
+    };
+  }, { html, selector });
+}
 
 /**
  * Waits until React has taken the week over and drawn it on the BROWSER's clock. With the clock frozen, the server's
