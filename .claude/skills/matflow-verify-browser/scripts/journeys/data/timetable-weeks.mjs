@@ -187,8 +187,9 @@ export async function seedWeek(page, week, { adopt = false } = {}) {
   const failed = statuses.filter((s) => s !== 201);
   if (failed.length) throw new Error(`seedWeek(${week.key}): ${failed.length} of ${classes.length} creates were refused (${[...new Set(failed)].join(", ")})`);
   if (adopt) {
-    const status = await page.evaluate(async (names) => {
-      const r = await fetch("/api/mats/adopt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names }) });
+    // Only the mat names of this week: a typed place that is not one of them ("Sports hall") stays a typed place.
+    const status = await page.evaluate(async (keys) => {
+      const r = await fetch("/api/mats/adopt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys }) });
       return r.status;
     }, week.mats);
     if (status !== 200) throw new Error(`seedWeek(${week.key}): adopting the mats answered ${status}`);

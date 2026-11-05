@@ -100,6 +100,11 @@ export const REASON = {
   // T6b: an old pause row would otherwise put an archived class back as
   // "active but archived" and mint sessions for it.
   archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
+  // Mats and the split: each is one press to put back where it was made, and
+  // a class's place text follows its mat, so nothing here writes them back.
+  timetablePage: "Change it back from the Timetable page.",
+  matGone: "That mat no longer exists.",
+  onMatNow: "This class is on a mat now. Change its mat from the Timetable page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -688,6 +693,8 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^(report\.|drive\.|onboarding\.|class\.instances_generated|member\.invite_link|member\.waiver_link|member\.waiver\.)/, REASON.record],
   // D2: the record of bookings an access change kept; undo the change itself instead.
   [/^class\.bookings\.kept_ineligible$/, REASON.record],
+  // Mats and the same-time split are changed back where they were changed.
+  [/^(mat\.|timetable\.layout\.)/, REASON.timetablePage],
 ];
 
 export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecision {
