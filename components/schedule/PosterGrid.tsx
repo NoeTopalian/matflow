@@ -11,7 +11,7 @@
  * values, the one sanctioned use (UI-RULES §11).
  */
 
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { minToTime } from "@/lib/schedule-state";
 import type { GridDay, GridMore, GridPlacement, TimetableGrid } from "@/lib/timetable-grid";
 
@@ -246,6 +246,154 @@ export function PosterGrid({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/**
+ * One day of the poster grid, for a phone: the staff phone's day and the
+ * members' day. The same row lines and columns as the week (so a 20-minute
+ * class never sits over the class after it, and two at the same time start on
+ * one line), without the day card, the day header or a scroll box of its own:
+ * the surface it sits in scrolls. Columns share the width — no minimum lane,
+ * no sideways scroll.
+ *
+ * Mat headers wrap to as many lines as the name needs (nothing is cut where
+ * there is no hover). `pinMats` keeps them at the top of the surface's
+ * scroller; their background is the surface's own (`--pg-pin-bg`).
+ *
+ * "+N more": when `openMore` is that item's id, `renderMorePanel` is drawn
+ * over the grid at the cluster's first line, across every column, straight
+ * after its button in the DOM (so Tab goes from the button into the panel and
+ * on to the next class). It takes no part in the row sizes; if it would hang
+ * past the end of the grid, the grid grows by that much while it is open.
+ */
+export function PosterDay({
+  grid,
+  label,
+  matName,
+  pinMats = false,
+  renderSession,
+  renderMore,
+  renderMorePanel,
+  openMore = null,
+  breakLabel,
+  testId = "day-poster",
+  tone = "staff",
+}: {
+  /** "member": the members' app paints the pinned mat names on its own shell colour, in its own ink (globals.css). */
+  tone?: "staff" | "member";
+  /** Built with one day in `days`. */
+  grid: TimetableGrid;
+  /** Accessible name of the day's group: "Monday 2 November, 12 sessions". */
+  label: string;
+  matName?: (matId: string | null) => string;
+  pinMats?: boolean;
+  renderSession: (item: GridPlacement) => ReactNode;
+  renderMore: (item: GridMore) => ReactNode;
+  renderMorePanel?: (item: GridMore) => ReactNode;
+  /** The id of the "+N more" whose panel is open, else null. */
+  openMore?: string | null;
+  breakLabel: (fromMin: number, toMin: number) => string;
+  testId?: string;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const [reserve, setReserve] = useState(0);
+  const day = grid.days[0];
+
+  useLayoutEffect(() => {
+    const grown = () => {
+      const g = root.current;
+      const p = panel.current;
+      if (!g || !p) {
+        setReserve(0);
+        return;
+      }
+      // The grid's own end is its bottom less what was reserved last time.
+      setReserve((prev) => {
+        const need = Math.max(0, Math.ceil(p.getBoundingClientRect().bottom - (g.getBoundingClientRect().bottom - prev)));
+        return need === prev ? prev : need;
+      });
+    };
+    grown();
+    if (!panel.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(grown);
+    observer.observe(panel.current);
+    return () => observer.disconnect();
+  }, [openMore]);
+
+  if (!day) return null;
+  const hasMats = day.columns.length > 0;
+  const rows = ["0px", hasMats ? "auto" : "0px", ...grid.rows.map((r) => (r.kind === "used" ? `minmax(${r.floorPx}px, auto)` : r.kind === "break" ? "26px" : "10px"))];
+
+  return (
+    <div
+      ref={root}
+      className="pg-grid"
+      role="group"
+      aria-label={label}
+      data-one-day="true"
+      data-tone={tone}
+      data-pin-mats={pinMats || undefined}
+      data-mats={hasMats || undefined}
+      data-day={DAY_SLUG[day.day]}
+      data-testid={testId}
+      style={{
+        gridTemplateColumns: `${GUTTER_PX}px repeat(${day.tracks}, minmax(0, 1fr))`,
+        gridTemplateRows: rows.join(" "),
+        paddingBottom: reserve > 0 ? reserve : undefined,
+        // The day's first track is the grid's second column: cells place themselves with --d + --c, as in the week.
+        ...vars({ "--d": 1, "--dt": day.tracks }),
+      }}
+    >
+      {grid.rows.map((row, i) =>
+        row.kind === "break" ? (
+          <div key={`break-${row.fromMin}`} className="pg-break" aria-hidden="true" style={{ gridRow: grid.firstTimeLine + i, gridColumn: "2 / -1" }}>
+            <span>{breakLabel(row.fromMin, row.toMin)}</span>
+            <i />
+          </div>
+        ) : null,
+      )}
+      {grid.ticks.map((tick) => (
+        <div key={`tick-${tick.minute}`} className="pg-tick" aria-hidden="true" style={{ gridRow: `${tick.rowStart} / ${tick.rowEnd}` }}>
+          {minToTime(tick.minute)}
+        </div>
+      ))}
+      {/* The band runs the full width: without this cell the time labels would scroll past the pinned names in the gutter. */}
+      {hasMats ? <div className="pg-mat" aria-hidden="true" style={vars({ "--c": 0, "--s": 1 })} /> : null}
+      {day.columns.map((column) => {
+        const name = matName ? matName(column.matId) : "";
+        return (
+          <div key={column.matId ?? "none"} className="pg-mat" data-mat-head={column.matId ?? ""} style={vars({ "--c": column.col, "--s": column.span })}>
+            <span className="pg-mat-pill">
+              <span>{name}</span>
+            </span>
+          </div>
+        );
+      })}
+      {grid.items.map((item) => (
+        <Fragment key={item.type === "session" ? item.key : item.id}>
+          <div
+            className="pg-cell"
+            data-cell-key={item.type === "session" ? item.key : undefined}
+            data-cell-more={item.type === "more" ? item.id : undefined}
+            data-row-start={item.rowStart}
+            data-row-end={item.rowEnd}
+            data-col={item.col}
+            data-lane={item.type === "session" ? item.lane : undefined}
+            data-mat={item.type === "session" ? (item.matId ?? "") : undefined}
+            style={vars({ "--c": item.col, "--s": item.span, "--r1": item.rowStart, "--r2": item.rowEnd })}
+          >
+            {item.type === "session" ? renderSession(item) : renderMore(item)}
+          </div>
+          {item.type === "more" && openMore === item.id && renderMorePanel ? (
+            <div ref={panel} className="pg-panel" data-panel-for={item.id} style={{ gridRow: `${item.clusterRowStart} / ${item.clusterRowStart + 1}` }}>
+              {renderMorePanel(item)}
+            </div>
+          ) : null}
+        </Fragment>
+      ))}
     </div>
   );
 }

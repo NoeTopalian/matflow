@@ -839,12 +839,13 @@ option {
   min-width: 0;
   padding: 0 3px;
   border-radius: 6px;
-  background: var(--sf-2);
+  /* A surface may restyle the name (the members' day: no pill, the shell's own ink). */
+  background: var(--pg-mat-bg, var(--sf-2));
   font-size: 11px;
   line-height: 13px;
   font-weight: 600;
   text-align: center;
-  color: var(--tx-2);
+  color: var(--pg-mat-ink, var(--tx-2));
 }
 .pg-mat-pill > span {
   display: -webkit-box;
@@ -886,4 +887,52 @@ option {
   .pg-day > .pg-empty { grid-column: 1 / -1; }
   .pg-day > .pg-mat,
   .pg-day > .pg-cell { grid-column: var(--c) / span var(--s); }
+}
+
+/* One day (PosterDay): the staff phone's day and the members' day. The same
+   row lines and columns as the week, but the columns share the width (no
+   minimum lane, so no sideways scroll), there is no day card and no scroll
+   box here, and a mat name wraps to as many lines as it needs: nothing is cut
+   where there is no hover. `data-pin-mats` keeps the mat names at the top of
+   the SURFACE's scroller, on the surface's own opaque colour. */
+.pg-grid[data-one-day] { justify-content: stretch; }
+.pg-grid[data-one-day] .pg-tick { position: static; }
+.pg-grid[data-one-day] .pg-mat {
+  position: static;
+  padding: 0 2px 6px;
+  box-shadow: none;
+}
+.pg-grid[data-one-day] .pg-mat-pill { padding: 3px 4px; }
+.pg-grid[data-one-day] .pg-mat-pill > span {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+.pg-grid[data-one-day][data-pin-mats] .pg-mat {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding-top: 4px;
+  background: var(--pg-pin-bg);
+  box-shadow: 0 1px 0 var(--bd-default);
+}
+/* The members' day: the pinned band is the member shell's own opaque colour
+   (`--member-bg`, published by app/member/layout.tsx; the shell's `--sf-1` is
+   a translucent wash and would let the classes show through), and a mat name
+   is plain text in the shell's ink, not a pill. */
+.pg-grid[data-tone="member"] {
+  --pg-pin-bg: var(--member-bg);
+  --pg-mat-bg: transparent;
+  --pg-mat-ink: var(--tx-1);
+}
+/* The opened "+N more": over the grid at the cluster's first line, across
+   every column, above the chips and the pinned mat names. Absolutely placed in
+   its grid area, so it takes no part in the row sizes. The surface paints it. */
+.pg-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  grid-column: 2 / -1;
+  z-index: 8;
 }
