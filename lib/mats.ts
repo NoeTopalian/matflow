@@ -53,7 +53,7 @@ export function compareMatNames(a: string, b: string): number {
  * class being saved onto that mat. Held until the transaction ends.
  *
  * ORDER: this is the FIRST statement of a transaction that takes it, before
- * any row lock (docs/security/LOCK-ORDER-2026-10-24.md). A class edit takes
+ * any row lock (docs/design/LOCK-ORDER-2026-10-24.md). A class edit takes
  * it only when the request names a mat.
  *
  * The one raw statement mats need: the project keeps raw SQL out of

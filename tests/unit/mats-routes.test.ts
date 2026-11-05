@@ -81,6 +81,14 @@ const tx = {
       db.ops.push("mat.delete");
       return gone;
     },
+    deleteMany: async ({ where }: { where: Row }) => {
+      const gone = db.mats.filter((m) => matches(m, where));
+      db.mats = db.mats.filter((m) => !gone.includes(m));
+      // ON DELETE SET NULL
+      db.classes.forEach((c) => { if (gone.some((g) => g.id === c.matId)) c.matId = null; });
+      db.ops.push("mat.deleteMany");
+      return { count: gone.length };
+    },
   },
   class: {
     findMany: async ({ where, distinct }: { where: Row; distinct?: string[] }) => {

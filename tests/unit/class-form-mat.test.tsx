@@ -120,6 +120,17 @@ describe("a club with mats", () => {
     expect(saves(calls)[0].body).toMatchObject({ matId: null, location: null });
   });
 
+  it("Mat 1, then Mat 2, then No mat: the place box does not keep either mat's name", async () => {
+    render(<TimetableManager initialClasses={[cls("Gi", "Mat 1", [[1, "18:00", "19:00"]], { matId: "m1" })]} mats={MATS} {...PROPS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit Gi/ })[0]);
+    fireEvent.change(matSelect(), { target: { value: "m2" } });
+    fireEvent.change(matSelect(), { target: { value: "" } });
+    expect(placeBox()?.value).toBe("");
+    submit("Save changes");
+    await waitFor(() => expect(saves(calls)).toHaveLength(1));
+    expect(saves(calls)[0].body).toMatchObject({ matId: null, location: null });
+  });
+
   it("a class with a typed place and no mat keeps its place in the box, and an edit sends the place but names no mat", async () => {
     render(<TimetableManager initialClasses={[cls("Yoga", "Sports hall", [[2, "10:00", "11:00"]]), cls("Gi", "Mat 1", [[1, "18:00", "19:00"]], { matId: "m1" })]} mats={MATS} {...PROPS} />);
     fireEvent.click(screen.getAllByRole("button", { name: /^Edit Yoga/ })[0]);

@@ -148,7 +148,7 @@ describe("first run: the club has typed places and no mats", () => {
   it("says the week is now split by mat when adding the mats changed it, and tells the page it has said so", async () => {
     await open();
     fireEvent.click(screen.getByRole("button", { name: "Add these as mats" }));
-    await waitFor(() => expect(screen.getByTestId("mats-notice").textContent).toBe("2 mats added. 21 classes are now on a mat. The week is now split by mat."));
+    await waitFor(() => expect(screen.getByTestId("mats-notice").textContent).toBe("2 mats added. 21 classes are now on a mat. The timetable is now split by mat."));
     expect(sent("POST", "/api/mats/adopt")[0].body).toEqual({ keys: ["mat 1", "mat 2"] });
     expect(onChanged).toHaveBeenCalledWith({ quiet: true });
   });
@@ -170,6 +170,17 @@ describe("first run: the club has typed places and no mats", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add these as mats" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Your mats" })).toBeTruthy());
     expect(sent("POST", "/api/mats/adopt")).toHaveLength(2);
+  });
+
+  it("a refused 'Add these as mats' shows the server's own sentence, after the places and the list are read again", async () => {
+    server.fail["POST /api/mats/adopt"] = 409;
+    server.errorText["POST /api/mats/adopt"] = "You can have up to 12 mats.";
+    await open();
+    const reads = sent("GET", "/api/mats").length;
+    fireEvent.click(screen.getByRole("button", { name: "Add these as mats" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("You can have up to 12 mats.");
+    expect(sent("GET", "/api/mats").length).toBeGreaterThan(reads);
+    expect(onChanged).not.toHaveBeenCalled();
   });
 
   it("'Add a mat myself' goes to the empty list with a new, focused row", async () => {

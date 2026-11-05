@@ -147,7 +147,7 @@ try {
     expect(await boxes.evaluateAll((els) => els.map((e) => e.getAttribute("aria-checked")))).toEqual(["true", "true"]);
     expect(await matRows()).toEqual([]);
     await sheet.getByRole("button", { name: "Add these as mats" }).click();
-    const line = `2 mats added. ${ON[1] + ON[2]} classes are now on a mat. The week is now split by mat.`;
+    const line = `2 mats added. ${ON[1] + ON[2]} classes are now on a mat. The timetable is now split by mat.`;
     await expect(sheet.getByTestId("mats-notice")).toHaveText(line);
     adopts.stop();
     expect(adopts.seen).toHaveLength(2); // the failed one and one retry
@@ -206,14 +206,14 @@ try {
       return { pill: getComputedStyle(head.querySelector(".pg-mat-pill")).backgroundColor, cell: getComputedStyle(head).backgroundColor };
     });
     expect(thu.pill).not.toBe(thu.cell);
-    // The toolbar is still one row at 1440 with the split control and its "(staff week)" label.
+    // The toolbar is still one row at 1440 with the split control and its "(whole club)" label.
     const row = await main.evaluate(() => {
       const top = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().top);
       return { arrows: top('button[aria-label="Previous week"]'), split: top('[data-testid="timetable-split-mat"]'), mats: top('[data-testid="timetable-mats"]'), hide: top('[data-testid="timetable-hide-menu"]') };
     });
     L.note("by-mat", "toolbar tops at 1440 (one row when they agree within a few px)", row);
     expect(Math.max(...Object.values(row)) - Math.min(...Object.values(row))).toBeLessThanOrEqual(8);
-    await expect(main.getByText("Split same-time classes (staff week)")).toBeVisible();
+    await expect(main.getByText("Split same-time classes (whole club)")).toBeVisible();
     await shot(main, "timetable-mats-by-mat-1440");
     // 1366: the box scrolls sideways, the page does not; with the menu hidden it fits.
     await size(main, 1366);
@@ -272,7 +272,7 @@ try {
 
   const manager = await seedStaff(club, "manager");
   const coach = await seedStaff(club, "coach");
-  await section("choice", "the manager presses By time and is told it is saved for the staff week; the owner sees by time after a reload, presses By mat and it is still by mat after a reload; a coach reads 'Split by mat'; a forced server error and then a dropped request each put the old choice back and say so; one retry sends one request", async () => {
+  await section("choice", "the manager presses By time and is told it is saved for the whole club; the owner sees by time after a reload, presses By mat and it is still by mat after a reload; a coach reads 'Split by mat'; a forced server error and then a dropped request each put the old choice back and say so; one retry sends one request", async () => {
     const out = {};
     const mctx = await context(browser, "10.94.8.2", { viewport: { width: 1440, height: 900 }, timezoneId: "Europe/London" });
     try {
@@ -284,7 +284,7 @@ try {
       await chips(page);
       await settled(page);
       await page.getByTestId("timetable-split-time").click();
-      await expect(page.getByText("Saved. The staff week is now split by time.")).toBeVisible();
+      await expect(page.getByText("Saved for the whole club.")).toBeVisible();
       await expect(weekGrid(page)).not.toHaveAttribute("data-mats", "true");
     } finally {
       await mctx.close();
@@ -299,7 +299,7 @@ try {
     const pair = await weekChips(weekDay(main, "mon")).evaluateAll((els) => els.slice(0, 2).map((e) => e.getAttribute("aria-label")));
     expect(pair).toEqual(MONDAY.slice(0, 2).map((s) => `Edit ${chipName(s, 0)}`));
     await main.getByTestId("timetable-split-mat").click();
-    await expect(main.getByText("Saved. The staff week is now split by mat.")).toBeVisible();
+    await expect(main.getByText("Saved for the whole club.")).toBeVisible();
     await main.reload();
     await chips(main);
     await settled(main);
@@ -338,12 +338,12 @@ try {
     expect(await storedLayout()).toBe("mat");
     const before = saves.seen.length;
     await main.getByTestId("timetable-split-time").click();
-    await expect(main.getByText("Saved. The staff week is now split by time.")).toBeVisible();
+    await expect(main.getByText("Saved for the whole club.")).toBeVisible();
     expect(saves.seen.length - before).toBe(1);
     expect(await storedLayout()).toBe("time");
     // Back to by mat for the steps that follow.
     await main.getByTestId("timetable-split-mat").click();
-    await expect(main.getByText("Saved. The staff week is now split by mat.")).toBeVisible();
+    await expect(main.getByText("Saved for the whole club.")).toBeVisible();
     saves.stop();
     expect(await storedLayout()).toBe("mat");
     return { ...out, layoutRequests: saves.seen.length };
@@ -577,7 +577,8 @@ try {
         await phone.goto("/dashboard/timetable");
         const button = phone.getByTestId("timetable-mats-phone");
         await expect(button).toBeVisible();
-        await expect(phone.getByTestId("timetable-split")).toBeHidden();
+        // From PR 3 the phone follows the split, so its control is on the phone too, beside Mats.
+        await expect(phone.getByTestId("timetable-split")).toBeVisible();
         await button.tap();
         const sheet = sheetOf(phone);
         await expect(sheet.getByLabel("Main mat name")).toBeVisible();
