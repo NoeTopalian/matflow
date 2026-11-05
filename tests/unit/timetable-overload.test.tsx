@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 //
-// Timetable overload: a busy day (DENSE_DAY+ sessions) widens the week and
-// uses the compact two-line chip; sessions that overlap sit in a group with a
-// rail and "Up to N at once" (N = how many run at the same moment, so a
-// staggered 16:30 / 17:00 / 17:30 is "up to 2", not 3); chips inside a group
-// show start–end and their mat; the same name, day, start and mat twice is
-// flagged "Duplicate?"; the form refuses an identical slot in one class.
-// Plan: .omc/plans/timetable-density-plan-2026-11-04.md.
+// A busy week on the staff timetable. On the desktop week, sessions that
+// overlap sit SIDE BY SIDE on the row of their start time (the poster grid,
+// .omc/plans/timetable-side-by-side-plan-2026-11-05.md): a staggered
+// 16:30 / 17:00 / 17:30 needs two lanes, not three; every chip shows start–end
+// and its place. On the phone they still sit in a group with a rail and
+// "Up to N at once". The same name, day, start and mat twice is flagged
+// "Duplicate?"; the form refuses an identical slot in one class.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
@@ -14,6 +14,7 @@ import React from "react";
 import TimetableManager, { DENSE_DAY, groupSessions, groupLabel } from "@/components/dashboard/TimetableManager";
 import { duplicateSessionKeys } from "@/lib/schedule-state";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
+import { weekCells, weekChips, weekDay, weekGrid } from "./helpers/week";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
@@ -77,64 +78,80 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-const grid = (container: HTMLElement) => container.querySelector(".grid-cols-7") as HTMLElement;
-const column = (container: HTMLElement, index: number) => grid(container).children[index] as HTMLElement;
 const chipsIn = (el: HTMLElement) => within(el).getAllByRole("button", { name: /^Edit / });
 const groupsIn = (el: HTMLElement) => within(el).queryAllByRole("group");
+/** A Monday cell of the week grid by its start time and (optionally) a word of its text. */
+const cellAt = (container: HTMLElement, start: string, word = "") => {
+  const hit = weekCells(weekDay(container, "mon")).filter((c) => c.textContent?.startsWith(`${start}–`) && c.textContent.includes(word));
+  if (hit.length !== 1) throw new Error(`${hit.length} Monday cells start at ${start} with "${word}"`);
+  return hit[0];
+};
+const lane = (cell: HTMLElement) => Number(cell.dataset.lane);
+const span = (cell: HTMLElement) => cell.style.getPropertyValue("--s");
 
-describe("a busy day widens the week and uses compact chips", () => {
-  it("14 sessions on Monday: the grid is dense, Monday's chips are compact, Tuesday's are not", () => {
+describe("a busy day on the week grid", () => {
+  it("14 sessions on Monday: every one is a chip, in time order, and the header counts them", () => {
     const { container } = render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
     expect(BUSY.flatMap((c) => c.schedules).filter((s) => s.dayOfWeek === 1)).toHaveLength(14);
     expect(14).toBeGreaterThanOrEqual(DENSE_DAY);
-    expect(grid(container).dataset.dense).toBe("true");
-    expect(grid(container).className).toContain("min-w-[1260px]");
-    const monday = column(container, 0);
-    expect(chipsIn(monday)).toHaveLength(14);
-    expect(chipsIn(monday).every((b) => b.dataset.chipSize === "compact")).toBe(true);
+    const monday = weekDay(container, "mon");
+    expect(weekChips(monday)).toHaveLength(14);
+    const starts = weekCells(monday).map((c) => c.textContent?.slice(0, 5));
+    expect(starts).toEqual([...starts].sort());
     expect(within(monday).getByText("14 sessions")).toBeTruthy();
-    const tuesday = column(container, 1);
-    expect(chipsIn(tuesday)).toHaveLength(2);
-    expect(chipsIn(tuesday).some((b) => b.dataset.chipSize === "compact")).toBe(false);
+    expect(monday.getAttribute("aria-label")).toBe("Monday 2 November, 14 sessions");
+    const tuesday = weekDay(container, "tue");
+    expect(weekChips(tuesday)).toHaveLength(2);
     expect(within(tuesday).getByText("2 sessions")).toBeTruthy();
+    // The old list's width switch and brackets are gone from the week.
+    expect(weekGrid(container)?.dataset.dense).toBeUndefined();
+    expect(monday.querySelector('[data-testid="overlap-group"]')).toBeNull();
   });
 
-  it("a quiet week keeps the 980 px grid and the normal chip", () => {
+  it("a quiet week: every session is alone, so each takes its day's full width", () => {
     const { container } = render(<TimetableManager initialClasses={QUIET} {...PROPS} />);
-    expect(grid(container).dataset.dense).toBeUndefined();
-    expect(grid(container).className).toContain("min-w-[980px]");
-    expect(chipsIn(column(container, 0)).some((b) => b.dataset.chipSize === "compact")).toBe(false);
-    expect(within(column(container, 0)).queryByText(/sessions?$/)).toBeNull();
+    for (const cell of [...weekCells(weekDay(container, "mon")), ...weekCells(weekDay(container, "tue"))]) {
+      expect(cell.dataset.col).toBe("1");
+      expect(span(cell)).toBe("1");
+    }
+    expect(container.querySelector('[data-testid="week-more"]')).toBeNull();
   });
 });
 
-describe("overlapping sessions sit in a group", () => {
-  it("Monday has five groups, labelled by how many run at once, in time order", () => {
+describe("overlapping sessions sit side by side", () => {
+  it("sessions that start together share a row line and take different lanes", () => {
     const { container } = render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
-    const groups = groupsIn(column(container, 0));
-    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual([
-      "2 at once, 06:30 to 08:00",
-      "2 at once, 12:00 to 12:50",
-      "Up to 2 at once, 16:30 to 18:30",
-      "3 at once, 18:40 to 19:30",
-      "2 at once, 19:30 to 21:00",
-    ]);
-    // Open Mat and Comp Team overlap nothing: plain chips outside any group.
-    const outside = chipsIn(column(container, 0)).filter((b) => !b.closest('[role="group"]'));
-    expect(outside.map((b) => b.getAttribute("aria-label"))).toEqual(["Edit Open Mat", "Edit Comp Team"]);
+    const gi = cellAt(container, "12:00", "Beginners");
+    const lunch = cellAt(container, "12:00", "Lunch");
+    expect(gi.dataset.rowStart).toBe(lunch.dataset.rowStart);
+    expect([lane(gi), lane(lunch)].sort()).toEqual([0, 1]);
+    // Monday's widest moment is three at once, so the day is six tracks: a pair takes three each.
+    expect(span(gi)).toBe("3");
+    // Open Mat and Comp Team overlap nothing: the full day width.
+    expect(span(cellAt(container, "09:30"))).toBe("6");
+    expect(span(cellAt(container, "21:00"))).toBe("6");
   });
 
-  it("chips inside a group show start–end and their mat; a staggered trio reads 'Up to 2'", () => {
+  it("a staggered trio needs two lanes, the first reused; each chip shows start–end and its place", () => {
     const { container } = render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
-    const trio = groupsIn(column(container, 0))[2];
-    expect(within(trio).getByText("Up to 2 at once")).toBeTruthy();
-    const rows = chipsIn(trio).map((b) => b.textContent);
-    expect(rows[0]).toContain("16:30–17:15");
-    expect(rows[0]).toContain("Mat 1");
-    expect(rows[0]).toContain("Little Champs");
-    expect(rows[1]).toContain("17:00–17:45");
-    expect(rows[1]).toContain("Mat 2");
-    expect(rows[2]).toContain("17:30–18:30");
+    const [champs, kids, teens] = [cellAt(container, "16:30"), cellAt(container, "17:00"), cellAt(container, "17:30")];
+    expect([lane(champs), lane(kids), lane(teens)]).toEqual([0, 1, 0]);
+    expect(champs.textContent).toContain("16:30–17:15");
+    expect(champs.textContent).toContain("Mat 1");
+    expect(champs.textContent).toContain("Little Champs");
+    expect(kids.textContent).toContain("17:00–17:45");
+    expect(kids.textContent).toContain("Mat 2");
+    expect(teens.textContent).toContain("17:30–18:30");
+    // A later start is a later row line.
+    expect(Number(kids.dataset.rowStart)).toBeGreaterThan(Number(champs.dataset.rowStart));
+  });
+
+  it("three at once are three lanes, ordered by place, and nothing is folded", () => {
+    const { container } = render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
+    const clash = weekCells(weekDay(container, "mon")).filter((c) => c.textContent?.startsWith("18:40–"));
+    expect(clash.map((c) => c.dataset.col)).toEqual(["1", "3", "5"]);
+    expect(clash.map((c) => /Mat \d/.exec(c.textContent ?? "")?.[0])).toEqual(["Mat 1", "Mat 1", "Mat 2"]);
+    expect(container.querySelector('[data-testid="week-more"]')).toBeNull();
   });
 
   it("groupSessions: lanes are the real maximum running at once", () => {
@@ -168,16 +185,15 @@ describe("overlapping sessions sit in a group", () => {
 describe("duplicates are flagged, never merged", () => {
   it("the same name, day, start and mat twice gets 'Duplicate?' on both; the Mat 2 session does not", () => {
     const { container } = render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
-    const clash = groupsIn(column(container, 0))[3];
-    const chips = chipsIn(clash);
+    const monday = weekDay(container, "mon");
+    const chips = weekChips(monday).filter((b) => b.textContent?.startsWith("18:40–"));
     expect(chips.map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Edit Beginners Course Gi (possible duplicate)",
-      "Edit Beginners Course Gi (possible duplicate)",
-      "Edit Beginners Course Gi",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 1 (possible duplicate)",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 1 (possible duplicate)",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 2",
     ]);
-    expect(within(clash).getAllByText("Duplicate?")).toHaveLength(2);
-    expect(within(column(container, 0)).getAllByText("Duplicate?")).toHaveLength(2);
-    expect(chipsIn(clash)).toHaveLength(3); // all three still drawn
+    expect(within(monday).getAllByText("Duplicate?")).toHaveLength(2);
+    expect(chips).toHaveLength(3); // all three still drawn
   });
 
   it("duplicateSessionKeys ignores case and spacing in the name, and treats a different place or venue as distinct", () => {
