@@ -129,10 +129,11 @@ describe("the control: Split same-time classes", () => {
     expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
   });
 
-  it("is on the Week view only in this release", () => {
+  it("is on the Day view too, now every screen follows the split", () => {
     render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} />);
     fireEvent.click(screen.getByTestId("timetable-view-day"));
-    expect(screen.queryByTestId("timetable-split")).toBeNull();
+    expect(screen.getByTestId("timetable-split")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Split same-time classes (whole club)" })).toBeTruthy();
     expect(screen.getByTestId("timetable-mats")).toBeTruthy();
   });
 
