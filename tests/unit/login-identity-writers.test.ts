@@ -65,6 +65,8 @@ const ALLOW: Record<string, [number, string]> = {
 const OUT_OF_BAND: Record<string, [number, string]> = {
   "prisma/seed.ts#user.upsert": [3, "local/demo seed (owner, coach, admin of the seed club)"],
   "prisma/seed.ts#member.upsert": [1, "local/demo seed members"],
+  "scripts/perf/activity-feed-explain.perf.ts#user.createMany": [1, "synthetic perf clubs (mfv-perf-…) on the Neon TEST branch only; torn down in the same run"],
+  "scripts/perf/activity-feed-explain.perf.ts#member.createMany": [1, "synthetic perf clubs (mfv-perf-…) on the Neon TEST branch only; torn down in the same run"],
   "scripts/seed-demo-rich.mjs#user.createMany": [1, "demo data generator (fresh demo club)"],
   "scripts/seed-demo-rich.mjs#member.createMany": [1, "demo data generator (fresh demo club)"],
   "scripts/stripe-dispute-closed-e2e.mjs#user.create": [1, "Stripe test-mode e2e fixture club"],

@@ -17,5 +17,5 @@ export default defineConfig({
     hookTimeout: 40 * 60_000,
     server: { deps: { inline: ["next-auth", "@auth/core"] } },
   },
-  resolve: { alias: { "@": root } },
+  resolve: { alias: { "@": root, "server-only": path.resolve(root, "tests/stubs/server-only.ts") } },
 });
