@@ -138,6 +138,9 @@ const RESTORABLE: Record<string, readonly string[]> = {
   Class: [
     "name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration",
     "maxCapacity", "isKids", "requiredRankId", "maxRankId", "color", "isActive",
+    // The mat the class runs on. Restored by id; its place text is then the
+    // mat's current name, never the recorded one (see class.updated `prepare`).
+    "matId",
     // T6c: the class category (a key from lib/class-category.ts, or null).
     "category",
     // T6b: Resume / Restore clears it; undoing that puts the archive back.
@@ -183,6 +186,13 @@ type SnapshotOptions = {
   after?: (row: AuditRowLike) => void;
   /** Extra refusals a pure decide can make from the metadata alone. */
   decide?: (m: Record<string, unknown>, restoreFields: string[]) => UndoDecision | null;
+  /**
+   * Runs in the transaction once the restore is worked out and BEFORE the
+   * stale check and the write. It may read (tenant-scoped), change `restore`
+   * and `expectNow` in place, or throw UndoStale to refuse. For a value that
+   * is derived from another row and must be re-derived, never copied back.
+   */
+  prepare?: (tx: TxLike, row: AuditRowLike, current: Record<string, unknown>, restore: Record<string, unknown>, expectNow: Record<string, unknown>) => Promise<void>;
   /** A last check against the live row before writing (throw UndoStale to refuse). */
   guard?: (current: Record<string, unknown>, restore: Record<string, unknown>) => void;
   /** Extra data to write alongside the restore (e.g. a session bump). */
@@ -246,6 +256,7 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
         }
       }
       if (Object.keys(restore).length === 0) throw new UndoStale("Nothing restorable was recorded.");
+      await opts.prepare?.(tx, row, current, restore, expectNow);
 
       // Stale check: every field the action set must still hold that value.
       for (const [f, v] of Object.entries(expectNow)) {
@@ -364,6 +375,25 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     extra: (restore) => ("role" in restore ? { sessionVersion: { increment: 1 } } : {}),
   }),
   "class.updated": snapshotHandler("Class", {
+    // Mats: a class on a mat always shows that mat's CURRENT name as its place
+    // (the write-through rule, lib/mats.ts), so an undo never copies an old
+    // place text back onto a class that is, or is about to be, on a mat.
+    async prepare(tx, row, current, restore, expectNow) {
+      const tenantId = row.tenantId ?? "";
+      // While the class is on a mat its place text is the mat's, and a rename
+      // since the edit is not "changed since": leave it out of the stale check.
+      if (current.matId != null) delete expectNow.location;
+      if (typeof restore.matId === "string") {
+        // Going back onto a mat: it must still be this club's, and its name today is the place.
+        const mat = await tx.mat.findFirst({ where: { id: restore.matId, tenantId }, select: { name: true } });
+        if (!mat) throw new UndoStale(REASON.matGone);
+        restore.location = mat.name;
+      } else if (!("matId" in restore) && current.matId != null && "location" in restore) {
+        // Staying on its mat: the other fields come back, the place stays the mat's name.
+        delete restore.location;
+        if (Object.keys(restore).length === 0) throw new UndoStale(REASON.onMatNow);
+      }
+    },
     guard(current, restore) {
       // T6b: an imported history class never goes on the timetable, not even
       // by undoing an old row that recorded it as active.

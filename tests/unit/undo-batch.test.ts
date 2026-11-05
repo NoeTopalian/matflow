@@ -109,6 +109,41 @@ describe("executeUndo", () => {
     await executeUndo(tx, plan.reversible, { tenantId: "t1", userId: "u-owner" });
     expect(queryRaw).not.toHaveBeenCalled();
   });
+
+  // Mats (5 Nov 2026): undoing a class edit may read a mat's name and write it as
+  // the class's place. Every writer that does so takes the club's mats lock FIRST
+  // (lib/mats.ts), so a rename racing an undo cannot deadlock against the row locks.
+  it("takes the club's mats lock before any row lock when a class edit is in the batch, and not otherwise", async () => {
+    const classFind = vi.fn(async () => {
+      order.push("handler");
+      return { id: "c1", name: "Gi Fundamentals", matId: null };
+    });
+    const executeRaw = vi.fn(async (strings: string[], ...values: unknown[]) => {
+      order.push(`${strings.join("?").includes("pg_advisory_xact_lock") ? "mats-lock" : "raw"}:${String(values[1])}`);
+      return 1;
+    });
+    const withClass = { ...fake, class: { findFirst: classFind, update: vi.fn(async () => ({})) }, $queryRaw: queryRaw, $executeRaw: executeRaw } as unknown as TxLike;
+    fake.member.findFirst.mockImplementation(async () => {
+      order.push("handler");
+      return { id: "m1", phone: "2" };
+    });
+    const items = [
+      r("c2", "class.updated", "2026-10-01T12:00:00Z", { before: { name: "Gi" }, after: { name: "Gi Fundamentals" } }, { entityType: "Class", entityId: "c1" }),
+      r("c1", "member.update", "2026-10-01T11:00:00Z", { changes: { phone: { from: "1", to: "2" } } }),
+    ].map((row) => ({ row, decision: { ok: true as const } }));
+    await executeUndo(withClass, items, { tenantId: "t1", userId: "u-owner" });
+    expect(order.slice(0, 3)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-member:["m1"]']);
+    expect(order.slice(3).every((o) => o === "handler")).toBe(true);
+
+    // A batch with no class edit takes no mats lock.
+    order.length = 0;
+    executeRaw.mockClear();
+    fake.member.findFirst.mockReset();
+    fake.member.findFirst.mockResolvedValueOnce({ id: "m1", phone: "2" }).mockResolvedValueOnce({ id: "m1", name: "B" });
+    fake.classRoster.deleteMany.mockResolvedValue({ count: 1 });
+    await executeUndo(withClass, planUndoTo(ROWS, "a1", new Set()).reversible, { tenantId: "t1", userId: "u-owner" });
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
 });
 
 describe("batchLockTargets", () => {
