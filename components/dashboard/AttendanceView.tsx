@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Link from "next/link";
 import { Users, TrendingUp, Calendar, Award, Search, Filter } from "lucide-react";
 import type { AttendanceRow, AttendanceSummary } from "@/app/dashboard/attendance/page";
 import { Card } from "@/components/ui/card";
@@ -149,9 +150,13 @@ interface Props {
   records: AttendanceRow[];
   summary: AttendanceSummary;
   primaryColor: string;
+  /** Set by ?instance=: `records` are this one session's check-ins. */
+  session?: { id: string; label: string } | null;
+  /** ?instance= named a session this club does not have; `records` are the recent list. */
+  sessionNotFound?: boolean;
 }
 
-export default function AttendanceView({ records, summary, primaryColor }: Props) {
+export default function AttendanceView({ records, summary, primaryColor, session = null, sessionNotFound = false }: Props) {
   const [query, setQuery] = useState("");
   const [methodFilter, setMethodFilter] = useState<string>("all");
 
@@ -171,7 +176,13 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
 
   return (
     <>
-      <PageHeader title="Attendance" description="Recent check-ins across all classes" />
+      <PageHeader title="Attendance" description={session ? "Check-ins for one session" : "Recent check-ins across all classes"} />
+
+      {sessionNotFound && (
+        <p role="status" className="mb-4 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2 text-sm text-tx-2">
+          That session can&apos;t be found. Showing recent check-ins instead.
+        </p>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -217,6 +228,18 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
         </div>
       </div>
 
+      {session && (
+        <div
+          data-testid="attendance-session"
+          className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2 text-sm"
+        >
+          <span className="min-w-0 break-words font-medium text-tx-1">Session: {session.label}</span>
+          <Link href="/dashboard/attendance" className="ml-auto shrink-0 text-tx-2 underline underline-offset-2 hover:text-tx-1">
+            Show all attendance
+          </Link>
+        </div>
+      )}
+
       {/* Records. The card chrome starts at `sm:` because below that the
           primitive renders its own per-row Cards — an outer card would nest
           white on white. No `overflow-hidden`: it would become the table's
@@ -229,7 +252,7 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
           columns={ATTENDANCE_COLUMNS}
           empty={
             <div className="py-16 text-center text-sm" style={{ color: "var(--tx-3)" }}>
-              No attendance records found
+              {session && records.length === 0 ? "No one was checked in to this session." : "No attendance records found"}
             </div>
           }
           renderCard={(r) => {
@@ -251,7 +274,11 @@ export default function AttendanceView({ records, summary, primaryColor }: Props
       </div>
 
       <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-3)" }}>
-        Showing {filtered.length} of {records.length} records
+        {session
+          ? filtered.length === records.length
+            ? `${records.length} ${records.length === 1 ? "check-in" : "check-ins"} for this session`
+            : `Showing ${filtered.length} of ${records.length} check-ins for this session`
+          : `Showing ${filtered.length} of ${records.length} records`}
       </p>
     </>
   );

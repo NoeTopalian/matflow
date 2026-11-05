@@ -42,6 +42,7 @@ import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
+import { parseIdParam } from "@/lib/id-param";
 import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
@@ -756,12 +757,25 @@ export default function MemberProfile({
 
   // Audit N1: honour deep links like ?tab=payments (the /dashboard/payments
   // row action) — previously the param was silently discarded.
+  // &paymentId=<id> with it: a link to one payment. The row is marked and
+  // brought into view once the payments have loaded; nothing is filtered.
+  const [linkedPaymentId, setLinkedPaymentId] = useState<string | null>(null);
+  const paymentsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get("tab");
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("tab");
     if (t && ["overview", "attendance", "ranks", "notes", "payments", "photos"].includes(t)) {
       setTab(t as ActiveTab);
     }
+    setLinkedPaymentId(parseIdParam(params.get("paymentId")));
   }, []);
+  const linkedPaymentFound = linkedPaymentId !== null && payments.some((p) => p.id === linkedPaymentId);
+  useEffect(() => {
+    if (tab !== "payments" || paymentsLoading || !linkedPaymentFound) return;
+    // The table row and the phone card are both in the DOM; scroll the shown one.
+    const marked = [...(paymentsRef.current?.querySelectorAll<HTMLElement>('[aria-current="true"]') ?? [])];
+    (marked.find((el) => el.offsetParent !== null) ?? marked[0])?.scrollIntoView({ block: "center" });
+  }, [tab, paymentsLoading, linkedPaymentFound]);
   const disciplines = Array.from(new Set(rankOptions.map((r) => r.discipline)));
   const selectedRankOption = rankOptions.find((r) => r.id === rankForm.rankSystemId);
   const disciplineRanks = rankOptions.filter((r) => {
@@ -1989,7 +2003,12 @@ export default function MemberProfile({
           </div>
 
           {/* ── Transactions (DataTable — §1.5.4 dense spec) ── */}
-          <div>
+          <div ref={paymentsRef}>
+            {linkedPaymentId !== null && !paymentsLoading && !paymentsError && !linkedPaymentFound && (
+              <p role="status" className="mb-3 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2 text-sm text-tx-2">
+                That payment isn&apos;t in this member&apos;s list.
+              </p>
+            )}
             <div className="mb-3 flex items-center gap-2">
               <Receipt className="size-4" style={{ color: "var(--tx-3)" }} />
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>Transactions</p>
@@ -2012,6 +2031,7 @@ export default function MemberProfile({
                 label="Payments for this member"
                 rows={payments}
                 rowKey={(p) => p.id}
+                isRowCurrent={(p) => p.id === linkedPaymentId}
                 loading={paymentsLoading}
                 columns={paymentColumns}
                 // §4a.7: the tab rail above is `sticky top-0`, so the table's

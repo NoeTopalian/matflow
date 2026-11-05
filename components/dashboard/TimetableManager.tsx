@@ -15,6 +15,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
+import { parseIdParam } from "@/lib/id-param";
 import { clusterLabel, clusterSessions, duplicateSessionKeys, hourWindow, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionCluster, type SessionState } from "@/lib/schedule-state";
 import { DayGrid } from "@/components/schedule/DayGrid";
 import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
@@ -679,11 +680,14 @@ function ClassCard({
 function InactiveClassList({
   classes,
   busyId,
+  currentId,
   onRestore,
   onArchive,
 }: {
   classes: ClassRow[];
   busyId: string | null;
+  /** The class a ?classId= link pointed at, marked in the list. */
+  currentId: string | null;
   onRestore: (c: ClassRow) => void;
   onArchive: (c: ClassRow) => void;
 }) {
@@ -703,8 +707,11 @@ function InactiveClassList({
             return (
               <li
                 key={cls.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-bd-default bg-sf-1 px-3 py-2"
+                className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border border-bd-default bg-sf-1 px-3 py-2${
+                  cls.id === currentId ? " outline outline-2 -outline-offset-2 outline-[var(--bd-active)]" : ""
+                }`}
                 data-testid={`inactive-class-${cls.id}`}
+                aria-current={cls.id === currentId ? "true" : undefined}
               >
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-tx-1 break-words">
@@ -1872,6 +1879,38 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
     }
   }, [canManage, searchParams]);
 
+  // ?classId=<id>: a link to one class. An active class opens its edit sheet;
+  // a paused or archived one has no sheet, so its row below is marked and
+  // brought into view. The param is removed either way, so Back does not
+  // repeat it.
+  const openedClassLink = useRef(false);
+  const [linkedInactiveId, setLinkedInactiveId] = useState<string | null>(null);
+  useEffect(() => {
+    const raw = searchParams.get("classId");
+    if (raw === null || openedClassLink.current) return;
+    openedClassLink.current = true;
+    const rest = new URLSearchParams(window.location.search);
+    rest.delete("classId");
+    const query = rest.toString();
+    window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+    if (!canManage) return;
+    const id = parseIdParam(raw);
+    const active = classes.find((c) => c.id === id);
+    if (active) {
+      setEditTarget(active);
+      setSaveError(null);
+      setDrawerOpen(true);
+      return;
+    }
+    const inactive = inactiveClasses.find((c) => c.id === id);
+    if (inactive) setLinkedInactiveId(inactive.id);
+    else showToast("That class isn't on the timetable any more.", "info");
+  }, [canManage, searchParams, classes, inactiveClasses, showToast]);
+  useEffect(() => {
+    if (!linkedInactiveId) return;
+    document.querySelector(`[data-testid="inactive-class-${linkedInactiveId}"]`)?.scrollIntoView({ block: "center" });
+  }, [linkedInactiveId]);
+
   function openEdit(cls: ClassRow) {
     setEditTarget(cls);
     setSaveError(null);
@@ -2547,6 +2586,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         <InactiveClassList
           classes={inactiveClasses}
           busyId={lifecycleBusy}
+          currentId={linkedInactiveId}
           onRestore={handleRestore}
           onArchive={handleArchive}
         />
