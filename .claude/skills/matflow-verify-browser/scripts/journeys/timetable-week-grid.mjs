@@ -10,7 +10,7 @@
 import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, launchWithScrollbars,
-  weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare, setAccent, accentOf, contrast, focusRing,
+  weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare, setAccent, accentOf, contrast, focusRing, weekOnFrozenClock,
 } from "../lib.mjs";
 import { POSTER, DAY, FROZEN, FROZEN_DAY, FROZEN_MIN, seedWeek, sessionsOn, countOn, chipName, classesOf } from "./data/timetable-weeks.mjs";
 
@@ -40,6 +40,8 @@ const freeze = async (ctx) => { await ctx.clock.setFixedTime(new Date(FROZEN)); 
 const openWeek = async (page) => {
   await page.goto("/dashboard/timetable");
   await expect(weekChips(weekGrid(page))).toHaveCount(SESSIONS, { timeout: 30_000 });
+  // On the frozen clock, wait for the browser's own render (Thursday 18:40 is live) before touching anything.
+  if (frozen) await weekOnFrozenClock(page, "thu", "18:40");
 };
 
 let main;
@@ -48,7 +50,8 @@ async function section(id, desc, fn) {
     L.check(id, desc, true, await fn());
   } catch (e) {
     const lines = String(e.message ?? e).split("\n");
-    L.check(id, desc, false, [lines[0], lines.find((l) => /waiting for|Expected|Received/.test(l))?.trim()].filter(Boolean).join(" — "));
+    const at = /timetable-week-grid\.mjs:(\d+)/.exec(String(e.stack ?? ""))?.[1];
+    L.check(id, desc, false, [at ? `line ${at}` : null, lines[0], ...lines.filter((l) => /waiting for|Expected|Received/.test(l)).slice(0, 3).map((l) => l.trim())].filter(Boolean).join(" — "));
     process.exitCode = 1;
     if (main && !main.isClosed()) {
       await shot(main, `timetable-week-grid-fail-${id}`);

@@ -27,12 +27,15 @@ const activeSlots = async (classId) =>
   q(`select "dayOfWeek", "startTime" from "ClassSchedule" where "classId" = $1 and "isActive" = true order by "dayOfWeek"`, [classId]);
 const isPatch = (id) => (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${id}` && !r.url().includes("dryRun");
 
-async function create(page, name, days) {
+// `start`: a start time other than the form's 18:00. More than three classes at once on a day fold behind
+// "+N more" on the week, so a class this journey needs to SEE as a chip is kept out of the 18:00 crowd.
+async function create(page, name, days, { start } = {}) {
   await page.getByRole("button", { name: "Add class", exact: true }).first().click();
   await page.getByLabel("Class Name", { exact: true }).fill(name);
   for (const [i, d] of days.entries()) {
     await page.getByRole("button", { name: "Add day", exact: true }).click();
     await page.getByLabel("Day of the week").nth(i).selectOption(String(d));
+    if (start) await page.getByLabel("Start time", { exact: true }).nth(i).fill(start);
   }
   const res = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/classes" && r.request().method() === "POST" && !r.url().includes("dryRun"));
   await page.getByRole("button", { name: "Create class", exact: true }).click();
@@ -218,8 +221,9 @@ try {
 
   let pair;
   await section("same-name", "two separately created 'Open mat' classes (Monday, Tuesday) stay distinct, also after reload", async () => {
-    const a = await create(main, "Open mat", [1]);
-    const b = await create(main, "Open mat", [2]);
+    // At 20:00: Monday 18:00 already has three classes, and a fourth at once would fold behind "+N more".
+    const a = await create(main, "Open mat", [1], { start: "20:00" });
+    const b = await create(main, "Open mat", [2], { start: "20:00" });
     expect(a.id).not.toBe(b.id);
     pair = [a, b];
     await expectDays(main, "Open mat", { 1: 1, 2: 1 });

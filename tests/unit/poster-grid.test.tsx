@@ -110,8 +110,20 @@ describe("days are groups", () => {
     vi.setSystemTime(new Date(2026, 10, 8, 10, 0)); // Sunday
     const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     const sunday = weekDay(container, "sun");
-    expect(within(sunday).getByText("Today")).toBeTruthy();
+    const pill = within(sunday).getByText("Today");
     expect(within(sunday).queryByText("—")).toBeNull();
+    // A 40 px column: the pill is the narrow one (a size down, no border, no letter-spacing), in the
+    // column's body, not its header. The browser journey measures that it stays inside 36 px.
+    expect(pill.className).toContain("text-[8px]");
+    expect(pill.className).not.toMatch(/\bborder\b|tracking-wide/);
+    expect(pill.closest(".pg-empty")).not.toBeNull();
+    // A day with classes keeps the full pill in its header.
+    vi.setSystemTime(new Date(2026, 10, 5, 10, 0)); // Thursday
+    cleanup();
+    const again = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
+    const full = within(weekDay(again.container, "thu")).getByText("Today");
+    expect(full.className).toContain("text-[9px]");
+    expect(full.closest("[data-day-head]")).not.toBeNull();
   });
 });
 

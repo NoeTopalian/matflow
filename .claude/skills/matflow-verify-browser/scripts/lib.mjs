@@ -317,71 +317,72 @@ export const spare = (page) => page.evaluate(() => {
 });
 
 /**
- * Contrast ratio of the text of a locator against what is actually behind it: translucent backgrounds are composited
- * up the ancestors until one is opaque (white if none is), and the opacity of the element and of its ancestors is
- * applied to the ink. Colours are resolved by a canvas, so color-mix() and color(srgb …) values measure correctly.
+ * Runs IN THE PAGE (passed to locator.evaluate). Measures an ink against the surface it is drawn on.
+ *   what = "text": the element's own text colour, on its own background and whatever is behind that.
+ *   what = "ring": the element's focus outline, on what is behind the element (an outline is drawn outside it).
+ * Translucent backgrounds are composited up the ancestors until one is opaque (white if none is), and the opacity of
+ * the element and its ancestors is applied to text.
+ *
+ * Computed colours come back as rgb() / rgba() or, from color-mix(), as color(srgb r g b / a). They are parsed here;
+ * anything else is an error. (A canvas was used at first: it does not read every form, and an unread colour silently
+ * stays the previous fill, so a tinted background measured as black.)
  */
-export function contrast(locator) {
-  return locator.evaluate((el) => {
-    const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
-    const rgba = (css) => {
-      ctx.clearRect(0, 0, 1, 1);
-      ctx.fillStyle = "#000";
-      ctx.fillStyle = css;
-      ctx.fillRect(0, 0, 1, 1);
-      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-      return a === 0 ? [0, 0, 0, 0] : [r, g, b, a / 255];
-    };
-    const over = (top, under) => top.slice(0, 3).map((c, i) => c * top[3] + under[i] * (1 - top[3]));
-    const layers = [];
-    let opacity = 1;
-    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-      const cs = getComputedStyle(n);
-      opacity *= Number(cs.opacity);
-      layers.push(rgba(cs.backgroundColor));
-      if (layers[layers.length - 1][3] === 1) break;
+function measureInk(el, what) {
+  const rgba = (css) => {
+    let m = /^rgba?\(([^)]+)\)$/.exec(css);
+    if (m) {
+      const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+      if (p.length >= 3 && p.every(Number.isFinite)) return [p[0], p[1], p[2], p[3] ?? 1];
     }
-    let bg = [255, 255, 255];
-    for (let i = layers.length - 1; i >= 0; i--) if (layers[i][3] > 0) bg = over(layers[i], bg);
-    const ink = rgba(getComputedStyle(el).color);
-    const fg = over([ink[0], ink[1], ink[2], ink[3] * opacity], bg);
-    const lum = (c) => c.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
-    const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
-    return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
-  });
+    m = /^color\(srgb\s+([^)]+)\)$/.exec(css);
+    if (m) {
+      const p = m[1].split(/[\s/]+/).filter(Boolean).map(Number);
+      if (p.length >= 3 && p.every(Number.isFinite)) return [p[0] * 255, p[1] * 255, p[2] * 255, p[3] ?? 1];
+    }
+    throw new Error(`measureInk cannot read the colour "${css}"`);
+  };
+  const over = (top, under) => top.slice(0, 3).map((c, i) => c * top[3] + under[i] * (1 - top[3]));
+  const lum = (c) => c.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const layers = [];
+  let opacity = 1;
+  for (let n = what === "ring" ? el.parentElement : el; n && n.nodeType === 1; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    opacity *= Number(cs.opacity);
+    layers.push(rgba(cs.backgroundColor));
+    if (layers[layers.length - 1][3] === 1) break;
+  }
+  let surface = [255, 255, 255];
+  for (let i = layers.length - 1; i >= 0; i--) if (layers[i][3] > 0) surface = over(layers[i], surface);
+  const own = getComputedStyle(el);
+  const raw = rgba(what === "ring" ? own.outlineColor : own.color);
+  const ink = over([raw[0], raw[1], raw[2], raw[3] * (what === "ring" ? 1 : opacity)], surface);
+  const [hi, lo] = [lum(ink), lum(surface)].sort((a, b) => b - a);
+  const round = (c) => c.map((v) => Math.round(v)).join(",");
+  return {
+    contrast: Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100,
+    ink: round(ink), surface: round(surface),
+    focused: document.activeElement === el, focusVisible: el.matches(":focus-visible"),
+    style: own.outlineStyle, width: parseFloat(own.outlineWidth),
+  };
 }
 
+/** Contrast ratio of the text of a locator against what is actually behind it. */
+export const contrast = (locator) => locator.evaluate(measureInk, "text").then((m) => m.contrast);
+
 /**
- * The focus outline an element shows and its contrast against the surface it is drawn on (the first opaque
- * background up the ancestors, composited as contrast() does).
+ * The focus outline an element shows: whether it has focus and shows it, the outline's style and width, and its
+ * contrast against the surface around the element ({ focused, focusVisible, style, width, contrast, ink, surface }).
  */
-export function focusRing(locator) {
-  return locator.evaluate((el) => {
-    const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
-    const rgba = (css) => {
-      ctx.clearRect(0, 0, 1, 1);
-      ctx.fillStyle = "#000";
-      ctx.fillStyle = css;
-      ctx.fillRect(0, 0, 1, 1);
-      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-      return a === 0 ? [0, 0, 0, 0] : [r, g, b, a / 255];
-    };
-    const over = (top, under) => top.slice(0, 3).map((c, i) => c * top[3] + under[i] * (1 - top[3]));
-    const layers = [];
-    for (let n = el.parentElement; n; n = n.parentElement) {
-      layers.push(rgba(getComputedStyle(n).backgroundColor));
-      if (layers[layers.length - 1][3] === 1) break;
-    }
-    let bg = [255, 255, 255];
-    for (let i = layers.length - 1; i >= 0; i--) if (layers[i][3] > 0) bg = over(layers[i], bg);
-    const cs = getComputedStyle(el);
-    const ring = over(rgba(cs.outlineColor), bg);
-    const lum = (c) => c.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
-    const [hi, lo] = [lum(ring), lum(bg)].sort((a, b) => b - a);
-    return {
-      focused: document.activeElement === el, focusVisible: el.matches(":focus-visible"),
-      style: cs.outlineStyle, width: parseFloat(cs.outlineWidth), color: cs.outlineColor,
-      contrast: Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100,
-    };
-  });
+export const focusRing = (locator) => locator.evaluate(measureInk, "ring");
+
+/**
+ * Waits until React has taken the week over and drawn it on the BROWSER's clock. With the clock frozen, the server's
+ * HTML (real clock) and the first client render (frozen clock) disagree: React reports #418 and replaces the nodes.
+ * Anything focused or measured before that is on nodes about to be thrown away. `liveAt` is a start time ("18:40") of
+ * a class that is live at the frozen time, on the day slug given.
+ */
+export async function weekOnFrozenClock(page, day, liveAt) {
+  const { expect } = require("@playwright/test");
+  await expect(page.locator(`[data-testid="week-grid"] [data-day="${day}"] [data-session-state="live"]`).first()).toHaveAccessibleName(new RegExp(` ${liveAt} to `), { timeout: 30000 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
