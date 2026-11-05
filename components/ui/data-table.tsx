@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -116,6 +116,15 @@ export interface DataTableProps<T> {
    * long table and would be indistinguishable from keyboard focus.
    */
   isRowCurrent?: (row: T) => boolean;
+  /**
+   * Group consecutive rows under a heading: whenever the key differs from the
+   * previous row's, a full-width header row (and, on a phone, a heading before
+   * the card) carries the label — the Activity timeline's "Today", "Yesterday",
+   * "Tuesday 4 November 2026". The rows must already arrive in section order;
+   * nothing is regrouped. Ignored while the table is client-sorted, since a
+   * sort would scatter the sections.
+   */
+  sectionOf?: (row: T) => { key: string; label: string };
   /** Below `sm:`, render each row through this instead of the table. */
   renderCard?: (row: T) => ReactNode;
   /** Accessible name for the table. */
@@ -247,6 +256,7 @@ export function DataTable<T>({
   empty,
   onRowClick,
   isRowCurrent,
+  sectionOf,
   renderCard,
   label,
   skeletonRows = 5,
@@ -278,6 +288,13 @@ export function DataTable<T>({
   }
 
   const skeletonKeys = Array.from({ length: skeletonRows }, (_, index) => index);
+
+  /** The section a row opens, or null when it continues the previous row's (or there are no sections). */
+  const sectionAt = (index: number): { key: string; label: string } | null => {
+    if (!sectionOf || sort) return null;
+    const section = sectionOf(sortedRows[index]);
+    return index === 0 || sectionOf(sortedRows[index - 1]).key !== section.key ? section : null;
+  };
 
   return (
     <div ref={rootRef} className={cn("w-full", className)}>
@@ -376,9 +393,21 @@ export function DataTable<T>({
                   const zebra = index % 2 === 1;
                   const isLastRow = index === sortedRows.length - 1;
                   const current = isRowCurrent?.(row) === true;
+                  const section = sectionAt(index);
                   return (
+                    <Fragment key={rowKey(row)}>
+                    {section ? (
+                      <tr data-section={section.key}>
+                        <th
+                          scope="colgroup"
+                          colSpan={columns.length}
+                          className="border-b border-bd-default bg-sf-2 px-3 py-1.5 text-left text-xs font-semibold text-tx-2"
+                        >
+                          {section.label}
+                        </th>
+                      </tr>
+                    ) : null}
                     <tr
-                      key={rowKey(row)}
                       aria-current={current ? "true" : undefined}
                       // `group`, because the zebra and hover fills live on the
                       // CELLS now: only a cell background can be clipped by a
@@ -428,6 +457,7 @@ export function DataTable<T>({
                         </td>
                       ))}
                     </tr>
+                    </Fragment>
                   );
                 })}
           </tbody>
@@ -443,7 +473,8 @@ export function DataTable<T>({
                 <Skeleton className="mt-2 h-3 w-1/2" />
               </Card>
             ))
-          : sortedRows.map((row) => {
+          : sortedRows.map((row, index) => {
+              const section = sectionAt(index);
               const content = renderCard ? (
                 renderCard(row)
               ) : (
@@ -467,9 +498,8 @@ export function DataTable<T>({
               const currentClass = current
                 ? "rounded-[var(--r-md)] outline outline-2 outline-offset-2 outline-[var(--tx-2)]"
                 : undefined;
-              return onRowClick ? (
+              const card = onRowClick ? (
                 <button
-                  key={rowKey(row)}
                   type="button"
                   onClick={() => onRowClick(row)}
                   aria-current={current ? "true" : undefined}
@@ -478,9 +508,19 @@ export function DataTable<T>({
                   {content}
                 </button>
               ) : (
-                <div key={rowKey(row)} aria-current={current ? "true" : undefined} className={currentClass}>
+                <div aria-current={current ? "true" : undefined} className={currentClass}>
                   {content}
                 </div>
+              );
+              return (
+                <Fragment key={rowKey(row)}>
+                  {section ? (
+                    <h3 data-section={section.key} className="px-1 pt-2 text-xs font-semibold text-tx-2">
+                      {section.label}
+                    </h3>
+                  ) : null}
+                  {card}
+                </Fragment>
               );
             })}
       </div>

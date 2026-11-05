@@ -106,6 +106,7 @@ Fixed-geometry controls must never be resized by context, global CSS, or text le
 - **Checkbox/Radio:** `18×18px` visual, 2px border, `--r-sm` (checkbox) / full-round (radio).
 - **Button:** fixed heights — `h-9` (36px) default, `h-8` (32px) compact for dense tables, `h-11` (44px) primary mobile CTAs. Width from content + padding; never full-width unless the layout slot demands it.
 - **Hit area vs visual size:** the WCAG 44px floor is met by an **extended hit area** (padding or a `::before` overlay), never by inflating the visual control. The blanket `min-height: 44px` rule in `globals.css:286-288` must be scoped with `:not(.ui-fixed-size)`; Switch, Checkbox, Radio and compact Button set `.ui-fixed-size` and provide their own hit-area extension.
+- **Fields in a row share one height.** `Select` and `Input` are 36px on a fine pointer and grow to 44px on a coarse one (replaced elements cannot carry a hit-area overlay). A `Button` that sits in a row of fields as one of them — a filter trigger — takes the `ui-field` class so it grows with them; never a mixed-height row.
 - Thumb/track and icon/button ratios are constants in the primitive — no per-usage size overrides beyond the named variants.
 
 **Adoption policy (boy-scout ratchet, not big-bang):** all NEW UI uses primitives, no exceptions. Any PR touching a file with a hand-rolled equivalent migrates at least the parts it touches. CI ratchet counts raw `<button>`, `confirm(`, `alert(`, `fixed inset-0` and fails on increases.
