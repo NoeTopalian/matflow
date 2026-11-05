@@ -887,6 +887,12 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return linking ? sentence(child, " was linked to ", parent) : sentence(child, " was unlinked from ", parent);
     }
 
+    case "member.attribution.update": {
+      const person = r.member(subjectMember);
+      if (!person) return null;
+      return who ? sentence(who, " changed who is credited for ", person) : sentence("Who is credited for ", person, " was changed");
+    }
+
     case "member.rank.promote": {
       const person = r.member(subjectMember);
       const to = r.rank(m.toRankId);
@@ -922,12 +928,12 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
     case "member.hold.start": {
       const theirs = r.member(subjectMember, true);
       if (!theirs) return null;
-      return who ? sentence(who, " put ", theirs, " membership on hold") : sentence(theirs, " membership was put on hold");
+      return who ? sentence(who, " put ", theirs, ...membership, " on hold") : sentence(theirs, ...membership, " was put on hold");
     }
     case "member.hold.end": {
       const theirs = r.member(subjectMember, true);
       if (!theirs) return null;
-      return who ? sentence(who, " resumed ", theirs, " membership") : sentence(theirs, " membership was resumed");
+      return who ? sentence(who, " resumed ", theirs, ...membership) : sentence(theirs, ...membership, " was resumed");
     }
 
     case "member.subscription.cancel": {
@@ -958,16 +964,19 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
     case "member.subscription.purchased": {
       const person = r.member(subjectMember);
       if (!person) return null;
-      const plan = r.tier(m.tierId) ?? text("a membership");
+      const what = plan ?? text("a membership");
       // Nothing has been paid when this row is written: the payment is its own row when it comes.
       // A staff member is on the row only when one started it; otherwise the member did, in their app.
-      return row.userId && who ? sentence(who, " started ", plan, " for ", person, " — awaiting first payment") : sentence(person, " started ", plan, " — awaiting first payment");
+      if (row.userId && who) return sentence(who, " started ", what, " for ", person, " — awaiting first payment");
+      // Started by staff whose account has since been removed: the row lost its user but still says a user wrote it.
+      if (!row.userId && m.actorType === "user" && !idOf(m.actorId)) return sentence("A former staff member started ", what, " for ", person, " — awaiting first payment");
+      return sentence(person, " started ", what, " — awaiting first payment");
     }
     case "class_pack.purchased": {
       const person = r.member(subjectMember ?? m.memberId);
       if (!person) return null;
-      const pack = idOf(m.classPackId) ? r.pack(m.classPackId) : null;
-      return pack ? sentence(person, " bought ", pack) : sentence(person, " bought a class pack");
+      const pack = idOf(m.classPackId) && ctx.lookups.packs.has(idOf(m.classPackId)!) ? r.pack(m.classPackId) : null;
+      return pack ? sentence(person, " bought the ", pack) : sentence(person, " bought a class pack");
     }
     case "order.paid": {
       const paid = r.amount(m.amountPence, m.currency);
@@ -1302,7 +1311,7 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
   } else if (sent.length) {
     const lifecycle = classLifecycleOf(m) != null;
     const fields = sent.filter((f) => !(lifecycle && f === "isActive"));
-    if (fields.length) add(`Fields: ${fields.map(fieldLabel).join(", ")}`);
+    if (fields.length) add(`Fields: ${[...new Set(fields.map(fieldLabel))].join(", ")}`);
   }
 
   // Imports say which file, exported when, and what happened to how many.

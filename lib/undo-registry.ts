@@ -101,12 +101,13 @@ export const REASON = {
   // "active but archived" and mint sessions for it.
   archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
   // Activity events (5 Nov 2026): records of something a member did, each with the way to reverse it.
-  membershipStarted: "Cancel the membership from the member's page.",
+  membershipStarted: "This started a Stripe subscription. Cancel it from the member's profile so Stripe is told too.",
   bookingMade: "The member can cancel the booking from their app.",
   bookingCancelled: "The member can book again from their app.",
   // A creation has no earlier state. It used to give the general "recorded before snapshots were kept" reason,
   // which is about something else and read as a fault.
-  created: "This added something new, so there is nothing earlier to put back. If it was a mistake, remove it from its own page.",
+  created: "This added something new, so there is nothing earlier to put back. If it was a mistake, remove or archive it where it lives.",
+  taskAdded: "This added a task or a note, so there is nothing earlier to put back. Close it by marking it done on the Tasks page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -703,6 +704,7 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^class\.bookings\.kept_ineligible$/, REASON.record],
   // Last, so every more specific reason above wins: a class, member, plan, pack, rank, venue, announcement or task
   // that was added (".create", ".created", ".create.kid").
+  [/^task\..*\.create$/, REASON.taskAdded],
   [/\.(create|created)(\.kid)?$/, REASON.created],
 ];
 

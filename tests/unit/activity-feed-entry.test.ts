@@ -182,6 +182,11 @@ describe("memberships", () => {
     expect(start.plain).toBe("Jack Streeter put Melody Orekoya's membership on hold");
     expect(start.detailPlain).toBe("Until 1 Dec 2026");
     expect(entry(row({ action: "member.hold.end", ...byJack, metadata: { holdUntil: null } })).plain).toBe("Jack Streeter resumed Melody Orekoya's membership");
+    // Rows written since 5 Nov 2026 name the plan, so the Plan filter's "Activity that names this plan" is true of them.
+    expect(entry(row({ action: "member.hold.start", ...byJack, metadata: { holdUntil: "2026-12-01T00:00:00.000Z", tierId: "t_adult" } })).plain).toBe("Jack Streeter put Melody Orekoya's Adult Unlimited membership on hold");
+    expect(entry(row({ action: "member.hold.end", ...byJack, metadata: { holdUntil: null, tierId: "t_adult" } })).plain).toBe("Jack Streeter resumed Melody Orekoya's Adult Unlimited membership");
+    expect(entry(row({ action: "member.hold.end", userId: null, metadata: { holdUntil: null, tierId: "t_adult" } })).plain).toBe("Melody Orekoya's Adult Unlimited membership was resumed");
+    expect(entry(row({ action: "member.hold.start", ...byJack, metadata: { tierId: "t_gone" } })).plain).toBe("Jack Streeter put Melody Orekoya's membership on hold");
   });
 });
 
@@ -381,9 +386,22 @@ describe("the events added with the timeline", () => {
   });
 
   it("a membership a staff member started for them names the staff member", () => {
-    const e = entry(purchased({ ...byJack, metadata: { memberId: "m_mel", tierId: "t_adult", stripeSubscriptionId: "sub_1" } }));
+    const byStaff = { memberId: "m_mel", tierId: "t_adult", stripeSubscriptionId: "sub_1", actor: "u_jack", actorType: "user", requestId: "sub-purchased:sub_1", outcome: "succeeded" };
+    const e = entry(purchased({ ...byJack, metadata: byStaff }));
     expect(e.plain).toBe("Jack Streeter started Adult Unlimited for Melody Orekoya — awaiting first payment");
     expect(e.source.label).toBe("Staff");
+    expect(JSON.stringify(e)).not.toMatch(/sub_1|succeeded/);
+  });
+
+  it("once that staff account is removed the row is still told as staff's doing, not the member's", () => {
+    // Deleting a user empties the row's userId; the row still says a user wrote it, and names no member as the actor.
+    const e = entry(purchased({ metadata: { memberId: "m_mel", tierId: "t_adult", stripeSubscriptionId: "sub_1", actor: "u_gone", actorType: "user", requestId: "sub-purchased:sub_1", outcome: "succeeded" } }));
+    expect(e.plain).toBe("A former staff member started Adult Unlimited for Melody Orekoya — awaiting first payment");
+    expect(e.source.label).toBe("Staff (account removed)");
+  });
+
+  it("a plan deleted since the membership started is not called a deleted plan", () => {
+    expect(entry(purchased({ metadata: { memberId: "m_mel", tierId: "t_gone", stripeSubscriptionId: "sub_1", actorId: "m_mel" } })).plain).toBe("Melody Orekoya started a membership — awaiting first payment");
   });
 
   it("a membership on a price that maps to no plan still reads as a sentence", () => {
@@ -392,13 +410,15 @@ describe("the events added with the timeline", () => {
 
   it("a class pack bought: who, which pack, how many classes, how much", () => {
     const e = entry(row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "pk_10", memberClassPackId: "mcp_1", credits: 10, amountPence: 8000, currency: "GBP" } }));
-    expect(e.plain).toBe("Melody Orekoya bought 10 class pack");
+    expect(e.plain).toBe("Melody Orekoya bought the 10 class pack");
     expect(e.detailPlain).toBe("10 classes · £80.00");
     expect(e.type).toBe("pack_purchased");
     expect(e.source.label).toBe("Stripe");
     expect(JSON.stringify(e)).not.toContain("mcp_1");
     const one = entry(row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "gone", memberClassPackId: "mcp_2", credits: 1, amountPence: 1000, currency: "GBP" } }));
     expect(one.detailPlain).toBe("1 class · £10.00");
+    // The pack has been deleted since: she did not buy "a deleted class pack".
+    expect(one.plain).toBe("Melody Orekoya bought a class pack");
   });
 
   it("a shop order paid: who, how much, and the order's own reference", () => {
@@ -421,11 +441,21 @@ describe("the events added with the timeline", () => {
   });
 
   it("a manager is sent all of them, with a plan and a pack as names rather than links", () => {
-    for (const r0 of [purchased(), row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "pk_10", memberClassPackId: "mcp_1", credits: 10, amountPence: 8000, currency: "GBP" } })]) {
-      const e = entry(r0, { role: "manager" });
-      expect(links(e.parts).some((l) => l.includes("/dashboard/memberships")), e.plain).toBe(false);
-      expect(e.plain).toMatch(/^Melody Orekoya (started|bought) /);
-    }
+    const started = entry(purchased(), { role: "manager" });
+    const bought = entry(row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "pk_10", memberClassPackId: "mcp_1", credits: 10, amountPence: 8000, currency: "GBP" } }), { role: "manager" });
+    expect(started.plain).toBe("Melody Orekoya started Adult Unlimited — awaiting first payment");
+    expect(bought.plain).toBe("Melody Orekoya bought the 10 class pack");
+    for (const e of [started, bought]) expect(links(e.parts), e.plain).toEqual(["Melody Orekoya -> /dashboard/members/m_mel"]);
+  });
+
+  it("a change to who is credited for a member is a sentence, and its fields are in words", () => {
+    const e = entry(row({ action: "member.attribution.update", ...byJack, metadata: { fields: ["trialRunById", "creditedToUserId", "creditedToLabel"], values: { trialRunById: "u_jack", creditedToUserId: null, creditedToLabel: "Friend of the club" } } }));
+    expect(e.plain).toBe("Jack Streeter changed who is credited for Melody Orekoya");
+    expect(e.type).toBe("attribution");
+    // Three stored columns are one thing to a reader, said once; what was typed is not shown.
+    expect(e.detailPlain).toBe("Fields: Trial run by, Credited to");
+    expect(JSON.stringify(e)).not.toContain("Friend of the club");
+    expect(entry(row({ action: "member.attribution.update", userId: null, metadata: { fields: ["creditedToMemberId"], values: { creditedToMemberId: "m_faisal" } } })).plain).toBe("Who is credited for Melody Orekoya was changed");
   });
 });
 

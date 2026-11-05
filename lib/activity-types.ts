@@ -370,6 +370,11 @@ export const ACTIVITY_FIELD_LABELS: Record<string, string> = {
   holdUntil: "On hold until",
   notes: "Notes",
   medicalConditions: "Medical details",
+  // Conversion credit: who ran the trial, and who is credited with the sign-up (a staff member, a member, or a typed name).
+  trialRunById: "Trial run by",
+  creditedToUserId: "Credited to",
+  creditedToMemberId: "Credited to",
+  creditedToLabel: "Credited to",
   // Class
   description: "Description",
   instructorId: "Coach",

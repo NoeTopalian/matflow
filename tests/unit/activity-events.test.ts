@@ -10,7 +10,7 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
 import { ACTIVITY_EVENT_ACTIONS, ACTIVITY_EVENT_SCHEMAS, logActivityEvent, type ActivityEventAction } from "@/lib/activity-events";
 import { AUDIT_LABELS } from "@/lib/audit-labels";
 import { typeKeyForAction, activityType } from "@/lib/activity-types";
-import { decideUndo } from "@/lib/undo-registry";
+import { applyUndo, decideUndo, UNDO_HANDLERS } from "@/lib/undo-registry";
 
 const VALID: Record<ActivityEventAction, Record<string, unknown>> = {
   "member.subscription.purchased": { memberId: "cmember000000000000000001", tierId: "ctier00000000000000000001", stripeSubscriptionId: "sub_1QabcDEF234" },
@@ -130,12 +130,19 @@ describe("each new event is known everywhere a row is read", () => {
       const d = decideUndo({ action, metadata: VALID[action] } as never, false);
       return d.ok ? "" : d.reason;
     };
-    expect(reason("member.subscription.purchased")).toBe("Cancel the membership from the member's page.");
+    expect(reason("member.subscription.purchased")).toBe("This started a Stripe subscription. Cancel it from the member's profile so Stripe is told too.");
     // One sentence for money, wherever it moved: the same as a payment's.
     expect(reason("class_pack.purchased")).toBe("Money moved — reverse it from Payments (refund), not from here.");
     expect(reason("order.paid")).toBe("Money moved — reverse it from Payments (refund), not from here.");
     expect(reason("class.booking.created")).toBe("The member can cancel the booking from their app.");
     expect(reason("class.booking.cancelled")).toBe("The member can book again from their app.");
+  });
+
+  it("none of them has an undo handler: asking to undo one is an error, not a silent success", async () => {
+    for (const action of ACTIVITY_EVENT_ACTIONS) {
+      expect(UNDO_HANDLERS[action], action).toBeUndefined();
+      await expect(applyUndo({} as never, { action, metadata: VALID[action] } as never), action).rejects.toThrow(`No undo handler for ${action}`);
+    }
   });
 });
 
@@ -144,10 +151,16 @@ describe("something that was added says so, instead of blaming a missing snapsho
     const d = decideUndo({ action, metadata: {} } as never, false);
     return d.ok ? "" : d.reason;
   };
-  const ADDED = "This added something new, so there is nothing earlier to put back. If it was a mistake, remove it from its own page.";
+  // "Remove or archive": a class is archived and a pack switched off; neither is deleted.
+  const ADDED = "This added something new, so there is nothing earlier to put back. If it was a mistake, remove or archive it where it lives.";
 
-  it.each(["class.created", "member.create", "member.create.kid", "announcement.created", "rank.created", "membership.tier.create", "class_pack.create", "location.create", "task.staff_task.create"])("%s", (action) => {
+  it.each(["class.created", "member.create", "member.create.kid", "announcement.created", "rank.created", "membership.tier.create", "class_pack.create", "location.create"])("%s", (action) => {
     expect(reasonFor(action)).toBe(ADDED);
+  });
+
+  // A task or a note cannot be removed at all: it is closed.
+  it.each(["task.staff_task.create", "task.member_note.create"])("%s is closed, not removed", (action) => {
+    expect(reasonFor(action)).toBe("This added a task or a note, so there is nothing earlier to put back. Close it by marking it done on the Tasks page.");
   });
 
   it("more specific reasons still win, and an edit recorded without its old values keeps the snapshot reason", () => {
