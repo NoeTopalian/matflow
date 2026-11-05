@@ -187,6 +187,8 @@ export async function POST(req: Request) {
   await logMembershipStarted({
     tenantId: session.user.tenantId,
     memberId: member.id,
+    // The plan this route already resolved (on sale, in this club): two plans may share one Stripe price.
+    tierId: tier.id,
     stripePriceId: priceId,
     stripeSubscriptionId: outcome.subscriptionId,
     userId: session.user.id ?? null,

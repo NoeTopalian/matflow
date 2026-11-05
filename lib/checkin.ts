@@ -632,8 +632,12 @@ export function memberChangedSince(pre: GateMemberView, locked: MemberLockRow): 
  * import creating a session, an undo batch) would deadlock with a check-in
  * holding the Class row. The member-deletion cascade still waits (its lock
  * and its DELETE are FOR UPDATE).
+ *
+ * Exported for the one other writer that must not run twice for one member:
+ * the "membership started" activity row (lib/activity-events.ts), which takes
+ * this lock alone, so it adds no new lock order.
  */
-async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
+export async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
   const rows = await tx.$queryRaw<MemberLockRow[]>`
     SELECT "id", "cardVersion", "membershipTierId", "paymentStatus", "stripeSubscriptionId",
            (EXTRACT(EPOCH FROM "nextDueAt") * 1000)::float8 AS "nextDueAtMs",

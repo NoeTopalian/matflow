@@ -10,7 +10,13 @@
  * that would carry anything else is a programming error — it throws in tests
  * and development, and in production the extra keys are dropped and the event
  * is still recorded, because losing "Faisal bought a class pack" is worse than
- * failing his purchase over a log line.
+ * failing his purchase over a log line. A row that names neither a member nor
+ * another record to file it under is refused the same way.
+ *
+ * "Tests and development" means vitest and `next dev` only. `next build` and
+ * `next start` set NODE_ENV to "production", so a Vercel preview and the
+ * browser-journey build are both lenient: a shape that has drifted is caught
+ * by the unit and database tests, never by a preview.
  *
  * Rows about a member use that member as the entity (`entityType: "Member"`),
  * so the member's own History and their subject-access export both find them.
@@ -18,6 +24,7 @@
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit-log";
+import { memberLock } from "@/lib/checkin";
 import { ERASED_EMAIL } from "@/lib/login-email";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
@@ -118,13 +125,17 @@ export async function logActivityEvent<A extends ActivityEventAction>(action: A,
  * subscription exists. The request that creates it is retried by design (the
  * client holds one idempotency key across retries and Stripe answers with the
  * same subscription), so the row is keyed by the subscription and written
- * once. Never throws: the member is owed their payment form whether or not
- * this line was recorded.
+ * once: the check for an earlier row and the write are one transaction, behind
+ * the Member row lock, so two requests for the same member take turns and the
+ * second finds the first's row. Never throws: the member is owed their payment
+ * form whether or not this line was recorded.
  */
 export async function logMembershipStarted(args: {
   tenantId: string;
   memberId: string;
-  /** The Stripe price the plan was sold at; the plan is looked up from it. */
+  /** The plan, when the caller has already resolved it (the member's route has). */
+  tierId?: string | null;
+  /** The Stripe price the plan was sold at; the plan is looked up from it when `tierId` is not given. */
   stripePriceId: string;
   stripeSubscriptionId: string;
   /** The staff member who started it, or the member themselves. */
@@ -133,19 +144,32 @@ export async function logMembershipStarted(args: {
   req?: Request;
 }): Promise<boolean> {
   try {
+    // An erased member gets no row: decided before anything is read.
+    if (typeof args.memberEmail === "string" && ERASED_EMAIL.test(args.memberEmail)) return false;
     const requestId = `sub-purchased:${args.stripeSubscriptionId}`;
-    const found = await withTenantContext(args.tenantId, async (tx) => {
+    return await withTenantContext(args.tenantId, async (tx) => {
+      // No member in this club (deleted a moment ago): nothing to record.
+      if (!(await memberLock(tx, args.tenantId, args.memberId))) return false;
       const already = await tx.auditLog.findFirst({ where: { tenantId: args.tenantId, requestId }, select: { id: true } });
-      if (already) return null;
-      const tier = await tx.membershipTier.findFirst({ where: { tenantId: args.tenantId, stripePriceId: args.stripePriceId }, select: { id: true } });
-      return { tierId: tier?.id ?? null };
+      if (already) return false;
+      // Two plans can share one Stripe price (a club keeps its "(OLD)" plan beside the current one): the one on
+      // sale is the one that was bought, and of two on sale the one edited last.
+      const tierId =
+        args.tierId ??
+        (
+          await tx.membershipTier.findFirst({
+            where: { tenantId: args.tenantId, stripePriceId: args.stripePriceId },
+            orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
+            select: { id: true },
+          })
+        )?.id ??
+        null;
+      return logActivityEvent(
+        "member.subscription.purchased",
+        { memberId: args.memberId, tierId, stripeSubscriptionId: args.stripeSubscriptionId },
+        { tx, tenantId: args.tenantId, userId: args.userId ?? null, requestId, memberEmail: args.memberEmail, req: args.req },
+      );
     });
-    if (!found) return false;
-    return await logActivityEvent(
-      "member.subscription.purchased",
-      { memberId: args.memberId, tierId: found.tierId, stripeSubscriptionId: args.stripeSubscriptionId },
-      { tenantId: args.tenantId, userId: args.userId ?? null, durable: true, requestId, memberEmail: args.memberEmail, req: args.req },
-    );
   } catch (e) {
     console.error("[activity-events] member.subscription.purchased was not recorded", (e as Error)?.message);
     return false;
