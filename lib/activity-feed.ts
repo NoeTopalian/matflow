@@ -566,9 +566,11 @@ function sentence(...items: (Part | string | null)[]): Part[] {
     if (!isSubject(part) && last && !isSubject(last)) out[out.length - 1] = text(last.text + part.text);
     else out.push(part);
   }
+  // A real name is shown exactly as the club wrote it; only our own words ("a deleted member") are capitalised.
   const first = out[0];
-  if (first && isSubject(first)) out[0] = { ...first, subject: { ...first.subject, name: upperFirst(first.subject.name) } };
-  else if (first) out[0] = text(upperFirst(first.text));
+  if (first && isSubject(first)) {
+    if (first.subject.gone) out[0] = { ...first, subject: { ...first.subject, name: upperFirst(first.subject.name) } };
+  } else if (first) out[0] = text(upperFirst(first.text));
   return out;
 }
 

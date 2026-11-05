@@ -107,6 +107,13 @@ describe("check-ins", () => {
     expect(e.type).toBe("checkin_removed");
   });
 
+  it("shows a name exactly as the club wrote it, even at the start of a sentence", () => {
+    const L = lookups();
+    L.members.set("m_lower", { name: "ffion ap Rhys", erased: false });
+    const e = toFeedEntry(row({ action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: "rec", metadata: { classInstanceId: "s_wed", memberId: "m_lower", actorId: "m_lower" } }), ctx({ lookups: L }));
+    expect(e.plain).toBe("ffion ap Rhys checked in to Advanced No-Gi · Wed 4 Nov, 19:00");
+  });
+
   it("a session that has since been deleted is said so, never shown as an id", () => {
     const e = entry(row({ action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: "rec9", metadata: { classInstanceId: "s_gone", memberId: "m_mel", actorId: "m_mel" } }));
     expect(e.plain).toBe("Melody Orekoya checked in to a deleted session");
