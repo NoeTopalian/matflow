@@ -118,10 +118,13 @@ export async function executeUndo(
   items: PlanItem[],
   actor: { tenantId: string; userId: string; ipAddress?: string | null; userAgent?: string | null },
 ): Promise<string[]> {
-  // Mats lock BEFORE any row lock, whenever a class is touched: undoing a
-  // class edit may read a mat's name and write it as the class's place, and
-  // every other writer that does so takes this lock first (lib/mats.ts).
-  if (items.some(({ row }) => row.entityType === "Class")) await lockClubMats(tx, actor.tenantId);
+  // Mats lock BEFORE any row lock, whenever a Class row is touched. Two
+  // reasons: undoing a class edit may read a mat's name and write it as the
+  // class's place, as every other such writer does under this lock
+  // (lib/mats.ts); and a mat rename or removal updates several Class rows in
+  // no particular order, which against this batch's id-ordered Class locks
+  // would be a deadlock. Under the same lock the two are serial.
+  if (batchLockTargets(items).classIds.length > 0) await lockClubMats(tx, actor.tenantId);
   await lockBatchRows(tx, actor.tenantId, items);
   const undone: string[] = [];
   for (const { row } of items) {

@@ -43,11 +43,18 @@ describe("executeUndo", () => {
     auditLog: { create: vi.fn() },
   } satisfies Record<string, Record<string, Fn>>;
   const queryRaw = vi.fn();
+  // The club's mats advisory lock (lib/mats.ts lockClubMats), taken first whenever the batch touches a class.
+  const executeRaw = vi.fn();
   const order: string[] = [];
-  const tx = { ...fake, $queryRaw: queryRaw } as unknown as TxLike;
+  const tx = { ...fake, $queryRaw: queryRaw, $executeRaw: executeRaw } as unknown as TxLike;
 
   beforeEach(() => {
     order.length = 0;
+    executeRaw.mockReset();
+    executeRaw.mockImplementation(async (strings: string[], ...values: unknown[]) => {
+      order.push(`${strings.join("?").includes("pg_advisory_xact_lock") ? "mats-lock" : "raw"}:${String(values[1])}`);
+      return 1;
+    });
     queryRaw.mockReset();
     queryRaw.mockImplementation(async (strings: string[], ...values: unknown[]) => {
       const text = strings.join("?");
@@ -94,8 +101,9 @@ describe("executeUndo", () => {
     });
     const plan = planUndoTo(ROWS, "a1", new Set());
     await executeUndo(tx, plan.reversible, { tenantId: "t1", userId: "u-owner" });
-    expect(order.slice(0, 2)).toEqual(['lock-class:["c1"]', 'lock-member:["m1"]']);
-    expect(order.slice(2).every((o) => o === "handler")).toBe(true);
+    // (the mats lock comes first, since the batch touches a class: see the mats case below)
+    expect(order.slice(0, 3)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-member:["m1"]']);
+    expect(order.slice(3).every((o) => o === "handler")).toBe(true);
     const [classSql, memberSql] = queryRaw.mock.calls.map((c) => (c[0] as string[]).join("?"));
     expect(classSql).toMatch(/ORDER BY "id" FOR NO KEY UPDATE/);
     expect(memberSql).toMatch(/ORDER BY "id" FOR NO KEY UPDATE/);
@@ -111,16 +119,13 @@ describe("executeUndo", () => {
   });
 
   // Mats (5 Nov 2026): undoing a class edit may read a mat's name and write it as
-  // the class's place. Every writer that does so takes the club's mats lock FIRST
+  // the class's place, and a mat rename updates several Class rows in no
+  // particular order. Every such writer takes the club's mats lock FIRST
   // (lib/mats.ts), so a rename racing an undo cannot deadlock against the row locks.
-  it("takes the club's mats lock before any row lock when a class edit is in the batch, and not otherwise", async () => {
+  it("takes the club's mats lock before any row lock when the batch touches a class, and not otherwise", async () => {
     const classFind = vi.fn(async () => {
       order.push("handler");
       return { id: "c1", name: "Gi Fundamentals", matId: null };
-    });
-    const executeRaw = vi.fn(async (strings: string[], ...values: unknown[]) => {
-      order.push(`${strings.join("?").includes("pg_advisory_xact_lock") ? "mats-lock" : "raw"}:${String(values[1])}`);
-      return 1;
     });
     const withClass = { ...fake, class: { findFirst: classFind, update: vi.fn(async () => ({})) }, $queryRaw: queryRaw, $executeRaw: executeRaw } as unknown as TxLike;
     fake.member.findFirst.mockImplementation(async () => {
@@ -135,13 +140,18 @@ describe("executeUndo", () => {
     expect(order.slice(0, 3)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-member:["m1"]']);
     expect(order.slice(3).every((o) => o === "handler")).toBe(true);
 
-    // A batch with no class edit takes no mats lock.
+    // A single class edit takes it too (there is no batch lock for one row, but the handler may read a mat).
+    order.length = 0;
+    await executeUndo(withClass, items.slice(0, 1), { tenantId: "t1", userId: "u-owner" });
+    expect(order[0]).toBe("mats-lock:t1");
+
+    // A batch that touches no class takes no mats lock.
     order.length = 0;
     executeRaw.mockClear();
     fake.member.findFirst.mockReset();
     fake.member.findFirst.mockResolvedValueOnce({ id: "m1", phone: "2" }).mockResolvedValueOnce({ id: "m1", name: "B" });
-    fake.classRoster.deleteMany.mockResolvedValue({ count: 1 });
-    await executeUndo(withClass, planUndoTo(ROWS, "a1", new Set()).reversible, { tenantId: "t1", userId: "u-owner" });
+    const membersOnly = [ROWS[1], ROWS[3]].map((row) => ({ row, decision: { ok: true as const } }));
+    await executeUndo(withClass, membersOnly, { tenantId: "t1", userId: "u-owner" });
     expect(executeRaw).not.toHaveBeenCalled();
   });
 });
