@@ -57,6 +57,9 @@ export function Checkbox({
         height: 18,
         background: checked ? "var(--color-primary)" : "transparent",
         borderColor: checked ? "var(--color-primary)" : "var(--bd-active)",
+        // A hairline that only matters when the club's accent is near-white: without it a ticked box is a white
+        // square on a white card (UI-RULES §2a).
+        boxShadow: checked ? "0 0 0 1px var(--bd-active)" : undefined,
         transition:
           "background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
       }}

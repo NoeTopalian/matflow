@@ -17,6 +17,8 @@ import { shiftDay } from "@/lib/activity-url";
 
 /** One height with the fields beside it: 36px with a mouse, 44px on a touch screen (UI-RULES §5a). */
 const FIELD_BUTTON = "ui-fixed-size ui-field h-9";
+/** The pressed day keeps a dark border, so it still reads as pressed when the club's accent is white (UI-RULES §2a). */
+const PRESSED = "border-[var(--tx-2)]";
 
 export function JumpToDate({
   dayKey,
@@ -45,10 +47,10 @@ export function JumpToDate({
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="jump-to-date">
       <div className="flex items-center gap-1" role="group" aria-label="Day">
-        <Button type="button" variant={ready && current === todayKey ? "primary" : "secondary"} aria-pressed={ready && current === todayKey} className={`${FIELD_BUTTON} px-3`} disabled={inert} onClick={() => onChange(null)}>
+        <Button type="button" variant={ready && current === todayKey ? "primary" : "secondary"} aria-pressed={ready && current === todayKey} className={`${FIELD_BUTTON} px-3 ${ready && current === todayKey ? PRESSED : ""}`} disabled={inert} onClick={() => onChange(null)}>
           Today
         </Button>
-        <Button type="button" variant={ready && current === yesterday ? "primary" : "secondary"} aria-pressed={ready && current === yesterday} className={`${FIELD_BUTTON} px-3`} disabled={inert} onClick={() => go(yesterday)}>
+        <Button type="button" variant={ready && current === yesterday ? "primary" : "secondary"} aria-pressed={ready && current === yesterday} className={`${FIELD_BUTTON} px-3 ${ready && current === yesterday ? PRESSED : ""}`} disabled={inert} onClick={() => go(yesterday)}>
           Yesterday
         </Button>
       </div>

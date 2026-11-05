@@ -83,6 +83,11 @@ const SCOPE_PARAM: Record<TimelineScope["kind"], "memberId" | "classId" | "payme
 /** One height with the fields beside it: 36px with a mouse, 44px on a touch screen (UI-RULES §5a). */
 const FIELD_BUTTON = "ui-fixed-size ui-field h-9";
 const CAPTION = "text-xs font-medium text-tx-3";
+/**
+ * A pressed chip is filled with the club's accent — which an owner may have set to white. The dark border is what
+ * still says "this one" then (UI-RULES §2a); on a dark accent the fill says it.
+ */
+export const PRESSED = "border-[var(--tx-2)]";
 
 export function ActivityTimeline(props: ActivityTimelineProps) {
   return props.variant === "embedded" ? <EmbeddedTimeline {...props} /> : <PageTimeline {...props} />;
@@ -357,7 +362,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Views" data-testid="activity-views">
         {ACTIVITY_VIEWS.map((v) => (
-          <Button key={v.key} type="button" size="compact" variant={view === v.key ? "primary" : "secondary"} aria-pressed={view === v.key} onClick={() => showTypes(v.typeKeys(role))}>
+          <Button key={v.key} type="button" size="compact" variant={view === v.key ? "primary" : "secondary"} className={view === v.key ? PRESSED : undefined} aria-pressed={view === v.key} onClick={() => showTypes(v.typeKeys(role))}>
             {v.label}
           </Button>
         ))}
