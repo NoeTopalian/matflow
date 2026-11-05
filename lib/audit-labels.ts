@@ -54,6 +54,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   "member.subscription.cancelled_by_stripe": "Subscription ended by Stripe",
   "member.subscription.create.kid": "Parent started a child's subscription",
   "member.subscription.migrated": "Moved a membership onto MatFlow billing",
+  // Written when the subscription is created, before any money has moved.
+  "member.subscription.purchased": "Started a membership — awaiting first payment",
   "member.subscription.portal.kid": "Parent opened a child's billing portal",
 
   // ── Waivers ───────────────────────────────────────────────────────────────
@@ -85,6 +87,8 @@ export const AUDIT_LABELS: Record<string, string> = {
   "class.roster.remove": "Removed a member from a class roster",
   // D2 (24 Oct 2026): a rule change kept bookings whose members it now turns away.
   "class.bookings.kept_ineligible": "Kept bookings of members the class now turns away",
+  "class.booking.created": "Booked a class",
+  "class.booking.cancelled": "Cancelled a class booking",
   "location.create": "Added a venue",
   "location.update": "Updated a venue",
   "location.delete": "Removed a venue",
@@ -97,6 +101,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "class_pack.create": "Created a class pack",
   "class_pack.update": "Updated a class pack",
   "class_pack.deactivate": "Deactivated a class pack",
+  "class_pack.purchased": "Bought a class pack",
   "rank.created": "Created a rank",
   "rank.updated": "Updated a rank",
   "rank.deleted": "Deleted a rank",
@@ -109,6 +114,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "payment.chase": "Sent a payment reminder",
   "payments.export": "Exported payments to CSV",
   "order.mark_paid": "Marked a shop order as paid",
+  "order.paid": "Paid for a shop order",
   "billing.portal.open": "Opened the billing portal",
   "stripe.connect": "Connected Stripe",
   "stripe.disconnect": "Disconnected Stripe",

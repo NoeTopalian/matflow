@@ -22,6 +22,7 @@ import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
+import { logMembershipStarted } from "@/lib/activity-events";
 import { z } from "zod";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
 import { refuseIfBilledElsewhere } from "@/lib/billing-source-server";
@@ -181,6 +182,17 @@ export async function POST(req: Request) {
   if (!outcome.ok) {
     return apiError(outcome.error, outcome.status, undefined, "[member/subscriptions/start]");
   }
+
+  // On the club's Activity timeline. Nothing has been paid yet; the payment is its own row when it arrives.
+  await logMembershipStarted({
+    tenantId: session.user.tenantId,
+    memberId: member.id,
+    stripePriceId: priceId,
+    stripeSubscriptionId: outcome.subscriptionId,
+    userId: session.user.id ?? null,
+    memberEmail: member.email,
+    req,
+  });
 
   return NextResponse.json(
     {

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ensureCanAcceptCharges } from "@/lib/stripe-account-status";
 import { createSubscriptionForMember } from "@/lib/stripe/subscriptions";
+import { logMembershipStarted } from "@/lib/activity-events";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseIfReviewLocked } from "@/lib/review-lock";
@@ -136,6 +137,17 @@ export async function POST(req: Request) {
   if (!outcome.ok) {
     return apiError(outcome.error, outcome.status, undefined, "[stripe/create-subscription]");
   }
+
+  // On the club's Activity timeline, naming the staff member who started it. Nothing has been paid yet.
+  await logMembershipStarted({
+    tenantId: session.user.tenantId,
+    memberId: member.id,
+    stripePriceId: priceId,
+    stripeSubscriptionId: outcome.subscriptionId,
+    userId: session.user.id,
+    memberEmail: member.email,
+    req,
+  });
 
   return NextResponse.json({
     subscriptionId: outcome.subscriptionId,

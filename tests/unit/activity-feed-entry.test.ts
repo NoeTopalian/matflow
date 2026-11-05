@@ -368,6 +368,67 @@ describe("deleted and erased members", () => {
   });
 });
 
+describe("the events added with the timeline", () => {
+  const purchased = (over: Record<string, unknown> = {}) => row({ action: "member.subscription.purchased", userId: null, metadata: { memberId: "m_mel", tierId: "t_adult", stripeSubscriptionId: "sub_1", actorId: "m_mel", actor: "m_mel", actorType: "user", requestId: "sub-purchased:sub_1", outcome: "succeeded" }, ...over });
+
+  it("a membership the member started in their app: no amount, because nothing has been paid yet", () => {
+    const e = entry(purchased());
+    expect(e.plain).toBe("Melody Orekoya started Adult Unlimited — awaiting first payment");
+    expect(e.type).toBe("membership_started");
+    expect(e.source.label).toBe("Member app");
+    expect(e.plain).not.toMatch(/£/);
+    expect(JSON.stringify(e)).not.toContain("sub_1");
+  });
+
+  it("a membership a staff member started for them names the staff member", () => {
+    const e = entry(purchased({ ...byJack, metadata: { memberId: "m_mel", tierId: "t_adult", stripeSubscriptionId: "sub_1" } }));
+    expect(e.plain).toBe("Jack Streeter started Adult Unlimited for Melody Orekoya — awaiting first payment");
+    expect(e.source.label).toBe("Staff");
+  });
+
+  it("a membership on a price that maps to no plan still reads as a sentence", () => {
+    expect(entry(purchased({ metadata: { memberId: "m_mel", tierId: null, stripeSubscriptionId: "sub_1", actorId: "m_mel" } })).plain).toBe("Melody Orekoya started a membership — awaiting first payment");
+  });
+
+  it("a class pack bought: who, which pack, how many classes, how much", () => {
+    const e = entry(row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "pk_10", memberClassPackId: "mcp_1", credits: 10, amountPence: 8000, currency: "GBP" } }));
+    expect(e.plain).toBe("Melody Orekoya bought 10 class pack");
+    expect(e.detailPlain).toBe("10 classes · £80.00");
+    expect(e.type).toBe("pack_purchased");
+    expect(e.source.label).toBe("Stripe");
+    expect(JSON.stringify(e)).not.toContain("mcp_1");
+    const one = entry(row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "gone", memberClassPackId: "mcp_2", credits: 1, amountPence: 1000, currency: "GBP" } }));
+    expect(one.detailPlain).toBe("1 class · £10.00");
+  });
+
+  it("a shop order paid: who, how much, and the order's own reference", () => {
+    const e = entry(row({ action: "order.paid", userId: null, metadata: { memberId: "m_mel", orderId: "o_1", orderRef: "ORD-LMRK4G", amountPence: 2500, currency: "GBP" } }));
+    expect(e.plain).toBe("Melody Orekoya paid £25.00 for shop order ORD-LMRK4G");
+    expect(e.type).toBe("payment");
+    expect(e.source.label).toBe("Stripe");
+    const guest = entry(row({ action: "order.paid", entityType: "Order", entityId: "o_2", userId: null, metadata: { memberId: null, orderId: "o_2", orderRef: "ORD-GUEST1", amountPence: 1200, currency: "GBP" } }));
+    expect(guest.plain).toBe("£12.00 was paid for shop order ORD-GUEST1");
+  });
+
+  it("a class booked, and the booking cancelled, in the member app's own words", () => {
+    const booked = entry(row({ action: "class.booking.created", userId: null, metadata: { memberId: "m_mel", classId: "c_nogi", actorId: "m_mel" } }));
+    expect(booked.plain).toBe("Melody Orekoya booked Advanced No-Gi");
+    expect(links(booked.parts)).toEqual(["Melody Orekoya -> /dashboard/members/m_mel", "Advanced No-Gi -> /dashboard/timetable?classId=c_nogi"]);
+    expect(booked.type).toBe("booking");
+    expect(booked.source.label).toBe("Member app");
+    const cancelled = entry(row({ action: "class.booking.cancelled", userId: null, metadata: { memberId: "m_mel", classId: "c_nogi", actorId: "m_mel" } }));
+    expect(cancelled.plain).toBe("Melody Orekoya cancelled their booking for Advanced No-Gi");
+  });
+
+  it("a manager is sent all of them, with a plan and a pack as names rather than links", () => {
+    for (const r0 of [purchased(), row({ action: "class_pack.purchased", userId: null, metadata: { memberId: "m_mel", classPackId: "pk_10", memberClassPackId: "mcp_1", credits: 10, amountPence: 8000, currency: "GBP" } })]) {
+      const e = entry(r0, { role: "manager" });
+      expect(links(e.parts).some((l) => l.includes("/dashboard/memberships")), e.plain).toBe(false);
+      expect(e.plain).toMatch(/^Melody Orekoya (started|bought) /);
+    }
+  });
+});
+
 describe("what changed", () => {
   const edit = row({
     action: "member.update",

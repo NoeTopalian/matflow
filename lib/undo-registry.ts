@@ -100,6 +100,10 @@ export const REASON = {
   // T6b: an old pause row would otherwise put an archived class back as
   // "active but archived" and mint sessions for it.
   archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
+  // Activity events (5 Nov 2026): records of something a member did, each with the way to reverse it.
+  membershipStarted: "Cancel the membership from the member's page.",
+  bookingMade: "The member can cancel the booking from their app.",
+  bookingCancelled: "The member can book again from their app.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -675,7 +679,13 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^attendance\.unmark$/, REASON.reMark],
   [/^attendance\.card_scan$/, REASON.batchScan],
   [/^(email\.|payment\.chase|member\.bulk_invite|staff\.invite)/, REASON.email],
+  // A bought pack and a paid shop order are money, reversed by a refund like any other payment.
   [/^(payment|payments|order|billing)\./, REASON.money],
+  [/^class_pack\.purchased$/, REASON.money],
+  [/^class\.booking\.created$/, REASON.bookingMade],
+  [/^class\.booking\.cancelled$/, REASON.bookingCancelled],
+  // Above the general subscription rule: starting one is undone by cancelling it, which the member's page does.
+  [/^member\.subscription\.purchased$/, REASON.membershipStarted],
   [/^member\.payment\./, REASON.money],
   [/^stripe\./, REASON.stripe],
   [/^member\.subscription\./, REASON.stripe],

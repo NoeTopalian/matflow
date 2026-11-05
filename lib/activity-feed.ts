@@ -388,8 +388,11 @@ export const IGNORED_ID_KEYS = new Set([
   "holderId",
   "initiativeId",
   "loginEventId",
+  "memberClassPackId",
   "memberRankId",
   "newOwnerId",
+  // A shop order has no page of its own; its reference (orderRef) is what a person reads.
+  "orderId",
   "ownerId",
   "ownerUserId",
   "previousOwnerId",
@@ -948,6 +951,34 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const parent = r.member(m.parentMemberId);
       return parent ? sentence(parent, " started a membership for ", child, " — awaiting first payment") : sentence("A membership was started for ", child, " — awaiting first payment");
     }
+    case "member.subscription.purchased": {
+      const person = r.member(subjectMember);
+      if (!person) return null;
+      const plan = r.tier(m.tierId) ?? text("a membership");
+      // Nothing has been paid when this row is written: the payment is its own row when it comes.
+      // A staff member is on the row only when one started it; otherwise the member did, in their app.
+      return row.userId && who ? sentence(who, " started ", plan, " for ", person, " — awaiting first payment") : sentence(person, " started ", plan, " — awaiting first payment");
+    }
+    case "class_pack.purchased": {
+      const person = r.member(subjectMember ?? m.memberId);
+      if (!person) return null;
+      const pack = idOf(m.classPackId) ? r.pack(m.classPackId) : null;
+      return pack ? sentence(person, " bought ", pack) : sentence(person, " bought a class pack");
+    }
+    case "order.paid": {
+      const paid = r.amount(m.amountPence, m.currency);
+      if (!paid) return null;
+      const order = str(m.orderRef) ? ` for shop order ${tidy(str(m.orderRef)!, 60)}` : " for a shop order";
+      const person = r.member(m.memberId);
+      return person ? sentence(person, " paid ", paid, order) : sentence(paid, " was paid", order);
+    }
+    case "class.booking.created":
+    case "class.booking.cancelled": {
+      const person = r.member(subjectMember ?? m.memberId);
+      const cls = r.klass(m.classId);
+      if (!person || !cls) return null;
+      return row.action === "class.booking.created" ? sentence(person, " booked ", cls) : sentence(person, " cancelled their booking for ", cls);
+    }
     case "member.subscription.migrated": {
       const theirs = r.member(subjectMember, true);
       if (!theirs) return null;
@@ -1210,6 +1241,13 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
     case "member.rank.promote":
       if (m.fromRankId === null && (num(m.stripes) ?? 0) > 0) add(`${m.stripes} ${m.stripes === 1 ? "stripe" : "stripes"}`);
       break;
+    case "class_pack.purchased": {
+      const credits = num(m.credits);
+      if (credits != null) add(`${credits} ${credits === 1 ? "class" : "classes"}`);
+      const paid = r.amount(m.amountPence, m.currency);
+      if (paid) add(paid);
+      break;
+    }
     case "member.hold.start": {
       const until = dateOf(m.holdUntil);
       if (until) add(`Until ${formatDate(until, ctx.timeZone)}`);

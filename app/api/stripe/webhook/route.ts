@@ -2,6 +2,7 @@ import { withRlsBypass } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit-log";
+import { logActivityEvent } from "@/lib/activity-events";
 import { recordStatusEvent } from "@/lib/member-status";
 import { refreshStripeAccountStatus } from "@/lib/stripe-account-status";
 import { getBaseUrl } from "@/lib/env-url";
@@ -513,7 +514,8 @@ export async function POST(req: NextRequest) {
         // ledger row against the wrong member. (M8 defence-in-depth, 2026-05-07.)
         const packMember = await tx.member.findFirst({
           where: { id: metadata.memberId, tenantId: metadata.tenantId },
-          select: { id: true },
+          // The address only to keep an erased member out of the activity log.
+          select: { id: true, email: true },
         });
         if (pack && packMember) {
           // The purchase records its own term from the product as sold
@@ -568,7 +570,7 @@ export async function POST(req: NextRequest) {
           } else try {
             // Already inside a transaction (withRlsBypass) — sequential awaits
             // remain atomic without a nested $transaction.
-            await tx.memberClassPack.create({
+            const minted = await tx.memberClassPack.create({
               data: {
                 tenantId: metadata.tenantId,
                 memberId: metadata.memberId,
@@ -579,7 +581,23 @@ export async function POST(req: NextRequest) {
                 stripePaymentIntentId: paymentIntentId,
                 status: "active",
               },
+              select: { id: true, creditsRemaining: true },
             });
+            // On the club's Activity timeline, in this transaction: it exists exactly when the credits do. A
+            // replay, and the completed + async-succeeded pair, take the "already minted" branch above and
+            // write nothing; a rollback takes this row with it.
+            await logActivityEvent(
+              "class_pack.purchased",
+              {
+                memberId: metadata.memberId,
+                classPackId: pack.id,
+                memberClassPackId: minted.id,
+                credits: minted.creditsRemaining,
+                amountPence,
+                currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
+              },
+              { tx, tenantId: metadata.tenantId, userId: null, memberEmail: packMember.email },
+            );
             await tx.payment.upsert({
               where: paymentIntentId
                 ? { stripePaymentIntentId: paymentIntentId }
@@ -657,6 +675,7 @@ export async function POST(req: NextRequest) {
           const order = await tx.order.findFirst({
             where: { tenantId: metadata.tenantId, orderRef: metadata.orderRef },
             select: {
+              id: true,
               memberId: true,
               totalPence: true,
               currency: true,
@@ -664,6 +683,19 @@ export async function POST(req: NextRequest) {
             },
           });
           if (order) {
+            // On the club's Activity timeline, in this transaction: written only by the event that flipped the
+            // order to paid, and rolled back with it.
+            await logActivityEvent(
+              "order.paid",
+              {
+                memberId: order.memberId,
+                orderId: order.id,
+                orderRef: metadata.orderRef,
+                amountPence: order.totalPence,
+                currency: ((obj.currency as string) ?? order.currency).toUpperCase(),
+              },
+              { tx, tenantId: metadata.tenantId, userId: null, memberEmail: order.member?.email ?? null, entity: order.memberId ? undefined : { type: "Order", id: order.id } },
+            );
             // A2: mirror a Payment row so the Stripe shop sale is visible to the
             // revenue/ledger/CSV surfaces (revenue/summary, /dashboard/payments,
             // export.csv) — all of which read Payment, never Order. Mirrors the

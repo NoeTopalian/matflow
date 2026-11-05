@@ -53,6 +53,7 @@ describe("types are well formed and their keys are permanent", () => {
       "checkin_exception",
       "checkin",
       "checkin_removed",
+      "booking",
       "member_joined",
       "rank",
       "hold",
@@ -62,6 +63,7 @@ describe("types are well formed and their keys are permanent", () => {
       "member_access",
       "attribution",
       "membership_started",
+      "pack_purchased",
       "membership_changed",
       "cancellation",
       "payment",
@@ -268,10 +270,13 @@ describe("every type has a writer in the product", () => {
     const written = new Set<string>();
     for (const file of [...walk("app"), ...walk("lib")]) {
       if (self.test(file)) continue;
-      for (const line of readFileSync(file, "utf8").split("\n")) {
+      const src = readFileSync(file, "utf8");
+      for (const line of src.split("\n")) {
         if (!/\baction:/.test(line)) continue;
         for (const m of line.matchAll(/"([a-z_-]+(?:\.[a-z_-]+)+)"/g)) written.add(m[1]);
       }
+      // The events added with the timeline are written through one function, by name.
+      for (const m of src.matchAll(/logActivityEvent\(\s*"([a-z_-]+(?:\.[a-z_-]+)+)"/g)) written.add(m[1]);
     }
     const unwritten = ACTIVITY_TYPES.filter((t) => t.key !== "undo" && t.key !== "other").filter((t) => ![...t.actions, ...t.ruleActions].some((a) => written.has(a)));
     expect(unwritten.map((t) => t.key)).toEqual([]);
