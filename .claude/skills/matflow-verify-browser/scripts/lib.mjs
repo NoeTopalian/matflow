@@ -189,11 +189,19 @@ export const accentOf = (page) => page.evaluate(() => {
  * chips intersect; a chip stays inside its day; a chip is at least 44 px tall; no time or name is cut in either axis
  * or leaves its chip; day headers do not spill. The place line may ellipsise, so its text must be in the accessible
  * name of the chip. Returns { problems: string[], … }: the journey asserts problems is empty.
+ *
+ * `grid` names the grid by test id: the week ("week-grid", the default), or a one-day grid — the staff phone's day
+ * ("phone-day-grid") or the members' day ("schedule-day", whose blocks mark their parts `data-block-part`). A one-day
+ * grid has no day header: a chip must stay inside the grid instead. Within `within` (a CSS selector) only the grid
+ * inside that element is measured — the members' day has three panes.
  */
-export function gridInvariants(page, { sessions }) {
-  return page.evaluate((expected) => {
-    const grid = document.querySelector('[data-testid="week-grid"]');
-    if (!grid) return { problems: ["no week grid on the page"] };
+export function gridInvariants(page, { sessions, grid: testId = "week-grid", within = null }) {
+  return page.evaluate(({ expected, testId, within }) => {
+    const scope = within ? document.querySelector(within) : document;
+    const grid = scope?.querySelector(`[data-testid="${testId}"]`);
+    if (!grid) return { problems: [`no ${testId} on the page`] };
+    const oneDay = grid.getAttribute("data-one-day") === "true";
+    const partAttr = testId === "schedule-day" ? "data-block-part" : "data-chip-part";
     const R = (el) => el.getBoundingClientRect();
     const problems = [];
     const cut = (el) => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
@@ -203,7 +211,7 @@ export function gridInvariants(page, { sessions }) {
     if (cells.length + folded !== expected) problems.push(`sessions on the grid: ${cells.length} chips + ${folded} folded, seeded ${expected}`);
     const chips = cells.map((cell) => {
       const button = cell.querySelector("button");
-      const part = (p) => button?.querySelector(`[data-chip-part="${p}"]`) ?? null;
+      const part = (p) => button?.querySelector(`[${partAttr}="${p}"]`) ?? null;
       const label = button?.getAttribute("aria-label") ?? "";
       const t = /(\d\d):(\d\d)/.exec(part("time")?.textContent ?? "");
       return { cell, button, label, day: cell.closest("[data-day]")?.getAttribute("data-day"), start: t ? Number(t[1]) * 60 + Number(t[2]) : null, time: part("time"), name: part("name"), place: part("place"), r: button ? R(button) : null };
@@ -216,8 +224,9 @@ export function gridInvariants(page, { sessions }) {
         if (cut(el)) problems.push(`${c.label}: ${what} is cut (${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight})`);
         if (!inside(R(el), c.r)) problems.push(`${c.label}: ${what} leaves its chip`);
       }
-      if (c.place && !c.label.includes((c.place.textContent ?? "").trim())) problems.push(`${c.label}: place "${c.place.textContent}" is not in the accessible name`);
-      const head = grid.querySelector(`[data-day-head="${c.day}"]`);
+      // A members' block ends with the coach, not the place, when a mat name is over it; that line is not its name.
+      if (c.place && partAttr === "data-chip-part" && !c.label.includes((c.place.textContent ?? "").trim())) problems.push(`${c.label}: place "${c.place.textContent}" is not in the accessible name`);
+      const head = oneDay ? grid : grid.querySelector(`[data-day-head="${c.day}"]`);
       if (!head) problems.push(`${c.label}: no header for ${c.day}`);
       else if (c.r.left < R(head).left - 1 || c.r.right > R(head).right + 1) problems.push(`${c.label}: outside its day (${c.r.left.toFixed(1)}–${c.r.right.toFixed(1)} against ${R(head).left.toFixed(1)}–${R(head).right.toFixed(1)})`);
       // Split by mat: a chip sits under its own mat's header, never under a neighbour's.
@@ -255,7 +264,7 @@ export function gridInvariants(page, { sessions }) {
       if (!m.button || !m.r) { problems.push("a '+N more' cell has no button"); continue; }
       if (m.r.height < 43.5) problems.push(`${m.label}: ${m.r.height.toFixed(1)} px tall`);
       if (cut(m.button)) problems.push(`${m.label}: its text is cut`);
-      const head = grid.querySelector(`[data-day-head="${m.day}"]`);
+      const head = oneDay ? grid : grid.querySelector(`[data-day-head="${m.day}"]`);
       if (!head || m.r.left < R(head).left - 1 || m.r.right > R(head).right + 1) problems.push(`${m.label}: outside its day`);
     }
     const boxes = [...placed, ...mores.filter((m) => m.r)];
@@ -277,10 +286,60 @@ export function gridInvariants(page, { sessions }) {
       problems, chips: cells.length, folded,
       narrowestChip: widths.length ? Math.round(Math.min(...widths) * 10) / 10 : null,
       shortestChip: heights.length ? Math.round(Math.min(...heights) * 10) / 10 : null,
-      dayDisplay: getComputedStyle(grid.querySelector("[data-day]")).display,
+      dayDisplay: oneDay ? null : getComputedStyle(grid.querySelector("[data-day]")).display,
     };
-  }, sessions);
+  }, { expected: sessions, testId, within });
 }
+
+/**
+ * Nothing on a phone scrolls sideways: not the document, not <main>, and no chip of the one-day grid (`grid`, by
+ * test id) hangs outside the grid.
+ */
+export function phoneNoSidewaysScroll(page, grid = "phone-day-grid") {
+  return page.evaluate((testId) => {
+    const main = document.querySelector("main");
+    const g = document.querySelector(`[data-testid="${testId}"]`);
+    const out = {
+      mainScrolls: !!main && main.scrollWidth > main.clientWidth + 1,
+      documentScrolls: document.documentElement.scrollWidth > window.innerWidth + 1,
+      chipsOutsideGrid: 0,
+    };
+    if (g) {
+      const r0 = g.getBoundingClientRect();
+      for (const chip of g.querySelectorAll("[data-cell-key] button, [data-cell-more] button")) {
+        const r = chip.getBoundingClientRect();
+        if (r.left < r0.left - 1 || r.right > r0.right + 1) out.chipsOutsideGrid += 1;
+      }
+    }
+    return { ...out, ok: !!g && !out.mainScrolls && !out.documentScrolls && out.chipsOutsideGrid === 0 };
+  }, grid);
+}
+
+/**
+ * One of the fixture club's members ("Member 1" by default) given a password for this run, so the journey can sign
+ * in as a member. The fixture's own synthetic member; nothing else about it changes. Returns { id, email, password }.
+ */
+export async function memberLogin(club, name = "Member 1") {
+  const { randomBytes } = require("node:crypto");
+  const member = (await q(`select id, email from "Member" where "tenantId" = $1 and name = $2`, [club.tenantId, name]))[0];
+  if (!member) throw new Error(`the fixture has no member called ${name}`);
+  const password = randomBytes(18).toString("base64url");
+  await q(`update "Member" set "passwordHash" = $3, "waiverAccepted" = true where id = $1 and "tenantId" = $2`, [member.id, club.tenantId, await bcrypt.hash(password, 10)]);
+  return { id: member.id, email: member.email, password, name };
+}
+
+/** A member through the real /login form (club code, email, password; a member has no authenticator). */
+export async function memberSignIn(page, club, member) {
+  await page.goto("/login");
+  await page.getByLabel("Club code").fill(club.slug);
+  await page.keyboard.press("Enter");
+  await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
+  await page.getByLabel("Email address").first().fill(member.email);
+  await page.getByLabel("Password").fill(member.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL(/\/member/, { timeout: 60000 });
+}
+
 
 /**
  * Nothing but the box of the week scrolls sideways: not <main> (the scrollport of the shell at 768 px and wider),

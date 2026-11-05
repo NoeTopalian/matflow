@@ -388,7 +388,7 @@ try {
   });
 
   for (const width of [375, 390]) {
-    await section(`phone-${width}`, `${width} px on the real clock: the day tabs and the list work as before, every Monday session is listed, rows are at least 44 px, and the page does not scroll sideways`, async () => {
+    await section(`phone-${width}`, `${width} px on the real clock: the day tabs and the day grid work, every Monday session is on it, chips are at least 44 px, and the page does not scroll sideways`, async () => {
       const mobile = await context(browser, `10.94.6.${width === 375 ? 30 : 31}`, { viewport: { width, height: 812 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState(), timezoneId: "Europe/London" });
       const phone = await mobile.newPage();
       const before = errors.length;
