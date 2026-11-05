@@ -26,6 +26,7 @@ import { LoginIdentityTaken, claimLoginIdentity } from "@/lib/login-email";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, isSupportSession, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 import { TRAINING_MEMBER } from "@/lib/member-population";
+import { requireApiStaff } from "@/lib/api-authz";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -53,13 +54,15 @@ const schema = memberCreateSchema;
 // produce identical formats. Don't reintroduce a local copy.
 
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   // Sprint 3 P1 fix: this endpoint exposes member PII (incl. kid synthesised emails),
   // so it must be staff-only. Members and unauthenticated callers cannot list other members.
-  const isStaff = ["owner", "manager", "admin", "coach"].includes(session.user.role);
-  if (!isStaff) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // 5 Nov 2026: the standard staff gate instead of a bare session check — the same four roles, plus what every
+  // other staff route already refuses: a sign-in still owing its authenticator code, a temporary password not yet
+  // changed, an elevated role not yet enrolled. The Activity page's member search made this list a second door
+  // to the directory, so it gets the same lock as the first.
+  const gate = await requireApiStaff();
+  if (!gate.ok) return gate.response;
+  const session = gate.session;
 
   const { searchParams } = new URL(req.url);
   const { take, cursor, skip } = parsePagination(searchParams, { defaultTake: 50, maxTake: 100 });

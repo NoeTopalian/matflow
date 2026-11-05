@@ -10,7 +10,7 @@ import { formatDate } from "@/lib/date";
 import { parseIdParam } from "@/lib/id-param";
 import { ERASED_EMAIL } from "@/lib/login-email";
 import { decideUndo } from "@/lib/undo-registry";
-import { parseTypesParam, type ActivityResponse, type ActivityRole, type FeedEntry } from "@/lib/activity-types";
+import { parseTypesParam, type ActivityResponse, type ActivityRole } from "@/lib/activity-types";
 import {
   FEED_ROW_SELECT,
   UNDO_PREFIX,
