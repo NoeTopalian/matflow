@@ -263,6 +263,8 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         background: appBg,
         fontFamily: appFont,
         // CSS vars used by child pages for theme-aware colors
+        // The shell's own colour, opaque: what a pinned band inside a page must paint itself with.
+        ["--member-bg" as string]: appBg,
         ["--member-text" as string]: textMain,
         // The club colour as text, lifted just enough to read on this shell
         // (lf-2, 30 Sep 2026). Fills and borders keep the raw club colour.
