@@ -71,6 +71,12 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
     }
     throw new Error(`class ${classId} has fewer than ${n} class.updated rows after 10 s`);
   };
+  /**
+   * A real staff owner of the club, for Undo: its own audit row names the user who undid, and the audit log's
+   * user reference must exist (the routes' synthetic session ids are moved aside by the audit writer; Undo's are not).
+   */
+  const owner = async (tenantId: string) =>
+    (await withRlsBypass((tx) => tx.user.create({ data: { tenantId, email: `owner-${randomUUID()}@example.test`, passwordHash: "synthetic-not-a-hash", name: "Synthetic Owner", role: "owner" }, select: { id: true } }))).id;
   const addMat = async (tenantId: string, name: string) => {
     as("owner", tenantId);
     const res = await matsPOST(request("/api/mats", "POST", { name }));
@@ -86,6 +92,7 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       await tx.classSchedule.deleteMany({ where: { class: { tenantId: { in: tenants } } } });
       await tx.class.deleteMany({ where: { tenantId: { in: tenants } } });
       await tx.mat.deleteMany({ where: { tenantId: { in: tenants } } });
+      await tx.user.deleteMany({ where: { tenantId: { in: tenants } } });
       await tx.tenant.deleteMany({ where: { id: { in: tenants } } });
     });
   });
@@ -248,6 +255,7 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       const [mat1] = await mats(T);
       const gym = await addMat(T, "Gym floor");
       const cls = await classRow(T, "Undo me", null);
+      const undoer = await owner(T);
       as("owner", T);
       // Mat 1, then Gym floor: the second edit is the one to undo.
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: mat1.id }), params(cls.id))).status).toBe(200);
@@ -257,7 +265,7 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       expect((last.metadata as { before: unknown }).before).toEqual({ location: "Mat 1", matId: mat1.id });
       // Mat 1 is renamed after the edit: the undo must take the NEW name.
       expect((await matPATCH(request(`/api/mats/${mat1.id}`, "PATCH", { name: "Main mat" }), params(mat1.id))).status).toBe(200);
-      await withTenantContext(T, (tx) => executeUndo(tx, [{ row: last, decision: decideUndo(last, false) }], { tenantId: T, userId: "synthetic-owner" }));
+      await withTenantContext(T, (tx) => executeUndo(tx, [{ row: last, decision: decideUndo(last, false) }], { tenantId: T, userId: undoer }));
       expect((await classes(T)).find((c) => c.id === cls.id)).toMatchObject({ matId: mat1.id, location: "Main mat" });
       // Back onto Gym floor by hand, then Gym floor is removed: undoing the first edit (onto Mat 1 from none) still works,
       // but an undo that would put the class back onto the removed mat is refused.
@@ -267,7 +275,7 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       const ontoGymGone = again[again.length - 1]; // before: Gym floor
       expect((await matDELETE(request(`/api/mats/${gym.id}`, "DELETE"), params(gym.id))).status).toBe(200);
       await expect(
-        withTenantContext(T, (tx) => executeUndo(tx, [{ row: ontoGymGone, decision: decideUndo(ontoGymGone, false) }], { tenantId: T, userId: "synthetic-owner" })),
+        withTenantContext(T, (tx) => executeUndo(tx, [{ row: ontoGymGone, decision: decideUndo(ontoGymGone, false) }], { tenantId: T, userId: undoer })),
       ).rejects.toThrow("That mat no longer exists.");
       expect((await classes(T)).find((c) => c.id === cls.id)).toMatchObject({ matId: mat1.id, location: "Main mat" });
     }, 120_000);
@@ -331,12 +339,13 @@ describe.skipIf(!HAS_DB)("mats — real database", () => {
       const T = await club("race-undo");
       const one = await addMat(T, "Mat 1");
       const two = await addMat(T, "Mat 2");
+      const undoer = await owner(T);
       const cls = await classRow(T, "Mover", "Mat 1", { matId: one.id });
       as("owner", T);
       expect((await classPATCH(request(`/api/classes/${cls.id}`, "PATCH", { matId: two.id }), params(cls.id))).status).toBe(200);
       const [edit] = await classEdits(T, cls.id, 1);
       const [undo, rename] = await Promise.allSettled([
-        withTenantContext(T, (tx) => executeUndo(tx, [{ row: edit, decision: decideUndo(edit, false) }], { tenantId: T, userId: "synthetic-owner" })),
+        withTenantContext(T, (tx) => executeUndo(tx, [{ row: edit, decision: decideUndo(edit, false) }], { tenantId: T, userId: undoer })),
         matPATCH(request(`/api/mats/${one.id}`, "PATCH", { name: "Main mat" }), params(one.id)),
       ]);
       // On failure, say why the undo was refused rather than only that it was.
