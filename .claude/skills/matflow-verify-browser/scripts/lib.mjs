@@ -220,6 +220,21 @@ export function gridInvariants(page, { sessions }) {
       const head = grid.querySelector(`[data-day-head="${c.day}"]`);
       if (!head) problems.push(`${c.label}: no header for ${c.day}`);
       else if (c.r.left < R(head).left - 1 || c.r.right > R(head).right + 1) problems.push(`${c.label}: outside its day (${c.r.left.toFixed(1)}–${c.r.right.toFixed(1)} against ${R(head).left.toFixed(1)}–${R(head).right.toFixed(1)})`);
+      // Split by mat: a chip sits under its own mat's header, never under a neighbour's.
+      const dayEl = c.cell.closest("[data-day]");
+      const matHeads = dayEl ? [...dayEl.querySelectorAll("[data-mat-head]")] : [];
+      if (matHeads.length > 0) {
+        const mine = matHeads.find((h) => h.getAttribute("data-mat-head") === (c.cell.getAttribute("data-mat") ?? ""));
+        if (!mine) problems.push(`${c.label}: no mat header for its column`);
+        else if (c.r.left < R(mine).left - 1 || c.r.right > R(mine).right + 1) problems.push(`${c.label}: outside its mat column "${(mine.textContent ?? "").trim()}"`);
+      }
+    }
+    // Mat headers show their name in full, or carry it in `title` when two lines are not enough.
+    for (const head of grid.querySelectorAll("[data-mat-head]")) {
+      const text = head.querySelector(".pg-mat-pill > span");
+      if (text && (text.scrollHeight > text.clientHeight + 1 || text.scrollWidth > text.clientWidth + 1) && head.getAttribute("title") !== (text.textContent ?? "")) {
+        problems.push(`mat header "${text.textContent}" is cut and has no title`);
+      }
     }
     const placed = chips.filter((c) => c.r && c.start !== null);
     for (let i = 0; i < placed.length; i++) {

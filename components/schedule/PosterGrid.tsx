@@ -216,7 +216,7 @@ export function PosterGrid({
               {day.columns.map((column) => {
                 const name = matName ? matName(column.matId) : "";
                 return (
-                  <div key={column.matId ?? "none"} className="pg-mat" title={name} style={vars({ "--c": column.col, "--s": column.span })}>
+                  <div key={column.matId ?? "none"} className="pg-mat" title={name} data-mat-head={column.matId ?? ""} style={vars({ "--c": column.col, "--s": column.span })}>
                     <span className="pg-mat-pill">
                       <span>{name}</span>
                     </span>
