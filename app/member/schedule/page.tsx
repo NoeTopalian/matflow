@@ -71,6 +71,12 @@ type ScheduleClass = {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+/**
+ * Secondary ink on the members' day: the shell's own text at 72 %. The shell's muted ink measures under 4.5:1 on a
+ * light club shell (#64748b on #f5f5f4 is 4.4:1); this reads on dark and light shells and over a block's tint.
+ */
+const QUIET_INK = "color-mix(in srgb, var(--member-text) 72%, transparent)";
+
 /** How the club splits same-time classes, and its mats in the club's order (GET /api/member/timetable). */
 type ClubTimetable = { layout: GridLayout; mats: { id: string; name: string }[] };
 const BY_TIME: ClubTimetable = { layout: "time", mats: [] };
@@ -381,7 +387,7 @@ function DayPane({
     >
       <div ref={root} className="px-3 pb-6">
         {day.fellBack ? (
-          <p className="mb-2 px-1 text-xs" style={{ color: "var(--member-text-muted)" }} data-testid="schedule-fallback">
+          <p className="mb-2 px-1 text-xs" style={{ color: QUIET_INK }} data-testid="schedule-fallback">
             {FELL_BACK}
           </p>
         ) : null}
@@ -418,7 +424,7 @@ function DayPane({
                   label={`${inCluster.length} classes, ${minToTime(from)} to ${minToTime(to)}`}
                   className="shadow-lg"
                   style={{ background: "var(--member-elevated)" }}
-                  closeClassName="text-[var(--member-text-muted)]"
+                  closeClassName="text-[color-mix(in_srgb,var(--member-text)_72%,transparent)]"
                   onClose={(returnFocus) => {
                     if (returnFocus) root.current?.querySelector<HTMLElement>(`[data-cell-more="${item.id}"] button`)?.focus();
                     setMore(null);
@@ -455,7 +461,7 @@ function MemberMore({ count, label, expanded, onOpen, onClose }: { count: number
       style={{ borderColor: "var(--member-border)", background: "var(--member-surface)", color: "var(--member-text)" }}
     >
       <span className="text-[13px] font-semibold leading-[17px]">+{count} more</span>
-      <span className="text-[11px] leading-[14px]" style={{ color: "var(--member-text-muted)" }}>Show them</span>
+      <span className="text-[11px] leading-[14px]" style={{ color: QUIET_INK }}>Show them</span>
     </Button>
   );
 }
@@ -505,7 +511,7 @@ function SessionBlock({
   // (the contact sheet of 26 Sep showed near-invisible class names on a blue club).
   const muted  = isSub
     ? (text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)")
-    : "var(--member-text-muted)";
+    : QUIET_INK;
   const ink    = isSub ? text : "var(--member-text)";
   const ended  = state === "ended";
   const cancelled = state === "cancelled";

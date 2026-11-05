@@ -924,7 +924,12 @@ option {
   --pg-pin-bg: var(--member-bg);
   --pg-mat-bg: transparent;
   --pg-mat-ink: var(--tx-1);
+  /* The shell's own muted ink measures under 4.5:1 on a light club shell (#64748b on #f5f5f4 is 4.4:1): the time
+     labels and break rows use the shell's text at 72 %, which reads on dark and light shells alike. */
+  --pg-quiet-ink: color-mix(in srgb, var(--member-text) 72%, transparent);
 }
+.pg-grid[data-tone="member"] .pg-tick,
+.pg-grid[data-tone="member"] .pg-break { color: var(--pg-quiet-ink); }
 /* The opened "+N more": over the grid at the cluster's first line, across
    every column, above the chips and the pinned mat names. Absolutely placed in
    its grid area, so it takes no part in the row sizes. The surface paints it. */
