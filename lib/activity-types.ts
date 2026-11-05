@@ -282,6 +282,59 @@ export function parseTypesParam(raw: string | null | undefined, role: ActivityRo
   return keys.length ? { view: null, keys, ignored, dropped } : fallback(ignored, dropped);
 }
 
+// ── What the server sends: the only shape the timeline is given ──────────────
+
+export type SubjectKind = "member" | "class" | "session" | "payment" | "tier" | "pack" | "staff" | "venue" | "rank";
+
+/** A person or thing a sentence names. `href: null` is plain text: gone, or a page this reader may not open. */
+export type FeedSubject = { kind: SubjectKind; name: string; href: string | null; gone?: "deleted" | "erased" };
+export type Part = { text: string } | { subject: FeedSubject; possessive?: boolean };
+export type FeedChange = { label: string; from: string | null; to: string | null };
+export type FeedSource = { label: string; staff: { id: string; name: string } | null; support: boolean };
+export type FeedUndo = { ok: true; sinceHere: { userId: string; name: string } | null } | { ok: false; reason: string };
+
+export type FeedEntry = {
+  id: string;
+  /** ISO instant. */
+  at: string;
+  /** The club day it falls on, "YYYY-MM-DD": drives the day headers. */
+  dayKey: string;
+  /** An ActivityType key. */
+  type: string;
+  parts: Part[];
+  /** The sentence as plain text (dialog titles, accessible names). */
+  plain: string;
+  detail: Part[] | null;
+  detailPlain: string | null;
+  /** Every changed field. `from`/`to` are null for a manager, and for an erased or deleted member. */
+  changes: FeedChange[] | null;
+  source: FeedSource;
+  undone: boolean;
+  /** Owner only, and never on an embedded timeline. */
+  undo?: FeedUndo;
+};
+
+/** GET /api/activity. Closed: no audit row, metadata, address, operator id or request id is ever in it. */
+export type ActivityResponse = {
+  entries: FeedEntry[];
+  nextCursor: string | null;
+  /** False when names could not be loaded: every entry is its plain label. */
+  enriched: boolean;
+  clock: { timeZone: string; todayKey: string; minDayKey: string; clamped: boolean };
+  filters: {
+    types: { view: string | null; keys: string[] };
+    /** `name: null` means the id is not a record of this club (removed, or never was). */
+    member: { id: string; name: string | null } | null;
+    class: { id: string; name: string | null } | null;
+    payment: { id: string; label: string | null } | null;
+    tier: { id: string; name: string | null } | null;
+    staff: { id: string; name: string | null } | null;
+    dayKey: string | null;
+  };
+  ignoredTypes: string[];
+  droppedTypes: string[];
+};
+
 // ── Field names, in words ────────────────────────────────────────────────────
 
 /**

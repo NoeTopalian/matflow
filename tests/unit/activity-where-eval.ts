@@ -64,6 +64,7 @@ function column(filter: unknown, value: unknown): Tri {
   if ("in" in f) return value == null ? null : (f.in as unknown[]).includes(value);
   if ("startsWith" in f) return typeof value === "string" ? value.startsWith(f.startsWith as string) : null;
   if ("lt" in f) return value instanceof Date ? value.getTime() < (f.lt as Date).getTime() : null;
+  if ("gte" in f) return value instanceof Date ? value.getTime() >= (f.gte as Date).getTime() : null;
   throw new Error(`activity-where-eval: unsupported column filter ${JSON.stringify(Object.keys(f))}`);
 }
 

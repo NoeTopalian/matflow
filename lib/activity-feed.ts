@@ -20,7 +20,22 @@
  */
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { ACTIVITY_TYPES, OTHER_TYPE, activityType, fieldLabel, typeKeyForAction, visibleTypeKeys, type ActivityRole } from "@/lib/activity-types";
+import {
+  ACTIVITY_TYPES,
+  OTHER_TYPE,
+  activityType,
+  fieldLabel,
+  typeKeyForAction,
+  visibleTypeKeys,
+  type ActivityRole,
+  type FeedChange,
+  type FeedEntry,
+  type FeedSource,
+  type FeedSubject,
+  type FeedUndo,
+  type Part,
+  type SubjectKind,
+} from "@/lib/activity-types";
 import { UNDO_PREFIX, auditEntryLabel, classLifecycleOf, isUndoAction } from "@/lib/audit-labels";
 import { clubDayKey } from "@/lib/club-month";
 import { formatDate } from "@/lib/date";
@@ -249,7 +264,6 @@ export const FEED_ROW_SELECT = {
   user: { select: { id: true, name: true } },
 } satisfies Prisma.AuditLogSelect;
 
-export type SubjectKind = "member" | "class" | "session" | "payment" | "tier" | "pack" | "staff" | "venue" | "rank";
 
 type PaymentInfo = { id: string; memberId: string | null; amountPence: number; currency: string; stripeInvoiceId: string | null };
 
@@ -520,33 +534,6 @@ export function hrefFor(subject: { kind: SubjectKind; id: string; memberId?: str
 }
 
 // ── The entry: the only shape that leaves the server ─────────────────────────
-
-export type FeedSubject = { kind: SubjectKind; name: string; href: string | null; gone?: "deleted" | "erased" };
-export type Part = { text: string } | { subject: FeedSubject; possessive?: boolean };
-export type FeedChange = { label: string; from: string | null; to: string | null };
-export type FeedSource = { label: string; staff: { id: string; name: string } | null; support: boolean };
-export type FeedUndo = { ok: true; sinceHere: { userId: string; name: string } | null } | { ok: false; reason: string };
-
-export type FeedEntry = {
-  id: string;
-  /** ISO instant. */
-  at: string;
-  /** The club day it falls on, "YYYY-MM-DD": drives the day headers. */
-  dayKey: string;
-  /** An ActivityType key. */
-  type: string;
-  parts: Part[];
-  /** The sentence as plain text (dialog titles, accessible names). */
-  plain: string;
-  detail: Part[] | null;
-  detailPlain: string | null;
-  /** Every changed field. `from`/`to` are null for a manager, and for an erased or deleted member. */
-  changes: FeedChange[] | null;
-  source: FeedSource;
-  undone: boolean;
-  /** Owner only, and never on an embedded timeline. */
-  undo?: FeedUndo;
-};
 
 export type FeedContext = {
   lookups: ActivityLookups;

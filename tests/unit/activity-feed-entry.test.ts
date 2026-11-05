@@ -6,7 +6,8 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { AUDIT_LABELS } from "@/lib/audit-labels";
-import { emptyLookups, hrefFor, plainFallbackEntry, sourceOf, toFeedEntries, toFeedEntry, type ActivityLookups, type FeedContext, type FeedEntry, type FeedRow, type Part } from "@/lib/activity-feed";
+import { emptyLookups, hrefFor, plainFallbackEntry, sourceOf, toFeedEntries, toFeedEntry, type ActivityLookups, type FeedContext, type FeedRow } from "@/lib/activity-feed";
+import type { FeedEntry, Part } from "@/lib/activity-types";
 
 const TZ = "Europe/London";
 const JACK = { id: "u_jack", name: "Jack Streeter" };
