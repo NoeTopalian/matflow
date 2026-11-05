@@ -21,11 +21,28 @@ const L = ledger("timetable-mats");
 const errors = [];
 let hydration = 0;
 let frozen = false;
-const watch = (page) => page.on("pageerror", (e) => {
-  // Server on the real clock, browser on the frozen one: React reports the mismatch (#418) and re-renders.
-  if (frozen && /#418|Hydration failed|hydrat/i.test(e.message)) hydration += 1;
-  else errors.push(e.message);
-});
+// API requests in flight, and the slowest that finished: a step that times out says what it was waiting on.
+const inFlight = new Map();
+const slowest = [];
+const watch = (page) => {
+  page.on("pageerror", (e) => {
+    // Server on the real clock, browser on the frozen one: React reports the mismatch (#418) and re-renders.
+    if (frozen && /#418|Hydration failed|hydrat/i.test(e.message)) hydration += 1;
+    else errors.push(e.message);
+  });
+  page.on("request", (r) => { if (r.url().includes("/api/")) inFlight.set(r, Date.now()); });
+  const done = (r, how) => {
+    const start = inFlight.get(r);
+    if (start === undefined) return;
+    inFlight.delete(r);
+    slowest.push({ what: `${r.method()} ${new URL(r.url()).pathname}`, ms: Date.now() - start, how });
+    slowest.sort((a, b) => b.ms - a.ms);
+    slowest.length = Math.min(slowest.length, 5);
+  };
+  page.on("requestfinished", (r) => done(r, "finished"));
+  page.on("requestfailed", (r) => done(r, "failed"));
+};
+const stuck = () => [...inFlight].map(([r, t]) => `${r.method()} ${new URL(r.url()).pathname} for ${Math.round((Date.now() - t) / 1000)} s`);
 
 const SESSIONS = POSTER.rows.length;
 const CLASSES = classesOf(POSTER);
@@ -69,6 +86,7 @@ async function section(id, desc, fn) {
   } catch (e) {
     const lines = String(e.message ?? e).split("\n");
     L.check(id, desc, false, [lines[0], lines.find((l) => /waiting for|Expected|Received/.test(l))?.trim()].filter(Boolean).join(" — "));
+    L.note(`${id}-requests`, "API requests still in flight when the step failed, and the slowest that finished", { inFlight: stuck(), slowest: [...slowest] });
     process.exitCode = 1;
     if (main && !main.isClosed()) {
       await shot(main, `timetable-mats-fail-${id}`);
