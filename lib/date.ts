@@ -14,13 +14,32 @@ function toDate(d: DateInput): Date {
   return d instanceof Date ? d : new Date(d);
 }
 
-/** "15 Aug 2026" */
-export function formatDate(d: DateInput): string {
+/** `{ timeZone }` when one is given: the formatters below default to the reader's zone. */
+function zone(timeZone: string | undefined): { timeZone?: string } {
+  return timeZone ? { timeZone } : {};
+}
+
+/** "15 Aug 2026". Pass `timeZone` (the club's) to format an instant on that clock, not the reader's. */
+export function formatDate(d: DateInput, timeZone?: string): string {
   return toDate(d).toLocaleDateString(LOCALE, {
     day: "numeric",
     month: "short",
     year: "numeric",
+    ...zone(timeZone),
   });
+}
+
+/** "Wednesday 4 November 2026" — built from parts, so no ICU version adds a comma after the weekday. */
+export function formatDateFull(d: DateInput, timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat(LOCALE, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    ...zone(timeZone),
+  }).formatToParts(toDate(d));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("weekday")} ${part("day")} ${part("month")} ${part("year")}`;
 }
 
 /** "15 August 2026" */
@@ -32,12 +51,13 @@ export function formatDateLong(d: DateInput): string {
   });
 }
 
-/** "18:05" (24-hour) */
-export function formatTime(d: DateInput): string {
+/** "18:05" (24-hour). Pass `timeZone` to read the club's clock. */
+export function formatTime(d: DateInput, timeZone?: string): string {
   return toDate(d).toLocaleTimeString(LOCALE, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    ...zone(timeZone),
   });
 }
 
@@ -64,8 +84,8 @@ export function formatWeekLabel(d: DateInput): string {
 }
 
 /** "15 Aug 2026, 18:05" */
-export function formatDateTime(d: DateInput): string {
-  return `${formatDate(d)}, ${formatTime(d)}`;
+export function formatDateTime(d: DateInput, timeZone?: string): string {
+  return `${formatDate(d, timeZone)}, ${formatTime(d, timeZone)}`;
 }
 
 /**

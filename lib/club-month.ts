@@ -51,10 +51,54 @@ export function clubMonthKey(instant: Date, timeZone: string): string {
 
 /** monthIndex is 0-based and may overflow either way (Date.UTC normalises it). */
 function monthStartFor(year: number, monthIndex: number, timeZone: string): Date {
-  const naive = Date.UTC(year, monthIndex, 1, 0, 0, 0, 0);
+  return dayStartFor(year, monthIndex, 1, timeZone);
+}
+
+/** Local midnight of a calendar date in `timeZone`, as a UTC instant. `day` may overflow, as `monthIndex` may. */
+function dayStartFor(year: number, monthIndex: number, day: number, timeZone: string): Date {
+  const naive = Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
   const firstOffset = zoneOffsetMs(new Date(naive), timeZone);
   const secondOffset = zoneOffsetMs(new Date(naive - firstOffset), timeZone);
   return new Date(naive - secondOffset);
+}
+
+// ── Club days (the Activity timeline's "Today", "Yesterday", "4 November") ────
+
+const DAY_KEY = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/** "2026-11-04": the club-zone calendar date an instant falls on. */
+export function clubDayKey(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+/** A "YYYY-MM-DD" that is a real calendar date, or null (30 February, a repeated param, free text). */
+export function parseDayKey(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const match = DAY_KEY.exec(raw);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toISOString().slice(0, 10) === raw ? raw : null;
+}
+
+/** The day key `days` calendar days later (negative: earlier). */
+export function shiftDayKey(dayKey: string, days: number): string {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * One club day as instants: half-open `[start, nextStart)`, where `nextStart`
+ * is local midnight of the NEXT CALENDAR DATE — never `start + 24 h`, since a
+ * day is 23 or 25 hours long when the clocks change.
+ *
+ * Not `todayWindow` (lib/class-time): that is a ±12 h band around a
+ * `ClassInstance.date` marker and is wrong for instants.
+ */
+export function clubDayWindow(dayKey: string, timeZone: string): { start: Date; nextStart: Date } {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return { start: dayStartFor(year, month - 1, day, timeZone), nextStart: dayStartFor(year, month - 1, day + 1, timeZone) };
 }
 
 /**
