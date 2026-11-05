@@ -28,6 +28,7 @@ export function useActivityUndo({
   timeZone,
   toast,
   onUndone,
+  onRefused,
   onUnsure,
 }: {
   /** The rows on screen: an item in the "since here" list is described by its own sentence when it is one of these. */
@@ -36,6 +37,8 @@ export function useActivityUndo({
   toast: (message: string, type?: "success" | "error" | "info" | "warning") => void;
   /** These rows were undone: strike them through in place. */
   onUndone: (ids: string[]) => void;
+  /** The server refused to undo this row, for the reason given: the row says so instead of offering Undo again. */
+  onRefused: (id: string, reason: string) => void;
   /** The outcome is not known (the connection dropped): reload page one. */
   onUnsure: () => void;
 }): { askUndo: (entry: FeedEntry) => void; askUndoTo: (entry: FeedEntry) => void; dialogs: ReactNode } {
@@ -44,14 +47,16 @@ export function useActivityUndo({
   const [busy, setBusy] = useState(false);
 
   const preview = useCallback(async (entry: FeedEntry, staff: { userId: string; name: string }) => {
-    setMany({ entry, staff, plan: null, planError: null });
+    const asked: UndoTo = { entry, staff, plan: null, planError: null };
+    setMany(asked);
+    const answer = (next: Pick<UndoTo, "plan" | "planError">) => setMany((open) => (open === asked ? { ...asked, ...next } : open));
     try {
       const res = await fetch("/api/audit-log/undo-to", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: staff.userId, auditId: entry.id, preview: true }) });
       const data = (await res.json().catch(() => ({}))) as Partial<Plan> & { error?: string };
-      if (!res.ok) setMany({ entry, staff, plan: null, planError: data.error ?? "Couldn't work out what can be undone." });
-      else setMany({ entry, staff, plan: { reversible: data.reversible ?? [], skipped: data.skipped ?? [] }, planError: null });
+      if (!res.ok) answer({ plan: null, planError: data.error ?? "Couldn't work out what can be undone." });
+      else answer({ plan: { reversible: data.reversible ?? [], skipped: data.skipped ?? [] }, planError: null });
     } catch {
-      setMany({ entry, staff, plan: null, planError: "Couldn't reach MatFlow. Nothing has changed." });
+      answer({ plan: null, planError: "Couldn't reach MatFlow. Nothing has changed." });
     }
   }, []);
 
@@ -63,6 +68,11 @@ export function useActivityUndo({
       const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
       if (!res.ok) {
         toast(data.error ?? "Couldn't undo that.", "error");
+        // The server has decided this row cannot be undone now (someone already did, or it changed since): stop offering it.
+        if (res.status === 409) {
+          onRefused(one.id, data.error ?? "This can't be undone now.");
+          setOne(null);
+        }
         return;
       }
       toast(data.message ?? "Undone.", "success");
@@ -123,7 +133,7 @@ export function useActivityUndo({
         onClose={() => {
           if (!busy) setMany(null);
         }}
-        title={many ? `Undo everything ${many.staff.name} did since here?` : "Undo?"}
+        title={many ? `Undo everything ${many.staff.name} did since ${formatTime(many.entry.at, timeZone)}?` : "Undo?"}
         description={
           many?.planError
             ? many.planError

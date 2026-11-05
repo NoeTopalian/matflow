@@ -107,6 +107,8 @@ afterEach(() => {
 const renderPage = (role: "owner" | "manager" = "owner", viewerId = OWNER) => render(<ActivityTimeline variant="page" role={role} viewerId={viewerId} staff={STAFF} tiers={TIERS} />);
 const table = () => screen.getByRole("table");
 const loaded = () => waitFor(() => expect(screen.getByTestId("activity-status").textContent).not.toBe(""));
+/** The screen-reader status line, which repeats the empty state's title. */
+const STATUS = '[data-testid="activity-status"]';
 
 describe("first load", () => {
   it("asks once, for the default view, and draws day headings, sentences and links from the answer", async () => {
@@ -249,9 +251,11 @@ describe("the address bar is the filter", () => {
 
   it("says what a link left out, and when a date was before the log began", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=checkin,bogus,staff&day=2020-01-01");
-    respond = () => ({ status: 200, body: body([], { ignoredTypes: ["bogus"], droppedTypes: ["staff"], clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2025-11-05", clamped: true }, filters: { types: { view: null, keys: ["checkin"] }, member: null, class: null, payment: null, tier: null, staff: null, dayKey: "2025-11-05" } }) });
+    respond = () => ({ status: 200, body: body([], { clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2025-11-05", clamped: true }, filters: { types: { view: null, keys: ["checkin"] }, member: null, class: null, payment: null, tier: null, staff: null, dayKey: "2025-11-05" } }) });
     renderPage("manager", "u_manager");
     await loaded();
+    // Only what this person may see is asked for; what was left out is said by the page, not learnt from the answer.
+    expect(lastQuery().get("types")).toBe("checkin");
     expect(screen.getByText("This link included activity types that no longer exist.")).toBeTruthy();
     expect(screen.getByText("Some activity types in this link are only visible to the owner.")).toBeTruthy();
     expect(screen.getByText(/nothing to show before 5 Nov 2025/)).toBeTruthy();
@@ -387,13 +391,16 @@ describe("what is drawn when there is nothing, or something went wrong", () => {
   it("nothing at all, with nothing filtered and everything shown", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=all");
     renderPage();
-    await waitFor(() => expect(screen.getByText("Nothing has been recorded yet.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Nothing has been recorded yet.", { ignore: STATUS })).toBeTruthy());
+    // Said once on the page and once to a screen reader, in the same words.
+    expect(screen.getByTestId("activity-status").textContent).toBe("Nothing has been recorded yet.");
   });
 
   it("nothing for these filters: says which, and offers the two ways out", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=refund&userId=u_jack&day=2026-11-03");
     renderPage();
-    await waitFor(() => expect(screen.getByText("Nothing matches these filters.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Nothing matches these filters.", { ignore: STATUS })).toBeTruthy());
+    expect(screen.getByTestId("activity-status").textContent).toBe("Nothing matches these filters.");
     expect(screen.getByText("Refund · done by Jack Streeter · up to 3 Nov 2026", { selector: "p" })).toBeTruthy();
     const everything = screen.getAllByRole("button", { name: "Show everything" }).at(-1)!;
     fireEvent.click(everything);
@@ -444,24 +451,25 @@ describe("undo (owner)", () => {
     respond = () => ({ status: 200, body: body([reversible({ id: "r1" })]) });
     renderPage();
     await loaded();
-    expect(within(table()).getByRole("button", { name: /^Undo everything Jack Streeter did since/ })).toBeTruthy();
+    expect(within(table()).getByRole("button", { name: /^Since here: undo everything Jack Streeter did since/ })).toBeTruthy();
     for (const narrowed of ["?types=all&memberId=m_mel", "?types=all&day=2026-11-04", "?types=club", "?types=all&classId=c1"]) {
       act(() => window.history.replaceState(null, "", `/dashboard/activity${narrowed}`));
-      await waitFor(() => expect(within(table()).queryByRole("button", { name: /^Undo everything/ })).toBeNull());
+      await waitFor(() => expect(within(table()).queryByRole("button", { name: /^Since here/ })).toBeNull());
       expect(within(table()).getByRole("button", { name: /^Undo: / })).toBeTruthy();
     }
   });
 
   it("undoing a row asks first, names it, and strikes it through where it is", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=all");
-    // The server says a row is undone once it is; until that answer lands the row is struck through locally.
+    // After the undo the page asks for page one again, and here that answer never comes: the row is struck through anyway.
     let undone = false;
     respond = (call) => {
       if (call.method === "POST") {
         undone = true;
         return { status: 200, body: { ok: true, message: "Undone." } };
       }
-      return { status: 200, body: body([undone ? reversible({ id: "r1", undone: true, undo: { ok: false, reason: "Already undone." } }) : reversible({ id: "r1" }), entry({ id: "r2" })]) };
+      if (undone) return new Promise(() => {});
+      return { status: 200, body: body([reversible({ id: "r1" }), entry({ id: "r2" })]) };
     };
     renderPage();
     await loaded();
@@ -471,6 +479,7 @@ describe("undo (owner)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Undo this" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url === "/api/audit-log/r1/undo")).toBe(true));
     await waitFor(() => expect(within(table()).getAllByText("Undone").length).toBeGreaterThan(0));
+    expect(within(table()).getByText("Jack Streeter updated Melody Orekoya's details").className).toContain("line-through");
     expect(h.toasts.at(-1)).toEqual({ message: "Undone.", type: "success" });
     expect(within(table()).queryByRole("button", { name: /^Undo: Jack/ })).toBeNull();
     expect(window.location.search).toBe("?types=all");
@@ -481,7 +490,7 @@ describe("undo (owner)", () => {
     renderPage();
     await loaded();
     expect(within(screen.getAllByTestId("activity-card")[0]).getByText(/Can't undo: Money moved/)).toBeTruthy();
-    fireEvent.click(within(table()).getByRole("button", { name: /^Why this can't be undone/ }));
+    fireEvent.click(within(table()).getByRole("button", { name: /^Can't undo: / }));
     expect(within(screen.getByRole("dialog", { name: "Why this can't be undone" })).getByText("Money moved — reverse it from Payments (refund), not from here.")).toBeTruthy();
   });
 
@@ -498,7 +507,7 @@ describe("undo (owner)", () => {
     };
     renderPage();
     await loaded();
-    fireEvent.click(within(table()).getByRole("button", { name: /^Undo everything Jack Streeter did since/ }));
+    fireEvent.click(within(table()).getByRole("button", { name: /^Since here: undo everything Jack Streeter did since/ }));
     const plan = await screen.findByTestId("undo-plan");
     expect(plan.textContent).toContain("19:45 Jack Streeter updated Melody Orekoya's details");
     expect(plan.textContent).toContain("19:50 Updated a class");
@@ -509,6 +518,109 @@ describe("undo (owner)", () => {
     const sent = calls.filter((c) => c.url === "/api/audit-log/undo-to")[1].body as { expectedIds: string[]; userId: string; auditId: string; preview: boolean };
     expect(sent).toEqual({ userId: "u_jack", auditId: "r1", preview: false, expectedIds: ["r1", "not-loaded"] });
     await waitFor(() => expect(within(table()).getAllByText("Undone").length).toBeGreaterThan(0));
+  });
+
+  it("an undo the server refuses stops being offered, and the row says why", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=all");
+    respond = (call) => (call.method === "POST" ? { status: 409, body: { error: "Already undone." } } : { status: 200, body: body([reversible({ id: "r1" })]) });
+    renderPage();
+    await loaded();
+    fireEvent.click(within(table()).getByRole("button", { name: /^Undo: / }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Undo this" }));
+    await waitFor(() => expect(within(table()).queryByRole("button", { name: /^Undo: / })).toBeNull());
+    expect(h.toasts.at(-1)).toEqual({ message: "Already undone.", type: "error" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(screen.getAllByTestId("activity-card")[0]).getByText(/Can't undo: Already undone\./)).toBeTruthy();
+    // Not struck through: nothing here was undone by this person.
+    expect(within(table()).queryByText("Undone")).toBeNull();
+  });
+
+  it("a 'Since here' answer that arrives after its dialog was closed does not bring the dialog back", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=all");
+    let release: (answer: { status: number; body: unknown }) => void = () => {};
+    respond = (call) => (call.url === "/api/audit-log/undo-to" ? new Promise((resolve) => (release = resolve)) : { status: 200, body: body([reversible({ id: "r1" })]) });
+    renderPage();
+    await loaded();
+    fireEvent.click(within(table()).getByRole("button", { name: /^Since here/ }));
+    expect(screen.getByText("Working out what can be put back…")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await act(async () => {
+      release({ status: 200, body: { reversible: [{ id: "r1", action: "member.update", createdAt: "2026-11-05T19:45:00.000Z" }], skipped: [] } });
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("the dialog's title says since when, not 'since here'", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=all");
+    respond = (call) => (call.url === "/api/audit-log/undo-to" ? { status: 200, body: { reversible: [], skipped: [] } } : { status: 200, body: body([reversible({ id: "r1" })]) });
+    renderPage();
+    await loaded();
+    fireEvent.click(within(table()).getByRole("button", { name: /^Since here/ }));
+    expect(await screen.findByRole("dialog", { name: "Undo everything Jack Streeter did since 19:45?" })).toBeTruthy();
+  });
+});
+
+describe("a link that has been mangled, and words that mean one thing", () => {
+  it("a day that is not a date and an id that is not an id are not filters", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?day=abc&memberId=a%20b");
+    respond = () => ({ status: 200, body: body([entry()]) });
+    renderPage();
+    await loaded();
+    expect([lastQuery().get("day"), lastQuery().get("memberId")]).toEqual([null, null]);
+    expect(screen.getByTestId("activity-summary").textContent).not.toMatch(/Invalid|member|up to/);
+    expect(screen.queryByTestId("member-picked")).toBeNull();
+    // The day controls still work from today.
+    fireEvent.click(screen.getByRole("button", { name: "Previous day" }));
+    expect(new URLSearchParams(window.location.search).get("day")).toBe("2026-11-04");
+  });
+
+  it("'Show all activity types' widens the types and keeps the member; 'Show everything' (when nothing matches) clears the member too", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=refund&memberId=m_mel");
+    respond = () => ({ status: 200, body: body([]) });
+    renderPage();
+    await loaded();
+    expect(screen.getAllByRole("button", { name: "Show everything" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Show all activity types" }));
+    expect(window.location.search).toBe("?types=all&memberId=m_mel");
+    await waitFor(() => expect(lastQuery().get("types")).toBe("all"));
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Show everything" }));
+    expect(window.location.search).toBe("?types=all");
+  });
+
+  it("the rows are marked busy while different filters load, and the status says what the page says when there is nothing", async () => {
+    let hold = false;
+    respond = () => (hold ? new Promise(() => {}) : { status: 200, body: body([entry()]) });
+    renderPage();
+    await loaded();
+    hold = true;
+    fireEvent.click(screen.getByRole("button", { name: "Money" }));
+    await waitFor(() => expect(table().closest("[aria-busy]")?.getAttribute("aria-busy")).toBe("true"));
+    // The rows for the old filters are still there, dimmed, not swapped for an empty list.
+    expect(within(table()).getByText("Melody Orekoya")).toBeTruthy();
+    expect(screen.getByTestId("activity-status").textContent).toBe("");
+  });
+
+  it("a picked member is named at once, before the server has answered", async () => {
+    let hold = false;
+    respond = (call) => {
+      if (call.url.startsWith("/api/members")) return { status: 200, body: { members: [{ id: "m_mel", name: "Melody Orekoya", email: "mel@example.test", status: "active" }] } };
+      return hold ? new Promise(() => {}) : { status: 200, body: body([entry()]) };
+    };
+    renderPage();
+    await loaded();
+    hold = true;
+    const field = screen.getByRole("combobox", { name: "Member" });
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: "mel" } });
+    fireEvent.mouseDown(await screen.findByRole("option", { name: /Melody Orekoya/ }));
+    expect(window.location.search).toBe("?memberId=m_mel");
+    expect(screen.getByTestId("member-picked").textContent).toContain("Melody Orekoya");
+    expect(screen.getByRole("button", { name: "Clear member filter: Melody Orekoya" })).toBeTruthy();
+    // What was typed never reaches the address.
+    expect(window.location.href).not.toContain("mel@");
   });
 });
 
@@ -548,7 +660,7 @@ describe("embedded in a record's page", () => {
     failed.unmount();
     respond = () => ({ status: 200, body: body([]) });
     render(<ActivityTimeline variant="embedded" role="owner" scope={{ kind: "member", id: "m_mel" }} />);
-    await waitFor(() => expect(screen.getByText("Nothing has been recorded yet.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Nothing recorded for this member yet.")).toBeTruthy());
     expect(screen.getByRole("link", { name: "See all activity" })).toBeTruthy();
   });
 });

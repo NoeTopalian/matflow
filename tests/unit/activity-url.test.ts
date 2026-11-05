@@ -3,7 +3,7 @@
 // concurrent one, naming a selection, and the request each state produces.
 import { describe, it, expect } from "vitest";
 import { ACTIVITY_TYPES, defaultTypeKeys, visibleTypeKeys } from "@/lib/activity-types";
-import { NO_FILTERS, apiQuery, dayHeading, hasSubjectFilter, isProductDefault, matchingView, readFilters, shiftDay, typesLabel, typesValue, writeFilters } from "@/lib/activity-url";
+import { NO_FILTERS, apiQuery, dayHeading, hasSubjectFilter, matchingView, readFilters, shiftDay, typesLabel, typesValue, writeFilters } from "@/lib/activity-url";
 
 const params = (query: string) => new URLSearchParams(query);
 
@@ -12,6 +12,14 @@ describe("readFilters", () => {
     expect(readFilters(params("types=money&memberId=m1&classId=c1&paymentId=p1&tierId=t1&userId=u1&day=2026-11-04"))).toEqual({ types: "money", memberId: "m1", classId: "c1", paymentId: "p1", tierId: "t1", userId: "u1", day: "2026-11-04" });
     expect(readFilters(params(""))).toEqual(NO_FILTERS);
     expect(readFilters(params("memberId=&day=%20"))).toEqual(NO_FILTERS);
+  });
+
+  it("a day that is not a date and an id that is not an id are not filters (the server ignores them too)", () => {
+    for (const day of ["abc", "2026-13-01", "2026-02-30", "2026-11-4", "20261104"]) expect(readFilters(params(`day=${day}`)).day, day).toBeNull();
+    expect(readFilters(params("day=2028-02-29")).day).toBe("2028-02-29");
+    expect(readFilters(params(`memberId=${encodeURIComponent("a b")}&classId=${encodeURIComponent("x/y")}&userId=${"u".repeat(101)}`))).toEqual(NO_FILTERS);
+    // Seeded ids are readable, not cuids.
+    expect(readFilters(params("classId=inst-gi-2026-11-04-19:00")).classId).toBe("inst-gi-2026-11-04-19:00");
   });
 });
 
@@ -64,11 +72,6 @@ describe("naming a selection", () => {
     expect(typesValue(["refund", "checkin"], "owner")).toBe("checkin,refund");
     // Types the role may not see never reach the address.
     expect(typesValue(["checkin", "staff"], "manager")).toBe("checkin");
-  });
-
-  it("knows the product default from a personal one", () => {
-    expect(isProductDefault(defaultTypeKeys("manager"), "manager")).toBe(true);
-    expect(isProductDefault(["checkin"], "manager")).toBe(false);
   });
 
   it("knows when the page is narrowed to a subject", () => {

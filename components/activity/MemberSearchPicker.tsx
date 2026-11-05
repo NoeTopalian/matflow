@@ -47,6 +47,9 @@ export function MemberSearchPicker({
 }) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const clearRef = useRef<HTMLButtonElement>(null);
+  /** Where the keyboard goes once the field has changed shape: to the clear button after a pick, back to the field after a clear. */
+  const focusNext = useRef<"clear" | "field" | null>(null);
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
@@ -60,7 +63,6 @@ export function MemberSearchPicker({
     if (term.length < MIN_CHARS) return;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      setState({ kind: "searching" });
       try {
         const res = await fetch(`/api/members?search=${encodeURIComponent(term)}&take=${MAX_RESULTS}`, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -79,13 +81,28 @@ export function MemberSearchPicker({
     };
   }, [term, attempt]);
 
+  // The field and the picked box are different elements: focus follows the person across the swap, once the swap has happened.
+  const pickedId = value?.id ?? null;
+  useEffect(() => {
+    if (focusNext.current === "clear" && pickedId) clearRef.current?.focus();
+    else if (focusNext.current === "field" && !pickedId) inputRef.current?.focus();
+    else return;
+    focusNext.current = null;
+  }, [pickedId]);
+
   const options = state.kind === "results" && term.length >= MIN_CHARS ? state.options : [];
 
   function pick(option: Option) {
     setText("");
     setOpen(false);
     setState({ kind: "idle" });
+    focusNext.current = "clear";
     onChange({ id: option.id, name: option.name });
+  }
+
+  function retry() {
+    setState({ kind: "searching" });
+    setAttempt((n) => n + 1);
   }
 
   if (value) {
@@ -93,6 +110,7 @@ export function MemberSearchPicker({
       <div data-testid="member-picked" className="ui-fixed-size ui-field flex h-9 w-full items-center gap-1 rounded-[var(--r-md)] border border-bd-default bg-sf-1 pl-3 pr-1 text-sm text-tx-1">
         <span className="min-w-0 flex-1 truncate">{value.name ?? "Removed member"}</span>
         <Button
+          ref={clearRef}
           type="button"
           variant="ghost"
           size="compact"
@@ -100,9 +118,8 @@ export function MemberSearchPicker({
           aria-label={`Clear member filter: ${value.name ?? "removed member"}`}
           disabled={disabled}
           onClick={() => {
+            focusNext.current = "field";
             onChange(null);
-            // The field comes back in the same place; put the caret in it.
-            requestAnimationFrame(() => inputRef.current?.focus());
           }}
         >
           <X className="size-4" aria-hidden="true" />
@@ -112,6 +129,11 @@ export function MemberSearchPicker({
   }
 
   const showList = open && !disabled;
+  const searched = term.length >= MIN_CHARS;
+  // What a screen reader is told as the list changes. The visible lines say the same to everyone else.
+  const spoken = !showList || !searched ? "" : state.kind === "error" ? "Couldn't search members. Press Enter to try again." : state.kind !== "results" ? "Searching" : options.length === 0 ? `No member matches ${term}` : `${options.length} ${options.length === 1 ? "member" : "members"} found`;
+  const NOTE = "px-3 py-2 text-xs text-tx-3";
+
   return (
     <div className="relative w-full">
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-tx-3" aria-hidden="true" />
@@ -120,7 +142,7 @@ export function MemberSearchPicker({
         role="combobox"
         aria-label="Member"
         aria-expanded={showList}
-        aria-controls={listId}
+        aria-controls={showList && options.length ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={showList && options[active] ? `${listId}-${options[active].id}` : undefined}
         autoComplete="off"
@@ -129,8 +151,11 @@ export function MemberSearchPicker({
         value={text}
         disabled={disabled}
         onChange={(event) => {
-          setText(event.target.value);
+          const next = event.target.value;
+          setText(next);
           setOpen(true);
+          // The matches on screen are for what was typed before: never offer them for the new text.
+          setState(next.trim().length >= MIN_CHARS ? { kind: "searching" } : { kind: "idle" });
         }}
         onFocus={() => setOpen(true)}
         // Leaving the field closes the list; a click on an option lands first because options act on mousedown.
@@ -143,6 +168,10 @@ export function MemberSearchPicker({
           } else if (event.key === "Enter" && showList && options[active]) {
             event.preventDefault();
             pick(options[active]);
+          } else if (event.key === "Enter" && showList && searched && state.kind === "error") {
+            // The "Try again" button cannot be reached without leaving the field, which closes the list.
+            event.preventDefault();
+            retry();
           } else if (event.key === "Escape" && showList) {
             // Closes the list and keeps what was typed.
             event.preventDefault();
@@ -151,47 +180,47 @@ export function MemberSearchPicker({
           }
         }}
       />
+      <p className="sr-only" role="status" data-testid="member-search-status">
+        {spoken}
+      </p>
       {showList ? (
-        <div id={listId} role="listbox" aria-label="Members" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-[var(--r-md)] border border-bd-default bg-sf-4 py-1 shadow-lg">
-          {term.length < MIN_CHARS ? (
-            <p className="px-3 py-2 text-xs text-tx-3">Type at least {MIN_CHARS} characters</p>
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-[var(--r-md)] border border-bd-default bg-sf-4 py-1 shadow-lg" data-testid="member-search-popup">
+          {!searched ? (
+            <p className={NOTE}>Type at least {MIN_CHARS} characters</p>
           ) : state.kind === "error" ? (
             <div className="flex items-center justify-between gap-2 px-3 py-1.5">
-              <p className="text-xs text-tx-2" role="alert">
-                Couldn&apos;t search members
-              </p>
+              <p className="text-xs text-tx-2">Couldn&apos;t search members</p>
               {/* mousedown, so the field's blur does not close the list before the click arrives. */}
-              <Button type="button" variant="ghost" size="compact" onMouseDown={(event) => event.preventDefault()} onClick={() => setAttempt((n) => n + 1)}>
+              <Button type="button" variant="ghost" size="compact" tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={retry}>
                 Try again
               </Button>
             </div>
           ) : state.kind !== "results" ? (
-            <p className="px-3 py-2 text-xs text-tx-3" role="status">
-              Searching…
-            </p>
+            <p className={NOTE}>Searching…</p>
           ) : options.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-tx-3" role="status">
-              No member matches &ldquo;{term}&rdquo;
-            </p>
+            <p className={NOTE}>No member matches &ldquo;{term}&rdquo;</p>
           ) : (
             <>
-              {options.map((option, index) => (
-                <div
-                  key={option.id}
-                  id={`${listId}-${option.id}`}
-                  role="option"
-                  aria-selected={index === active}
-                  className={`cursor-pointer px-3 py-1.5 ${index === active ? "bg-sf-2" : ""}`}
-                  onMouseEnter={() => setActive(index)}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    pick(option);
-                  }}
-                >
-                  <p className="truncate text-sm text-tx-1">{option.name}</p>
-                  <p className="truncate text-xs text-tx-3">{secondLine(option)}</p>
-                </div>
-              ))}
+              {/* Only options live in the listbox; notes about the list sit beside it. */}
+              <div id={listId} role="listbox" aria-label="Members">
+                {options.map((option, index) => (
+                  <div
+                    key={option.id}
+                    id={`${listId}-${option.id}`}
+                    role="option"
+                    aria-selected={index === active}
+                    className={`cursor-pointer px-3 py-1.5 ${index === active ? "bg-sf-2" : ""}`}
+                    onMouseEnter={() => setActive(index)}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      pick(option);
+                    }}
+                  >
+                    <p className="truncate text-sm text-tx-1">{option.name}</p>
+                    <p className="truncate text-xs text-tx-3">{secondLine(option)}</p>
+                  </div>
+                ))}
+              </div>
               {options.length === MAX_RESULTS ? <p className="px-3 py-1.5 text-xs text-tx-3">Showing the first {MAX_RESULTS} — keep typing to narrow</p> : null}
             </>
           )}

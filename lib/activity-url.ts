@@ -7,8 +7,9 @@
  * link inside the timeline, the Back button, a pasted address and a reload all
  * behave the same. Everything here is pure and client-safe.
  */
-import { ACTIVITY_VIEWS, DEFAULT_VIEW, activityType, defaultTypeKeys, visibleTypeKeys, type ActivityRole } from "@/lib/activity-types";
+import { ACTIVITY_VIEWS, DEFAULT_VIEW, activityType, visibleTypeKeys, type ActivityRole } from "@/lib/activity-types";
 import { formatDateFull } from "@/lib/date";
+import { parseIdParam } from "@/lib/id-param";
 
 export type ActivityFilters = {
   /** A view key, a comma list of type keys, or null for the viewer's default. */
@@ -27,9 +28,23 @@ const KEYS: (keyof ActivityFilters)[] = ["types", "memberId", "classId", "paymen
 
 type Params = { get(name: string): string | null; toString(): string };
 
+/** A whole, real calendar date ("2026-02-30" is not one). */
+function dayKeyOf(raw: string | null): string | null {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [year, month, day] = raw.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? raw : null;
+}
+
+/**
+ * The filters the address holds. A value the server would ignore — a day that
+ * is not a date, an id that is not an id — is not a filter here either, so a
+ * mangled link reads as the unfiltered page it really is.
+ */
 export function readFilters(params: Params): ActivityFilters {
-  const read = (key: keyof ActivityFilters) => params.get(key)?.trim() || null;
-  return { types: read("types"), memberId: read("memberId"), classId: read("classId"), paymentId: read("paymentId"), tierId: read("tierId"), userId: read("userId"), day: read("day") };
+  const text = (key: keyof ActivityFilters) => params.get(key)?.trim() || null;
+  const id = (key: keyof ActivityFilters) => parseIdParam(text(key));
+  return { types: text("types"), memberId: id("memberId"), classId: id("classId"), paymentId: id("paymentId"), tierId: id("tierId"), userId: id("userId"), day: dayKeyOf(text("day")) };
 }
 
 /**
@@ -77,11 +92,6 @@ export function typesLabel(keys: string[], role: ActivityRole): string {
   if (view) return ACTIVITY_VIEWS.find((v) => v.key === view)!.label;
   if (keys.length === 1) return activityType(keys[0])?.label ?? "1 activity type";
   return `${keys.length} activity types`;
-}
-
-/** Whether a selection is the product's own default for this role. */
-export function isProductDefault(keys: string[], role: ActivityRole): boolean {
-  return [...keys].sort().join() === [...defaultTypeKeys(role)].sort().join();
 }
 
 /** "2026-11-04" one day earlier or later. Pure calendar arithmetic: a day key has no time zone. */

@@ -261,4 +261,43 @@ describe("useActivityFeed", () => {
     expect(result.current.phase).toBe("ready");
     expect(result.current.page?.entries).toHaveLength(2);
   });
+
+  it("a refresh nobody asked for that fails leaves the rows as they are, and says nothing", async () => {
+    const { result } = renderHook(() => useActivityFeed(A));
+    await tick(0);
+    await answer(pending[0], 200, page(["a1"]));
+    expect(result.current.pending).toBe(false);
+    await act(async () => {
+      result.current.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.pending).toBe(true);
+    await answer(pending[1], 429, { error: "Too many requests. Try again in a moment." });
+    expect(result.current.phase).toBe("ready");
+    expect(result.current.error).toBeNull();
+    expect(result.current.page?.entries.map((e) => e.id)).toEqual(["a1"]);
+    expect(result.current.pending).toBe(false);
+  });
+
+  it("once Show older has been asked for, neither a refresh nor a return to the tab cancels it", async () => {
+    const { result } = renderHook(() => useActivityFeed(A));
+    await tick(0);
+    await answer(pending[0], 200, page(["a1"], "a1"));
+    await tick(61_000);
+    await act(async () => {
+      void result.current.loadOlder();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.pending).toBe(true);
+    await act(async () => {
+      result.current.refresh();
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(pending).toHaveLength(2);
+    expect(pending[1].signal.aborted).toBe(false);
+    await answer(pending[1], 200, page(["a2"], null));
+    expect(result.current.page?.entries.map((e) => e.id)).toEqual(["a1", "a2"]);
+    expect(result.current.pending).toBe(false);
+  });
 });

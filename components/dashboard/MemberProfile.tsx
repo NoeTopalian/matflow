@@ -1745,8 +1745,8 @@ export default function MemberProfile({
                       each of them is sent; a coach is not shown the section at all. */}
                   {(role === "owner" || role === "manager") && (
                     <Card>
-                      <h3 className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
-                        <History className="w-4 h-4" style={{ color: "var(--tx-3)" }} aria-hidden />
+                      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-tx-1">
+                        <History className="size-4 text-tx-3" aria-hidden />
                         History
                       </h3>
                       <ActivityTimeline variant="embedded" role={role} scope={{ kind: "member", id: member.id }} take={20} />

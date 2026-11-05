@@ -45,6 +45,8 @@ function isPage(body: unknown): body is ActivityResponse {
  */
 export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debounceMs?: number } = {}) {
   const [state, setState] = useState<State>({ loaded: null, error: null, older: "idle" });
+  /** A list request is in flight (of any kind): "Show older" waits for it. */
+  const [pending, setPending] = useState(false);
   const current = useRef(url);
   const sequence = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
@@ -54,8 +56,10 @@ export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debo
   const paged = useRef(false);
   const first = useRef(true);
 
-  const request = useCallback(async (target: string, cursor: string | null): Promise<OlderResult | null> => {
+  /** @param quiet A refresh nobody asked for (after an undo, on returning to the tab): if it fails, the rows on screen stay and nothing is said. */
+  const request = useCallback(async (target: string, cursor: string | null, quiet = false): Promise<OlderResult | null> => {
     inFlight.current?.abort();
+    setPending(true);
     const controller = new AbortController();
     inFlight.current = controller;
     const mine = ++sequence.current;
@@ -70,7 +74,7 @@ export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debo
         const told = body && typeof body === "object" ? (body as { error?: unknown; reference?: unknown }) : {};
         const message = typeof told.error === "string" ? told.error : "Couldn't load activity.";
         if (older) setState((s) => ({ ...s, older: "error" }));
-        else setState((s) => ({ ...s, error: { url: target, message, reference: typeof told.reference === "string" ? told.reference : null } }));
+        else if (!quiet) setState((s) => ({ ...s, error: { url: target, message, reference: typeof told.reference === "string" ? told.reference : null } }));
         return null;
       }
       loadedAt.current = Date.now();
@@ -94,10 +98,11 @@ export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debo
       if (controller.signal.aborted && controller.signal.reason !== TIMED_OUT) return null;
       const message = controller.signal.aborted ? TOO_SLOW : UNREACHABLE;
       if (older) setState((s) => ({ ...s, older: "error" }));
-      else setState((s) => ({ ...s, error: { url: target, message } }));
+      else if (!quiet) setState((s) => ({ ...s, error: { url: target, message } }));
       return null;
     } finally {
       clearTimeout(timer);
+      if (mine === sequence.current) setPending(false);
     }
   }, []);
 
@@ -118,7 +123,7 @@ export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debo
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible" || !current.current || paged.current) return;
-      if (loadedAt.current && Date.now() - loadedAt.current >= STALE_AFTER_MS) void request(current.current, null);
+      if (loadedAt.current && Date.now() - loadedAt.current >= STALE_AFTER_MS) void request(current.current, null, true);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -145,13 +150,17 @@ export function useActivityFeed(url: string | null, { debounceMs = 250 }: { debo
       const target = current.current;
       const cursor = state.loaded?.url === target ? state.loaded.page.nextCursor : null;
       if (!target || !cursor) return null;
+      // From here the person is paging: a refresh of page one would lose their place, or cancel this very request.
+      paged.current = true;
       setState((s) => ({ ...s, older: "loading" }));
       return request(target, cursor);
     }, [request, state.loaded]),
     /** Page one again, keeping the rows on screen until it lands (after an undo). Skipped once the person has paged. */
     refresh: useCallback(() => {
-      if (current.current && !paged.current) void request(current.current, null);
+      if (current.current && !paged.current) void request(current.current, null, true);
     }, [request]),
+    /** A list request is in flight. */
+    pending,
     /** Change rows already on screen (an undone row is struck through at once, without a reload). */
     patch: useCallback((change: (entry: FeedEntry) => FeedEntry) => {
       const base = latestLoaded.current;

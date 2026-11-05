@@ -88,8 +88,7 @@ export default function AttributionFields({
   // ── Staff list (trial-run picker + staff-credit picker) ──────────────────
   // The retry bumps a reload key rather than calling a fetch the effect also
   // depends on: setState belongs in the async then/catch, never synchronously
-  // in the effect body (react-hooks/set-state-in-effect). Same shape as
-  // MemberProfile's DetailsHistory.
+  // in the effect body (react-hooks/set-state-in-effect).
   const [staff, setStaff] = useState<StaffOption[] | null>(null);
   const [staffError, setStaffError] = useState(false);
   const [staffReload, setStaffReload] = useState(0);

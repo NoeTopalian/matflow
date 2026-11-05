@@ -22,7 +22,7 @@ import { ACTIVITY_GROUPS, ACTIVITY_TYPES, defaultTypeKeys, visibleTypeKeys, type
 import { ActivityIcon } from "./activity-icons";
 
 /** The row is the hit area, so the box's own 44px overlay is switched off inside it. */
-const ROW = "flex min-h-11 cursor-pointer items-center gap-3 px-4 hover:bg-sf-2 lg:min-h-9";
+const ROW = "flex min-h-11 cursor-pointer items-center gap-3 px-4 hover:bg-sf-2 [@media(pointer:fine)]:lg:min-h-9";
 
 export function ActivityTypesSheet({
   open,
@@ -65,7 +65,7 @@ function Staged({ onClose, role, selected, onApply }: { onClose: () => void; rol
       open
       onClose={onClose}
       title="Activity types"
-      description="Choose what the timeline shows."
+      description="Choose which activity to show."
       footer={
         <div className="flex w-full flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-tx-3" role="status">

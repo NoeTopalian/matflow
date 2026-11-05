@@ -87,7 +87,7 @@ const CAPTION = "text-xs font-medium text-tx-3";
  * A pressed chip is filled with the club's accent — which an owner may have set to white. The dark border is what
  * still says "this one" then (UI-RULES §2a); on a dark accent the fill says it.
  */
-export const PRESSED = "border-[var(--tx-2)]";
+const PRESSED = "border-[var(--tx-2)]";
 
 export function ActivityTimeline(props: ActivityTimelineProps) {
   return props.variant === "embedded" ? <EmbeddedTimeline {...props} /> : <PageTimeline {...props} />;
@@ -173,6 +173,8 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [whyNot, setWhyNot] = useState<FeedEntry | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  /** The name as it was picked, shown until the server's answer names the member itself. Display only: the filter is the id in the address. */
+  const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const change = useCallback((patch: Partial<ActivityFilters>) => {
@@ -199,11 +201,12 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
       feed.patch((entry) => (ids.includes(entry.id) ? markUndone(entry) : entry));
       feed.refresh();
     },
+    onRefused: (id, reason) => feed.patch((entry) => (entry.id === id && entry.undo ? { ...entry, undo: { ok: false as const, reason } } : entry)),
     onUnsure: feed.retry,
   });
 
   const echo = page?.filters;
-  const memberName = filters.memberId ? (echo?.member?.id === filters.memberId ? echo.member.name : undefined) : undefined;
+  const memberName = filters.memberId ? (echo?.member?.id === filters.memberId ? echo.member.name : picked?.id === filters.memberId ? picked.name : undefined) : undefined;
   const subjectFiltered = hasSubjectFilter(filters);
   const nothingFiltered = !subjectFiltered && !filters.day && atDefaultTypes;
   /** "Since here" undoes everything a person did from a row onwards — only honest when the page is hiding nothing. */
@@ -228,7 +231,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
       await navigator.clipboard.writeText(link);
       toast("Link copied.", "success");
     } catch {
-      toast("Couldn't copy. Press and hold the address bar instead.", "error");
+      toast("Couldn't copy. Copy the address from the address bar instead.", "error");
     }
   };
 
@@ -238,7 +241,14 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
     setAnnouncement(result.added === 0 ? "Nothing older to show" : `${result.added} more loaded`);
     // Keyboard and screen-reader users continue from the first new row, not from the button.
     const firstId = result.firstId;
-    if (firstId) requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(firstId)}"] a`)?.focus());
+    if (firstId) {
+      requestAnimationFrame(() => {
+        const matches = [...(listRef.current?.querySelectorAll<HTMLElement>(`[data-entry-id="${CSS.escape(firstId)}"]`) ?? [])];
+        const shown = matches.find((el) => el.offsetParent !== null) ?? matches[0];
+        // Its first link when it has one; a row with nothing to follow takes the focus itself.
+        (shown?.querySelector<HTMLElement>("a") ?? shown)?.focus();
+      });
+    }
   };
 
   const undoCell = (entry: FeedEntry, card: boolean) => {
@@ -251,7 +261,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
             <RotateCcw className="size-3.5" aria-hidden="true" /> Undo
           </Button>
           {sinceHereAllowed && entry.undo.sinceHere ? (
-            <Button variant="ghost" size="compact" onClick={() => undo.askUndoTo(entry)} aria-label={`Undo everything ${entry.undo.sinceHere.name} did since: ${entry.plain}`}>
+            <Button variant="ghost" size="compact" onClick={() => undo.askUndoTo(entry)} aria-label={`Since here: undo everything ${entry.undo.sinceHere.name} did since ${entry.plain}`}>
               Since here
             </Button>
           ) : null}
@@ -262,7 +272,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
     return card ? (
       <p className="text-xs text-tx-3">Can&apos;t undo: {entry.undo.reason}</p>
     ) : (
-      <Button variant="ghost" size="compact" onClick={() => setWhyNot(entry)} aria-label={`Why this can't be undone: ${entry.plain}`}>
+      <Button variant="ghost" size="compact" onClick={() => setWhyNot(entry)} aria-label={`Can't undo: ${entry.plain}`}>
         Can&apos;t undo
       </Button>
     );
@@ -278,7 +288,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
       headerLabel: "What happened",
       wrap: true,
       cell: (e) => (
-        <div data-entry-id={e.id}>
+        <div data-entry-id={e.id} tabIndex={-1}>
           <ActivitySentence entry={e} />
         </div>
       ),
@@ -301,7 +311,11 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
       {typesTrigger}
       <div className="flex min-w-0 flex-col gap-1">
         <span className={CAPTION}>Member</span>
-        <MemberSearchPicker value={filters.memberId ? { id: filters.memberId, name: memberName === undefined ? "…" : memberName } : null} onChange={(member) => change({ memberId: member?.id ?? null })} />
+        <MemberSearchPicker value={filters.memberId ? { id: filters.memberId, name: memberName === undefined ? "…" : memberName } : null} onChange={(member) => {
+            setPicked(member);
+            change({ memberId: member?.id ?? null });
+          }}
+        />
       </div>
       <div className="flex min-w-0 flex-col gap-1">
         <span className={CAPTION}>Plan</span>
@@ -325,12 +339,43 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
           <option value="">Anyone</option>
           {staff.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name} · {s.role}
+              {s.name} · {s.role.charAt(0).toUpperCase() + s.role.slice(1)}
             </option>
           ))}
           {filters.userId && !staff.some((s) => s.id === filters.userId) ? <option value={filters.userId}>Removed staff member</option> : null}
         </Select>
       </div>
+    </>
+  );
+
+  const linkActions = (
+    <>
+      <Button type="button" variant="ghost" className={`${FIELD_BUTTON} px-3`} onClick={() => void copyLink()}>
+        Copy link
+      </Button>
+      {/* The slot is always there, so the row does not shuffle when a default is saved or dropped. */}
+      <span className={cn("flex items-center gap-1", atDefaultTypes && !mine.saved && "invisible")}>
+        {!atDefaultTypes ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className={`${FIELD_BUTTON} px-3`}
+            onClick={() => {
+              if (mine.save(keys)) {
+                toast("Saved. Activity will open like this on this device.", "success");
+                // The address no longer needs to say it: this is now what "no types" means here.
+                change({ types: null });
+              } else toast("Couldn't save on this device.", "error");
+            }}
+          >
+            Make this my default
+          </Button>
+        ) : (
+          <Button type="button" variant="ghost" className={`${FIELD_BUTTON} px-3`} onClick={() => mine.clear()}>
+            Use MatFlow&apos;s default
+          </Button>
+        )}
+      </span>
     </>
   );
 
@@ -344,7 +389,9 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
   ];
 
   const count = entries.length;
-  const status = feed.phase === "ready" ? announcement || (count === 0 ? "Nothing to show" : `Showing ${count} ${count === 1 ? "activity" : "activities"}`) : "";
+  const nothingRecorded = !subjectFiltered && !filters.day && view === "all";
+  const emptyTitle = nothingRecorded ? "Nothing has been recorded yet." : "Nothing matches these filters.";
+  const status = feed.phase === "ready" ? announcement || (count === 0 ? emptyTitle : `Showing ${count} ${count === 1 ? "activity" : "activities"}`) : "";
 
   return (
     <div className="space-y-4">
@@ -376,35 +423,13 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
             <SlidersHorizontal className="size-4" aria-hidden="true" />
             {narrowed ? `Filters (${narrowed})` : "Filters"}
           </Button>
-          <Button type="button" variant="ghost" className={`${FIELD_BUTTON} px-3`} onClick={() => void copyLink()}>
-            Copy link
-          </Button>
-          {/* The slot is always there, so the row does not shuffle when a default is saved or dropped. */}
-          <span className={cn("flex items-center gap-1", atDefaultTypes && !mine.saved && "invisible")}>
-            {!atDefaultTypes ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className={`${FIELD_BUTTON} px-3`}
-                onClick={() => {
-                  if (mine.save(keys)) {
-                    toast("Saved. Activity will open like this on this device.", "success");
-                    // The address no longer needs to say it: this is now what "no types" means here.
-                    change({ types: null });
-                  } else toast("Couldn't save on this device.", "error");
-                }}
-              >
-                Make this my default
-              </Button>
-            ) : (
-              <Button type="button" variant="ghost" className={`${FIELD_BUTTON} px-3`} tabIndex={mine.saved ? 0 : -1} aria-hidden={mine.saved ? undefined : true} onClick={() => mine.clear()}>
-                Use MatFlow&apos;s default
-              </Button>
-            )}
-          </span>
-          <Button type="button" variant="ghost" className={`${FIELD_BUTTON} ml-auto px-3`} disabled={nothingFiltered} onClick={() => change(NO_FILTERS)}>
-            Reset filters
-          </Button>
+          {/* On a phone the card is Jump to date and Filters; everything else is inside the Filters sheet. */}
+          <div className="hidden flex-1 flex-wrap items-center gap-3 sm:flex">
+            {linkActions}
+            <Button type="button" variant="ghost" className={`${FIELD_BUTTON} ml-auto px-3`} disabled={nothingFiltered} onClick={() => change(NO_FILTERS)}>
+              Reset filters
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -420,17 +445,17 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
       ) : null}
 
       <div className="space-y-1">
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-tx-2" aria-live="polite" data-testid="activity-summary">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-tx-2" data-testid="activity-summary">
           <span>{summary.join(" · ")}</span>
           {view !== "all" ? (
             <Button type="button" variant="ghost" size="compact" onClick={() => change({ types: "all" })}>
-              Show everything
+              Show all activity types
             </Button>
           ) : null}
         </p>
         {clock && browserZone() !== clock.timeZone ? <p className="text-xs text-tx-3">Times are shown in club time ({clock.timeZone}).</p> : null}
-        {page?.ignoredTypes.length ? <p className="text-xs text-tx-3">This link included activity types that no longer exist.</p> : null}
-        {page?.droppedTypes.length ? <p className="text-xs text-tx-3">Some activity types in this link are only visible to the owner.</p> : null}
+        {selection.ignored.length || page?.ignoredTypes.length ? <p className="text-xs text-tx-3">This link included activity types that no longer exist.</p> : null}
+        {selection.dropped.length || page?.droppedTypes.length ? <p className="text-xs text-tx-3">Some activity types in this link are only visible to the owner.</p> : null}
         {clock?.clamped && echo?.dayKey ? <p className="text-xs text-tx-3">Activity is kept for one year, so there&apos;s nothing to show before {formatDate(`${echo.dayKey}T12:00:00Z`, "UTC")}.</p> : null}
         {owner ? (
           <p className="text-xs text-tx-3">Undo puts the recorded details back as they were. Linked records (bookings, rank history, Stripe, emails) are not changed; where a change can&apos;t be put back safely the row says why.</p>
@@ -453,7 +478,10 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
               </Button>
             </div>
           ) : null}
-          <div aria-busy={busy || undefined} className={cn("transition-opacity duration-[var(--dur-fast)] ease-[var(--ease-out)]", busy && "opacity-60")}>
+          <div
+            aria-busy={busy || undefined}
+            className={cn("transition-opacity duration-[var(--dur-fast)] ease-[var(--ease-out)] sm:rounded-[var(--r-md)] sm:border sm:border-bd-default sm:bg-sf-1", busy && "opacity-60")}
+          >
             <DataTable
               label={`Activity: ${summary.join(", ")}`}
               columns={columns}
@@ -463,11 +491,11 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
               skeletonRows={8}
               sectionOf={clock ? (e) => ({ key: e.dayKey, label: dayHeading(e.dayKey, clock.todayKey) }) : undefined}
               empty={
-                !subjectFiltered && !filters.day && view === "all" ? (
-                  <EmptyState title="Nothing has been recorded yet." icon={<History className="size-5" aria-hidden="true" />} />
+                nothingRecorded ? (
+                  <EmptyState title={emptyTitle} icon={<History className="size-5" aria-hidden="true" />} />
                 ) : (
                   <EmptyState
-                    title="Nothing matches these filters."
+                    title={emptyTitle}
                     hint={summary.join(" · ")}
                     icon={<History className="size-5" aria-hidden="true" />}
                     action={
@@ -485,7 +513,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
                 )
               }
               renderCard={(e) => (
-                <div data-testid="activity-card" data-entry-id={e.id} className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3">
+                <div data-testid="activity-card" data-entry-id={e.id} tabIndex={-1} className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3">
                   <div className="flex items-center justify-between gap-3 text-xs">
                     <ActivityTypeLabel typeKey={e.type} />
                     <span className="shrink-0 tabular-nums text-tx-3">{formatTime(e.at, timeZone)}</span>
@@ -500,7 +528,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
           {page && count > 0 ? (
             page.nextCursor ? (
               <div className="flex flex-wrap items-center justify-center gap-3">
-                <Button type="button" variant="secondary" loading={feed.older === "loading"} disabled={feed.phase !== "ready"} onClick={() => void loadOlder()}>
+                <Button type="button" variant="secondary" loading={feed.older === "loading"} disabled={feed.phase !== "ready" || feed.pending} onClick={() => void loadOlder()}>
                   Show older
                 </Button>
                 {feed.older === "error" ? (
@@ -537,6 +565,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
         }
       >
         <div className="grid grid-cols-1 gap-3">{fields}</div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">{linkActions}</div>
       </Sheet>
 
       <Dialog open={!!whyNot} onClose={() => setWhyNot(null)} title="Why this can't be undone" description={whyNot?.plain}>
@@ -565,6 +594,12 @@ function browserZone(): string | null {
 
 // ── A record's own History ───────────────────────────────────────────────────
 
+const NOTHING_HERE: Record<TimelineScope["kind"], string> = {
+  member: "Nothing recorded for this member yet.",
+  class: "Nothing recorded for this class yet.",
+  payment: "Nothing recorded for this payment yet.",
+};
+
 function EmbeddedTimeline({ scope, take = 20 }: EmbeddedProps) {
   // Always everything this reader may see (the server knows their role), never their saved default, never the address bar.
   const param = SCOPE_PARAM[scope.kind];
@@ -572,7 +607,7 @@ function EmbeddedTimeline({ scope, take = 20 }: EmbeddedProps) {
   const page = feed.page;
 
   if (feed.phase === "error" && feed.error) return <ErrorState message={feed.error.message} reference={feed.error.reference} onRetry={feed.retry} />;
-  if (feed.phase === "loading" || !page) {
+  if (feed.phase !== "ready" || !page) {
     return (
       <div className="space-y-2" aria-busy="true" data-testid="activity-embedded-loading">
         {[0, 1, 2].map((i) => (
@@ -589,7 +624,7 @@ function EmbeddedTimeline({ scope, take = 20 }: EmbeddedProps) {
   return (
     <div className="space-y-2" data-testid="activity-embedded">
       {page.entries.length === 0 ? (
-        <p className="text-sm text-tx-3">Nothing has been recorded yet.</p>
+        <p className="text-sm text-tx-3">{NOTHING_HERE[scope.kind]}</p>
       ) : (
         <>
           {!page.enriched ? <p className="text-xs text-tx-3">Names couldn&apos;t be loaded, so this is the plain log.</p> : null}
@@ -608,7 +643,7 @@ function EmbeddedTimeline({ scope, take = 20 }: EmbeddedProps) {
           </ul>
         </>
       )}
-      <Link href={`/dashboard/activity?${param}=${encodeURIComponent(scope.id)}&types=all`} className="inline text-sm font-medium text-tx-1 underline decoration-[color:var(--bd-active)] underline-offset-2 hover:decoration-[color:var(--tx-1)]">
+      <Link href={`/dashboard/activity?${param}=${encodeURIComponent(scope.id)}&types=all`} className="inline-flex items-center text-sm font-medium text-tx-1 underline decoration-[color:var(--bd-active)] underline-offset-2 hover:decoration-[color:var(--tx-1)]">
         See all activity
       </Link>
     </div>
