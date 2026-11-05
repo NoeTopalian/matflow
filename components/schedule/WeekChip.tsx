@@ -13,20 +13,18 @@ import { Button } from "@/components/ui/button";
 import { hex } from "@/lib/color";
 import { sessionStateLabel, type SessionState } from "@/lib/schedule-state";
 
-const PILL = "inline-flex max-w-full items-center gap-1 rounded-full px-1 text-[9px] font-bold leading-4 tracking-wide [overflow-wrap:anywhere]";
+const PILL = "inline-flex max-w-full items-center gap-1 rounded-full border px-1 text-[9px] font-bold leading-4 tracking-wide [overflow-wrap:anywhere]";
+// Each tone is a tint mixed into an opaque --sf-1 base, so the pill's text keeps its contrast on a tinted chip.
+const PILL_TONE = {
+  neutral: "border-bd-default bg-sf-2 text-tx-2",
+  live: "border-[color-mix(in_srgb,var(--hue-success)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-success)_14%,var(--sf-1))] text-[var(--hue-success-ink)]",
+  next: "border-[color-mix(in_srgb,var(--hue-info)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] text-[var(--hue-info-ink)]",
+  duplicate: "border-[color-mix(in_srgb,var(--hue-warning)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-warning)_14%,var(--sf-1))] text-tx-1",
+} as const;
 
-function Pill({ children, tint, ink = "var(--tx-2)", upper = true, testId }: { children: ReactNode; tint?: string; ink?: string; upper?: boolean; testId?: string }) {
+function Pill({ children, tone = "neutral", upper = true, testId }: { children: ReactNode; tone?: keyof typeof PILL_TONE; upper?: boolean; testId?: string }) {
   return (
-    <span
-      data-testid={testId}
-      className={[PILL, upper ? "uppercase" : ""].join(" ")}
-      style={{
-        // An opaque base under the tint, so the pill's text keeps its contrast on a tinted chip.
-        background: tint ? `color-mix(in srgb, ${tint} 14%, var(--sf-1))` : "var(--sf-2)",
-        border: `1px solid ${tint ? `color-mix(in srgb, ${tint} 45%, var(--sf-1))` : "var(--bd-default)"}`,
-        color: ink,
-      }}
-    >
+    <span data-testid={testId} className={[PILL, PILL_TONE[tone], upper ? "uppercase" : ""].join(" ")}>
       {children}
     </span>
   );
@@ -77,12 +75,13 @@ export function WeekChip({
       onClick={onEdit}
       aria-label={label}
       data-session-state={state ?? undefined}
-      className="h-auto min-h-[44px] flex-col items-stretch justify-start gap-0.5 whitespace-normal rounded-[var(--r-sm)] border-bd-hover px-[5px] pb-[6px] pt-[5px] text-left font-normal text-tx-1 hover:bg-transparent hover:text-tx-1 enabled:hover:brightness-[0.97] disabled:cursor-default disabled:opacity-100"
-      style={{
-        // Ended and cancelled sessions dim their fill, never their ink (UI-RULES §8).
-        background: hex(color, dim ? 0.06 : 0.12),
-        borderLeft: duplicate ? "3px solid var(--hue-warning)" : state === "live" ? `3px solid ${color}` : undefined,
-      }}
+      className={[
+        "h-auto min-h-[44px] flex-col items-stretch justify-start gap-0.5 whitespace-normal rounded-[var(--r-sm)] border-bd-hover px-[5px] pb-[6px] pt-[5px] text-left font-normal text-tx-1 hover:bg-transparent hover:text-tx-1 enabled:hover:brightness-[0.97] disabled:cursor-default disabled:opacity-100",
+        // A 3 px left edge: amber for a possible duplicate, else the class colour while it is live.
+        duplicate ? "border-l-[3px] border-l-[color:var(--hue-warning)]" : state === "live" ? "border-l-[3px]" : "",
+      ].join(" ")}
+      // Runtime values only (UI-RULES §11): the class's own colour. Ended and cancelled dim the fill, never the ink (§8).
+      style={{ background: hex(color, dim ? 0.06 : 0.12), ...(state === "live" && !duplicate ? { borderLeftColor: color } : {}) }}
     >
       <span className="flex flex-wrap items-center text-[11px] font-bold leading-[14px] tabular-nums" data-chip-part="time">
         <span aria-hidden="true" className="mr-[3px] size-1.5 shrink-0 rounded-full" style={{ background: color }} />
@@ -100,19 +99,12 @@ export function WeekChip({
       {showState || duplicate || kids || category ? (
         <span className="mt-px flex flex-wrap gap-[3px]">
           {showState ? (
-            <Pill
-              tint={state === "live" ? "var(--hue-success)" : state === "next" ? "var(--hue-info)" : undefined}
-              ink={state === "live" ? "var(--hue-success-ink)" : state === "next" ? "var(--hue-info-ink)" : "var(--tx-2)"}
-            >
-              {state === "live" ? <span aria-hidden="true" className="size-1.5 rounded-full motion-safe:animate-pulse" style={{ background: "var(--hue-success)" }} /> : null}
+            <Pill tone={state === "live" ? "live" : state === "next" ? "next" : "neutral"}>
+              {state === "live" ? <span aria-hidden="true" className="size-1.5 rounded-full bg-[var(--hue-success)] motion-safe:animate-pulse" /> : null}
               {sessionStateLabel(state)}
             </Pill>
           ) : null}
-          {duplicate ? (
-            <Pill tint="var(--hue-warning)" ink="var(--tx-1)">
-              Duplicate?
-            </Pill>
-          ) : null}
+          {duplicate ? <Pill tone="duplicate">Duplicate?</Pill> : null}
           {kids ? <Pill>Kids</Pill> : null}
           {category ? (
             <Pill upper={false} testId="class-chip-category">

@@ -86,6 +86,20 @@ describe("rows are the real times", () => {
     expect(day(g, 1).count).toBe(2);
   });
 
+  it("keeps a class that starts in the last ten minutes of the day on its own start line", () => {
+    const g = byTime([s("late", 1, "23:55", "23:58"), s("eve", 1, "20:00", "21:00")]);
+    expect(g.rows.some((r) => r.fromMin === 23 * 60 + 55 && r.toMin === 23 * 60 + 58)).toBe(true);
+    expect(g.ticks.map((t) => t.minute)).toContain(23 * 60 + 55);
+  });
+
+  it("a session on a day that is not on show adds no row, no label and no break", () => {
+    const shown = byTime([s("a", 1, "18:00", "19:00")], [1]);
+    const withStray = byTime([s("a", 1, "18:00", "19:00"), s("stray", 7, "03:00", "04:00"), s("other", 2, "09:00", "10:00")], [1]);
+    expect(withStray.rows).toEqual(shown.rows);
+    expect(withStray.ticks).toEqual(shown.ticks);
+    expect(withStray.items).toEqual(shown.items);
+  });
+
   it("has no rows and seven empty days when there are no sessions", () => {
     const g = byTime([]);
     expect(g.rows).toEqual([]);
@@ -165,6 +179,70 @@ describe("columns by time", () => {
     expect(session(g, "early").lanes).toBe(3);
   });
 
+  it("folds only where more than three are on: a pair beside an all-day class stays on show though the evening is crowded", () => {
+    const g = byTime([
+      s("open", 1, "06:00", "22:00", "0"),
+      s("a", 1, "07:00", "08:00", "1"),
+      s("b", 1, "07:00", "08:00", "2"),
+      s("c", 1, "18:00", "19:00", "1"),
+      s("d", 1, "18:00", "19:00", "2"),
+      s("e", 1, "18:00", "19:00", "3"),
+    ]);
+    // One overlap cluster (the all-day class joins everything). At 07:00 three are on: nothing folds there.
+    expect(g.items.filter((i) => i.type === "session").map((i) => i.key)).toEqual(["open", "a", "b", "c"]);
+    expect(session(g, "b").lane).toBe(2);
+    const [more, ...rest] = mores(g);
+    expect(rest).toEqual([]);
+    expect(more.keys).toEqual(["d", "e"]);
+    expect([more.startMin, more.endMin]).toEqual([18 * 60, 19 * 60]);
+    expect(more.rowStart).toBe(session(g, "c").rowStart);
+    expect(more.rowEnd).toBe(session(g, "c").rowEnd);
+    // The classes on around that "+2 more": the all-day one and the three at 18:00, not the morning pair.
+    expect(more.clusterKeys).toEqual(["open", "c", "d", "e"]);
+    expect(more.clusterRowStart).toBe(session(g, "open").rowStart);
+    expect(day(g, 1).tracks).toBe(3);
+  });
+
+  it("a class in the third lane with nothing beyond it is shown; the '+N more' covers only the crowded stretch", () => {
+    const g = byTime([
+      s("i1", 1, "10:00", "12:00", "1"),
+      s("i2", 1, "10:00", "12:00", "2"),
+      s("i3", 1, "10:00", "10:30", "3"),
+      s("i4", 1, "10:00", "10:30", "4"),
+      s("i5", 1, "11:00", "11:30", "5"),
+    ]);
+    // 10:00: four at once → i3 and i4 fold. 11:00: three at once → i5 is on show, in the third lane.
+    const [more, ...rest] = mores(g);
+    expect(rest).toEqual([]);
+    expect(more.keys).toEqual(["i3", "i4"]);
+    expect([more.startMin, more.endMin]).toEqual([10 * 60, 10 * 60 + 30]);
+    expect(session(g, "i5").lane).toBe(2);
+    expect(session(g, "i5").col).toBe(more.col);
+    expect(session(g, "i5").rowStart).toBeGreaterThanOrEqual(more.rowEnd);
+  });
+
+  it("two crowded stretches in one cluster give two '+N more', each over its own classes", () => {
+    const g = byTime([
+      s("open", 1, "06:00", "22:00", "0"),
+      s("m1", 1, "07:00", "08:00", "1"),
+      s("m2", 1, "07:00", "08:00", "2"),
+      s("m3", 1, "07:00", "08:00", "3"),
+      s("e1", 1, "18:00", "19:00", "1"),
+      s("e2", 1, "18:00", "19:00", "2"),
+      s("e3", 1, "18:00", "19:00", "3"),
+    ]);
+    const found = mores(g);
+    expect(found.map((m) => m.keys)).toEqual([["m2", "m3"], ["e2", "e3"]]);
+    expect(new Set(found.map((m) => m.id)).size).toBe(2);
+    // Nothing on show shares a lane and a row with a "+N more".
+    for (const m of found) {
+      for (const i of g.items) {
+        if (i.type !== "session" || i.col !== m.col) continue;
+        expect(i.rowEnd <= m.rowStart || i.rowStart >= m.rowEnd).toBe(true);
+      }
+    }
+  });
+
   it("uses six tracks on a day that has both a pair and a trio", () => {
     const g = byTime([
       s("p1", 1, "09:00", "10:00", "1"),
@@ -226,6 +304,9 @@ describe("columns by mat", () => {
     expect(cols(g, 1)).toEqual(["m1", "m2", null]);
     expect(session(g, "none").col).toBe(3);
     expect(cols(g, 2)).toEqual(["m1", "m2", null]);
+    // A mat that is no longer the club's is "No mat" on the placement too, not the id that has gone.
+    expect(session(g, "gone").matId).toBeNull();
+    expect(session(g, "gone").col).toBe(3);
     expect(cols(byMat([s("a", 3, "18:40", "19:30", "", "m1")], TWO), 3)).toEqual(["m1", "m2"]);
   });
 

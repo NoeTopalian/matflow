@@ -323,9 +323,6 @@ function ClassChip({
   );
 }
 
-/** A day with this many sessions switches the week to the wider, compact layout. */
-export const DENSE_DAY = 7;
-
 /** A refused save: the server's sentence, plus its machine reason when it gives one. */
 class ApiRefusal extends Error {
   reason?: string;
@@ -351,7 +348,9 @@ const placeOf = (cls: ClassRow) => cls.location ?? cls.coachUser?.name ?? cls.co
 /**
  * The chips of one day: a plain chip per session, and an overlap group (rail,
  * "Up to N at once", compact chips showing start–end and place) wherever
- * sessions overlap. Used by the week grid and the phone agenda.
+ * sessions overlap. Used by the phone agenda only (`size="agenda"`): the
+ * desktop week is the poster grid (components/schedule/PosterGrid). The other
+ * sizes, with ClassChip, go when the phone moves to the grid.
  */
 function DaySessions({
   sessions,
@@ -2537,6 +2536,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         )}
                         breakLabel={(fromMin, toMin) => `No classes ${minToTime(fromMin)} to ${minToTime(toMin)}`}
                         scrollTarget={weekOffset === 0 ? { key: liveOrNext?.slot.id ?? null, day: todayDow } : null}
+                        scrollToken={weekOffset}
                         onOverflowChange={setWeekWider}
                       />
                     );
@@ -2603,6 +2603,8 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                             } : undefined}
                             emptyText="No sessions on this day"
                             openCluster={openCluster}
+                            // One-shot: coming back to this day later must not reopen the group or take focus.
+                            onOpenClusterHandled={() => setOpenCluster(null)}
                           />
                         </div>
                       );

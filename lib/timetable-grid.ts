@@ -124,9 +124,9 @@ type Placed = GridSession & { startMin: number; endMin: number };
 function onAxis(session: GridSession): Placed {
   if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10 };
   const span = spanMinutes(session.startTime, session.endTime);
-  const startMin = Math.min(Math.max(span.startMin, 0), DAY_END - 10);
-  const endMin = Math.min(span.endMin, DAY_END);
-  return { ...session, startMin, endMin: endMin > startMin ? endMin : startMin + 10 };
+  const startMin = Math.min(Math.max(span.startMin, 0), DAY_END - 1);
+  const endMin = Math.max(Math.min(span.endMin, DAY_END), startMin + 1);
+  return { ...session, startMin, endMin };
 }
 
 const inOrder = (a: Placed, b: Placed) =>
@@ -141,12 +141,26 @@ const lcm = (a: number, b: number) => (a / gcd(a, b)) * b;
 type Lane = { session: Placed; lane: number; lanes: number };
 type Fold = { lane: number; lanes: number; startMin: number; endMin: number; keys: string[]; clusterKeys: string[]; clusterStartMin: number };
 
-/** Lanes for one run of sessions (a day by time, or one mat column), folding any clash wider than `maxLanes`. */
+const overlap = (a: Placed, b: Placed) => a.startMin < b.endMin && b.startMin < a.endMin;
+
+/**
+ * Lanes for one run of sessions (a day by time, or one mat column), folding
+ * where more than `maxLanes` are on at once.
+ *
+ * Folding is per crowded MOMENT, not per overlap cluster: one long class makes
+ * a whole day a single cluster, and a pair at 07:00 must not vanish because
+ * five classes clash at 18:00. A session folds when it is in a lane beyond the
+ * last, or in the last lane while one beyond it is running; every stretch of
+ * such sessions becomes its own "+N more" in the last lane. Whatever stays in
+ * the last lane cannot overlap a "+N more": it shares a lane with the folded
+ * last-lane sessions and, by the rule, overlaps none beyond.
+ */
 function lanesFor(sessions: Placed[], maxLanes: number): { placed: Lane[]; folds: Fold[]; widest: number } {
   const packed = packLanes(sessions, { maxLanes });
   const placed: Lane[] = [];
   const folds: Fold[] = [];
   let widest = sessions.length ? 1 : 0;
+  const last = maxLanes - 1;
   for (const cluster of packed.clusters) {
     const members = [...cluster.members].sort((a, b) => a - b);
     if (!cluster.dense) {
@@ -155,26 +169,45 @@ function lanesFor(sessions: Placed[], maxLanes: number): { placed: Lane[]; folds
       continue;
     }
     widest = Math.max(widest, maxLanes);
-    const folded = members.filter((i) => packed.placements[i].lane >= maxLanes - 1);
+    const beyond = members.filter((i) => packed.placements[i].lane > last);
+    const folded = members.filter(
+      (i) => packed.placements[i].lane > last || (packed.placements[i].lane === last && beyond.some((j) => overlap(sessions[i], sessions[j]))),
+    );
     for (const i of members) {
-      if (packed.placements[i].lane < maxLanes - 1) placed.push({ session: sessions[i], lane: packed.placements[i].lane, lanes: maxLanes });
+      if (!folded.includes(i)) placed.push({ session: sessions[i], lane: packed.placements[i].lane, lanes: maxLanes });
     }
-    folds.push({
-      lane: maxLanes - 1,
-      lanes: maxLanes,
-      startMin: Math.min(...folded.map((i) => sessions[i].startMin)),
-      endMin: Math.max(...folded.map((i) => sessions[i].endMin)),
-      keys: folded.map((i) => sessions[i].key),
-      clusterKeys: members.map((i) => sessions[i].key),
-      clusterStartMin: cluster.startMin,
-    });
+    // `members` is in start order, so a run ends where the next folded session starts at or after everything before it.
+    let run: number[] = [];
+    let runEnd = -1;
+    const close = () => {
+      if (run.length === 0) return;
+      const startMin = sessions[run[0]].startMin;
+      const around = members.filter((i) => sessions[i].startMin < runEnd && sessions[i].endMin > startMin);
+      folds.push({
+        lane: last,
+        lanes: maxLanes,
+        startMin,
+        endMin: runEnd,
+        keys: run.map((i) => sessions[i].key),
+        clusterKeys: around.map((i) => sessions[i].key),
+        clusterStartMin: Math.min(...around.map((i) => sessions[i].startMin)),
+      });
+      run = [];
+    };
+    for (const i of folded) {
+      if (run.length > 0 && sessions[i].startMin >= runEnd) close();
+      run.push(i);
+      runEnd = run.length === 1 ? sessions[i].endMin : Math.max(runEnd, sessions[i].endMin);
+    }
+    close();
   }
   return { placed, folds, widest };
 }
 
 type DayLayout = {
   day: GridDay;
-  sessions: { session: Placed; col: number; span: number; lane: number; lanes: number }[];
+  /** `matId`: the column the session sits in by mat (null = "No mat"); by time, its own mat. */
+  sessions: { session: Placed; col: number; span: number; lane: number; lanes: number; matId: string | null }[];
   folds: (Fold & { col: number; span: number })[];
 };
 
@@ -185,7 +218,7 @@ function dayByTime(day: number, sessions: Placed[], maxLanes: number, fellBack: 
   const lanes = counts.length ? Math.max(...counts) : 1;
   return {
     day: { day, tracks, lanes, layout: "time", fellBack, columns: [], count: sessions.length },
-    sessions: placed.map((p) => ({ ...p, span: tracks / p.lanes, col: 1 + p.lane * (tracks / p.lanes) })),
+    sessions: placed.map((p) => ({ ...p, matId: p.session.matId, span: tracks / p.lanes, col: 1 + p.lane * (tracks / p.lanes) })),
     folds: folds.map((f) => ({ ...f, span: tracks / f.lanes, col: 1 + f.lane * (tracks / f.lanes) })),
   };
 }
@@ -211,7 +244,7 @@ function dayByMat(day: number, sessions: Placed[], mats: GridMat[], maxLanes: nu
       const span = width % lanes === 0 ? width / lanes : 1;
       return { col: 1 + offset + lane * span, span };
     };
-    for (const p of placed) layout.sessions.push({ ...p, ...place(p.lane, p.lanes) });
+    for (const p of placed) layout.sessions.push({ ...p, matId, ...place(p.lane, p.lanes) });
     for (const f of folds) layout.folds.push({ ...f, ...place(f.lane, f.lanes) });
     layout.day.columns.push({ matId, col: 1 + offset, span: width });
     offset += width;
@@ -223,7 +256,8 @@ function dayByMat(day: number, sessions: Placed[], mats: GridMat[], maxLanes: nu
 
 export function buildTimetableGrid(input: GridSession[], opts: GridOptions): TimetableGrid {
   const maxLanes = opts.maxLanes ?? 3;
-  const all = input.map(onAxis);
+  // Only the days on show shape the rows: a session on a day nobody asked for adds no line and no gutter label.
+  const all = input.filter((s) => opts.days.includes(s.day)).map(onAxis);
 
   // Rows: the distinct start and end minutes of everything on show.
   const lines = [...new Set(all.flatMap((s) => [s.startMin, s.endMin]))].sort((a, b) => a - b);
@@ -270,7 +304,7 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
           rowEnd: lineOf(p.session.endMin),
           lane: p.lane,
           lanes: p.lanes,
-          matId: p.session.matId,
+          matId: p.matId,
         },
       })),
       ...layout.folds.map((f) => ({

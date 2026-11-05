@@ -5,7 +5,7 @@
 // week's "+N more" lands here, so the classes it folded are on screen and not
 // behind a second button (plan §4.11).
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import React from "react";
 import { DayGrid, type DayGridItem } from "@/components/schedule/DayGrid";
@@ -56,5 +56,29 @@ describe("DayGrid openCluster", () => {
     screen.getByRole("button", { name: "Collapse" }).click();
     view.rerender(grid("tots"));
     expect(screen.queryByTestId("day-grid-cluster-open")).toBeNull();
+  });
+
+  it("tells the caller once the request has been acted on, so the caller can drop it", () => {
+    const handled = vi.fn();
+    const withHandler = (openCluster: string | null) => (
+      <DayGrid items={DAY} startHour={9} endHour={14} action="Edit" onActivate={() => {}} openCluster={openCluster} onOpenClusterHandled={handled} />
+    );
+    const view = render(withHandler(null));
+    expect(handled).not.toHaveBeenCalled();
+    view.rerender(withHandler("kids"));
+    expect(handled).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("day-grid-cluster-open")).toBeTruthy();
+    // A request for a session with no folded group to open is spent too: it must not wait for another day.
+    view.rerender(withHandler("open"));
+    expect(handled).toHaveBeenCalledTimes(2);
+  });
+
+  it("a fresh grid with no request leaves the group folded and focus alone (what coming back to the day is)", () => {
+    const first = render(grid("kids"));
+    expect(screen.getByTestId("day-grid-cluster-open")).toBeTruthy();
+    first.unmount();
+    render(grid(null));
+    expect(screen.queryByTestId("day-grid-cluster-open")).toBeNull();
+    expect(document.activeElement).toBe(document.body);
   });
 });

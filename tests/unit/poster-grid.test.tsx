@@ -74,6 +74,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("days are groups", () => {
@@ -220,8 +221,9 @@ describe("the scroll box", () => {
     const box = screen.getByRole("region", { name: "Week timetable" });
     expect(box.getAttribute("tabindex")).toBe("0");
     expect(box.getAttribute("data-testid")).toBe("week-scroller");
-    expect(box.style.scrollPaddingTop).toBe("46px");
-    expect(box.style.scrollPaddingLeft).toBe("36px");
+    // The 44 px day-name band and the 36 px gutter, each plus room for a focused chip's ring (3 px out).
+    expect(box.style.scrollPaddingTop).toBe("50px");
+    expect(box.style.scrollPaddingLeft).toBe("40px");
   });
 
   it("renders without ResizeObserver and says nothing about width", () => {
@@ -230,12 +232,81 @@ describe("the scroll box", () => {
     expect(screen.getByTestId("week-wider").textContent).toBe("");
   });
 
-  it("opens on today's class without moving focus or animating", () => {
+});
+
+// jsdom lays nothing out, so the box and the cell it should open on are given
+// positions here; what is pinned is the arithmetic and WHEN it runs.
+describe("where the box opens", () => {
+  const rect = (top: number, left: number, width = 100) => ({ top, left, right: left + width, bottom: top + 50, width, height: 50, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+  /** The box sits at (100, 50); `at` says where one cell sits, picked by `pick`. */
+  const layOut = (pick: (el: Element) => boolean, at: { top: number; left: number }) =>
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      if (this.matches('[data-testid="week-scroller"]')) return rect(100, 50, 900);
+      if (pick(this)) return rect(at.top, at.left);
+      return rect(0, 0, 0);
+    });
+  const isLiveCell = (el: Element) => el.matches("[data-cell-key]") && el.querySelector('[data-session-state="live"]') !== null;
+  const box = () => screen.getByTestId("week-scroller");
+
+  it("puts today's live class just under the pinned day names and brings its column into view, by assigning scroll positions", () => {
     const scrollIntoView = vi.fn();
+    const had = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
     Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      layOut(isLiveCell, { top: 700, left: 600 });
+      render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
+      // 700 − 100 (the box's top) − 44 (the day-name band) − 4
+      expect(box().scrollTop).toBe(552);
+      // 600 − 50 (the box's left) − 36 (the gutter) − 6 (the day gap)
+      expect(box().scrollLeft).toBe(508);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(document.body);
+    } finally {
+      if (had) Object.defineProperty(Element.prototype, "scrollIntoView", had);
+      else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("does it once: when the live class ends and the next begins, an ordinary re-render leaves the box where the reader scrolled it", () => {
+    layOut(isLiveCell, { top: 700, left: 600 });
     render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
-    expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(document.body);
+    expect(box().scrollTop).toBe(552);
+    box().scrollTop = 20; // the reader scrolls to the morning
+    box().scrollLeft = 0;
+    vi.setSystemTime(new Date(2026, 10, 5, 19, 5)); // 18:40 has ended, 19:00 is live: a different target
+    fireEvent.click(screen.getByTestId("timetable-hide-menu")); // any state change re-renders the page
+    expect(weekChips(weekDay(document.body, "thu")).map((b) => b.dataset.sessionState)).toContain("ended");
+    expect(box().scrollTop).toBe(20);
+    expect(box().scrollLeft).toBe(0);
+  });
+
+  it("positions again when the week on show changes: another week starts at the top", () => {
+    layOut(isLiveCell, { top: 700, left: 600 });
+    render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
+    expect(box().scrollTop).toBe(552);
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    expect(box().scrollTop).toBe(0);
+    expect(box().scrollLeft).toBe(0);
+  });
+
+  it("opens on the '+N more' button when today's live class is folded behind it", () => {
+    // Five at once now. The page's own order is by name, so "Aaa" is its first live class; the grid
+    // keeps the two that sort first by place, and "Aaa" (Mat 9) is one of the three it folds.
+    const crowded: ClassRow[] = [
+      cls("Aaa", "Mat 9", [[4, "18:40", "19:30"]]),
+      cls("Bbb", "Mat 1", [[4, "18:40", "19:30"]]),
+      cls("Ccc", "Mat 2", [[4, "18:40", "19:30"]]),
+      cls("Ddd", "Mat 3", [[4, "18:40", "19:30"]]),
+      cls("Eee", "Mat 4", [[4, "18:40", "19:30"]]),
+    ];
+    layOut((el) => el.matches("[data-cell-more]"), { top: 400, left: 300 });
+    const { container } = render(<TimetableManager initialClasses={crowded} {...PROPS} />);
+    expect(weekChips(weekDay(container, "thu")).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Edit Bbb, Thursday 18:40 to 19:30, Mat 1 (live)",
+      "Edit Ccc, Thursday 18:40 to 19:30, Mat 2 (live)",
+    ]);
+    // 400 − 100 − 44 − 4
+    expect(box().scrollTop).toBe(252);
   });
 });
 
