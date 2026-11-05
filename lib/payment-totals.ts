@@ -60,7 +60,8 @@ export function sumCollected(
   return { todayPence, monthPence };
 }
 
-function formatMoney(pence: number, currency: string): string {
+/** "£45.00" from integer pence. The one money formatter for sentences (the Activity timeline uses it too). */
+export function formatMoney(pence: number, currency: string): string {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency }).format(pence / 100);
 }
 
