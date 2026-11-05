@@ -8,7 +8,7 @@
 import type { Prisma } from "@prisma/client";
 import { liveClassWhere } from "@/lib/class-live";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, compareMatNames, matNameKey } from "@/lib/mats";
+import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, commonestSpelling, compareMatNames, matNameKey } from "@/lib/mats";
 import { effectiveLayout, isTimetableLayout, type TimetableLayout } from "@/lib/timetable-layout";
 
 type Tx = Prisma.TransactionClient;
@@ -125,7 +125,7 @@ export async function adoptPlaces(tx: Tx, tenantId: string, keys: readonly strin
     byKey.set(key, entry);
   }
   const named = [...byKey].map(([key, entry]) => {
-    const [name] = [...entry.spellings].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0] ?? [entry.anySpelling];
+    const name = commonestSpelling(entry.spellings) ?? entry.anySpelling;
     return { key, name, ids: entry.ids };
   });
   named.sort((a, b) => compareMatNames(a.name, b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));

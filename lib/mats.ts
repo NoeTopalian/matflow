@@ -76,6 +76,18 @@ export interface PlaceSuggestion {
 }
 
 /**
+ * Which of a place's spellings names its mat: the commonest. Between equally common ones, the one that reads most
+ * like a name — mixed case ("Mat 1") before all lower ("mat 1") before all capitals ("MAT 1") — then the one that
+ * sorts first, so the answer never flips with the order the rows come back in. The suggestion list and adopting
+ * both use this, so the sheet names a mat exactly as adopting will create it. `null` when there is no spelling.
+ */
+export function commonestSpelling(spellings: ReadonlyMap<string, number>): string | null {
+  const casing = (s: string) => (s !== s.toLowerCase() && s !== s.toUpperCase() ? 0 : s === s.toLowerCase() ? 1 : 2);
+  const [first] = [...spellings].sort((a, b) => b[1] - a[1] || casing(a[0]) - casing(b[0]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return first ? first[0] : null;
+}
+
+/**
  * The distinct places typed on the classes given (pass the club's classes
  * that are not on a mat), one line per place whatever its capitals and
  * spacing, in number-aware name order; and how many classes have no place.
@@ -100,11 +112,7 @@ export function placeSuggestions(
   }
   const suggestions: PlaceSuggestion[] = [];
   for (const [key, seen] of spellings) {
-    // The commonest spelling. Between equally common ones, the one that reads most like a name — mixed case
-    // ("Mat 1") before all lower ("mat 1") before all capitals ("MAT 1") — then the one that sorts first, so the
-    // answer never flips with the order the rows come back in.
-    const casing = (s: string) => (s !== s.toLowerCase() && s !== s.toUpperCase() ? 0 : s === s.toLowerCase() ? 1 : 2);
-    const [name] = [...seen].sort((a, b) => b[1] - a[1] || casing(a[0]) - casing(b[0]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0];
+    const name = commonestSpelling(seen) ?? key;
     let classCount = 0;
     for (const n of seen.values()) classCount += n;
     suggestions.push({ name, key, classCount, tooLong: name.length > MAT_NAME_MAX, matId: matByKey.get(key) ?? null });
