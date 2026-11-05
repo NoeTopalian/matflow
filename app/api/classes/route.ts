@@ -154,7 +154,7 @@ export async function POST(req: Request) {
           },
         },
         include: {
-          schedules: true,
+          schedules: { orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }] },
           requiredRank: true,
           maxRank: true,
           coachUser: { select: { id: true, name: true } },

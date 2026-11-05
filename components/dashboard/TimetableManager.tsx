@@ -256,28 +256,30 @@ function ClassChip({
  * Returns `null` for any day that is not today.
  */
 export function chipStatesFor(
-  classes: ClassRow[],
-  dow: number,
+  sessions: DaySession[],
   isToday: boolean,
   cancelledToday: ReadonlySet<string> = new Set(),
   now: Date = new Date(),
 ): (SessionState | null)[] {
-  if (!isToday) return classes.map(() => null);
+  if (!isToday) return sessions.map(() => null);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // Lane 3 D6: the template alone showed a called-off session as LIVE. Today's
   // instances (from /api/coach/today) mark a cancelled one, keyed on
   // class + start time, and lib/schedule-state decides cancellation FIRST —
   // so it reads "Cancelled", never Live or Next.
-  const spans = classes.map((cls) => {
-    const slot = cls.schedules.find((sc) => sc.dayOfWeek === dow);
-    const startTime = slot?.startTime ?? "00:00";
-    return {
-      ...spanMinutes(startTime, slot?.endTime ?? "00:00"),
-      cancelled: cancelledToday.has(`${cls.id}|${startTime}`),
-    };
-  });
+  const spans = sessions.map(({ cls, slot }) => ({
+    ...spanMinutes(slot.startTime, slot.endTime),
+    cancelled: cancelledToday.has(`${cls.id}|${slot.startTime}`),
+  }));
   return sessionStates(spans, nowMin, true);
 }
+
+/**
+ * One session on the staff timetable: a class and one of its slots. The week
+ * grid and the agenda are built from these, not from classes, so a class that
+ * runs three times on Monday gets three chips (Sean's Beginners Gi showed one).
+ */
+export type DaySession = { cls: ClassRow; slot: ClassRow["schedules"][number] };
 
 function getWeekDates(offset: number): Date[] {
   const now = new Date();
@@ -1614,15 +1616,12 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           : c.category === categoryFilter,
     );
 
-  // Group by day — driven by `visibleClasses` so the weekly grid filters too
-  const byDay = Array.from({ length: 7 }, (_, i) =>
+  // Group by day — one entry per session, in start-time order — driven by
+  // `visibleClasses` so the weekly grid filters too
+  const byDay: DaySession[][] = Array.from({ length: 7 }, (_, i) =>
     visibleClasses
-      .filter((c) => c.schedules.some((s) => s.dayOfWeek === i))
-      .sort((a, b) => {
-        const at = a.schedules.find((s) => s.dayOfWeek === i)?.startTime ?? "";
-        const bt = b.schedules.find((s) => s.dayOfWeek === i)?.startTime ?? "";
-        return at.localeCompare(bt);
-      })
+      .flatMap((cls) => cls.schedules.filter((s) => s.dayOfWeek === i).map((slot) => ({ cls, slot })))
+      .sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime) || a.cls.name.localeCompare(b.cls.name))
   );
 
   function openAdd() {
@@ -2095,12 +2094,12 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                       (() => {
                         const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
                         const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
-                        const chipStates = chipStatesFor(byDay[agendaDow], agendaDow, agendaIsToday, cancelledToday);
-                        return byDay[agendaDow].map((cls, i) => (
+                        const chipStates = chipStatesFor(byDay[agendaDow], agendaIsToday, cancelledToday);
+                        return byDay[agendaDow].map(({ cls, slot }, i) => (
                           <ClassChip
-                            key={cls.id}
+                            key={slot.id}
                             cls={cls}
-                            startTime={cls.schedules.find((sc) => sc.dayOfWeek === agendaDow)?.startTime}
+                            startTime={slot.startTime}
                             primaryColor={primaryColor}
                             canManage={canManage}
                             onEdit={openEdit}
@@ -2118,9 +2117,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                   <div className="grid grid-cols-7 min-w-[980px] xl:min-w-0 gap-2">
                     {weekDates.map((date, rawIdx) => {
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
-                      const dayClasses = byDay[dow];
+                      const daySessions = byDay[dow];
                       const isToday = date.getTime() === todayMidnight.getTime();
-                      const chipStates = chipStatesFor(dayClasses, dow, isToday, cancelledToday);
+                      const chipStates = chipStatesFor(daySessions, isToday, cancelledToday);
                       return (
                         <div
                           key={rawIdx}
@@ -2154,14 +2153,14 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
                           {/* Classes */}
                           <div className="space-y-1.5 flex-1">
-                            {dayClasses.length === 0 ? (
+                            {daySessions.length === 0 ? (
                               <p className="text-center text-[11px] py-4" style={{ color: "var(--tx-4)" }}>—</p>
                             ) : (
-                              dayClasses.map((cls, i) => (
+                              daySessions.map(({ cls, slot }, i) => (
                                 <ClassChip
-                                  key={cls.id}
+                                  key={slot.id}
                                   cls={cls}
-                                  startTime={cls.schedules.find((sc) => sc.dayOfWeek === dow)?.startTime}
+                                  startTime={slot.startTime}
                                   primaryColor={primaryColor}
                                   canManage={canManage}
                                   onEdit={openEdit}

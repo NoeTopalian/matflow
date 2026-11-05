@@ -266,8 +266,9 @@ describe("D6 — a cancelled session is never Live on the timetable", () => {
   it("chipStatesFor marks today's cancelled instance Cancelled even mid-session", () => {
     const now = new Date(2026, 8, 30, 20, 30); // Wednesday 30 Sep, 20:30
     const cls = { ...CLASS, schedules: [{ id: "s1", dayOfWeek: 3, startTime: "20:00", endTime: "21:00" }] };
-    expect(chipStatesFor([cls], 3, true, new Set(), now)).toEqual(["live"]);
-    expect(chipStatesFor([cls], 3, true, new Set(["c1|20:00"]), now)).toEqual(["cancelled"]);
+    const session = { cls, slot: cls.schedules[0] };
+    expect(chipStatesFor([session], true, new Set(), now)).toEqual(["live"]);
+    expect(chipStatesFor([session], true, new Set(["c1|20:00"]), now)).toEqual(["cancelled"]);
   });
 
   it("the week view reads today's instances and shows the chip as Cancelled", async () => {
