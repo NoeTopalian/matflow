@@ -160,6 +160,59 @@ export interface PackedLanes {
 
 const overlaps = (a: SessionSpan, b: SessionSpan) => a.startMin < b.endMin && b.startMin < a.endMin;
 
+/** 1110 → `"18:30"`; an overnight end wraps past midnight (1470 → `"00:30"`). */
+export function minToTime(m: number): string {
+  return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+// Active-hours clamp for a day grid: min(start) − 1 h → max(end) + 1 h over
+// the sessions given, kept inside 06:00–23:00 and never narrower than 8 hours.
+// No sessions → 09:00–21:00. Shared by the member day view and the staff Day
+// view so both show the same hours for the same club.
+const CLAMP_START = 6;
+const CLAMP_END = 23;
+const MIN_WINDOW = 8;
+const FALLBACK_START = 9;
+const FALLBACK_END = 21;
+
+export function hourWindow(sessions: { startTime: string; endTime: string }[]): { startHour: number; endHour: number } {
+  if (sessions.length === 0) return { startHour: FALLBACK_START, endHour: FALLBACK_END };
+  const minStart = Math.min(...sessions.map((s) => timeToMin(s.startTime)));
+  const maxEnd = Math.max(...sessions.map((s) => timeToMin(s.endTime)));
+  let start = Math.max(CLAMP_START, Math.floor(minStart / 60) - 1);
+  let end = Math.min(CLAMP_END, Math.ceil(maxEnd / 60) + 1);
+  // Widen to the minimum window without leaving the clamp.
+  while (end - start < MIN_WINDOW) {
+    if (end < CLAMP_END) end++;
+    else if (start > CLAMP_START) start--;
+    else break;
+  }
+  return { startHour: start, endHour: end };
+}
+
+export interface SessionCluster {
+  /** Indexes into the input array, in input order. */
+  members: number[];
+  /** The most sessions running at one moment — "Up to 2" for a staggered trio, never 3. */
+  lanes: number;
+  startMin: number;
+  endMin: number;
+}
+
+/**
+ * One day's sessions as overlap clusters, in time order, without lane
+ * placement: the staff week list draws each cluster of two or more as a
+ * group ("Up to N at once"). A session that overlaps nothing is a cluster of
+ * one. Same clustering as `packLanes`, so the staff Day view and the member
+ * day view agree on what clashes.
+ */
+export function clusterSessions(sessions: { startTime: string; endTime: string }[]): SessionCluster[] {
+  const packed = packLanes(sessions.map((s) => spanMinutes(s.startTime, s.endTime)), { maxLanes: Number.MAX_SAFE_INTEGER });
+  return packed.clusters.map((c) => ({ members: [...c.members].sort((a, b) => a - b), lanes: c.lanes, startMin: c.startMin, endMin: c.endMin }));
+}
+
+export const clusterLabel = (c: SessionCluster) => (c.lanes === c.members.length ? `${c.lanes} at once` : `Up to ${c.lanes} at once`);
+
 /**
  * Sessions that look like the same one entered twice: the same class name
  * (case and spacing ignored), weekday, start time and place. Two genuine

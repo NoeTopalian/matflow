@@ -15,7 +15,8 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
-import { duplicateSessionKeys, packLanes, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
+import { clusterLabel, clusterSessions, duplicateSessionKeys, hourWindow, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionCluster, type SessionState } from "@/lib/schedule-state";
+import { DayGrid } from "@/components/schedule/DayGrid";
 import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
@@ -322,21 +323,16 @@ function ClassChip({
 /** A day with this many sessions switches the week to the wider, compact layout. */
 export const DENSE_DAY = 7;
 
-export type SessionGroup = { members: number[]; lanes: number; startMin: number; endMin: number };
+export type SessionGroup = SessionCluster;
 
 /**
- * One day's sessions as overlap groups, in time order. A group is a run of
- * sessions that overlap transitively (the clustering the member day view's
- * lanes use); `lanes` is the most that run at once — "up to 2" for a staggered
- * 16:30–17:15 / 17:00–17:45 / 17:30–18:30, never 3. A session that overlaps
- * nothing is a group of one.
+ * One day's sessions as overlap groups, in time order — lib/schedule-state's
+ * `clusterSessions` over the slots, the same clustering the member day view
+ * and the staff Day view lay out in lanes. "Up to 2" for a staggered
+ * 16:30–17:15 / 17:00–17:45 / 17:30–18:30, never 3.
  */
-export function groupSessions(sessions: DaySession[]): SessionGroup[] {
-  const packed = packLanes(sessions.map(({ slot }) => spanMinutes(slot.startTime, slot.endTime)), { maxLanes: Number.MAX_SAFE_INTEGER });
-  return packed.clusters.map((c) => ({ members: [...c.members].sort((a, b) => a - b), lanes: c.lanes, startMin: c.startMin, endMin: c.endMin }));
-}
-export const groupLabel = (g: SessionGroup) => (g.lanes === g.members.length ? `${g.lanes} at once` : `Up to ${g.lanes} at once`);
-const minToTime = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+export const groupSessions = (sessions: DaySession[]): SessionGroup[] => clusterSessions(sessions.map(({ slot }) => slot));
+export const groupLabel = clusterLabel;
 const placeOf = (cls: ClassRow) => cls.location ?? cls.coachUser?.name ?? cls.coachName ?? null;
 
 /**
@@ -1692,6 +1688,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  // Desktop: the week grid, or one day on a time axis (lanes show what clashes).
+  const [desktopView, setDesktopView] = useState<"week" | "day">("week");
+  const [dayDow, setDayDow] = useState(() => new Date().getDay());
   // Between md: and xl: the week grid keeps its 980px floor inside a
   // horizontal scroller, so on a tablet the page opened with Monday on the
   // left and today (Saturday, say) off-screen to the right — the one column
@@ -1703,7 +1702,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
     const scroller = col?.parentElement?.parentElement;
     if (!col || !scroller || scroller.scrollWidth <= scroller.clientWidth + 1) return;
     col.scrollIntoView({ inline: "center", block: "nearest" });
-  }, [weekOffset]);
+  }, [weekOffset, desktopView]);
   // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
   // on the day the owner almost always wants, rather than on Sunday.
   const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
@@ -1810,6 +1809,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   // columns (it scrolls sideways below that, as it already does at 980 px) and
   // the compact two-line chip, so a time range and a full name both fit.
   const dense = byDay.some((d) => d.length >= DENSE_DAY);
+  // The Day view's hours: the club's earliest and latest session ± 1 h over
+  // the whole week, the same clamp the member day view uses.
+  const dayHours = hourWindow(visibleClasses.flatMap((c) => c.schedules));
   // Same name, day, start and place twice: almost certainly entered twice.
   const duplicates = duplicateSessionKeys(
     visibleClasses.flatMap((cls) => cls.schedules.map((slot) => ({ key: slot.id, name: cls.name, dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, place: placeOf(cls), venue: cls.locationId }))),
@@ -2217,11 +2219,31 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                       <ChevronRight className="w-4 h-4" />
                     </Button>
                   </div>
-                  {weekOffset !== 0 && (
-                    <Button variant="secondary" size="compact" onClick={() => setWeekOffset(0)}>
-                      Today
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {(weekOffset !== 0 || (desktopView === "day" && dayDow !== new Date().getDay())) && (
+                      <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setDayDow(new Date().getDay()); }}>
+                        Today
+                      </Button>
+                    )}
+                    {/* Desktop only: the phone already shows one day at a time. The
+                        selected segment is white on the grey track (UI-RULES §4a.5). */}
+                    <div className="hidden md:flex items-center gap-1 rounded-lg p-0.5" role="group" aria-label="Timetable view" style={{ background: "var(--sf-2)" }}>
+                      {(["week", "day"] as const).map((v) => (
+                        <Button
+                          key={v}
+                          variant="ghost"
+                          size="compact"
+                          aria-pressed={desktopView === v}
+                          onClick={() => setDesktopView(v)}
+                          data-testid={`timetable-view-${v}`}
+                          className={desktopView === v ? "border" : ""}
+                          style={desktopView === v ? { background: "var(--sf-1)", borderColor: "var(--bd-active)", boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08))", color: "var(--tx-1)" } : { color: "var(--tx-2)" }}
+                        >
+                          {v === "week" ? "Week" : "Day"}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 {/* 7-column week grid. Each cell wants ≥130px to fit names like
@@ -2306,6 +2328,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                 {/* The content column is capped at max-w-6xl (1152 px), so a dense
                     week's 1260 px grid never fits: it scrolls sideways inside this
                     box at every desktop width, never the page (UI-RULES §4a). */}
+                {desktopView === "week" ? (
                 <div className={["hidden md:block overflow-x-auto -mx-1 px-1", dense ? "" : "xl:overflow-x-visible"].join(" ")} data-testid="week-scroller">
                   <div
                     className={["grid grid-cols-7 gap-2", dense ? "min-w-[1260px]" : "min-w-[980px] xl:min-w-0"].join(" ")}
@@ -2373,6 +2396,72 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                     })}
                   </div>
                 </div>
+                ) : (
+                  /* ── Desktop: one day on a time axis ───────────────────────
+                     Sessions sit where they run; overlapping ones share the width
+                     in lanes, so a clash is visible. Same hours, same lane maths as
+                     the member day view (lib/schedule-state). */
+                  <div className="hidden md:block" data-testid="day-view">
+                    <div className="flex gap-1.5 mb-3 rounded-xl p-1" role="group" aria-label="Day" style={{ background: "var(--sf-2)" }}>
+                      {weekDates.map((date, rawIdx) => {
+                        const dow = rawIdx === 6 ? 0 : rawIdx + 1;
+                        const isToday = date.getTime() === todayMidnight.getTime();
+                        const n = byDay[dow].length;
+                        const selected = dayDow === dow;
+                        return (
+                          <Button
+                            key={rawIdx}
+                            aria-pressed={selected}
+                            aria-label={`${DAYS_FULL[dow]} ${date.getDate()}${isToday ? ", today" : ""}, ${n === 0 ? "no sessions" : `${n} session${n === 1 ? "" : "s"}`}`}
+                            variant="ghost"
+                            size="compact"
+                            onClick={() => setDayDow(dow)}
+                            className={["h-auto flex-col gap-0 px-3 py-1.5", selected ? "border" : ""].join(" ")}
+                            style={selected ? { background: "var(--sf-1)", borderColor: "var(--bd-active)", boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08))" } : undefined}
+                          >
+                            <span className={["text-[10px] font-semibold uppercase tracking-wider", isToday ? "underline underline-offset-2" : ""].join(" ")} style={{ color: "var(--tx-1)" }}>
+                              {DAYS[dow]} {date.getDate()}
+                            </span>
+                            <span className="text-[10px] tabular-nums" style={{ color: "var(--tx-3)" }}>{n === 0 ? "—" : n}</span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                    {(() => {
+                      const date = weekDates[dayDow === 0 ? 6 : dayDow - 1];
+                      const isToday = date.getTime() === todayMidnight.getTime();
+                      const sessions = byDay[dayDow];
+                      const states = chipStatesFor(sessions, isToday, cancelledToday);
+                      return (
+                        <div className="rounded-2xl border p-3 pt-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
+                          <DayGrid
+                            key={dayDow}
+                            items={sessions.map(({ cls, slot }, i) => ({
+                              key: slot.id,
+                              name: cls.name,
+                              startTime: slot.startTime,
+                              endTime: slot.endTime,
+                              color: cls.color ?? primaryColor,
+                              meta: placeOf(cls),
+                              state: states[i],
+                              duplicate: duplicates.has(slot.id),
+                            }))}
+                            startHour={dayHours.startHour}
+                            endHour={dayHours.endHour}
+                            hourHeight={56}
+                            isToday={isToday}
+                            action={canManage ? "Edit" : undefined}
+                            onActivate={canManage ? (key) => {
+                              const s = sessions.find((x) => x.slot.id === key);
+                              if (s) openEdit(s.cls);
+                            } : undefined}
+                            emptyText="No sessions on this day"
+                          />
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </>
             );
           })()}
