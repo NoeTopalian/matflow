@@ -78,6 +78,15 @@ describe("placeSuggestions", () => {
     expect(a.suggestions[0].name).toBe(b.suggestions[0].name);
   });
 
+  it("between equally common spellings, prefers the one that reads like a name: Mat 1, then mat 1, then MAT 1", () => {
+    for (const order of [["MAT 1", "mat 1", "Mat 1"], ["mat 1", "MAT 1", "Mat 1"], ["Mat 1", "MAT 1", "mat 1"]]) {
+      expect(placeSuggestions(order.flatMap((s) => at(s)), []).suggestions[0].name).toBe("Mat 1");
+    }
+    expect(placeSuggestions([...at("MAT 1"), ...at("mat 1")], []).suggestions[0].name).toBe("mat 1");
+    // A commoner spelling still wins whatever its capitals.
+    expect(placeSuggestions([...at("MAT 1", 2), ...at("Mat 1")], []).suggestions[0].name).toBe("MAT 1");
+  });
+
   it("has nothing to offer a club with no classes", () => {
     expect(placeSuggestions([], [])).toEqual({ suggestions: [], noPlaceCount: 0 });
   });
