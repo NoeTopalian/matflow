@@ -8,7 +8,7 @@
  *
  * Behaviour, the same on both surfaces: focus goes to the first row when it
  * opens; Escape and "Show fewer" close it and hand focus back to the "+N more"
- * button; moving focus out of it (Tab past the last row, a tap elsewhere)
+ * button; moving focus out of it (Tab past the last row) or a press elsewhere
  * closes it and leaves focus where it went.
  */
 
@@ -58,8 +58,19 @@ export function MorePanel({
   closeClassName?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     root.current?.querySelector<HTMLElement>("button:not([disabled]), a[href]")?.focus();
+  }, []);
+  // A press anywhere outside closes it. (Not a blur with no next focus: Safari does not focus a button it taps, so a
+  // tap on one of the panel's own rows would blur to nothing and close the panel before the tap landed.)
+  useEffect(() => {
+    const outside = (e: PointerEvent) => {
+      if (root.current && e.target instanceof Node && !root.current.contains(e.target)) close.current(false);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
   }, []);
   return (
     <div
@@ -75,8 +86,10 @@ export function MorePanel({
         onClose(true);
       }}
       onBlur={(e) => {
+        // Focus moving to something outside (Tab past the last row): closed. Focus moving to nothing is a tap,
+        // handled by the press listener above.
         const next = e.relatedTarget as Node | null;
-        if (!next || !root.current?.contains(next)) onClose(false);
+        if (next && !root.current?.contains(next)) onClose(false);
       }}
     >
       {children}

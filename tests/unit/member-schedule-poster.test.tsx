@@ -231,4 +231,37 @@ describe("more than three at once", () => {
     await waitFor(() => expect(within(day).queryByTestId("more-panel")).toBeNull());
     expect(document.activeElement).toBe(more);
   });
+
+  it("a tap on a row that moves focus to nothing (Safari) still opens that class's sheet", async () => {
+    timetable = byTime;
+    stub(FIVE);
+    render(<MemberSchedulePage />);
+    const { day } = await today();
+    fireEvent.click(within(day).getByTestId("schedule-more"));
+    const panel = await within(day).findByTestId("more-panel");
+    const rowD = within(panel).getByRole("button", { name: /^Class D,/ });
+    // Safari: the tapped button does not take focus, so focus leaves the panel for nothing.
+    fireEvent.pointerDown(rowD);
+    fireEvent.blur(within(panel).getAllByRole("button")[0], { relatedTarget: null });
+    expect(within(day).queryByTestId("more-panel")).not.toBeNull();
+    fireEvent.click(rowD);
+    expect(await screen.findByRole("button", { name: /Subscribe to class/ })).toBeTruthy();
+  });
+
+  it("a press outside closes it; Tab past its last row closes it too", async () => {
+    timetable = byTime;
+    stub(FIVE);
+    render(<MemberSchedulePage />);
+    const { day } = await today();
+    const more = within(day).getByTestId("schedule-more");
+    fireEvent.click(more);
+    await within(day).findByTestId("more-panel");
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(within(day).queryByTestId("more-panel")).toBeNull());
+    fireEvent.click(more);
+    const panel = await within(day).findByTestId("more-panel");
+    const buttons = within(panel).getAllByRole("button");
+    fireEvent.blur(buttons[buttons.length - 1], { relatedTarget: more });
+    await waitFor(() => expect(within(day).queryByTestId("more-panel")).toBeNull());
+  });
 });

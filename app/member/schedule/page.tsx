@@ -72,8 +72,8 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /**
- * Secondary ink on the members' day: the shell's own text at 72 %. The shell's muted ink measures under 4.5:1 on a
- * light club shell (#64748b on #f5f5f4 is 4.4:1); this reads on dark and light shells and over a block's tint.
+ * Secondary ink on the members' day: the shell's own text at 72 %. The shell's muted ink measures 4.4:1 on a light
+ * club shell, under the 4.5:1 floor; this reads on dark and light shells and over a block's tint.
  */
 const QUIET_INK = "color-mix(in srgb, var(--member-text) 72%, transparent)";
 
