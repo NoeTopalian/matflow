@@ -582,7 +582,7 @@ export async function POST(req: NextRequest) {
                 stripePaymentIntentId: paymentIntentId,
                 status: "active",
               },
-              select: { id: true, creditsRemaining: true },
+              select: { id: true },
             });
             // On the club's Activity timeline, in this transaction: it exists exactly when the credits do. A
             // replay, and the completed + async-succeeded pair, take the "already minted" branch above and
@@ -593,7 +593,9 @@ export async function POST(req: NextRequest) {
                 memberId: metadata.memberId,
                 classPackId: pack.id,
                 memberClassPackId: minted.id,
-                credits: minted.creditsRemaining,
+                // The pack as sold, beside the amount as paid. After an earlier part refund the member holds fewer
+                // credits than this; the refund's own row says so.
+                credits: pack.totalCredits,
                 amountPence,
                 currency: ((obj.currency as string) ?? pack.currency).toUpperCase(),
               },
@@ -692,8 +694,9 @@ export async function POST(req: NextRequest) {
                 memberId: order.memberId,
                 orderId: order.id,
                 orderRef: metadata.orderRef,
+                // Both from the order: what it was sold for, in the currency it was sold in.
                 amountPence: order.totalPence,
-                currency: ((obj.currency as string) ?? order.currency).toUpperCase(),
+                currency: order.currency.toUpperCase(),
               },
               { tx, tenantId: metadata.tenantId, userId: null, memberEmail: order.member?.email ?? null, entity: order.memberId ? undefined : { type: "Order", id: order.id } },
             );

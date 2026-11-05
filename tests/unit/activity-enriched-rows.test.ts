@@ -111,23 +111,35 @@ describe("the attribution row is written for a change, not for every save", () =
 // elsewhere. Each is pinned where it is written, so a later edit cannot drop it without this test saying which.
 describe("each writer names what the timeline filters on", () => {
   const src = (path: string) => readFileSync(path, "utf8").replace(/\s+/g, " ");
-  const WRITERS: [string, string, RegExp][] = [
-    ["a member's own cancellation names their plan", "app/api/member/subscriptions/cancel/route.ts", /action: "member\.subscription\.cancel",.*?tierId: member\.membershipTierId/],
-    ["a parent's cancellation for a child names the child's plan", "app/api/member/subscriptions/cancel-for-kid/route.ts", /action: "member\.subscription\.cancel\.kid",.*?tierId: kid\.membershipTierId/],
-    ["a parent starting a child's membership names the plan", "app/api/member/subscriptions/start-for-kid/route.ts", /action: "member\.subscription\.create\.kid",.*?tierId: tier\.id/],
-    ["a membership ended by Stripe names the plan", "app/api/stripe/webhook/route.ts", /action: "member\.subscription\.cancelled_by_stripe",.*?tierId: cancelledMember\.membershipTierId/],
-    ["a hold names the plan", "app/api/members/[id]/hold/route.ts", /action: "member\.hold\.start",.*?tierId: member\.membershipTierId/],
-    ["the end of a hold names the plan", "app/api/members/[id]/resume/route.ts", /action: "member\.hold\.end",.*?tierId: member\.membershipTierId/],
-    ["a refund names the member whose payment it was", "app/api/payments/[id]/refund/route.ts", /action: "payment\.refund",.*?memberId: payment\.memberId/],
-    ["an order marked paid at the desk names its member", "app/api/orders/[id]/mark-paid/route.ts", /action: "order\.mark_paid",.*?memberId: updated\.memberId/],
-    ["a staff check-in names the class", "app/api/checkin/route.ts", /action: "attendance\.mark",.*?classId: result\.classId/],
-    ["a member's own check-in names the class", "app/api/checkin/route.ts", /action: "attendance\.self_checkin",.*?classId: result\.classId/],
-    ["a kiosk check-in names the class", "app/api/kiosk/[token]/checkin/route.ts", /action: "attendance\.kiosk_checkin",.*?classId: result\.classId/],
-    ["a card-scan batch names the class", "app/api/checkin/card/route.ts", /action: "attendance\.card_scan",.*?classId: instance\.classId/],
-    ["a deleted member's name is kept on the deletion row", "app/api/members/[id]/route.ts", /action: "member\.delete",.*?name: deletedName/],
+  /**
+   * The key must sit in the same logAudit call as the action: the match stops at the next call or the next action, so a
+   * key that moved to a different row later in the file no longer counts.
+   */
+  const esc = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const inSameCall = (action: string, key: string) => new RegExp(`action: "${esc(action)}",(?:(?!action: "|logAudit\\().)*?${esc(key)}`);
+  const WRITERS: [string, string, string, string][] = [
+    ["a member's own cancellation names their plan", "app/api/member/subscriptions/cancel/route.ts", "member.subscription.cancel", "tierId: member.membershipTierId"],
+    ["a parent's cancellation for a child names the child's plan", "app/api/member/subscriptions/cancel-for-kid/route.ts", "member.subscription.cancel.kid", "tierId: kid.membershipTierId"],
+    ["a parent starting a child's membership names the plan", "app/api/member/subscriptions/start-for-kid/route.ts", "member.subscription.create.kid", "tierId: tier.id"],
+    ["a membership ended by Stripe names the plan", "app/api/stripe/webhook/route.ts", "member.subscription.cancelled_by_stripe", "tierId: cancelledMember.membershipTierId"],
+    ["a hold names the plan", "app/api/members/[id]/hold/route.ts", "member.hold.start", "tierId: member.membershipTierId"],
+    ["the end of a hold names the plan", "app/api/members/[id]/resume/route.ts", "member.hold.end", "tierId: member.membershipTierId"],
+    ["a refund names the member whose payment it was", "app/api/payments/[id]/refund/route.ts", "payment.refund", "memberId: payment.memberId"],
+    ["an order marked paid at the desk names its member", "app/api/orders/[id]/mark-paid/route.ts", "order.mark_paid", "memberId: updated.memberId"],
+    ["a staff check-in names the class", "app/api/checkin/route.ts", "attendance.mark", "classId: result.classId"],
+    ["a member's own check-in names the class", "app/api/checkin/route.ts", "attendance.self_checkin", "classId: result.classId"],
+    ["a kiosk check-in names the class", "app/api/kiosk/[token]/checkin/route.ts", "attendance.kiosk_checkin", "classId: result.classId"],
+    ["a card-scan batch names the class", "app/api/checkin/card/route.ts", "attendance.card_scan", "classId: instance.classId"],
+    ["a deleted member's name is kept on the deletion row", "app/api/members/[id]/route.ts", "member.delete", "name: deletedName"],
   ];
-  it.each(WRITERS)("%s", (_what, path, pattern) => {
-    expect(pattern.test(src(path)), `${path} no longer matches ${pattern}`).toBe(true);
+  it.each(WRITERS)("%s", (_what, path, action, key) => {
+    expect(inSameCall(action, key).test(src(path)), `${path}: the ${action} row no longer carries ${key}`).toBe(true);
+  });
+
+  it("the check stops at the end of the call it is looking in", () => {
+    const twoCalls = 'await logAudit({ action: "payment.refund", metadata: { amountPence } }); await logAudit({ action: "other.row", metadata: { memberId: payment.memberId } });';
+    expect(inSameCall("payment.refund", "memberId: payment.memberId").test(twoCalls)).toBe(false);
+    expect(inSameCall("other.row", "memberId: payment.memberId").test(twoCalls)).toBe(true);
   });
 
   it("every successful check-in result carries its class", () => {

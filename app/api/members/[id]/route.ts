@@ -19,7 +19,7 @@ import { recordStatusEvent } from "@/lib/member-status";
 import { shownPaymentStatus } from "@/lib/overdue";
 import { refuseSupportSession, refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
-import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
+import { ERASED_EMAIL, LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -831,7 +831,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           .filter((r) => r.id === id || (strategy?.kind === "cascade" && r.parentMemberId === id))
           .map((r) => r.email)
           .filter((e): e is string => !!e);
-        const deletedName = lockedRows.find((r) => r.id === id)?.name?.trim() || null;
+        // Someone already erased under a data-protection request has no name to keep ("Deleted member" is a placeholder).
+        const doomed = lockedRows.find((r) => r.id === id);
+        const deletedName = doomed?.email && ERASED_EMAIL.test(doomed.email) ? null : doomed?.name?.trim() || null;
         await logAudit({
           tx,
           tenantId: session.user.tenantId,
