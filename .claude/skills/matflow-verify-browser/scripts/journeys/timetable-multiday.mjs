@@ -5,7 +5,7 @@
 // it: keyboard creation, failed saves with one-request retry, same-name
 // classes, the who-can-attend preview, archive/restore and phone width.
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, weekDay, weekGrid } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -15,9 +15,10 @@ const L = ledger("timetable-multiday");
 const errors = [];
 const DAY = { 1: "Mon", 2: "Tue", 3: "Wed" };
 
-const gridDay = (page, day) =>
-  page.locator(".grid-cols-7 > div").filter({ has: page.getByText(day, { exact: true }) });
-const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: `Edit ${name}`, exact: true });
+const gridDay = (page, day) => weekDay(page, day.toLowerCase());
+// A week chip is named "Edit Gi, Monday 18:00 to 19:00" (then its place and, today, its state).
+const weekName = (name) => new RegExp(`^Edit ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, [A-Z][a-z]+day \\d\\d:\\d\\d to `);
+const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: weekName(name) });
 async function expectDays(page, name, want) {
   // A route refresh takes ~6 s to land on this harness (Neon round trips).
   for (const [d, n] of Object.entries(want)) await expect(chips(page, DAY[d], name)).toHaveCount(n, { timeout: 30_000 });
@@ -196,7 +197,7 @@ try {
 
   await section("lists", "Kids paused then resumed in another tab: after each route refresh it is in one list only", async () => {
     const where = async () => ({
-      grid: await main.locator('.grid-cols-7 button[aria-label="Edit Kids"]').count(),
+      grid: await weekGrid(main).getByRole("button", { name: weekName("Kids") }).count(),
       paused: await main.getByTestId(`inactive-class-${kids.id}`).count(),
     });
     const other = await open();
