@@ -15,6 +15,7 @@ import { getBaseUrl } from "@/lib/env-url";
 import { synthesiseKidEmail, synthesiseMemberEmail, isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { MAX_KIDS_PER_PARENT, childAccountTypeFor } from "@/lib/kids-policy";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
+import { firstForeignAttribution, attributionNotFoundMessage } from "@/lib/attribution-scope";
 import { assertSameOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { recordStatusEvent } from "@/lib/member-status";
@@ -350,6 +351,14 @@ export async function POST(req: Request) {
 
     parentMemberId = parent.id;
   }
+
+  // Attribution ids must resolve inside this tenant (reviewer A-1, 2026-11-02):
+  // trialRunById / creditedToUserId reference staff Users, creditedToMemberId
+  // another Member. Checked in-tenant before the write, as parentMemberId is.
+  const foreignAttribution = await withTenantContext(session.user.tenantId, (tx) =>
+    firstForeignAttribution(tx, session.user.tenantId, parsed.data),
+  );
+  if (foreignAttribution) return apiError(attributionNotFoundMessage(foreignAttribution), 400);
 
   // Future-DOB rejection — mirrors app/api/member/children/route.ts:61-66 so
   // bad dates are refused identically by both creation paths.
