@@ -403,6 +403,8 @@ try {
       try {
         const status = await page.evaluate(async (id) => (await fetch(`/api/member/class-subscriptions/${id}`, { method: "POST" })).status, bookId);
         expect(status).toBeLessThan(300);
+        const held = await q(`select count(*)::int n from "ClassSubscription" where "classId" = $1 and "memberId" = $2`, [bookId, member.id]);
+        expect(held[0].n).toBe(1);
       } finally {
         await bctx.close();
       }
@@ -431,7 +433,12 @@ try {
           // A booked block is filled with its class colour and its ink comes from the shared readableText (not
           // changed here): measured and recorded, not held to the 4.5:1 line.
           const filled = day.locator("button[data-booked] [data-block-part]");
-          await expect(filled.first()).toBeVisible();
+          const seen = async () => ({
+            subs: await pane.page().evaluate(async () => (await (await fetch("/api/member/me/subscriptions")).json()).classIds),
+            booked: await day.locator("button[data-booked]").count(),
+            named: await day.getByRole("button", { name: /^Advanced Gi \+ Sparring,/ }).count(),
+          });
+          await expect.poll(async () => (await seen()).booked, { message: JSON.stringify({ bookId, ...(await seen()) }) }).toBeGreaterThan(0);
           for (let i = 0; i < (await filled.count()); i++) booked[`${shell} ${hex}`] = Math.min(booked[`${shell} ${hex}`] ?? 99, await contrast(filled.nth(i)));
           // The fallen-back Monday (five at 09:00 sit beside two mats) is by time: its '+N more' and panel.
           const more = pane.getByTestId("schedule-more");

@@ -202,12 +202,12 @@ try {
     await expect(soloChip).toHaveCount(1);
     await expect(soloChip.locator('[data-chip-part="place"]')).toHaveCount(0);
     const where = await main.evaluate(() => {
-      const mon = document.querySelector('[data-day="mon"]');
+      const mon = document.querySelector('[data-testid="week-grid"] [data-day="mon"]');
       const [mat1, mat2] = [...mon.querySelectorAll("[data-mat-head]")].map((h) => h.getBoundingClientRect());
       const cells = [...mon.querySelectorAll("[data-cell-key]")].map((c) => ({ r: c.getBoundingClientRect(), time: c.querySelector('[data-chip-part="time"]').textContent }));
       const solo = cells.find((c) => c.time.startsWith("07:20"));
       const beside = cells.filter((c) => c !== solo && c.r.left < mat1.right - 1 && c.r.bottom > solo.r.top + 1 && c.r.top < solo.r.bottom - 1).length;
-      const tops = [...document.querySelectorAll("[data-cell-key]")].filter((c) => c.querySelector('[data-chip-part="time"]').textContent.startsWith("18:40")).map((c) => Math.round(c.getBoundingClientRect().top));
+      const tops = [...document.querySelectorAll('[data-testid="week-grid"] [data-cell-key]')].filter((c) => c.querySelector('[data-chip-part="time"]').textContent.startsWith("18:40")).map((c) => Math.round(c.getBoundingClientRect().top));
       return { underMat2: solo.r.left >= mat2.left - 1 && solo.r.right <= mat2.right + 1, besideInMat1: beside, tops1840: [...new Set(tops)], n1840: tops.length };
     });
     expect(where.underMat2).toBe(true);
@@ -222,7 +222,7 @@ try {
     L.note("by-mat", "pixels to spare at 1440 by mat, scrollbars on show", fit[1440].spare);
     // Today's column: the mat header is told apart from the tinted cell behind it.
     const thu = await main.evaluate(() => {
-      const head = document.querySelector('[data-day="thu"] [data-mat-head]');
+      const head = document.querySelector('[data-testid="week-grid"] [data-day="thu"] [data-mat-head]');
       return { pill: getComputedStyle(head.querySelector(".pg-mat-pill")).backgroundColor, cell: getComputedStyle(head).backgroundColor };
     });
     expect(thu.pill).not.toBe(thu.cell);
@@ -262,7 +262,7 @@ try {
       const box = scroller.getBoundingClientRect();
       const hit = (el) => { const r = el.getBoundingClientRect(); const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!at && el.contains(at); };
       const day = document.querySelector('[data-day-head="mon"]');
-      const mat = document.querySelectorAll('[data-day="mon"] [data-mat-head]')[1];
+      const mat = document.querySelectorAll('[data-testid="week-grid"] [data-day="mon"] [data-mat-head]')[1];
       return { scrollTop: scroller.scrollTop, dayTop: Math.round(day.getBoundingClientRect().top - box.top), matTop: Math.round(mat.getBoundingClientRect().top - box.top), dayOnTop: hit(day), matOnTop: hit(mat), mat: mat.textContent.trim() };
     });
     expect(pinned.scrollTop).toBeGreaterThan(50);
@@ -280,7 +280,7 @@ try {
       else await weekChips(mon).last().focus();
       const stop = await main.evaluate(() => {
         const el = document.activeElement;
-        const band = Math.max(...[...document.querySelectorAll('[data-day="mon"] [data-mat-head]')].map((h) => h.getBoundingClientRect().bottom));
+        const band = Math.max(...[...document.querySelectorAll('[data-testid="week-grid"] [data-day="mon"] [data-mat-head]')].map((h) => h.getBoundingClientRect().bottom));
         return { label: el.getAttribute("aria-label"), clear: el.getBoundingClientRect().top >= band - 1 };
       });
       if (!stop.clear) under.push(stop.label);
@@ -318,8 +318,10 @@ try {
     // By time, Mat 1 is still left of Mat 2 and every chip says its mat.
     const pair = await weekChips(weekDay(main, "mon")).evaluateAll((els) => els.slice(0, 2).map((e) => e.getAttribute("aria-label")));
     expect(pair).toEqual(MONDAY.slice(0, 2).map((s) => `Edit ${chipName(s, 0)}`));
+    const toMat = main.waitForResponse((r) => r.request().method() === "PATCH" && r.url().endsWith("/api/timetable/layout"));
     await main.getByTestId("timetable-split-mat").click();
     await expect(main.getByText("Saved for the whole club.")).toBeVisible();
+    expect((await toMat).status()).toBeLessThan(300);
     await main.reload();
     await chips(main);
     await settled(main);
@@ -357,13 +359,17 @@ try {
     await expect(main.getByTestId("timetable-split-mat")).toHaveAttribute("aria-pressed", "true");
     expect(await storedLayout()).toBe("mat");
     const before = saves.seen.length;
+    const retry = main.waitForResponse((r) => r.request().method() === "PATCH" && r.url().endsWith("/api/timetable/layout"));
     await main.getByTestId("timetable-split-time").click();
     await expect(main.getByText("Saved for the whole club.")).toBeVisible();
+    expect((await retry).status()).toBeLessThan(300);
     expect(saves.seen.length - before).toBe(1);
     expect(await storedLayout()).toBe("time");
-    // Back to by mat for the steps that follow.
+    // Back to by mat for the steps that follow. The message from the save before may still be showing, so wait for
+    // this save's own response (on the slow test link the database was read before it landed).
+    const back = main.waitForResponse((r) => r.request().method() === "PATCH" && r.url().endsWith("/api/timetable/layout"));
     await main.getByTestId("timetable-split-mat").click();
-    await expect(main.getByText("Saved for the whole club.")).toBeVisible();
+    expect((await back).status()).toBeLessThan(300);
     saves.stop();
     expect(await storedLayout()).toBe("mat");
     return { ...out, layoutRequests: saves.seen.length };
@@ -471,7 +477,7 @@ try {
     const pinned = await main.evaluate(async () => {
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const scroller = document.querySelector('[data-testid="week-scroller"]');
-      const tick = document.querySelector(".pg-tick");
+      const tick = document.querySelector('[data-testid="week-grid"] .pg-tick');
       const before = tick.getBoundingClientRect().left;
       scroller.scrollLeft = scroller.scrollWidth;
       scroller.scrollTop = scroller.scrollHeight;
@@ -499,7 +505,7 @@ try {
       await chips(main, SESSIONS + 1 + Math.min(n, n > 3 ? 2 : n));
       await settled(main);
       return main.evaluate(() => {
-        const sun = document.querySelector('[data-day="sun"]');
+        const sun = document.querySelector('[data-testid="week-grid"] [data-day="sun"]');
         const head = sun.querySelector("[data-mat-head]").getBoundingClientRect();
         const cells = [...sun.querySelectorAll("[data-cell-key]")].map((c) => c.getBoundingClientRect());
         return {

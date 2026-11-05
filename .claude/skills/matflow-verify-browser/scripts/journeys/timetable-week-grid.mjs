@@ -95,7 +95,7 @@ try {
     if (errors.length > before) L.note("real-clock-hydration", "server HTML against the browser render: what only one of them has", await hydrationDiff(main, html));
     expect(errors.map((e) => e.slice(0, 160))).toEqual([]);
     const inv = await gridInvariants(main, { sessions: SESSIONS });
-    expect(inv.problems.slice(0, 5)).toEqual([]);
+    expect(inv.problems, JSON.stringify(inv.problems.slice(0, 8))).toEqual([]);
     return { chips: inv.chips, errors: errors.length };
   });
 
@@ -111,7 +111,7 @@ try {
     const where = await main.evaluate(() => {
       const scroller = document.querySelector('[data-testid="week-scroller"]');
       const head = document.querySelector('[data-day-head="thu"]').getBoundingClientRect();
-      const chip = document.querySelector('[data-day="thu"] [data-session-state="live"]').getBoundingClientRect();
+      const chip = document.querySelector('[data-testid="week-grid"] [data-day="thu"] [data-session-state="live"]').getBoundingClientRect();
       const b = scroller.getBoundingClientRect();
       return { belowBand: chip.top >= head.bottom - 1, insideBox: chip.bottom <= b.bottom + 1, scrollTop: scroller.scrollTop, focusOnBody: document.activeElement === document.body };
     });
@@ -219,9 +219,9 @@ try {
       scroller.scrollTop = 0;
       scroller.scrollLeft = 0;
       await frame();
-      const chip = document.querySelector('[data-day="mon"] [data-cell-key] button');
+      const chip = document.querySelector('[data-testid="week-grid"] [data-day="mon"] [data-cell-key] button');
       const head = document.querySelector('[data-day-head="mon"]');
-      const tick = document.querySelector(".pg-tick");
+      const tick = document.querySelector('[data-testid="week-grid"] .pg-tick');
       const before = { chipTop: chip.getBoundingClientRect().top, headTop: head.getBoundingClientRect().top, boxTop: scroller.getBoundingClientRect().top, boxBottom: scroller.getBoundingClientRect().bottom, tickLeft: tick.getBoundingClientRect().left };
       scroller.scrollTop = scroller.scrollHeight;
       await frame();
