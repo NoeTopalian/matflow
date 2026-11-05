@@ -45,6 +45,20 @@ import { formatMoney } from "@/lib/payment-totals";
 import { sessionLabel } from "@/lib/session-label";
 import type { UndoDecision } from "@/lib/undo-registry";
 
+/**
+ * "£45.00". A currency code that Intl does not know (a hand-typed "1AB" on a
+ * desk payment) must not fail the page: the amount is then shown with the code
+ * as written.
+ */
+export function money(pence: number, currency: string | null | undefined): string {
+  const code = (currency ?? "GBP").toUpperCase();
+  try {
+    return formatMoney(pence, code);
+  } catch {
+    return `${(pence / 100).toFixed(2)} ${code}`;
+  }
+}
+
 type Where = Prisma.AuditLogWhereInput;
 type Meta = Record<string, unknown>;
 
@@ -71,8 +85,12 @@ export type RowRule = {
   action: string;
   /** Rows of that action the rule claims. */
   where: Where;
-  /** Every other row of that action, including rows with no metadata at all. */
-  whereNot: Where;
+  /**
+   * Every other row of that action, including rows with no metadata at all.
+   * Absent when it cannot be written (see the check-in rule): the type that
+   * owns the action then keeps ALL its rows, the claimed ones included.
+   */
+  whereNot?: Where;
   /** The same decision in memory. */
   test: (metadata: unknown) => boolean;
 };
@@ -88,10 +106,13 @@ const CHARGE_SUCCEEDED: Where = { metadata: { path: ["outcome"], equals: "succee
 /** Tested in this order, before any exact action name. The first rule that claims a row wins. */
 export const ROW_RULES: RowRule[] = [
   {
+    // No `whereNot`. Prisma renders NOT (array contains x) as "is an array that does not contain x", so "everything
+    // else" — which has to include a value that is not a list at all — cannot be written, and a row in neither half
+    // would be found by no filter (measured against Postgres, 5 Nov 2026). So the two types overlap instead: Check-in
+    // finds every staff check-in, and this type finds the ones with a warning. A warned check-in is still a check-in.
     type: "checkin_exception",
     action: "attendance.mark",
     where: { OR: EXCEPTION_FLAGS.map(hasFlag) },
-    whereNot: { OR: [...absent(["acknowledged"]), { AND: EXCEPTION_FLAGS.map((f) => ({ NOT: hasFlag(f) })) }] },
     test: (metadata) => {
       const flags = metaOf({ metadata }).acknowledged;
       return Array.isArray(flags) && EXCEPTION_FLAGS.some((f) => flags.includes(f));
@@ -125,10 +146,21 @@ export const ROW_RULES: RowRule[] = [
   },
 ];
 
-/** The type a row belongs to: the first row rule that claims it, else its action's type, else Other. */
+/**
+ * The type a row SHOWS: the first row rule that claims it, else its action's type, else Other.
+ * Every filter that finds a row is either that type's or, for a rule without a complement, the
+ * type that owns the action as well (`typesFinding`).
+ */
 export function typeOf(row: { action: string; metadata: unknown }): string {
   for (const rule of ROW_RULES) if (rule.action === row.action && rule.test(row.metadata)) return rule.type;
   return typeKeyForAction(row.action);
+}
+
+/** The types whose filter finds a row: the one it shows, plus the action's own type where the claiming rule has no complement. */
+export function typesFinding(row: { action: string; metadata: unknown }): string[] {
+  const shown = typeOf(row);
+  const rule = ROW_RULES.find((r) => r.type === shown && r.action === row.action && r.test(row.metadata));
+  return rule && !rule.whereNot ? [shown, typeKeyForAction(row.action)] : [shown];
 }
 
 // ── Queries ──────────────────────────────────────────────────────────────────
@@ -154,9 +186,10 @@ function compile(keys: string[]): Where {
     const type = activityType(key);
     if (!type) continue;
     for (const action of type.actions) {
-      const rules = rulesOn(action);
-      // An action some row rule claims: this type keeps only the rows no rule took.
-      if (rules.length) or.push({ AND: [{ action }, ...rules.map((r) => r.whereNot)] });
+      // An action some row rule claims: this type keeps only the rows no rule took — where the rule can say what
+      // it did not take. A rule without a complement leaves the whole action here.
+      const complements = rulesOn(action).flatMap((r) => (r.whereNot ? [r.whereNot] : []));
+      if (complements.length) or.push({ AND: [{ action }, ...complements] });
       else plain.push(action);
     }
     for (const prefix of type.prefixes) or.push({ action: { startsWith: prefix } });
@@ -164,7 +197,7 @@ function compile(keys: string[]): Where {
       if (rule.type !== key) return;
       // First match wins: a later rule on the same action takes only what the earlier ones left.
       const earlier = ROW_RULES.slice(0, i).filter((r) => r.action === rule.action);
-      or.push({ AND: [{ action: rule.action }, rule.where, ...earlier.map((r) => r.whereNot)] });
+      or.push({ AND: [{ action: rule.action }, rule.where, ...earlier.flatMap((r) => (r.whereNot ? [r.whereNot] : []))] });
     });
   }
   if (plain.length) or.unshift({ action: { in: plain } });
@@ -249,7 +282,8 @@ export type FeedRow = {
   createdAt: Date;
   userId: string | null;
   operatorId: string | null;
-  user?: { id: string; name: string | null } | null;
+  /** The staff member behind `userId`. The route drops a joined user that is not of this club before anything reads it. */
+  user?: { id: string; name: string | null; tenantId?: string } | null;
 };
 
 export const FEED_ROW_SELECT = {
@@ -261,7 +295,7 @@ export const FEED_ROW_SELECT = {
   createdAt: true,
   userId: true,
   operatorId: true,
-  user: { select: { id: true, name: true } },
+  user: { select: { id: true, name: true, tenantId: true } },
 } satisfies Prisma.AuditLogSelect;
 
 
@@ -397,13 +431,18 @@ const ENTITY_IS_NOT_AN_ID = new Set(["member.waiver.signed_via_kiosk"]);
 /** Members named per card-scan row: the sentence shows three. */
 const SCAN_MEMBERS_RESOLVED = 5;
 
-/** Every id a page of rows names, by kind. */
-export function subjectRefs(rows: FeedRow[]): SubjectRefs {
+/**
+ * Every id a page of rows names, by kind. `focusMemberId` is the member the
+ * page is filtered to: a card-scan batch is told as theirs even when they were
+ * the twentieth card scanned, so they are always looked up.
+ */
+export function subjectRefs(rows: FeedRow[], focusMemberId?: string | null): SubjectRefs {
   const refs: SubjectRefs = { member: new Set(), class: new Set(), session: new Set(), payment: new Set(), invoice: new Set(), order: new Set(), tier: new Set(), pack: new Set(), venue: new Set(), staff: new Set(), rank: new Set() };
   const add = (kind: RefKind | undefined, value: unknown) => {
     const id = kind === "invoice" ? str(value) : idOf(value);
     if (kind && id) refs[kind].add(id);
   };
+  if (rows.length) add("member", focusMemberId);
   for (const row of rows) {
     const m = metaOf(row);
     if (!ENTITY_IS_NOT_AN_ID.has(row.action)) add(ENTITY_KIND[row.entityType], row.entityId);
@@ -430,8 +469,8 @@ type LookupTx = Pick<Prisma.TransactionClient, "member" | "class" | "classInstan
  * from another club resolves to nothing. Runs in its own transaction: if it
  * fails, the page is still served as plain sentences.
  */
-export async function loadLookups(tx: LookupTx, tenantId: string, rows: FeedRow[]): Promise<ActivityLookups> {
-  const refs = subjectRefs(rows);
+export async function loadLookups(tx: LookupTx, tenantId: string, rows: FeedRow[], focusMemberId?: string | null): Promise<ActivityLookups> {
+  const refs = subjectRefs(rows, focusMemberId);
   const out = emptyLookups();
   const list = (ids: Set<string>) => [...ids].slice(0, LOOKUP_CAP);
 
@@ -473,9 +512,9 @@ export async function loadLookups(tx: LookupTx, tenantId: string, rows: FeedRow[
     for (const m of members) out.members.set(m.id, { name: m.name, erased: ERASED_EMAIL.test(m.email) });
     const gone = ids.filter((id) => !out.members.has(id));
     if (gone.length) {
-      const deletions = await tx.auditLog.findMany({ where: { tenantId, action: "member.delete", entityType: "Member", entityId: { in: gone } }, select: { entityId: true, metadata: true } });
+      const deletions = await tx.auditLog.findMany({ where: { tenantId, action: { in: ["member.delete", "member.child.delete"] }, entityType: "Member", entityId: { in: gone } }, select: { entityId: true, metadata: true } });
       for (const d of deletions) {
-        const name = str(metaOf(d).name)?.trim();
+        const name = (str(metaOf(d).name) ?? str(metaOf(d).childName))?.trim();
         if (name) out.deletedMemberNames.set(d.entityId, name);
       }
     }
@@ -542,6 +581,8 @@ export type FeedContext = {
   timeZone: string;
   /** The member the page is filtered to, so a card-scan batch can be told as theirs. */
   focusMemberId?: string | null;
+  /** The club's currency, for an amount whose row does not record one (a card charge, a reminder). */
+  currency?: string | null;
 };
 
 export type EntryExtras = { undone?: boolean; undo?: UndoDecision };
@@ -658,14 +699,22 @@ function reader(row: FeedRow, ctx: FeedContext) {
     return { subject: subject("staff", id, name), ...flag };
   }
 
-  /** The staff member who did it, or null when the row has none (a member, Stripe, a schedule). */
-  const actor = (possessive = false): Part | null => (row.userId ? staff(row.userId, possessive) : null);
+  /**
+   * Who did it: the staff member, or null when the row has none (a member,
+   * Stripe, a schedule). A change made during a MatFlow support session was
+   * made by MatFlow, whichever account it was made through — the row says so,
+   * and so does the sentence.
+   */
+  const actor = (possessive = false): Part | null => {
+    if (bySupport(row)) return text(possessive ? "MatFlow support's" : "MatFlow support");
+    return row.userId ? staff(row.userId, possessive) : null;
+  };
 
   /** "£45.00", linked to the payment when the page knows which one it is. */
   function amount(pence: unknown, currency: unknown, payment?: PaymentInfo | null): Part | null {
     const value = num(pence) ?? payment?.amountPence ?? null;
     if (value == null) return null;
-    const label = formatMoney(value, str(currency) ?? payment?.currency ?? "GBP");
+    const label = money(value, str(currency) ?? payment?.currency ?? ctx.currency);
     return payment ? { subject: subject("payment", payment.id, label, { memberId: payment.memberId }) } : text(label);
   }
 
@@ -740,6 +789,12 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const person = r.member(m.memberId);
       if (!person) return null;
       const where = r.session(m.classInstanceId);
+      // The register was ticked for someone already checked in: nothing new happened.
+      if (m.created === false) {
+        const theirs = r.member(m.memberId, true);
+        const on = where ? [" for ", where] : [];
+        return who ? sentence(who, " confirmed ", theirs, " check-in", ...on) : sentence(theirs, " check-in was confirmed", ...on);
+      }
       return who ? sentence(who, " checked ", person, ...inTo(where)) : sentence(person, " was checked", ...inTo(where));
     }
     case "attendance.card_scan": {
@@ -798,13 +853,23 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return by ? sentence(by, " added ", child) : sentence(child, " was added");
     }
     case "member.delete": {
-      // The deleted person's name is on this row, and only this row, for the year the log is kept.
+      // From PR C the deleted person's name is recorded on this row, and only this row, for the year the log is kept.
       const name = str(m.name)?.trim() || null;
       return who ? sentence(who, " deleted ", name ?? "a member") : sentence(name ?? "A member", " was deleted");
     }
     case "member.child.delete": {
       const parent = r.member(m.parentMemberId);
-      return parent ? sentence(parent, " removed a child") : null;
+      const child = str(m.childName)?.trim() || "a child";
+      return parent ? sentence(parent, " removed ", child) : null;
+    }
+    case "member.guardian.confirmed":
+    case "member.guardian.rejected": {
+      const child = r.member(subjectMember, true);
+      const guardian = r.member(m.parentMemberId);
+      if (!child || !guardian) return null;
+      const confirmed = row.action === "member.guardian.confirmed";
+      if (who) return confirmed ? sentence(who, " confirmed ", guardian, " as ", child, " guardian") : sentence(who, " removed ", guardian, " as ", child, " suggested guardian");
+      return confirmed ? sentence(guardian, " was confirmed as ", child, " guardian") : sentence(guardian, " was removed as ", child, " suggested guardian");
     }
     case "member.link.child":
     case "member.unlink.child": {
@@ -824,8 +889,19 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       if (!("fromRankId" in m)) return who ? sentence(who, " promoted ", person, " to ", to) : sentence(person, " was promoted to ", to);
       if (m.fromRankId === null) return who ? sentence(who, " awarded ", person, " ", to) : sentence(person, " was awarded ", to);
       if (m.fromRankId === m.toRankId) {
+        // Same belt: say what happened to the stripes only when the row records both counts.
+        const before = num(m.fromStripes);
         const now = stripes != null ? ` (now ${stripes})` : "";
-        return who ? sentence(who, " awarded ", person, " a stripe on ", to, now) : sentence(person, " was awarded a stripe on ", to, now);
+        const gained = stripes != null && before != null ? stripes - before : null;
+        if (gained != null && gained > 0) {
+          const what = gained === 1 ? " a stripe on " : ` ${gained} stripes on `;
+          return who ? sentence(who, " awarded ", person, what, to, now) : sentence(person, " was awarded", what, to, now);
+        }
+        if (gained != null && gained < 0) {
+          const what = gained === -1 ? " a stripe from " : ` ${-gained} stripes from `;
+          return who ? sentence(who, " removed", what, r.member(subjectMember, true), " ", to, now) : sentence(r.member(subjectMember, true), " ", to, " lost", gained === -1 ? " a stripe" : ` ${-gained} stripes`, now);
+        }
+        return who ? sentence(who, " updated ", r.member(subjectMember, true), " ", to, now) : sentence(r.member(subjectMember, true), " ", to, " was updated", now);
       }
       const from = r.rank(m.fromRankId);
       return who ? sentence(who, " promoted ", person, " from ", from, " to ", to) : sentence(person, " was promoted from ", from, " to ", to);
@@ -860,7 +936,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const parent = r.member(m.parentMemberId);
       const ends = dateOf(m.cancelAt);
       const tail = ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null;
-      return parent ? sentence(parent, " asked to cancel ", child, " membership", tail) : sentence(child, " membership was cancelled", tail);
+      return parent ? sentence(parent, " asked to cancel ", child, " membership", tail) : sentence("A cancellation was requested for ", child, " membership", tail);
     }
     case "member.subscription.cancelled_by_stripe": {
       const theirs = r.member(subjectMember, true);
@@ -935,8 +1011,10 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
     }
     case "stripe.checkout.class_pack_payment_failed": {
       const theirs = r.member(m.memberId, true);
-      const bought = r.pack(row.entityId);
-      return theirs && bought ? sentence(theirs, " payment for ", bought, " failed — no classes were added") : null;
+      if (!theirs) return null;
+      // With no pack on the checkout the row's entity is a Stripe session id, which names nothing.
+      const bought = ctx.lookups.packs.has(row.entityId) ? r.pack(row.entityId) : null;
+      return bought ? sentence(theirs, " payment for the ", bought, " failed — no classes were added") : sentence(theirs, " class pack payment failed — no classes were added");
     }
     case "billing.portal.open": {
       const person = r.member(subjectMember);
@@ -987,6 +1065,22 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const person = r.member(m.assigneeMemberId);
       return who && person ? sentence(who, " left a note for ", person) : null;
     }
+    case "task.staff_task.create": {
+      const assignee = idOf(m.assignedToId) && m.assignedToId !== row.userId ? r.staff(m.assignedToId) : null;
+      return who && assignee ? sentence(who, " created a task for ", assignee) : null;
+    }
+  }
+
+  if (row.action.startsWith("stripe.dispute.")) {
+    const status = row.action.slice("stripe.dispute.".length);
+    const theirs = r.member(subjectMember, true);
+    const payment = ctx.lookups.payments.get(idOf(m.paymentId) ?? "");
+    const disputed = r.amount(m.amountPence, m.currency, payment);
+    if (!theirs || !disputed) return null;
+    const outcome: Record<string, string> = { won: " was won", lost: " was lost", needs_response: " needs a response", warning_needs_response: " needs a response", under_review: " is under review", warning_under_review: " is under review" };
+    const due = dateOf(m.evidenceDueAt);
+    const respondBy = due && outcome[status] === " needs a response" ? ` — respond by ${formatDate(due, ctx.timeZone)}` : null;
+    return sentence("The dispute over ", theirs, " ", disputed, " payment", outcome[status] ?? ` is ${tidy(status)}`, respondBy);
   }
 
   if (isUndoAction(row.action) && who) {
@@ -1019,7 +1113,7 @@ function display(field: string, value: unknown, r: Reader, ctx: FeedContext, cur
     return part && isSubject(part) ? part.subject.name : "—";
   }
   if (typeof value === "boolean") return value ? "on" : "off";
-  if (typeof value === "number") return field.endsWith("Pence") ? formatMoney(value, currency) : String(value);
+  if (typeof value === "number") return field.endsWith("Pence") ? money(value, currency) : String(value);
   if (typeof value !== "string") return "(changed)";
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return formatDate(`${value}T12:00:00Z`, "UTC");
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) && Number.isFinite(new Date(value).getTime())) return formatDate(value, ctx.timeZone);
@@ -1037,10 +1131,11 @@ function changesOf(row: FeedRow, r: Reader, ctx: FeedContext): FeedChange[] | nu
   const pairs = changedPairs(r.m);
   if (pairs.length === 0) return null;
   const redact = ctx.role !== "owner" || (row.entityType === "Member" && !r.memberIsLive(row.entityId));
-  const currency = str(record(r.m.after)?.currency) ?? str(record(r.m.before)?.currency) ?? "GBP";
-  const lifecycle = classLifecycleOf(r.m) != null;
+  const currency = str(record(r.m.after)?.currency) ?? str(record(r.m.before)?.currency) ?? ctx.currency ?? "GBP";
+  // Paused / resumed / restored / archived is in the sentence; "Active: on → off" would only repeat it in database terms.
+  const lifecycle = classLifecycleOf(r.m) != null || row.action === "class.deleted";
   return pairs
-    .filter(([field]) => !(lifecycle && field === "isActive"))
+    .filter(([field]) => !(lifecycle && field === "isActive") && !NEVER_A_FIELD.has(field))
     .map(([field, from, to]) => ({
       label: fieldLabel(field),
       from: redact ? null : display(field, from, r, ctx, currency),
@@ -1048,9 +1143,26 @@ function changesOf(row: FeedRow, r: Reader, ctx: FeedContext): FeedChange[] | nu
     }));
 }
 
+/** Keys a save sends that are not fields anyone edits (the concurrency token). */
+const NEVER_A_FIELD = new Set(["updatedAt"]);
+
+/** Member edits whose `fields` list is every key the form SENT, not what changed. */
+const MEMBER_EDITS = new Set(["member.update", "member.self_update"]);
+/** The member fields an edit can change that are never diffed: their values are private, so only the fact is kept. */
+const UNDIFFED_MEMBER_FIELDS = ["notes", "medicalConditions"];
+
+/**
+ * Whose words a `reason` is. A provider's code or the reason a session was
+ * cancelled is club business for anyone who may see the row; a reason staff
+ * typed about a member (a demotion, a revoked card, a refund) is for the owner.
+ */
+const REASON_FOR_EVERYONE = new Set(["class.instance_cancelled", "member.payment.failed", "stripe.payment_intent.failed"]);
+
 /** The line after the sentence: what was changed, or the one fact the sentence leaves out. */
 function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange[] | null): Part[] | null {
   const { m } = r;
+  /** Text someone typed about this row's member is shown to nobody once that member is erased or deleted. */
+  const memberGone = row.entityType === "Member" && !ENTITY_IS_NOT_AN_ID.has(row.action) && !r.memberIsLive(row.entityId);
   const bits: (Part | string)[][] = [];
   const add = (...bit: (Part | string | null)[]) => {
     const kept = bit.filter((b): b is Part | string => b != null && b !== "");
@@ -1084,29 +1196,42 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
       if (str(m.method)) add(`Paid by ${tidy(str(m.method)!).toLowerCase()}`);
       break;
     case "payment.adhoc.charge":
-      if (str(m.description)) add(tidy(str(m.description)!));
+      if (str(m.description) && !memberGone) add(tidy(str(m.description)!));
       break;
     case "payment.refund":
       if (typeof m.fullyRefunded === "boolean") add(m.fullyRefunded ? "Full refund" : "Part refund");
       break;
     case "payment.chase": {
+      // The amount is the payment the reminder was about, not a running balance.
       const owed = r.amount(m.amountPence, m.currency);
-      if (owed) add(owed, " owed");
+      if (owed) add("Reminder for ", owed);
       break;
     }
     case "order.mark_paid": {
       const order = ctx.lookups.orders.get(row.entityId);
-      if (order) add(formatMoney(order.totalPence, order.currency), order.memberId ? " · " : null, order.memberId ? r.member(order.memberId) : null);
+      if (order) add(money(order.totalPence, order.currency), order.memberId ? " · " : null, order.memberId ? r.member(order.memberId) : null);
       break;
     }
   }
 
+  const sent = Array.isArray(m.fields) ? m.fields.filter((f): f is string => typeof f === "string" && !NEVER_A_FIELD.has(f)) : [];
+  // What a member edit changed beyond its diff: the login address (recorded as two digests, never as text) and the
+  // private fields. Everything else in `fields` is only what the form sent.
+  const alsoChanged: string[] = [];
+  if (MEMBER_EDITS.has(row.action)) {
+    const emailChanged = (str(m.oldEmailSha256) != null && m.oldEmailSha256 !== m.newEmailSha256) || (sent.length === 1 && sent[0] === "email");
+    if (emailChanged) alsoChanged.push(fieldLabel("email"));
+    for (const field of UNDIFFED_MEMBER_FIELDS) if (sent.includes(field)) alsoChanged.push(fieldLabel(field));
+  }
   if (changes?.length) {
     const shown = changes.every((c) => c.from != null && c.to != null);
-    add(shown ? changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(" · ") : `Fields: ${changes.map((c) => c.label).join(", ")}`);
-  } else if (Array.isArray(m.fields)) {
+    add(shown ? changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(" · ") : `Fields: ${[...changes.map((c) => c.label), ...alsoChanged].join(", ")}`);
+    if (shown && alsoChanged.length) add(`Also changed: ${alsoChanged.join(", ")}`);
+  } else if (MEMBER_EDITS.has(row.action)) {
+    if (alsoChanged.length) add(`Fields: ${alsoChanged.join(", ")}`);
+  } else if (sent.length) {
     const lifecycle = classLifecycleOf(m) != null;
-    const fields = m.fields.filter((f): f is string => typeof f === "string" && !(lifecycle && f === "isActive"));
+    const fields = sent.filter((f) => !(lifecycle && f === "isActive"));
     if (fields.length) add(`Fields: ${fields.map(fieldLabel).join(", ")}`);
   }
 
@@ -1124,7 +1249,7 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
     add(file.join(" · "));
   }
 
-  if (str(m.reason)) add(`Reason: ${tidy(str(m.reason)!)}`);
+  if (str(m.reason) && !memberGone && (ctx.role === "owner" || REASON_FOR_EVERYONE.has(row.action) || row.action.startsWith("stripe.dispute."))) add(`Reason: ${tidy(str(m.reason)!)}`);
 
   if (bits.length === 0) return null;
   const out: Part[] = [];
@@ -1143,7 +1268,20 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
 
 const KIOSK_ACTIONS = new Set(["attendance.kiosk_checkin", "member.waiver.signed_via_kiosk"]);
 const STRIPE_ACTIONS = new Set(["member.subscription.cancelled_by_stripe", "class_pack.purchased", "order.paid"]);
-const MEMBER_APP_ACTIONS = new Set(["billing.portal.open", "waiver.sign", "waiver.sign-for-child", "class.booking.created", "class.booking.cancelled"]);
+const MEMBER_APP_ACTIONS = new Set(["billing.portal.open", "waiver.sign", "waiver.sign-for-child", "task.member_note.complete", "class.booking.created", "class.booking.cancelled"]);
+/**
+ * Actions only staff can take. A row of one of these with no staff member on it
+ * was made by someone whose account has since been removed (the link is cleared
+ * when a user is deleted) — it was not automatic.
+ */
+const STAFF_ONLY_ACTIONS = new Set([
+  "attendance.mark", "attendance.override", "attendance.unmark", "attendance.card_scan",
+  "member.update", "member.delete", "member.rank.promote", "member.rank.demote", "member.hold.start", "member.link.child", "member.unlink.child",
+  "member.guardian.confirmed", "member.guardian.rejected",
+  "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
+  "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",
+  "waiver.sign.supervised", "task.member_note.create", "task.staff_task.create",
+]);
 
 /** True when the real actor behind the row was MatFlow: an operator route, or a change made during a support session. */
 const bySupport = (row: FeedRow) => row.operatorId != null || typeof metaOf(row).actingAs === "string";
@@ -1156,7 +1294,7 @@ export function sourceOf(row: FeedRow, lookups: ActivityLookups, namedInSentence
   const m = metaOf(row);
   const support = bySupport(row);
   const name = row.userId ? ((row.user?.id === row.userId ? row.user.name : null) ?? lookups.staff.get(row.userId)?.name ?? null) : null;
-  const staff = row.userId && name && !namedInSentence.has(row.userId) ? { id: row.userId, name } : null;
+  const staff = row.userId && name && !support && !namedInSentence.has(row.userId) ? { id: row.userId, name } : null;
   const label = support
     ? "MatFlow support"
     : KIOSK_ACTIONS.has(row.action)
@@ -1165,7 +1303,9 @@ export function sourceOf(row: FeedRow, lookups: ActivityLookups, namedInSentence
         ? "Card scan"
         : row.userId
           ? "Staff"
-          : row.action.startsWith("stripe.") || row.action.startsWith("member.payment.") || STRIPE_ACTIONS.has(row.action)
+          : STAFF_ONLY_ACTIONS.has(row.action) || (m.actorType === "user" && !idOf(m.actorId))
+            ? "Staff (account removed)"
+            : row.action.startsWith("stripe.") || row.action.startsWith("member.payment.") || STRIPE_ACTIONS.has(row.action)
             ? "Stripe"
             : idOf(m.actorId) || m.collectedBy === "self" || MEMBER_APP_ACTIONS.has(row.action)
               ? "Member app"
@@ -1239,7 +1379,14 @@ export function toFeedEntries(rows: FeedRow[], ctx: FeedContext, extrasFor: (row
   return rows
     .filter((row) => !folded.has(row.id))
     .map((row) => {
-      const entry = toFeedEntry(row, ctx, extrasFor(row));
+      let entry: FeedEntry;
+      try {
+        entry = toFeedEntry(row, ctx, extrasFor(row));
+      } catch (e) {
+        // One row the templates cannot tell must not take the page with it: it is shown as its label.
+        console.error("[activity-feed] a row could not be described", JSON.stringify({ action: row.action, error: e instanceof Error ? e.name : typeof e }));
+        return plainFallbackEntry(row, ctx, extrasFor(row));
+      }
       if (!withPhoto.has(row.id)) return entry;
       const detail = entry.detail ? [...entry.detail, text(" · Photo attached")] : [text("Photo attached")];
       return { ...entry, detail, detailPlain: plainOf(detail) };

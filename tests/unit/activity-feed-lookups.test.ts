@@ -45,6 +45,14 @@ describe("subjectRefs", () => {
     expect([...refs.member]).toEqual(["a", "b", "c", "d", "e"]);
   });
 
+  it("always includes the member the page is about, however far down a card-scan batch they were", () => {
+    const batch = row({ action: "attendance.card_scan", entityType: "ClassInstance", entityId: "s1", metadata: { memberIds: ["a", "b", "c", "d", "e", "f", "g", "h", "focus"] } });
+    expect([...subjectRefs([batch], "focus").member]).toContain("focus");
+    expect([...subjectRefs([batch]).member]).not.toContain("focus");
+    // No rows, nothing to look up.
+    expect(subjectRefs([], "focus").member.size).toBe(0);
+  });
+
   it("never treats the kiosk waiver's entity id — an email — as a record to look up", () => {
     const refs = subjectRefs([row({ action: "member.waiver.signed_via_kiosk", entityType: "Member", entityId: "someone@example.test", metadata: { signerName: "Some One" } })]);
     expect(refs.member.size).toBe(0);
@@ -69,7 +77,7 @@ function fakeTx(data: Record<string, Rec[]>) {
       return (data[name] ?? []).filter((r) => {
         if ("tenantId" in where && r.tenantId !== where.tenantId) return false;
         if (where.class && (r.class as Rec).tenantId !== (where.class as Rec).tenantId) return false;
-        if (where.action && r.action !== where.action) return false;
+        if (where.action && !inList(where.action, r.action)) return false;
         if (where.entityId && !inList(where.entityId, r.entityId)) return false;
         if (where.OR) return (where.OR as Record<string, unknown>[]).some((o) => (o.id ? inList(o.id, r.id) : inList(o.stripeInvoiceId, r.stripeInvoiceId)));
         return where.id ? inList(where.id, r.id) : true;
@@ -160,7 +168,21 @@ describe("loadLookups", () => {
     expect(L.deletedMemberNames.get("m_gone")).toBe("Jane Smith");
     const deletions = calls.filter((c) => c.model === "auditLog");
     expect(deletions).toHaveLength(1);
-    expect(deletions[0].where).toMatchObject({ tenantId: CLUB, action: "member.delete", entityType: "Member", entityId: { in: ["m_gone"] } });
+    expect(deletions[0].where).toMatchObject({ tenantId: CLUB, action: { in: ["member.delete", "member.child.delete"] }, entityType: "Member", entityId: { in: ["m_gone"] } });
+  });
+
+  it("a child a parent removed is named from the row that removed them", async () => {
+    const data = { ...DATA, auditLog: [...DATA.auditLog, { id: "del3", tenantId: CLUB, action: "member.child.delete", entityType: "Member", entityId: "m_kid_gone", metadata: { parentMemberId: "m1", childName: "Zara Obi" } }] };
+    const { tx } = fakeTx(data);
+    const L = await loadLookups(tx, CLUB, [row({ action: "a.b", entityType: "Member", entityId: "m_kid_gone" })]);
+    expect(L.deletedMemberNames.get("m_kid_gone")).toBe("Zara Obi");
+  });
+
+  it("the member a page is about is looked up even when no row on it would have named them", async () => {
+    const batch = row({ action: "attendance.card_scan", entityType: "ClassInstance", entityId: "s1", metadata: { classInstanceId: "s1", memberIds: ["x1", "x2", "x3", "x4", "x5", "x6", "m1"] } });
+    const { tx } = fakeTx(DATA);
+    expect((await loadLookups(tx, CLUB, [batch])).members.has("m1")).toBe(false);
+    expect((await loadLookups(tx, CLUB, [batch], "m1")).members.get("m1")?.name).toBe("Ada Obi");
   });
 
   it("uses the actor that came with the row, and looks up only staff it has not seen", async () => {

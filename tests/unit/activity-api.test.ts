@@ -61,7 +61,7 @@ function log(action: string, over: Partial<Audit> = {}): Audit {
 }
 
 const records: Record<string, Rec[]> = {
-  tenant: [{ id: CLUB, timezone: "Europe/London" }],
+  tenant: [{ id: CLUB, timezone: "Europe/London", currency: "GBP" }],
   member: [
     { id: "m_mel", tenantId: CLUB, name: "Melody Orekoya", email: "melody@example.test" },
     { id: "m_a", tenantId: CLUB, name: "Ada Obi", email: "ada@example.test" },
@@ -98,13 +98,12 @@ function makeTx() {
     findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => (note(name), records[name].filter((r) => matches(where, r)))),
   });
   const auditLog = {
-    findMany: vi.fn(async (args: { where: unknown; orderBy?: unknown; take?: number; cursor?: { id: string }; skip?: number }) => {
+    findFirst: vi.fn(async (args: { where: unknown }) => (note("auditLog.cursor"), audit.find((r) => selects(args.where, r)) ?? null)),
+    findMany: vi.fn(async (args: { where: unknown; orderBy?: unknown; take?: number; cursor?: unknown }) => {
       note("auditLog");
-      let rows = audit.filter((r) => selects(args.where, r)).sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime() || (x.id < y.id ? 1 : -1));
-      if (args.cursor) {
-        const i = rows.findIndex((r) => r.id === args.cursor!.id);
-        rows = i < 0 ? [] : rows.slice(i + (args.skip ?? 0));
-      }
+      // The route pages by an explicit comparison; Prisma's own cursor (whose lookup is not club-scoped) must not come back.
+      if (args.cursor) throw new Error("the route must not use Prisma's cursor");
+      const rows = audit.filter((r) => selects(args.where, r)).sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime() || (x.id < y.id ? 1 : -1));
       const staff = records.user;
       return rows.slice(0, args.take ?? rows.length).map((r) => ({ ...r, user: r.userId ? (staff.find((u) => u.id === r.userId) ?? null) : null }));
     }),
@@ -255,7 +254,8 @@ describe("the manager's feed", () => {
     const ownerOnlyIds = new Set(audit.filter((r) => OWNER_ONLY_ACTIONS.includes(r.action) || r.operatorId || (r.metadata as { actingAs?: string } | null)?.actingAs).map((r) => r.id));
     expect(ownerOnlyIds.size).toBe(11);
     const everyType = ACTIVITY_TYPES.map((t) => t.key).join(",");
-    for (const query of ["", "?types=all", "?types=staff", `?types=${everyType}`, "?types=staff_changes", `?userId=${OWNER.id}`, `?types=all&userId=${OWNER.id}`, "?types=other,undo,support", "?types=all&memberId=m_mel", "?types=all&day=2026-11-03"]) {
+    const someRow = audit[3].id;
+    for (const query of ["", "?types=all", "?types=staff", `?types=${everyType}`, "?types=staff_changes", `?userId=${OWNER.id}`, `?types=all&userId=${OWNER.id}`, "?types=other,undo,support", "?types=all&memberId=m_mel", "?types=all&day=2026-11-03", `?types=all&cursor=${someRow}`, "?types=all&paymentId=p1", "?types=all&classId=c_nogi", "?types=all&embed=1", "?types=all&tierId=t_adult", `?types=${everyType}&embed=1&day=2026-11-02&userId=${OWNER.id}`]) {
       const { res, body } = await get(query);
       expect(res.status, query).toBe(200);
       for (const e of body.entries) expect(ownerOnlyIds.has(e.id), `${query}: ${e.plain}`).toBe(false);
@@ -319,10 +319,16 @@ describe("parameters never break the page", () => {
       expect(tx.auditLog.findMany, query).not.toHaveBeenCalled();
     }
     expect((await get("?memberId=m_other")).body.filters.member).toEqual({ id: "m_other", name: null });
-    // Another club's member and an id that never existed are indistinguishable.
-    const foreign = (await get("?types=all&memberId=m_other")).body;
-    const random = (await get("?types=all&memberId=m_nobody")).body;
-    expect({ ...foreign, filters: { ...foreign.filters, member: null } }).toEqual({ ...random, filters: { ...random.filters, member: null } });
+    // Another club's member and an id that never existed are indistinguishable — for the owner, for a manager, and for a staff id.
+    for (const role of ["owner", "manager"] as const) {
+      if (role === "manager") asManager();
+      const foreign = (await get("?types=all&memberId=m_other")).body;
+      const random = (await get("?types=all&memberId=m_nobody")).body;
+      expect({ ...foreign, filters: { ...foreign.filters, member: null } }).toEqual({ ...random, filters: { ...random.filters, member: null } });
+      const missingStaff = (await get("?types=all&userId=u_nobody")).body;
+      const otherStaff = (await get("?types=all&userId=u_elsewhere")).body;
+      expect({ ...missingStaff, filters: { ...missingStaff.filters, staff: null } }).toEqual({ ...otherStaff, filters: { ...otherStaff.filters, staff: null } });
+    }
   });
 
   it("a malformed id is ignored, not treated as a filter", async () => {
@@ -386,6 +392,67 @@ describe("parameters never break the page", () => {
       // The first audit read of a request is the page itself.
       expect((tx.auditLog.findMany.mock.calls[0][0] as { take: number }).take, query).toBe(expected);
     }
+  });
+});
+
+describe("the cursor", () => {
+  beforeEach(seed);
+
+  it("continues from a row of this club", async () => {
+    const first = (await get("?types=all&take=5")).body;
+    expect(first.entries).toHaveLength(5);
+    const second = (await get(`?types=all&take=5&cursor=${first.nextCursor}`)).body;
+    expect(second.entries).toHaveLength(5);
+    expect(second.entries.some((e) => first.entries.some((f) => f.id === e.id))).toBe(false);
+    expect(second.entries[0].at <= first.entries[4].at).toBe(true);
+    expect(h.transactions[h.transactions.length - 2].statements.slice(0, 3)).toEqual(["tenant", "auditLog.cursor", "auditLog"]);
+  });
+
+  it("another club's row id and an id that is no row at all both give an empty page, without reading the log", async () => {
+    const theirs = audit.find((r) => r.tenantId === "club_b")!.id;
+    const answers = [];
+    for (const cursor of [theirs, "a9999", "not-a-row"]) {
+      tx.auditLog.findMany.mockClear();
+      const { res, body } = await get(`?types=all&cursor=${cursor}`);
+      expect(res.status).toBe(200);
+      expect(body.entries).toEqual([]);
+      expect(body.nextCursor).toBeNull();
+      expect(tx.auditLog.findMany).not.toHaveBeenCalled();
+      answers.push(JSON.stringify(body));
+    }
+    expect(new Set(answers).size).toBe(1);
+    // The lookup itself is scoped to the club.
+    expect((tx.auditLog.findFirst.mock.calls[0][0] as { where: unknown }).where).toEqual({ id: theirs, tenantId: CLUB });
+  });
+});
+
+describe("bounds on what one request can cost", () => {
+  beforeEach(seed);
+
+  it("never names a user of another club, whatever an old row points at", async () => {
+    records.user.push({ id: "u_foreign", tenantId: "club_b", name: "Other Club Coach" });
+    try {
+      log("member.update", { userId: "u_foreign", metadata: { changes: { phone: { from: "1", to: "2" } } }, createdAt: at("2026-11-05T11:00:00Z") });
+      const { body } = await get("?types=all");
+      expect(body.entries[0].plain).toBe("A former staff member updated Melody Orekoya's details");
+      expect(JSON.stringify(body)).not.toContain("Other Club Coach");
+    } finally {
+      records.user.pop();
+    }
+  });
+
+  it("never reads further back than the year the log is kept for", async () => {
+    log("member.update", { userId: JACK.id, metadata: { changes: { phone: { from: "1", to: "2" } } }, createdAt: at("2025-09-01T10:00:00Z") });
+    log("admin.tenant.create", { entityType: "Tenant", entityId: CLUB, operatorId: "op_1", createdAt: at("2024-01-01T10:00:00Z") });
+    const { body } = await get("?types=all");
+    expect(body.entries).toHaveLength(16);
+    expect(body.entries.every((e) => e.dayKey >= body.clock.minDayKey)).toBe(true);
+  });
+
+  it("caps the already-undone lookup", async () => {
+    await get("?types=all");
+    const undoLookup = tx.auditLog.findMany.mock.calls.map(([a]) => a as { where: unknown; take?: number }).find((a) => JSON.stringify(a.where).includes("undo."));
+    expect(undoLookup?.take).toBe(1000);
   });
 });
 
@@ -471,6 +538,7 @@ describe("when something fails", () => {
     expect(body.error).toBe("Couldn't load activity.");
     expect(body.entries).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain("relation");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 });
 
@@ -489,6 +557,14 @@ describe("what the response may contain", () => {
       for (const e of body.entries) {
         for (const key of Object.keys(e)) expect(ALLOWED_ENTRY, `${role}: ${key}`).toContain(key);
         expect(Object.keys(e.source).sort()).toEqual(["label", "staff", "support"]);
+        // Nothing nested carries a key of its own invention either.
+        for (const part of [...e.parts, ...(e.detail ?? [])]) {
+          const keys = Object.keys(part).sort();
+          expect(["text"].join() === keys.join() || ["subject"].join() === keys.join() || ["possessive", "subject"].join() === keys.join(), keys.join()).toBe(true);
+          if ("subject" in part) for (const key of Object.keys(part.subject)) expect(["kind", "name", "href", "gone"], key).toContain(key);
+        }
+        for (const change of e.changes ?? []) expect(Object.keys(change).sort()).toEqual(["from", "label", "to"]);
+        if (e.source.staff) expect(Object.keys(e.source.staff).sort()).toEqual(["id", "name"]);
         if (role === "manager") expect("undo" in e).toBe(false);
       }
       expect(body.entries.map((e) => e.type).every((t) => visibleTypeKeys(role).includes(t))).toBe(true);
@@ -499,5 +575,38 @@ describe("what the response may contain", () => {
     log("member.create", { userId: OWNER.id, operatorId: "op_secret", metadata: { name: "Melody Orekoya", email: "melody@example.test", actingAs: "op_secret", requestId: "req_abc", ipAddress: "203.0.113.9", userAgent: "Mozilla/5.0" } });
     const text = JSON.stringify((await get("?types=all")).body);
     for (const banned of ['"metadata"', "ipAddress", "userAgent", "operatorId", "requestId", "actingAs", '"email"', "tenantId", "example.test", "op_secret", "op_1", "203.0.113", "Mozilla"]) expect(text, banned).not.toContain(banned);
+  });
+});
+
+describe("money on the page", () => {
+  it("a payment recorded with a currency code nobody recognises does not fail the page or its own trail", async () => {
+    records.payment.push({ id: "p_odd", tenantId: CLUB, memberId: "m_mel", amountPence: 2000, currency: "1AB", stripeInvoiceId: null, paidAt: at("2026-11-04T09:00:00Z"), createdAt: at("2026-11-04T09:00:00Z") });
+    try {
+      log("payment.manual", { entityType: "Payment", entityId: "p_odd", userId: JACK.id, metadata: { memberId: "m_mel", method: "cash", amountPence: 2000 } });
+      const page = await get("?types=all");
+      expect(page.res.status).toBe(200);
+      expect(page.body.entries[0].plain).toBe("Jack Streeter recorded a 20.00 1AB payment from Melody Orekoya");
+      const trail = await get("?types=all&paymentId=p_odd");
+      expect(trail.res.status).toBe(200);
+      expect(trail.body.filters.payment).toEqual({ id: "p_odd", label: "20.00 1AB · 4 Nov 2026" });
+    } finally {
+      records.payment.pop();
+    }
+  });
+
+  it("an amount with no currency on its row is in the club's currency", async () => {
+    records.tenant[0].currency = "EUR";
+    try {
+      log("payment.adhoc.charge", { userId: JACK.id, metadata: { amountPence: 1500, outcome: "succeeded" } });
+      expect((await get("?types=all")).body.entries[0].plain).toBe("Jack Streeter charged Melody Orekoya's card €15.00");
+    } finally {
+      records.tenant[0].currency = "GBP";
+    }
+  });
+
+  it("a member far down a card-scan batch is named on their own timeline", async () => {
+    log("attendance.card_scan", { entityType: "ClassInstance", entityId: "s_wed", userId: JACK.id, metadata: { classInstanceId: "s_wed", memberIds: ["x1", "x2", "x3", "x4", "x5", "x6", "x7", "m_mel"] } });
+    const { body } = await get("?types=checkin&memberId=m_mel");
+    expect(body.entries[0].plain).toBe("Melody Orekoya was scanned in to Advanced No-Gi · Wed 4 Nov, 19:00");
   });
 });

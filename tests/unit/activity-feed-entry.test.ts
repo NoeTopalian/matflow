@@ -426,10 +426,25 @@ describe("source", () => {
     expect(of({ action: "class.instances_generated" })).toBe("Automatic");
   });
 
-  it("a support edit is flagged, and still says whose account it was made through", () => {
+  it("a support edit is told as MatFlow support's, not as the account it was made through", () => {
     const e = entry(row({ action: "member.update", ...byJack, operatorId: "op1", metadata: { actingAs: "op1", changes: { phone: { from: "1", to: "2" } } } }));
+    expect(e.plain).toBe("MatFlow support updated Melody Orekoya's details");
     expect(e.source).toEqual({ label: "MatFlow support", staff: null, support: true });
     expect(JSON.stringify(e)).not.toContain("op1");
+    expect(JSON.stringify(e)).not.toContain("Jack Streeter");
+    const charge = entry(row({ action: "payment.adhoc.charge", ...byJack, metadata: { actingAs: "op1", amountPence: 1500, outcome: "declined" } }));
+    expect(charge.plain).toBe("MatFlow support's £15.00 charge to Melody Orekoya's card was declined");
+  });
+
+  it("a staff action whose author's account has been removed is still staff, not automatic", () => {
+    const e = entry(row({ action: "member.update", metadata: { changes: { phone: { from: "1", to: "2" } } } }));
+    expect(e.plain).toBe("Melody Orekoya's details were updated");
+    expect(e.source).toEqual({ label: "Staff (account removed)", staff: null, support: false });
+    // A durable row records that a user made it; a member's own action carries their id and is not mistaken for staff.
+    expect(sourceOf(row({ action: "member.hold.end", metadata: { actorType: "user" } }), lookups()).label).toBe("Staff (account removed)");
+    expect(sourceOf(row({ action: "member.subscription.cancel", metadata: { actorType: "user", actorId: "m_mel" } }), lookups()).label).toBe("Member app");
+    expect(sourceOf(row({ action: "member.hold.end", metadata: {} }), lookups()).label).toBe("Automatic");
+    expect(sourceOf(row({ action: "task.member_note.complete", metadata: { memberId: "m_mel" } }), lookups()).label).toBe("Member app");
   });
 
   it("no entry names the same person in the sentence and in the source", () => {
@@ -527,5 +542,162 @@ describe("the entry as a whole", () => {
       const body = JSON.stringify(toFeedEntry(loud, ctx({ role }), role === "owner" ? { undo: { ok: true } } : {}));
       for (const key of ["metadata", "ipAddress", "userAgent", "operatorId", "requestId", "actingAs", "email", "tenantId", "example.test", "op_secret", "203.0.113"]) expect(body, `${role}: ${key}`).not.toContain(key);
     }
+  });
+});
+
+// ── Pinned after the independent reviews of 5 Nov 2026 ───────────────────────
+
+describe("what a member edit is said to have changed", () => {
+  // The profile form sends every field on each save; `fields` is what was SENT, not what changed.
+  const SENT = ["updatedAt", "name", "phone", "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth", "email", "membershipTierId", "status", "trialRunById", "creditedToUserId", "creditedToMemberId", "creditedToLabel"];
+
+  it("an email-only edit says Email — the row holds two digests that differ, and nothing else changed", () => {
+    const e = entry(row({ action: "member.update", ...byJack, metadata: { fields: SENT, oldEmailSha256: "aaa", newEmailSha256: "bbb", unverified: true, sessionsRevoked: true } }));
+    expect(e.plain).toBe("Jack Streeter updated Melody Orekoya's details");
+    expect(e.detailPlain).toBe("Fields: Email");
+    expect(e.changes).toBeNull();
+    expect(JSON.stringify(e)).not.toMatch(/aaa|bbb/);
+  });
+
+  it("a save that changed nothing lists no fields at all", () => {
+    const e = entry(row({ action: "member.update", ...byJack, metadata: { fields: SENT } }));
+    expect(e.detail).toBeNull();
+    expect(e.detailPlain).toBeNull();
+  });
+
+  it("a notes save says Notes; the concurrency token is never called a field", () => {
+    expect(entry(row({ action: "member.update", ...byJack, metadata: { fields: ["updatedAt", "notes"] } })).detailPlain).toBe("Fields: Notes");
+    expect(entry(row({ action: "member.update", ...byJack, metadata: { fields: ["updatedAt", "medicalConditions"] } })).detailPlain).toBe("Fields: Medical details");
+    expect(entry(row({ action: "class.updated", entityType: "Class", entityId: "c_nogi", ...byJack, metadata: { fields: ["updatedAt", "maxCapacity"] } })).detailPlain).toBe("Fields: Capacity");
+    expect(entry(row({ action: "member.update", ...byJack, metadata: { fields: ["email"] } })).detailPlain).toBe("Fields: Email");
+  });
+
+  it("an email change alongside a diff is added to it, for the owner and for a manager", () => {
+    const edit = row({ action: "member.update", ...byJack, metadata: { fields: SENT, changes: { phone: { from: "1", to: "2" } }, oldEmailSha256: "aaa", newEmailSha256: "bbb" } });
+    expect(entry(edit).detailPlain).toBe("Phone: 1 → 2 · Also changed: Email");
+    expect(entry(edit, { role: "manager" }).detailPlain).toBe("Fields: Phone, Email");
+  });
+
+  it("an archived class does not also say Active: on → off", () => {
+    const e = entry(row({ action: "class.deleted", entityType: "Class", entityId: "c_nogi", ...byJack, metadata: { before: { isActive: true, deletedAt: null }, after: { isActive: false, deletedAt: "2026-11-05T10:00:00.000Z" } } }));
+    expect(e.plain).toBe("Jack Streeter archived Advanced No-Gi");
+    expect(e.changes).toEqual([{ label: "Archived", from: "—", to: "5 Nov 2026" }]);
+  });
+});
+
+describe("free text is shown only to whom it is for", () => {
+  const demotion = row({ action: "member.rank.demote", ...byJack, metadata: { fromRankId: "r_blue", fromStripes: 1, stripes: 0, toRankId: "r_white", reason: "Graded in error" } });
+
+  it("a reason staff typed about a member is for the owner, not a manager", () => {
+    expect(entry(demotion).detailPlain).toBe("Reason: Graded in error");
+    expect(entry(demotion, { role: "manager" }).detail).toBeNull();
+    expect(JSON.stringify(entry(demotion, { role: "manager" }))).not.toContain("Graded in error");
+  });
+
+  it("a cancelled session's reason and a provider's failure code are for anyone who may see the row", () => {
+    const cancelled = row({ action: "class.instance_cancelled", entityType: "ClassInstance", entityId: "s_wed", ...byJack, metadata: { classId: "c_nogi", date: "2026-11-04T00:00:00.000Z", startTime: "19:00", reason: "Coach ill" } });
+    expect(entry(cancelled, { role: "manager" }).detailPlain).toBe("Reason: Coach ill");
+    const failed = row({ action: "member.payment.failed", metadata: { amountPence: 4500, currency: "gbp", reason: "card_declined" } });
+    expect(entry(failed, { role: "manager" }).detailPlain).toBe("Reason: card declined");
+  });
+
+  it("nothing typed about a member is shown once they are erased or deleted", () => {
+    const aboutErased = row({ action: "member.rank.demote", entityId: "m_erased", ...byJack, metadata: { fromRankId: "r_blue", fromStripes: 1, stripes: 0, toRankId: "r_white", reason: "Private remark" } });
+    expect(JSON.stringify(entry(aboutErased))).not.toContain("Private remark");
+    const charge = row({ action: "payment.adhoc.charge", entityId: "m_unknown", ...byJack, metadata: { amountPence: 1500, description: "Catch-up for Jane", outcome: "succeeded" } });
+    expect(JSON.stringify(entry(charge))).not.toContain("Catch-up for Jane");
+  });
+});
+
+describe("amounts", () => {
+  it("an amount with no currency on its row is in the club's currency, not assumed to be pounds", () => {
+    const charge = row({ action: "payment.adhoc.charge", ...byJack, metadata: { amountPence: 1500, outcome: "succeeded" } });
+    expect(entry(charge, { currency: "EUR" }).plain).toBe("Jack Streeter charged Melody Orekoya's card €15.00");
+    expect(entry(charge).plain).toBe("Jack Streeter charged Melody Orekoya's card £15.00");
+    const reminder = entry(row({ action: "payment.chase", ...byJack, metadata: { amountPence: 4500, emailSent: true } }), { currency: "USD" });
+    expect(reminder.detailPlain).toBe("Reminder for US$45.00");
+  });
+
+  it("a currency code nobody recognises is printed as written; it never fails the page", () => {
+    const L = lookups();
+    L.payments.set("p_odd", { id: "p_odd", memberId: "m_mel", amountPence: 2000, currency: "1AB", stripeInvoiceId: null });
+    const e = toFeedEntry(row({ action: "payment.manual", entityType: "Payment", entityId: "p_odd", ...byJack, metadata: { memberId: "m_mel", method: "cash", amountPence: 2000 } }), ctx({ lookups: L }));
+    expect(e.plain).toBe("Jack Streeter recorded a 20.00 1AB payment from Melody Orekoya");
+  });
+
+  it("one row that cannot be described is shown as its label; the rest of the page is unaffected", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const L = lookups();
+    const realGet = L.sessions.get.bind(L.sessions);
+    L.sessions.get = (key: string) => {
+      if (key === "s_bad") throw new Error("boom");
+      return realGet(key);
+    };
+    const bad = row({ action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: "r1", metadata: { classInstanceId: "s_bad", memberId: "m_mel", actorId: "m_mel" } });
+    const good = row({ action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: "r2", metadata: { classInstanceId: "s_wed", memberId: "m_mel", actorId: "m_mel" } });
+    const out = toFeedEntries([bad, good], ctx({ lookups: L }));
+    expect(out.map((e) => e.plain)).toEqual(["Member checked themselves in", "Melody Orekoya checked in to Advanced No-Gi · Wed 4 Nov, 19:00"]);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+});
+
+describe("sentences corrected after review", () => {
+  it("a register tick for someone already checked in is a confirmation, not a second check-in", () => {
+    const e = entry(row({ action: "attendance.mark", entityType: "AttendanceRecord", entityId: "s_wed:m_mel", ...byJack, metadata: { classInstanceId: "s_wed", memberId: "m_mel", created: false } }));
+    expect(e.plain).toBe("Jack Streeter confirmed Melody Orekoya's check-in for Advanced No-Gi · Wed 4 Nov, 19:00");
+  });
+
+  it("stripes on the same belt: gained, lost, or simply updated when the row does not say", () => {
+    const same = (fromStripes: number | undefined, stripes: number) => entry(row({ action: "member.rank.promote", ...byJack, metadata: { fromRankId: "r_blue", ...(fromStripes === undefined ? {} : { fromStripes }), toRankId: "r_blue", stripes } })).plain;
+    expect(same(2, 3)).toBe("Jack Streeter awarded Melody Orekoya a stripe on Blue belt (now 3)");
+    expect(same(1, 3)).toBe("Jack Streeter awarded Melody Orekoya 2 stripes on Blue belt (now 3)");
+    expect(same(3, 2)).toBe("Jack Streeter removed a stripe from Melody Orekoya's Blue belt (now 2)");
+    expect(same(2, 2)).toBe("Jack Streeter updated Melody Orekoya's Blue belt (now 2)");
+    expect(same(undefined, 2)).toBe("Jack Streeter updated Melody Orekoya's Blue belt (now 2)");
+  });
+
+  it("a parent removing a child names the child, from the row", () => {
+    const e = entry(row({ action: "member.child.delete", entityId: "m_gone_kid", metadata: { parentMemberId: "m_faisal", childName: "Zara Alshukri", actorId: "m_faisal" } }));
+    expect(e.plain).toBe("Faisal Alshukri removed Zara Alshukri");
+    expect(e.type).toBe("member_removed");
+  });
+
+  it("a child's cancellation that was only requested is not said to have happened", () => {
+    const e = entry(row({ action: "member.subscription.cancel.kid", entityId: "m_kid", metadata: { cancelAt: Date.UTC(2026, 10, 30, 12) / 1000 } }));
+    expect(e.plain).toBe("A cancellation was requested for Zara Alshukri's membership — ends 30 Nov 2026");
+  });
+
+  it("guardian decisions name the guardian", () => {
+    const meta = { parentMemberId: "m_faisal", suggestedBy: "import", wasConfirmed: false };
+    expect(entry(row({ action: "member.guardian.confirmed", entityId: "m_kid", ...byJack, metadata: meta })).plain).toBe("Jack Streeter confirmed Faisal Alshukri as Zara Alshukri's guardian");
+    expect(entry(row({ action: "member.guardian.rejected", entityId: "m_kid", ...byJack, metadata: meta })).plain).toBe("Jack Streeter removed Faisal Alshukri as Zara Alshukri's suggested guardian");
+  });
+
+  it("a staff task names who it is for", () => {
+    expect(entry(row({ action: "task.staff_task.create", entityType: "Task", entityId: "t1", ...byJack, metadata: { assignedToId: "u_sean", titleLength: 12 } })).plain).toBe("Jack Streeter created a task for Sean Coates");
+    // A task for yourself has nobody else to name.
+    expect(entry(row({ action: "task.staff_task.create", entityType: "Task", entityId: "t2", ...byJack, metadata: { assignedToId: JACK.id, titleLength: 12 } })).plain).toBe("Created a staff task");
+  });
+
+  it("a dispute says how much, on which payment, and by when to respond", () => {
+    const dispute = (status: string, extra: Record<string, unknown> = {}) => entry(row({ action: `stripe.dispute.${status}`, metadata: { stripeDisputeId: "dp_1", chargeId: "ch_1", paymentId: "p_stripe", status, amountPence: 4500, reason: "fraudulent", evidenceDueAt: "2026-11-12T23:59:59.000Z", ...extra } }));
+    const open = dispute("needs_response");
+    expect(open.plain).toBe("The dispute over Melody Orekoya's £45.00 payment needs a response — respond by 12 Nov 2026");
+    expect(open.type).toBe("payment_failed");
+    expect(open.detailPlain).toBe("Reason: fraudulent");
+    expect(links(open.parts)).toContain("£45.00 -> /dashboard/members/m_mel?tab=payments&paymentId=p_stripe");
+    expect(dispute("won").plain).toBe("The dispute over Melody Orekoya's £45.00 payment was won");
+    expect(dispute("lost").plain).toBe("The dispute over Melody Orekoya's £45.00 payment was lost");
+    expect(JSON.stringify(open)).not.toMatch(/dp_1|ch_1/);
+    // Not tied to a member: the row's own label.
+    expect(entry(row({ action: "stripe.dispute.lost", entityType: "Dispute", entityId: "dp_2", metadata: { amountPence: 4500 } })).plain).toBe("Dispute lost");
+  });
+
+  it("a failed class-pack payment names the pack, and says less when the checkout had none", () => {
+    expect(entry(row({ action: "stripe.checkout.class_pack_payment_failed", entityType: "ClassPack", entityId: "pk_10", metadata: { sessionId: "cs_1", memberId: "m_mel" } })).plain).toBe("Melody Orekoya's payment for the 10 class pack failed — no classes were added");
+    const noPack = entry(row({ action: "stripe.checkout.class_pack_payment_failed", entityType: "ClassPack", entityId: "cs_test_a1B2c3", metadata: { sessionId: "cs_test_a1B2c3", memberId: "m_mel" } }));
+    expect(noPack.plain).toBe("Melody Orekoya's class pack payment failed — no classes were added");
+    expect(JSON.stringify(noPack)).not.toContain("cs_test");
   });
 });

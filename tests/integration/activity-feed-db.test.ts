@@ -23,7 +23,7 @@ import { auth } from "@/auth";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { GET } from "@/app/api/activity/route";
 import { ACTIVITY_TYPES, visibleTypeKeys, type ActivityResponse } from "@/lib/activity-types";
-import { typeOf, visibleWhere, whereForTypes } from "@/lib/activity-feed";
+import { typeOf, typesFinding, visibleWhere, whereForTypes } from "@/lib/activity-feed";
 import { selects } from "../unit/activity-where-eval";
 
 const STAMP = randomUUID().slice(0, 8);
@@ -150,6 +150,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     named.pause = add("class.updated", { entityType: "Class", entityId: cls, ...byOwner, metadata: { fields: ["isActive"], lifecycle: "paused" } });
     named.roster = add("class.roster.add", { entityType: "ClassRoster", entityId: id("roster"), ...byJack, metadata: { classId: cls, memberId: m.mel } });
     named.dispute = add("stripe.dispute.needs_response", { entityType: "Payment", entityId: payment, metadata: {} });
+    // Shapes no writer produces today. Each must still be found by exactly one type, and must not break a sentence.
+    named.ackString = add("attendance.mark", { ...checkin, ...byJack, metadata: { classInstanceId: session, memberId: m.mel, acknowledged: "on_hold" } });
+    named.ackObject = add("attendance.mark", { ...checkin, ...byJack, metadata: { classInstanceId: session, memberId: m.mel, acknowledged: { on_hold: true } } });
+    named.ackNull = add("attendance.mark", { ...checkin, ...byJack, metadata: { classInstanceId: session, memberId: m.mel, acknowledged: null } });
+    named.changesScalar = add("member.update", { ...byJack, metadata: { changes: "phone" } });
+    named.statusScalar = add("member.update", { ...byJack, metadata: { changes: { status: "cancelled" } } });
+    named.statusNumber = add("member.update", { ...byJack, metadata: { changes: { status: { to: 7 } } } });
+    named.tierNull = add("member.update", { ...byJack, metadata: { changes: { membershipTierId: null } } });
+    named.metaArray = add("member.update", { ...byJack, metadata: [1, 2] });
+    named.outcomeNumber = add("payment.adhoc.charge", { ...byJack, metadata: { amountPence: 1500, outcome: 0 } });
+    named.outcomeObject = add("payment.adhoc.charge", { ...byJack, metadata: { amountPence: 1500, outcome: { code: "declined" } } });
+    named.actingAsNull = add("member.update", { ...byJack, metadata: { actingAs: null, changes: { phone: { from: "1", to: "2" } } } });
+    named.actingAsNumber = add("member.update", { ...byJack, metadata: { actingAs: 7 } });
     // Owner-only types.
     named.undo = add("undo.member.update", { ...byOwner, metadata: { undoneAuditId: id("nothing") } });
     named.staff = add("staff.update", { entityType: "User", entityId: JACK, ...byOwner, metadata: { changes: { role: { from: "admin", to: "coach" } } } });
@@ -194,7 +207,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     expect(left).toBe(0);
   }, 120_000);
 
-  it("every row is found by exactly the one type it shows — and the SQL model used by the unit tests agrees with Postgres", async () => {
+  it("every row is found by the type it shows (and the one declared overlap) — and the SQL model used by the unit tests agrees with Postgres", async () => {
     const foundBy = new Map<string, string[]>(inA().map((r) => [r.id, []]));
     const disagreements: string[] = [];
     for (const key of ALL_KEYS) {
@@ -206,8 +219,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
       }
     }
     expect(disagreements).toEqual([]);
-    const wrong = inA().filter((r) => foundBy.get(r.id)!.join() !== typeOf(r)).map((r) => `${r.action} ${JSON.stringify(r.metadata)}: shows ${typeOf(r)}, found by [${foundBy.get(r.id)}]`);
+    const wrong = inA().filter((r) => [...foundBy.get(r.id)!].sort().join() !== [...typesFinding(r)].sort().join()).map((r) => `${r.action} ${JSON.stringify(r.metadata)}: shows ${typeOf(r)}, found by [${foundBy.get(r.id)}]`);
     expect(wrong).toEqual([]);
+    // No row is found by no filter at all.
+    expect(inA().filter((r) => foundBy.get(r.id)!.length === 0).map((r) => r.action)).toEqual([]);
     // The cases the NULL-safe predicates exist for.
     expect(foundBy.get(named.phone.id)).toEqual(["member_updated"]);
     expect(foundBy.get(named.editNoMeta.id)).toEqual(["member_updated"]);
@@ -215,7 +230,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     expect(foundBy.get(named.markPlain.id)).toEqual(["checkin"]);
     expect(foundBy.get(named.markNoMeta.id)).toEqual(["checkin"]);
     expect(foundBy.get(named.markEmptyFlags.id)).toEqual(["checkin"]);
-    expect(foundBy.get(named.markWarned.id)).toEqual(["checkin_exception"]);
+    // A warned check-in shows as that, and is still a check-in.
+    expect(foundBy.get(named.markWarned.id)).toEqual(["checkin_exception", "checkin"]);
     expect(foundBy.get(named.cancel.id)).toEqual(["cancellation"]);
     expect(foundBy.get(named.tier.id)).toEqual(["membership_changed"]);
     expect(foundBy.get(named.chargeOld.id)).toEqual(["payment"]);
@@ -224,6 +240,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     expect(foundBy.get(named.chargeUnknown.id)).toEqual(["payment_failed"]);
     expect(foundBy.get(named.dispute.id)).toEqual(["payment_failed"]);
     expect(foundBy.get(named.unmapped.id)).toEqual(["other"]);
+    // Odd shapes land where the in-memory rules put them.
+    expect(foundBy.get(named.ackString.id)).toEqual(["checkin"]);
+    expect(foundBy.get(named.ackObject.id)).toEqual(["checkin"]);
+    expect(foundBy.get(named.ackNull.id)).toEqual(["checkin"]);
+    expect(foundBy.get(named.changesScalar.id)).toEqual(["member_updated"]);
+    expect(foundBy.get(named.statusScalar.id)).toEqual(["member_updated"]);
+    expect(foundBy.get(named.statusNumber.id)).toEqual(["member_updated"]);
+    expect(foundBy.get(named.tierNull.id)).toEqual(["member_updated"]);
+    expect(foundBy.get(named.metaArray.id)).toEqual(["member_updated"]);
+    expect(foundBy.get(named.outcomeNumber.id)).toEqual(["payment_failed"]);
+    expect(foundBy.get(named.outcomeObject.id)).toEqual(["payment_failed"]);
   }, 240_000);
 
   it("the manager restriction selects club-life rows only, and never one made by or through MatFlow support", async () => {
@@ -231,13 +258,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     const found = new Set((await withTenantContext(A, (tx) => tx.auditLog.findMany({ where: { AND: [{ tenantId: A }, where] }, select: { id: true } }))).map((r) => r.id));
     const managerTypes = new Set(visibleTypeKeys("manager"));
     for (const row of inA()) {
-      const support = row.operatorId != null || typeof (row.metadata as { actingAs?: unknown } | null)?.actingAs === "string";
+      // Any marker at all counts (fails closed); a JSON null is no marker.
+      const support = row.operatorId != null || (row.metadata as { actingAs?: unknown } | null)?.actingAs != null;
       expect(found.has(row.id), `${row.action} ${JSON.stringify(row.metadata)}`).toBe(managerTypes.has(typeOf(row)) && !support);
       expect(selects(where, row), `model: ${row.action}`).toBe(found.has(row.id));
     }
     for (const row of [named.supportByColumn, named.supportByMeta, named.operatorRow, named.unmapped, named.undo, named.staff, named.signIn, named.settings, named.dsar, named.imported, named.plan]) expect(found.has(row.id), row.action).toBe(false);
-    // A row with no metadata is not a support session.
+    // A row with no metadata, or a null marker, is not a support session; an odd marker is treated as one.
     expect(found.has(named.editNoMeta.id)).toBe(true);
+    expect(found.has(named.actingAsNull.id)).toBe(true);
+    expect(found.has(named.actingAsNumber.id)).toBe(false);
   }, 120_000);
 
   it("the owner's feed is every row of this club and none of another's, as sentences with links", async () => {
@@ -269,8 +299,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
 
   it("a manager is sent no owner-only row, whatever is asked for", async () => {
     as("manager");
-    const forbidden = new Set([named.undo, named.staff, named.signIn, named.settings, named.dsar, named.imported, named.plan, named.operatorRow, named.unmapped, named.supportByColumn, named.supportByMeta].map((r) => r.id));
-    const queries = ["?types=all", `?types=${ALL_KEYS.join(",")}`, "?types=staff,support,undo,other,settings", "?types=staff_changes", `?types=all&userId=${OWNER}`, `?types=all&memberId=${m.mel}`, `?types=all&tierId=${tierAdult}`];
+    const forbidden = new Set([named.undo, named.staff, named.signIn, named.settings, named.dsar, named.imported, named.plan, named.operatorRow, named.unmapped, named.supportByColumn, named.supportByMeta, named.actingAsNumber].map((r) => r.id));
+    const queries = ["?types=all", `?types=${ALL_KEYS.join(",")}`, "?types=staff,support,undo,other,settings", "?types=staff_changes", `?types=all&userId=${OWNER}`, `?types=all&memberId=${m.mel}`, `?types=all&tierId=${tierAdult}`, `?types=all&paymentId=${payment}`, `?types=all&classId=${cls}`, "?types=all&embed=1", `?types=all&day=${ROW_DAY}`, `?types=all&cursor=${named.staff.id}`, `?types=all&cursor=${named.undo.id}&userId=${OWNER}`];
     for (const query of queries) {
       const entries = await all(query);
       for (const e of entries) expect(forbidden.has(e.id), `${query}: ${e.plain}`).toBe(false);
@@ -311,6 +341,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     const expected = inA().filter((r) => r.userId === JACK && ["checkin", "checkin_exception", "member_updated"].includes(typeOf(r)) && (r.entityId === m.mel || JSON.stringify(r.metadata ?? {}).includes(m.mel)));
     expect(combined.map((e) => e.id).sort()).toEqual(expected.map((r) => r.id).sort());
     expect(combined.length).toBeGreaterThan(5);
+    // …and with a day as well: the same rows on the day they were written, none the day before.
+    const query = `?types=checkin,checkin_exception,member_updated&memberId=${m.mel}&userId=${JACK}`;
+    expect((await all(`${query}&day=${ROW_DAY}`)).map((e) => e.id).sort()).toEqual(expected.map((r) => r.id).sort());
+    expect(await all(`${query}&day=${DAY_BEFORE}`)).toEqual([]);
   }, 240_000);
 
   it("120 rows written in the same instant page at 50 to exactly 120 different rows", async () => {
@@ -319,6 +353,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     expect(entries).toHaveLength(120);
     expect(new Set(entries.map((e) => e.id)).size).toBe(120);
   }, 240_000);
+
+  it("a cursor that is another club's row, or no row at all, gives the same empty page", async () => {
+    as("owner");
+    const theirs = rows.find((r) => r.tenantId === B)!.id;
+    const fromTheirs = await get(`?types=all&cursor=${theirs}`);
+    const fromNothing = await get(`?types=all&cursor=${id("nocursor")}`);
+    expect(fromTheirs.entries).toEqual([]);
+    expect(fromTheirs.nextCursor).toBeNull();
+    expect(JSON.stringify(fromTheirs)).toBe(JSON.stringify(fromNothing));
+    // …and a cursor of this club continues from it, newest first, without repeats.
+    const first = await get("?types=all&take=10");
+    const second = await get(`?types=all&take=10&cursor=${first.nextCursor}`);
+    expect(second.entries).toHaveLength(10);
+    expect(second.entries.some((e) => first.entries.some((f) => f.id === e.id))).toBe(false);
+    expect(inA().map((r) => r.id).slice(10, 20)).toEqual(second.entries.map((e) => e.id));
+  }, 120_000);
 
   it("a row that points at another club's records names nothing of theirs", async () => {
     as("owner");

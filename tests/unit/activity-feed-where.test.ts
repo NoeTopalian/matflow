@@ -8,7 +8,7 @@ vi.mock("server-only", () => ({}));
 
 import { AUDIT_LABELS } from "@/lib/audit-labels";
 import { ACTIVITY_TYPES, visibleTypeKeys } from "@/lib/activity-types";
-import { ROW_RULES, classWhere, memberWhere, paymentWhere, tierWhere, typeOf, visibleWhere, whereForTypes } from "@/lib/activity-feed";
+import { ROW_RULES, classWhere, memberWhere, paymentWhere, tierWhere, typeOf, typesFinding, visibleWhere, whereForTypes } from "@/lib/activity-feed";
 import { selects, type EvalRow } from "./activity-where-eval";
 
 const ALL_KEYS = ACTIVITY_TYPES.map((t) => t.key);
@@ -37,6 +37,17 @@ const METADATA: unknown[] = [
   { amountPence: 500, outcome: "declined" },
   { amountPence: 500, outcome: "rejected" },
   { amountPence: 500, outcome: "unknown" },
+  // Shapes no writer produces today, which a rule must still file somewhere.
+  [1, 2],
+  { acknowledged: "on_hold" },
+  { acknowledged: { on_hold: true } },
+  { acknowledged: null },
+  { changes: "phone" },
+  { changes: { status: "cancelled" } },
+  { changes: { status: { to: 7 } } },
+  { changes: { membershipTierId: null } },
+  { outcome: 0 },
+  { outcome: { code: "declined" } },
 ];
 
 const ACTIONS = [...Object.keys(AUDIT_LABELS), "stripe.dispute.needs_response", "undo.member.update", "undo.class.updated", "something.nobody.listed"];
@@ -55,9 +66,26 @@ describe("row rules", () => {
         const claimed = rule.test(metadata);
         const label = `${rule.type} ${JSON.stringify(metadata)}`;
         expect(selects(rule.where, row), `where: ${label}`).toBe(claimed);
-        expect(selects(rule.whereNot, row), `whereNot: ${label}`).toBe(!claimed);
+        if (rule.whereNot) expect(selects(rule.whereNot, row), `whereNot: ${label}`).toBe(!claimed);
       }
     }
+  });
+
+  it("only the check-in warning rule has no complement, and for the reason given: NOT (contains) loses a value that is not a list", () => {
+    expect(ROW_RULES.filter((r) => !r.whereNot).map((r) => r.type)).toEqual(["checkin_exception"]);
+    // What a hand-written complement would have been, and the rows it would have dropped from every filter.
+    const flag = (f: string) => ({ metadata: { path: ["acknowledged"], array_contains: [f] } });
+    const noneOfThem = { AND: ["on_hold", "waiver_unsigned", "kids_class"].map((f) => ({ NOT: flag(f) })) };
+    for (const acknowledged of ["on_hold", { on_hold: true }, 7]) {
+      const row = { action: "attendance.mark", metadata: { acknowledged } };
+      expect(selects(ROW_RULES[0].where, row)).toBe(false);
+      expect(selects(noneOfThem, row), JSON.stringify(acknowledged)).toBe(false);
+    }
+    // For a real list it would have worked — which is why the gap only showed against odd data.
+    expect(selects(noneOfThem, { action: "attendance.mark", metadata: { acknowledged: ["rank_gate"] } })).toBe(true);
+    expect(typesFinding({ action: "attendance.mark", metadata: { acknowledged: ["on_hold"] } })).toEqual(["checkin_exception", "checkin"]);
+    expect(typesFinding({ action: "attendance.mark", metadata: { acknowledged: "on_hold" } })).toEqual(["checkin"]);
+    expect(typesFinding({ action: "member.update", metadata: { changes: { status: { to: "cancelled" } } } })).toEqual(["cancellation"]);
   });
 
   it("claims what it should", () => {
@@ -80,19 +108,27 @@ describe("row rules", () => {
 });
 
 describe("whereForTypes", () => {
-  it("for every row, the one type whose filter finds it is the type the row shows", () => {
+  it("every row is found by the filter of the type it shows — and by no other, bar the one declared overlap", () => {
     const wrong: string[] = [];
     for (const row of ROWS) {
       const found = ALL_KEYS.filter((key) => selects(whereForTypes([key], "owner"), row));
-      const shown = typeOf(row);
-      if (found.length !== 1 || found[0] !== shown) wrong.push(`${row.action} ${JSON.stringify(row.metadata)}: shows ${shown}, found by [${found.join(", ")}]`);
+      const expected = typesFinding(row);
+      if ([...found].sort().join() !== [...expected].sort().join()) wrong.push(`${row.action} ${JSON.stringify(row.metadata)}: shows ${typeOf(row)}, found by [${found.join(", ")}], expected [${expected.join(", ")}]`);
     }
     expect(wrong).toEqual([]);
+    // Never by none: a row no filter finds would be invisible to a manager and in every view but Everything.
+    for (const row of ROWS) expect(ALL_KEYS.some((key) => selects(whereForTypes([key], "owner"), row)), `${row.action} ${JSON.stringify(row.metadata)}`).toBe(true);
   });
 
   it("a selection finds exactly the rows of its types", () => {
     const chosen = ["cancellation", "checkin", "refund", "other", "undo"];
-    for (const row of ROWS) expect(selects(whereForTypes(chosen, "owner"), row), `${row.action} ${JSON.stringify(row.metadata)}`).toBe(chosen.includes(typeOf(row)));
+    for (const row of ROWS) expect(selects(whereForTypes(chosen, "owner"), row), `${row.action} ${JSON.stringify(row.metadata)}`).toBe(typesFinding(row).some((k) => chosen.includes(k)));
+    // A warned check-in is found by "Check-in" alone and by "Check-in with a warning" alone; a plain one only by the first.
+    const warned = { action: "attendance.mark", metadata: { acknowledged: ["waiver_unsigned"] } };
+    const plain = { action: "attendance.mark", metadata: { acknowledged: [] } };
+    expect(selects(whereForTypes(["checkin"], "owner"), warned)).toBe(true);
+    expect(selects(whereForTypes(["checkin_exception"], "owner"), warned)).toBe(true);
+    expect(selects(whereForTypes(["checkin_exception"], "owner"), plain)).toBe(false);
   });
 
   it("every type at once is no filter for the owner, and nothing chosen finds nothing", () => {
@@ -130,6 +166,9 @@ describe("visibleWhere", () => {
     expect(selects(where, { ...edit, operatorId: null, metadata: { ...edit.metadata, actingAs: "op1" } })).toBe(false);
     // No metadata at all is not a support session.
     expect(selects(where, { action: "member.update", metadata: null, operatorId: null })).toBe(true);
+    // A null marker is no marker; anything else present is treated as a support session (fails closed).
+    expect(selects(where, { ...edit, operatorId: null, metadata: { ...edit.metadata, actingAs: null } })).toBe(true);
+    expect(selects(where, { ...edit, operatorId: null, metadata: { ...edit.metadata, actingAs: 7 } })).toBe(false);
   });
 
   it("hides an action nobody has mapped yet", () => {

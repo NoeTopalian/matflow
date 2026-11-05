@@ -9,7 +9,6 @@ import { clubDayKey, clubDayWindow, parseDayKey, shiftDayKey } from "@/lib/club-
 import { formatDate } from "@/lib/date";
 import { parseIdParam } from "@/lib/id-param";
 import { ERASED_EMAIL } from "@/lib/login-email";
-import { formatMoney } from "@/lib/payment-totals";
 import { decideUndo } from "@/lib/undo-registry";
 import { parseTypesParam, type ActivityResponse, type ActivityRole, type FeedEntry } from "@/lib/activity-types";
 import {
@@ -18,6 +17,7 @@ import {
   classWhere,
   loadLookups,
   memberWhere,
+  money,
   paymentWhere,
   plainFallbackEntry,
   tierWhere,
@@ -62,6 +62,8 @@ const RATE_WINDOW_MS = 60_000;
 const RETENTION_DAYS = 365;
 /** A member's payments read to find rows on those payments (a refund carries no member id). */
 const MEMBER_PAYMENTS_CAP = 500;
+/** Undo rows read to mark a page's rows "already undone". Undos are rare; this only bounds the read. */
+const UNDO_ROWS_CAP = 1_000;
 const LOOKUP_BUDGET_MS = 5_000;
 const SLOW_MS = 1_000;
 
@@ -112,6 +114,7 @@ export async function GET(req: Request) {
 
   let first: {
     timeZone: string;
+    currency: string;
     clock: ActivityResponse["clock"];
     filters: Omit<ActivityResponse["filters"], "types">;
     rows: FeedRow[];
@@ -121,7 +124,8 @@ export async function GET(req: Request) {
   const startedRows = Date.now();
   try {
     first = await withTenantContext(tenantId, async (tx) => {
-      const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+      const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true, currency: true } });
+      const currency = tenant?.currency ?? "GBP";
       const timeZone = usableTimezone(tenant?.timezone);
       const todayKey = clubDayKey(new Date(), timeZone);
       const minDayKey = shiftDayKey(todayKey, -RETENTION_DAYS);
@@ -134,7 +138,8 @@ export async function GET(req: Request) {
       }
 
       const filters: Omit<ActivityResponse["filters"], "types"> = { member: null, class: null, payment: null, tier: null, staff: null, dayKey };
-      const and: Where[] = [{ tenantId }, visibleWhere(role), whereForTypes(types.keys, role)];
+      // Nothing older than the year the log is kept for: the same bound the page states, and a floor under every scan.
+      const and: Where[] = [{ tenantId }, { createdAt: { gte: clubDayWindow(minDayKey, timeZone).start } }, visibleWhere(role), whereForTypes(types.keys, role)];
       // An id that is not a record of this club selects nothing — and the audit query is not run for it.
       let unknown = false;
 
@@ -154,7 +159,7 @@ export async function GET(req: Request) {
       }
       if (asked.payment) {
         const payment = await tx.payment.findFirst({ where: { id: asked.payment, tenantId }, select: { id: true, amountPence: true, currency: true, stripeInvoiceId: true, paidAt: true, createdAt: true } });
-        filters.payment = { id: asked.payment, label: payment ? `${formatMoney(payment.amountPence, payment.currency)} · ${formatDate(payment.paidAt ?? payment.createdAt, timeZone)}` : null };
+        filters.payment = { id: asked.payment, label: payment ? `${money(payment.amountPence, payment.currency)} · ${formatDate(payment.paidAt ?? payment.createdAt, timeZone)}` : null };
         if (payment) and.push(paymentWhere(payment.id, payment.stripeInvoiceId));
         else unknown = true;
       }
@@ -173,7 +178,17 @@ export async function GET(req: Request) {
       if (dayKey) and.push({ createdAt: { lt: clubDayWindow(dayKey, timeZone).nextStart } });
 
       const clock = { timeZone, todayKey, minDayKey, clamped };
-      if (unknown) return { timeZone, clock, filters, rows: [], hasMore: false, undone: new Set<string>() };
+      const nothing = { timeZone, currency, clock, filters, rows: [], hasMore: false, undone: new Set<string>() };
+      if (unknown) return nothing;
+
+      // The cursor is the last row of the previous page. It is looked up IN THIS CLUB and the page continues
+      // from its position by an explicit comparison — not Prisma's own cursor, whose lookup of the row is not
+      // club-scoped, so another club's row id would have answered differently from an id that does not exist.
+      if (cursor) {
+        const after = await tx.auditLog.findFirst({ where: { id: cursor, tenantId }, select: { id: true, createdAt: true } });
+        if (!after) return nothing;
+        and.push({ OR: [{ createdAt: { lt: after.createdAt } }, { createdAt: after.createdAt, id: { lt: after.id } }] });
+      }
 
       // `id` breaks ties: rows written in the same instant still page without repeats or gaps.
       const found: FeedRow[] = await tx.auditLog.findMany({
@@ -181,34 +196,41 @@ export async function GET(req: Request) {
         select: FEED_ROW_SELECT,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: take + 1,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
-      const rows = found.slice(0, take);
+      // The actor's name comes with the row. A user of another club is never named, whatever an old row points at.
+      const rows = found.slice(0, take).map((row) => ({ ...row, user: row.user && row.user.tenantId === tenantId ? { id: row.user.id, name: row.user.name } : null }));
 
       // Which of these have already been undone? Only the owner undoes, and
       // only worth asking when something on the page could be undone at all.
       const undone = new Set<string>();
       if (withUndo && rows.some((row) => decideUndo({ ...row, tenantId }, false).ok)) {
-        const undoRows = await tx.auditLog.findMany({ where: { tenantId, action: { startsWith: UNDO_PREFIX }, createdAt: { gte: rows[rows.length - 1].createdAt } }, select: { metadata: true } });
+        // An undo is always written after the row it undoes, so nothing older than the page's oldest row can matter.
+        const undoRows = await tx.auditLog.findMany({ where: { tenantId, action: { startsWith: UNDO_PREFIX }, createdAt: { gte: rows[rows.length - 1].createdAt } }, select: { metadata: true }, orderBy: { createdAt: "desc" }, take: UNDO_ROWS_CAP });
         for (const undo of undoRows) {
           const id = (undo.metadata as { undoneAuditId?: unknown } | null)?.undoneAuditId;
           if (typeof id === "string") undone.add(id);
         }
       }
-      return { timeZone, clock, filters, rows, hasMore: found.length > take, undone };
+      return { timeZone, currency, clock, filters, rows, hasMore: found.length > take, undone };
     });
   } catch (e) {
     if (isTimeout(e)) return NextResponse.json({ ok: false, code: "timeout", error: TOO_MUCH }, { status: 504, headers: NO_STORE });
-    return apiError("Couldn't load activity.", 500, e, "[activity]", { tenantId, userId, req });
+    const failed = apiError("Couldn't load activity.", 500, e, "[activity]", { tenantId, userId, req });
+    failed.headers.set("Cache-Control", NO_STORE["Cache-Control"]);
+    return failed;
   }
   slow(1, Date.now() - startedRows, asked, types.keys.length, first.rows.length);
 
-  // Names, in a transaction of their own.
+  // The member the page is about: a real member of this club, or nobody.
+  const focusMemberId = first.filters.member?.name != null ? first.filters.member.id : null;
+
+  // Names, in a transaction of their own. The five-second budget is when this request stops waiting; a statement
+  // already running is cancelled by the database's own bound (lib/prisma-tenant.ts), not by this.
   let lookups: ActivityLookups | null = null;
   if (first.rows.length > 0) {
     const startedNames = Date.now();
     try {
-      lookups = await withTenantContext(tenantId, (tx) => loadLookups(tx, tenantId, first.rows), { timeout: LOOKUP_BUDGET_MS });
+      lookups = await withTenantContext(tenantId, (tx) => loadLookups(tx, tenantId, first.rows, focusMemberId), { timeout: LOOKUP_BUDGET_MS });
     } catch (e) {
       // The rows are still true without their names: serve them plain, and say why in the log.
       console.error("[activity-feed] names could not be loaded", JSON.stringify({ tenantId, error: e instanceof Error ? e.name : typeof e, rows: first.rows.length }));
@@ -223,7 +245,7 @@ export async function GET(req: Request) {
   };
   const enriched = lookups !== null || first.rows.length === 0;
   const entries = lookups
-    ? toFeedEntries(first.rows, { lookups, role, timeZone: first.timeZone, focusMemberId: first.filters.member?.name != null ? first.filters.member.id : null }, extrasFor)
+    ? toFeedEntries(first.rows, { lookups, role, timeZone: first.timeZone, currency: first.currency, focusMemberId }, extrasFor)
     : first.rows.map((row) => plainFallbackEntry(row, { timeZone: first.timeZone }, extrasFor(row)));
 
   const body: ActivityResponse = {

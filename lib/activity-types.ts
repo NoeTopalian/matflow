@@ -33,7 +33,9 @@ export type ActivityType = {
    * Actions this type claims only for some rows, decided from the row's
    * metadata (the predicates are in lib/activity-feed.ts). A row rule is
    * tested before any exact name: `member.update` is "Member details" unless
-   * it changed the plan or cancelled the membership.
+   * it changed the plan or cancelled the membership. One rule overlaps
+   * instead of dividing: a check-in with a warning shows as that type and is
+   * also found by "Check-in", because a warned check-in is still a check-in.
    */
   ruleActions: string[];
   /** Name prefixes, only for names minted at run time: "undo.<action>", "stripe.dispute.<status>". */
@@ -71,7 +73,7 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     label: "Waiver",
     group: "Members",
     icon: "FileSignature",
-    actions: ["waiver.sign", "waiver.sign.supervised", "waiver.sign-for-child", "waiver.signature.view", "member.waiver.signed_via_kiosk", "member.waiver_link.generated"],
+    actions: ["waiver.sign", "waiver.sign.supervised", "waiver.sign-for-child", "member.waiver.signed_via_kiosk", "member.waiver_link.generated"],
     roles: BOTH,
     defaultOn: true,
   }),
@@ -97,12 +99,15 @@ export const ACTIVITY_TYPES: ActivityType[] = [
       "member.guardian.confirmed",
       "member.guardian.rejected",
       "member.promoted_to_adult",
-      "member.attribution.update",
     ],
     roles: BOTH,
     defaultOn: true,
   }),
-  type({ key: "member_access", label: "Member sign-in and access", group: "Members", icon: "KeyRound", actions: ["member.unlock", "member.totp_reset", "member.invite_link.generated", "member.bulk_invite", "member.card_revoked"], roles: BOTH, defaultOn: false }),
+  // Sign-in help, and the record of who opened a signed waiver: access to a member's account or papers, not a change to them.
+  type({ key: "member_access", label: "Member sign-in and access", group: "Members", icon: "KeyRound", actions: ["member.unlock", "member.totp_reset", "member.invite_link.generated", "member.bulk_invite", "member.card_revoked", "waiver.signature.view"], roles: BOTH, defaultOn: false }),
+  // Off by default: the member form sends these fields with every save and the row is written whether or not
+  // they changed, so until the writer records only real changes it would add a line to every profile save.
+  type({ key: "attribution", label: "Conversion credit", group: "Members", icon: "Target", actions: ["member.attribution.update"], roles: BOTH, defaultOn: false }),
 
   // ── Memberships & money ────────────────────────────────────────────────────
   type({ key: "membership_started", label: "Membership started", group: "Memberships & money", icon: "BadgeCheck", actions: ["member.subscription.create.kid"], roles: BOTH, defaultOn: true }),
