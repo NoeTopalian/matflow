@@ -15,7 +15,7 @@ import TimetableManager, { DENSE_DAY, groupSessions, groupLabel } from "@/compon
 import { duplicateSessionKeys } from "@/lib/schedule-state";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 let nextId = 0;

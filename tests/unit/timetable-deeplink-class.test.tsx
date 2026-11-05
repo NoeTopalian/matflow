@@ -14,7 +14,10 @@ import type { ClassRow } from "@/app/dashboard/timetable/page";
 
 const { nav, toastSpy } = vi.hoisted(() => ({ nav: { search: "" }, toastSpy: vi.fn() }));
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(nav.search) }));
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(nav.search),
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
 
 const base = (over: Partial<ClassRow>): ClassRow => ({

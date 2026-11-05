@@ -18,6 +18,7 @@ import type { ClassRow } from "@/app/dashboard/timetable/page";
 // Mock next/navigation — TimetableManager uses useSearchParams.
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("@/components/ui/Toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
