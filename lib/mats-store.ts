@@ -7,6 +7,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { liveClassWhere } from "@/lib/class-live";
+import { withTenantContext } from "@/lib/prisma-tenant";
 import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, compareMatNames, matNameKey } from "@/lib/mats";
 import { effectiveLayout, isTimetableLayout, type TimetableLayout } from "@/lib/timetable-layout";
 
@@ -49,6 +50,33 @@ export async function readLayout(tx: Tx, tenantId: string): Promise<LayoutState>
   const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timetableLayout: true } });
   const stored = isTimetableLayout(tenant?.timetableLayout) ? tenant.timetableLayout : null;
   return { stored, effective: effectiveLayout(stored, await countMatsInUse(tx, tenantId)) };
+}
+
+/**
+ * What the Timetable page needs about mats: the list in order and the split
+ * somebody chose. Read APART from the classes, in its own transaction, and
+ * guarded: a statement that fails inside a tenant transaction aborts that
+ * whole transaction, and a timetable must not go blank because its mats could
+ * not be read. On failure the page renders split by time and says so
+ * (`failed`); the classes are untouched.
+ */
+export async function readMatsForTimetable(
+  tenantId: string,
+): Promise<{ mats: { id: string; name: string }[]; storedLayout: TimetableLayout | null; failed: boolean }> {
+  try {
+    return await withTenantContext(tenantId, async (tx) => {
+      const mats = await listMats(tx, tenantId);
+      const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timetableLayout: true } });
+      return {
+        mats: mats.map((m) => ({ id: m.id, name: m.name })),
+        storedLayout: isTimetableLayout(tenant?.timetableLayout) ? tenant.timetableLayout : null,
+        failed: false,
+      };
+    });
+  } catch (e) {
+    console.error("[timetable] the mats could not be loaded; rendering split by time", e);
+    return { mats: [], storedLayout: null, failed: true };
+  }
 }
 
 export interface AdoptedMat {

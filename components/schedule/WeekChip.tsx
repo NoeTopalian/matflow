@@ -38,6 +38,7 @@ export function WeekChip({
   color,
   place,
   showPlace,
+  noPlaceLabel,
   state = null,
   duplicate = false,
   kids = false,
@@ -56,6 +57,8 @@ export function WeekChip({
   place: string | null;
   /** False where a pinned column header already names the mat. */
   showPlace: boolean;
+  /** What the accessible name says when there is no place at all ("no mat"), in a club that has mats. */
+  noPlaceLabel?: string;
   state?: SessionState | null;
   duplicate?: boolean;
   kids?: boolean;
@@ -66,7 +69,7 @@ export function WeekChip({
   const showState = state !== null && state !== "upcoming";
   const dim = state === "ended" || state === "cancelled";
   const label =
-    `${canManage ? "Edit " : ""}${name}, ${dayName} ${startTime} to ${endTime}${place ? `, ${place}` : ""}` +
+    `${canManage ? "Edit " : ""}${name}, ${dayName} ${startTime} to ${endTime}${place ? `, ${place}` : noPlaceLabel ? `, ${noPlaceLabel}` : ""}` +
     `${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}`;
   return (
     <Button

@@ -27,7 +27,7 @@ export function effectiveLayout(stored: string | null | undefined, matsInUse: nu
 }
 
 /** How many of the club's mats have at least one of these classes on them. Pass the live classes. */
-export function matsInUse(classes: readonly { matId: string | null }[], mats: readonly { id: string }[]): number {
+export function matsInUse(classes: readonly { matId?: string | null }[], mats: readonly { id: string }[]): number {
   const used = new Set<string>();
   for (const c of classes) if (c.matId) used.add(c.matId);
   let n = 0;
