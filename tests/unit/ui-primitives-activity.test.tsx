@@ -33,8 +33,11 @@ describe("DataTable sectionOf", () => {
     expect(headers.map((h) => h.textContent)).toEqual(["Today", "Yesterday", "Tuesday 3 November 2026"]);
     for (const h of headers) {
       expect(h.getAttribute("colspan")).toBe("2");
-      expect(h.getAttribute("scope")).toBe("colgroup");
+      // A header for the rows under it: each section is its own row group.
+      expect(h.getAttribute("scope")).toBe("rowgroup");
+      expect(h.closest("tbody")!.querySelectorAll("tr[data-section]")).toHaveLength(1);
     }
+    expect([...container.querySelectorAll("tbody")].map((tb) => tb.querySelectorAll("tr:not([data-section])").length)).toEqual([2, 1, 1]);
     // In document order: header, its rows, next header…
     const order = [...container.querySelectorAll("tbody tr")].map((tr) => tr.getAttribute("data-section") ?? tr.querySelector("td")?.textContent);
     expect(order).toEqual(["2026-11-05", "first", "second", "2026-11-04", "third", "2026-11-03", "fourth"]);
@@ -43,7 +46,7 @@ describe("DataTable sectionOf", () => {
   it("gives the phone cards the same headings", () => {
     const { container } = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} sectionOf={sectionOf} renderCard={(r) => <p>{r.name}</p>} />);
     const cards = container.querySelector(".sm\\:hidden")!;
-    expect([...cards.querySelectorAll("h3[data-section]")].map((h) => h.textContent)).toEqual(["Today", "Yesterday", "Tuesday 3 November 2026"]);
+    expect([...cards.querySelectorAll("h2[data-section]")].map((h) => h.textContent)).toEqual(["Today", "Yesterday", "Tuesday 3 November 2026"]);
     expect([...cards.children].map((el) => el.textContent)).toEqual(["Today", "first", "second", "Yesterday", "third", "Tuesday 3 November 2026", "fourth"]);
   });
 
@@ -119,9 +122,14 @@ describe("Input", () => {
 });
 
 describe("a field and a field-like button share a height on a touch screen", () => {
-  it("the coarse-pointer rule covers the select, the input and .ui-field, and UI-RULES says so", () => {
+  it("the coarse-pointer rule covers the select, the Input primitive and .ui-field, and UI-RULES says so", () => {
     const css = readFileSync(join("app", "globals.css"), "utf8").replace(/\s+/g, " ");
-    expect(css).toMatch(/@media \(pointer: coarse\) \{ select\.ui-fixed-size, input\.ui-fixed-size, \.ui-field\.ui-fixed-size \{ min-height: 44px; \} \}/);
+    expect(css).toMatch(/@media \(pointer: coarse\) \{ select\.ui-fixed-size, input\[data-slot="input"\]\.ui-fixed-size, \.ui-field\.ui-fixed-size \{ min-height: 44px; \} \}/);
+    // Only the primitive's field: a bare input carries ui-fixed-size to opt OUT of the 44px floor (the member profile's
+    // rows are their own hit area), and must not be grown by this rule.
+    expect(css).not.toMatch(/[,{] input\.ui-fixed-size[ ,{]/);
+    const { container } = render(<Input aria-label="Name" />);
+    expect(container.querySelector("input")!.getAttribute("data-slot")).toBe("input");
     expect(readFileSync(join("docs", "UI-RULES.md"), "utf8")).toContain("`ui-field`");
   });
 });

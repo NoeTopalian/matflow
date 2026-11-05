@@ -604,8 +604,13 @@ option {
   }
 
   /* ── Focus ── */
+  /* `--focus-ring` is the club's accent moved just far enough to be seen on a
+     light surface (set by the staff shell's ThemeProvider, UI-RULES §2a): a
+     white or pale-yellow accent would otherwise draw an invisible ring. An
+     accent that already shows is used unchanged; a shell that does not set
+     the variable keeps the accent itself. */
   :focus-visible {
-    outline: 2px solid var(--color-primary, #3b82f6);
+    outline: 2px solid var(--focus-ring, var(--color-primary, #3b82f6));
     outline-offset: 2px;
     border-radius: 6px;
   }
@@ -619,10 +624,12 @@ option {
      it grows to the 44px floor instead (UI-RULES §5a / §8); on a fine pointer
      it keeps its fixed 36px geometry. `.ui-field` is for a Button that sits
      in a row of fields as one of them (a filter trigger): it grows with them,
-     so the row keeps one height. */
+     so the row keeps one height. Only the Input primitive's field grows
+     (`data-slot="input"`): other inputs carry `ui-fixed-size` to opt OUT of
+     the floor because their label row is the hit area (the member profile). */
   @media (pointer: coarse) {
     select.ui-fixed-size,
-    input.ui-fixed-size,
+    input[data-slot="input"].ui-fixed-size,
     .ui-field.ui-fixed-size {
       min-height: 44px;
     }

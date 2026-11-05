@@ -296,6 +296,14 @@ export function DataTable<T>({
     return index === 0 || sectionOf(sortedRows[index - 1]).key !== section.key ? section : null;
   };
 
+  /** The table's row groups: one per run of rows in the same section, or a single group when there are no sections. */
+  const rowGroups: { section: { key: string; label: string } | null; indexes: number[] }[] = [];
+  sortedRows.forEach((_, index) => {
+    const section = sectionAt(index);
+    if (section || rowGroups.length === 0) rowGroups.push({ section, indexes: [index] });
+    else rowGroups[rowGroups.length - 1].indexes.push(index);
+  });
+
   return (
     <div ref={rootRef} className={cn("w-full", className)}>
       {/* ── Desktop / tablet table ── */}
@@ -378,36 +386,45 @@ export function DataTable<T>({
               })}
             </tr>
           </thead>
-          <tbody>
-            {loading
-              ? skeletonKeys.map((index) => (
-                  <tr key={`skeleton-${index}`} className="h-[var(--row-h-dense)]">
-                    {columns.map((column) => (
-                      <td key={column.key} className={cn("border-b border-bd-default px-3 py-1", column.visibleFrom && VISIBLE_FROM[column.visibleFrom])}>
-                        <Skeleton className="h-3 w-full" />
-                      </td>
-                    ))}
+          {loading ? (
+            <tbody>
+              {skeletonKeys.map((index) => (
+                <tr key={`skeleton-${index}`} className="h-[var(--row-h-dense)]">
+                  {columns.map((column) => (
+                    <td key={column.key} className={cn("border-b border-bd-default px-3 py-1", column.visibleFrom && VISIBLE_FROM[column.visibleFrom])}>
+                      <Skeleton className="h-3 w-full" />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          ) : (
+            // One row group per section (one for the whole table when there are
+            // none), so a section's header cell is the header OF its rows
+            // (`scope="rowgroup"`) and a screen reader announces the day with
+            // each row under it.
+            rowGroups.map((group) => (
+              <tbody key={group.section ? `${group.section.key}-${group.indexes[0]}` : "rows"}>
+                {group.section ? (
+                  <tr data-section={group.section.key}>
+                    <th
+                      scope="rowgroup"
+                      colSpan={columns.length}
+                      // White with a rule above: the zebra rows are grey, so a grey header read as one more row.
+                      className="border-b border-t border-bd-default bg-sf-1 px-3 pb-1.5 pt-3 text-left text-xs font-semibold text-tx-1"
+                    >
+                      {group.section.label}
+                    </th>
                   </tr>
-                ))
-              : sortedRows.map((row, index) => {
+                ) : null}
+                {group.indexes.map((index) => {
+                  const row = sortedRows[index];
                   const zebra = index % 2 === 1;
                   const isLastRow = index === sortedRows.length - 1;
                   const current = isRowCurrent?.(row) === true;
-                  const section = sectionAt(index);
                   return (
-                    <Fragment key={rowKey(row)}>
-                    {section ? (
-                      <tr data-section={section.key}>
-                        <th
-                          scope="colgroup"
-                          colSpan={columns.length}
-                          className="border-b border-bd-default bg-sf-2 px-3 py-1.5 text-left text-xs font-semibold text-tx-2"
-                        >
-                          {section.label}
-                        </th>
-                      </tr>
-                    ) : null}
                     <tr
+                      key={rowKey(row)}
                       aria-current={current ? "true" : undefined}
                       // `group`, because the zebra and hover fills live on the
                       // CELLS now: only a cell background can be clipped by a
@@ -457,10 +474,11 @@ export function DataTable<T>({
                         </td>
                       ))}
                     </tr>
-                    </Fragment>
                   );
                 })}
-          </tbody>
+              </tbody>
+            ))
+          )}
         </table>
       </div>
 
@@ -515,9 +533,10 @@ export function DataTable<T>({
               return (
                 <Fragment key={rowKey(row)}>
                   {section ? (
-                    <h3 data-section={section.key} className="px-1 pt-2 text-xs font-semibold text-tx-2">
+                    // The page's title is its h1; a day is the next level down.
+                    <h2 data-section={section.key} className="px-1 pt-2 text-xs font-semibold text-tx-2">
                       {section.label}
-                    </h3>
+                    </h2>
                   ) : null}
                   {card}
                 </Fragment>

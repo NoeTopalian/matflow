@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { readableOn } from "@/lib/color";
+import { isHexColor, legibleInk, readableOn } from "@/lib/color";
 
 interface ThemeProviderProps {
   primaryColor: string;
@@ -35,9 +35,21 @@ export default function ThemeProvider({ primaryColor, secondaryColor, textColor,
     // did not, so every primary Button fell back to the white default and
     // rendered white-on-white for any tenant that picked a light accent.
     root.style.setProperty("--tx-on-accent",         readableOn(primary));
+    // The keyboard focus ring is drawn in the accent. On this light shell a
+    // white or pale accent drew no ring at all, so it is moved just far enough
+    // to reach 3:1 against the darkest surface a control sits on (--sf-2, read
+    // from the stylesheet so the token stays the one source); an accent that
+    // already shows comes back unchanged. Without the token the ring stays the
+    // accent, as before.
+    const surface = getComputedStyle(root).getPropertyValue("--sf-2").trim();
+    if (isHexColor(surface)) root.style.setProperty("--focus-ring", legibleInk(primary, surface, 3));
     // NOTE: bgColor (--sf-bg) is intentionally NOT applied here.
     // The admin dashboard always uses its own dark theme.
     // bgColor only affects the member-facing app (read in app/member/layout.tsx).
+    // The ring colour is this shell's alone: leaving the dashboard hands the ring back to the accent.
+    return () => {
+      root.style.removeProperty("--focus-ring");
+    };
   }, [primaryColor, secondaryColor, textColor]);
 
   return <>{children}</>;

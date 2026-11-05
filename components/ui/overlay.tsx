@@ -202,6 +202,10 @@ export function useOverlay({
         return;
       }
       if (event.key !== "Tab") return;
+      // Topmost overlay only, as for Escape: with two open (a Sheet opened
+      // from a Sheet, a confirm over a Sheet) each trap pulled focus back into
+      // its own panel on every Tab, so focus never left the first control.
+      if (openOverlays[openOverlays.length - 1] !== escapeToken) return;
       const target = nextFocusTarget(
         getFocusable(panelRef.current),
         document.activeElement,
