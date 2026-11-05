@@ -16,7 +16,8 @@ import {
 import { POSTER, FROZEN, seedWeek, countOn } from "./data/timetable-weeks.mjs";
 
 const require = createRequire(import.meta.url);
-const { expect } = require("@playwright/test");
+// Assertions wait 20 s (see timetable-mats.mjs: the slow path to the test branch measured 5 Nov 2026).
+const expect = require("@playwright/test").expect.configure({ timeout: 20_000 });
 const club = state.club;
 if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture first");
 const L = ledger("timetable-day-columns");

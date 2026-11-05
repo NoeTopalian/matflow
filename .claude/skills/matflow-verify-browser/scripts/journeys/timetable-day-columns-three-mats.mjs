@@ -10,7 +10,9 @@ import { state, q, ledger, shot, context, ownerSignIn, gridInvariants, phoneNoSi
 import { THREE_MATS, seedWeek, countOn } from "./data/timetable-weeks.mjs";
 
 const require = createRequire(import.meta.url);
-const { expect, chromium } = require("@playwright/test");
+// Assertions wait 20 s (see timetable-mats.mjs: the slow path to the test branch measured 5 Nov 2026).
+const { chromium } = require("@playwright/test");
+const expect = require("@playwright/test").expect.configure({ timeout: 20_000 });
 const club = state.club;
 if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture first");
 const L = ledger("timetable-day-columns-three-mats");
