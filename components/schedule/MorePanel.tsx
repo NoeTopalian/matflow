@@ -59,7 +59,9 @@ export function MorePanel({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
-  close.current = onClose;
+  useEffect(() => {
+    close.current = onClose;
+  });
   useEffect(() => {
     root.current?.querySelector<HTMLElement>("button:not([disabled]), a[href]")?.focus();
   }, []);
