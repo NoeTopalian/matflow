@@ -394,7 +394,19 @@ try {
     await main.evaluate(async () => (await fetch("/api/timetable/layout", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ layout: "mat" }) })).status);
     expect(await storedLayout()).toBe("mat");
     const out = {};
+    const booked = {};
     let n = 0;
+    // One Monday class booked, so a filled block is measured too.
+    const [{ id: bookId }] = await q(`select id from "Class" where "tenantId" = $1 and name = 'Advanced Gi + Sparring'`, [club.tenantId]);
+    {
+      const { ctx: bctx, page } = await memberPage(browser, 390, "10.95.7.99", member);
+      try {
+        const status = await page.evaluate(async (id) => (await fetch(`/api/member/class-subscriptions/${id}`, { method: "POST" })).status, bookId);
+        expect(status).toBeLessThan(300);
+      } finally {
+        await bctx.close();
+      }
+    }
     for (const [shell, bg] of [["dark", null], ["light", LIGHT_SHELL]]) {
       if (bg) await q(`update "Tenant" set "bgColor" = $2 where id = $1`, [club.tenantId, bg]);
       for (const hex of ACCENTS) {
@@ -413,9 +425,14 @@ try {
           await measure("matName", day.locator("[data-mat-head] .pg-mat-pill > span"));
           await measure("timeLabel", day.locator(".pg-tick"));
           await measure("breakRow", day.locator(".pg-break > span"));
-          await measure("blockTime", day.locator('[data-block-part="time"]'));
-          await measure("blockName", day.locator('[data-block-part="name"]'));
-          await measure("blockLast", day.locator('[data-block-part="place"]'));
+          await measure("blockTime", day.locator('button:not([data-booked]) [data-block-part="time"]'));
+          await measure("blockName", day.locator('button:not([data-booked]) [data-block-part="name"]'));
+          await measure("blockLast", day.locator('button:not([data-booked]) [data-block-part="place"]'));
+          // A booked block is filled with its class colour and its ink comes from the shared readableText (not
+          // changed here): measured and recorded, not held to the 4.5:1 line.
+          const filled = day.locator("button[data-booked] [data-block-part]");
+          await expect(filled.first()).toBeVisible();
+          for (let i = 0; i < (await filled.count()); i++) booked[`${shell} ${hex}`] = Math.min(booked[`${shell} ${hex}`] ?? 99, await contrast(filled.nth(i)));
           // The fallen-back Monday (five at 09:00 sit beside two mats) is by time: its '+N more' and panel.
           const more = pane.getByTestId("schedule-more");
           if (await more.count()) {
@@ -434,6 +451,7 @@ try {
       if (bg) await q(`update "Tenant" set "bgColor" = '#111111' where id = $1`, [club.tenantId]);
     }
     await setAccent(club, "#3b82f6");
+    L.note("member-booked", "the booked (filled) block's text on the members' day, lowest contrast per shell and accent", booked);
     return out;
   });
 

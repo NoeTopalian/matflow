@@ -350,8 +350,14 @@ function DayPane({
   // Three lanes leave each block about a third of the screen: it keeps the smaller sizes.
   const size = day.lanes >= 3 ? "small" : "large";
   const root = useRef<HTMLDivElement>(null);
-  // The open "+N more", keyed by day: this pane shows another day after a swipe, and the panel must not follow it.
+  // The open "+N more". It closes on a day change (plan §4.12): this pane shows another day after a swipe, and on
+  // the way back the panel must not open again and take focus.
   const [more, setMore] = useState<{ dow: number; id: string } | null>(null);
+  const [moreDay, setMoreDay] = useState(dow);
+  if (moreDay !== dow) {
+    setMoreDay(dow);
+    setMore(null);
+  }
   const openMore = more && more.dow === dow ? more.id : null;
   const matOf = (cls: ScheduleClass) => (cls.matId ? (matNames.get(cls.matId) ?? null) : null);
   // The last line names the place only where it is what tells classes apart:
@@ -359,6 +365,12 @@ function DayPane({
   // to time. Under a pinned mat name, and for a class on its own, it names the coach.
   const placeShown = (item: { matId: string | null; lanes: number }) =>
     day.layout === "mat" ? item.matId === null : day.fellBack || item.lanes > 1;
+  // A class folded into "+N more" has no block of its own: the button says whether it hides the live or next class,
+  // so the scroll to it on opening the day lands on the button.
+  const foldedState = (keys: string[]) => {
+    const hidden = keys.map((key) => states[indexOf.get(key) ?? -1]);
+    return hidden.includes("live") ? "live" : hidden.includes("next") ? "next" : undefined;
+  };
   const blockFor = (cls: ScheduleClass, showPlace: boolean) => {
     const i = indexOf.get(cls.id) ?? 0;
     return (
@@ -407,6 +419,7 @@ function DayPane({
             }}
             renderMore={(item) => (
               <MemberMore
+                folded={foldedState(item.keys)}
                 count={item.keys.length}
                 label={`${item.keys.length} more classes, ${minToTime(item.startMin)} to ${minToTime(item.endMin)}. Show them.`}
                 expanded={openMore === item.id}
@@ -448,7 +461,7 @@ function DayPane({
 }
 
 /** "+N more" on the members' day: a dashed block in the member shell's inks that opens the list over the grid. */
-function MemberMore({ count, label, expanded, onOpen, onClose }: { count: number; label: string; expanded: boolean; onOpen: () => void; onClose: () => void }) {
+function MemberMore({ count, label, expanded, onOpen, onClose, folded }: { count: number; label: string; expanded: boolean; onOpen: () => void; onClose: () => void; folded?: "live" | "next" }) {
   const press = useMoreToggle(expanded, onOpen, onClose);
   return (
     <Button
@@ -457,6 +470,7 @@ function MemberMore({ count, label, expanded, onOpen, onClose }: { count: number
       aria-label={label}
       aria-expanded={expanded}
       data-testid="schedule-more"
+      data-folded-state={folded}
       className="h-auto min-h-[44px] flex-col items-stretch justify-start gap-0.5 whitespace-normal rounded-xl border border-dashed px-[7px] pb-[8px] pt-[7px] text-left font-normal hover:bg-transparent"
       style={{ borderColor: "var(--member-border)", background: "var(--member-surface)", color: "var(--member-text)" }}
     >
@@ -509,9 +523,9 @@ function SessionBlock({
   // reads on it. Unsubscribed blocks are a tint of that colour over the member
   // shell, so their ink is the shell's own text, never a hard-coded dark navy
   // (the contact sheet of 26 Sep showed near-invisible class names on a blue club).
-  const muted  = isSub
-    ? (text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)")
-    : QUIET_INK;
+  // On a booked block the secondary text (the last line, the category, the Bell) is the block's own ink: a
+  // see-through ink measured about 2.7:1 on a blue class (plan Appendix B 19).
+  const muted  = isSub ? text : QUIET_INK;
   const ink    = isSub ? text : "var(--member-text)";
   const ended  = state === "ended";
   const cancelled = state === "cancelled";
@@ -531,6 +545,7 @@ function SessionBlock({
       onClick={() => onSelect(cls.id)}
       data-session-state={state}
       data-block-size={size}
+      data-booked={isSub || undefined}
       aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${where ? `, ${where}` : ""}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
       className={[
         "relative h-auto flex-col items-stretch justify-start gap-0.5 overflow-hidden whitespace-normal rounded-xl text-left font-normal transition-all active:scale-[0.98] hover:bg-transparent",
@@ -545,6 +560,9 @@ function SessionBlock({
         borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : color}` : undefined,
         boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
         color: ink,
+        // A booked class that has ended is greyed. Desaturating keeps each colour's brightness, so its ink still
+        // reads; a see-through fill would not on a light shell.
+        filter: isSub && ended ? "saturate(0.35)" : undefined,
       }}
     >
       <span className={["font-bold tabular-nums", large ? "text-xs leading-[15px]" : "text-[11px] leading-[14px]"].join(" ")} data-block-part="time">
@@ -704,7 +722,9 @@ export default function MemberSchedulePage() {
     if (!pane || scheduleLoading) return;
     const band = pane.querySelector<HTMLElement>("[data-mat-head]")?.getBoundingClientRect().height ?? 0;
     pane.style.scrollPaddingTop = `${Math.ceil(band)}px`;
-    const target = pane.querySelector<HTMLElement>('[data-session-state="live"]') ?? pane.querySelector<HTMLElement>('[data-session-state="next"]');
+    const target =
+      pane.querySelector<HTMLElement>('[data-session-state="live"], [data-folded-state="live"]') ??
+      pane.querySelector<HTMLElement>('[data-session-state="next"], [data-folded-state="next"]');
     if (!target) {
       pane.scrollTo({ top: 0 });
       return;

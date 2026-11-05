@@ -35,7 +35,7 @@ const EVENING = [
 
 let timetable: () => Promise<Response> | Response;
 let calls: string[];
-function stub(rows: Row[]) {
+function stub(rows: Row[], booked: string[] = []) {
   calls = [];
   vi.stubGlobal(
     "fetch",
@@ -43,7 +43,7 @@ function stub(rows: Row[]) {
       const url = typeof input === "string" ? input : String(input);
       calls.push(`${init?.method ?? "GET"} ${url}`);
       if (url.startsWith("/api/member/schedule")) return { ok: true, status: 200, json: async () => rows } as Response;
-      if (url.startsWith("/api/member/me/subscriptions")) return { ok: true, status: 200, json: async () => ({ classIds: [] }) } as Response;
+      if (url.startsWith("/api/member/me/subscriptions")) return { ok: true, status: 200, json: async () => ({ classIds: booked }) } as Response;
       if (url.startsWith("/api/member/timetable")) return timetable();
       if (url.startsWith("/api/member/class-subscriptions/")) return { ok: true, status: 201, json: async () => ({}) } as Response;
       return { ok: true, status: 200, json: async () => ({}) } as Response;
@@ -144,6 +144,30 @@ describe("the members' day by mat", () => {
     const block = within(day).getByRole("button", { name: /^Sunrise Gi,/ });
     // 00:10 has passed whenever this runs, except in its first ten minutes of the day.
     if (block.dataset.sessionState === "ended") expect(block.style.opacity).toBe("");
+  });
+
+  it("a booked block's last line is in the block's own ink, not a see-through one", async () => {
+    stub(EVENING, ["gi"]);
+    render(<MemberSchedulePage />);
+    const { day } = await today();
+    const block = within(day).getByRole("button", { name: /^Beginners Course Gi,/ });
+    await waitFor(() => expect(block.style.background).toContain("linear-gradient"));
+    await waitFor(() => expect(block.querySelector("svg")).not.toBeNull()); // the Bell: booked
+    const last = block.querySelector<HTMLElement>('[data-block-part="place"]')!;
+    expect(last.style.color).toBe(block.style.color);
+  });
+
+  it("a booked class that has ended is greyed, its ink unchanged", async () => {
+    stub([row("early", "Sunrise Gi", "00:00", "00:10", "Mat 1", "m1")], ["early"]);
+    render(<MemberSchedulePage />);
+    const { day } = await today();
+    const block = within(day).getByRole("button", { name: /^Sunrise Gi,/ });
+    await waitFor(() => expect(block.querySelector("svg, [data-block-part]")).not.toBeNull());
+    // 00:10 has passed whenever this runs, except in its first ten minutes of the day.
+    if (block.dataset.sessionState === "ended") {
+      await waitFor(() => expect(block.style.filter).toBe("saturate(0.35)"));
+      expect(block.style.opacity).toBe("");
+    }
   });
 });
 
@@ -263,5 +287,35 @@ describe("more than three at once", () => {
     const buttons = within(panel).getAllByRole("button");
     fireEvent.blur(buttons[buttons.length - 1], { relatedTarget: more });
     await waitFor(() => expect(within(day).queryByTestId("more-panel")).toBeNull());
+  });
+
+  it("it closes on a day change and stays closed on the way back", async () => {
+    timetable = byTime;
+    stub(FIVE);
+    render(<MemberSchedulePage />);
+    const { day } = await today();
+    fireEvent.click(within(day).getByTestId("schedule-more"));
+    await within(day).findByTestId("more-panel");
+    const pills = screen.getAllByRole("button", { name: /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*\d/ });
+    expect(pills).toHaveLength(7);
+    const todayAt = (new Date().getDay() + 6) % 7;
+    fireEvent.click(pills[(todayAt + 1) % 7]);
+    fireEvent.click(pills[todayAt]);
+    const back = await today();
+    await within(back.day).findByTestId("schedule-more");
+    expect(within(back.pane).queryByTestId("more-panel")).toBeNull();
+  });
+
+  it("'+N more' says when it hides the class that is on now, so opening the day scrolls to it", async () => {
+    const now = new Date();
+    const min = now.getHours() * 60 + now.getMinutes();
+    const at = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    const from = at(Math.max(0, min - 5)), to = at(Math.min(23 * 60 + 59, min + 30));
+    timetable = byTime;
+    stub(["A", "B", "C", "D", "E"].map((n) => row(`l${n}`, `Live ${n}`, from, to, "", null)));
+    render(<MemberSchedulePage />);
+    const { day } = await today();
+    const more = within(day).getByTestId("schedule-more");
+    if (from !== to) await waitFor(() => expect(more.dataset.foldedState).toBe("live"));
   });
 });
