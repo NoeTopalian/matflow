@@ -9,7 +9,7 @@
 import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, launchWithScrollbars,
-  weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare,
+  weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare, weekOnFrozenClock,
 } from "../lib.mjs";
 import { POSTER, FROZEN, seedWeek, sessionsOn, classesOf, daysWithClasses, DAY, chipName } from "./data/timetable-weeks.mjs";
 
@@ -38,6 +38,8 @@ const wider = (page) => page.getByTestId("week-wider");
 const sheetOf = (page) => page.getByRole("dialog", { name: "Mats" });
 const matHeads = (page, day) => weekDay(page, day).locator("[data-mat-head]").evaluateAll((els) => els.map((e) => (e.textContent ?? "").trim()));
 const chips = (page, n = SESSIONS) => expect(weekChips(weekGrid(page))).toHaveCount(n, { timeout: 30_000 });
+/** After a load on the frozen clock: the browser's own render has replaced the server's (which is on the real clock). */
+const settled = (page) => weekOnFrozenClock(page, "thu", "18:40");
 const classesOnMats = async () => (await q(`select count(*)::int n from "Class" where "tenantId" = $1 and "matId" is not null`, [club.tenantId]))[0].n;
 const matRows = () => q(`select id, name, "sortOrder" from "Mat" where "tenantId" = $1 order by "sortOrder", "createdAt"`, [club.tenantId]);
 const storedLayout = async () => (await q(`select "timetableLayout" v from "Tenant" where id = $1`, [club.tenantId]))[0].v;
@@ -98,6 +100,7 @@ try {
   frozen = true;
   await main.goto("/dashboard/timetable");
   await chips(main);
+  await settled(main);
 
   await section("by-hand", `a mat added by hand changes nothing on the timetable: still by time, "By mat" cannot be pressed and says why, and the sheet offers the ${ON[1]} classes that already say its name; the mat is then removed`, async () => {
     let sheet = await openMats(main);
@@ -279,6 +282,7 @@ try {
       await mctx.clock.setFixedTime(new Date(FROZEN));
       await page.goto("/dashboard/timetable");
       await chips(page);
+      await settled(page);
       await page.getByTestId("timetable-split-time").click();
       await expect(page.getByText("Saved. The staff week is now split by time.")).toBeVisible();
       await expect(weekGrid(page)).not.toHaveAttribute("data-mats", "true");
@@ -288,6 +292,7 @@ try {
     expect(await storedLayout()).toBe("time");
     await main.reload();
     await chips(main);
+    await settled(main);
     await expect(weekGrid(main)).not.toHaveAttribute("data-mats", "true");
     await expect(main.getByTestId("timetable-split-time")).toHaveAttribute("aria-pressed", "true");
     // By time, Mat 1 is still left of Mat 2 and every chip says its mat.
@@ -297,6 +302,7 @@ try {
     await expect(main.getByText("Saved. The staff week is now split by mat.")).toBeVisible();
     await main.reload();
     await chips(main);
+    await settled(main);
     await expect(weekGrid(main)).toHaveAttribute("data-mats", "true");
     expect(await storedLayout()).toBe("mat");
     // A coach reads it and changes nothing.
@@ -308,6 +314,7 @@ try {
       await cctx.clock.setFixedTime(new Date(FROZEN));
       await page.goto("/dashboard/timetable");
       await chips(page);
+      await settled(page);
       await expect(page.getByTestId("timetable-split-text")).toHaveText("Split by mat");
       await expect(page.getByTestId("timetable-split-mat")).toHaveCount(0);
       await expect(page.getByTestId("timetable-mats")).toHaveCount(0);
@@ -468,6 +475,7 @@ try {
     const sunday = async (n) => {
       await main.reload();
       await chips(main, SESSIONS + 1 + Math.min(n, n > 3 ? 2 : n));
+      await settled(main);
       return main.evaluate(() => {
         const sun = document.querySelector('[data-day="sun"]');
         const head = sun.querySelector("[data-mat-head]").getBoundingClientRect();
