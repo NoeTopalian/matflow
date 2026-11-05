@@ -96,6 +96,17 @@ describe("the timetable when the mats could not be loaded", () => {
     expect((screen.getByLabelText("Location") as HTMLInputElement).value).toBe("Mat 1");
   });
 
+  it("a refresh whose mats read fails, and the one after that succeeds, announce no change of split", () => {
+    const MATS = [{ id: "m1", name: "Mat 1" }, { id: "m2", name: "Mat 2" }];
+    const view = render(<TimetableManager initialClasses={classes()} mats={MATS} {...PROPS} />);
+    expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
+    view.rerender(<TimetableManager initialClasses={classes()} matsLoadFailed {...PROPS} />);
+    expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBeNull();
+    view.rerender(<TimetableManager initialClasses={classes()} mats={MATS} {...PROPS} />);
+    expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
+    expect(toast.mock.calls.filter(([text]) => /now split by/.test(String(text)))).toEqual([]);
+  });
+
   it("says nothing of the kind when the mats loaded", () => {
     render(<TimetableManager initialClasses={classes()} mats={[{ id: "m1", name: "Mat 1" }, { id: "m2", name: "Mat 2" }]} {...PROPS} />);
     expect(screen.queryByTestId("timetable-mats-load-failed")).toBeNull();

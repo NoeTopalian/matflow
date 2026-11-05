@@ -147,7 +147,7 @@ try {
     expect(await boxes.evaluateAll((els) => els.map((e) => e.getAttribute("aria-checked")))).toEqual(["true", "true"]);
     expect(await matRows()).toEqual([]);
     await sheet.getByRole("button", { name: "Add these as mats" }).click();
-    const line = `2 mats added. ${ON[1] + ON[2]} classes are now on a mat. The week is now split by mat.`;
+    const line = `2 mats added. ${ON[1] + ON[2]} classes are now on a mat. The staff week is now split by mat.`;
     await expect(sheet.getByTestId("mats-notice")).toHaveText(line);
     adopts.stop();
     expect(adopts.seen).toHaveLength(2); // the failed one and one retry

@@ -1038,9 +1038,10 @@ function ClassForm({
   const [matId, setMatId] = useState(initialMatId);
   function chooseMat(next: string) {
     if (next === "") {
-      // Leaving a mat: the place box must not carry the name of the mat just left.
-      const left = mats.find((m) => m.id === matId)?.name;
-      if (left && location.trim().toLowerCase() === left.trim().toLowerCase()) setLocation("");
+      // Leaving a mat: the place box must not carry a mat's name (the one just left, or one passed through on the
+      // way: Mat 1, then Mat 2, then No mat would otherwise leave "Mat 1" typed).
+      const typed = location.trim().toLowerCase();
+      if (typed && mats.some((m) => m.name.trim().toLowerCase() === typed)) setLocation("");
     }
     setMatId(next);
   }
@@ -1880,15 +1881,21 @@ export default function TimetableManager({
   // control's own toast, the Mats sheet's own line — sets `quietSplit` first.
   const quietSplit = useRef(false);
   const lastLayout = useRef(layout);
+  // A failed mats read draws the week by time and says why in its own line; neither that nor the recovery is a
+  // change of the split, so neither gets the toast.
+  const lastLoadFailed = useRef(matsLoadFailed);
   useEffect(() => {
+    const readChanged = lastLoadFailed.current !== matsLoadFailed;
+    lastLoadFailed.current = matsLoadFailed;
     if (lastLayout.current === layout) return;
     lastLayout.current = layout;
     if (quietSplit.current) {
       quietSplit.current = false;
       return;
     }
+    if (readChanged || matsLoadFailed) return;
     showToast(`The staff week is now split by ${layout === "mat" ? "mat" : "time"}.`, "info");
-  }, [layout, showToast]);
+  }, [layout, matsLoadFailed, showToast]);
 
   async function chooseLayout(next: TimetableLayout) {
     if (savingLayout) return;

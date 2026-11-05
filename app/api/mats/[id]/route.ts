@@ -47,7 +47,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (existing.name === name) return { ok: true as const, row: existing, changed: false };
       const clash = await tx.mat.findFirst({ where: { tenantId, nameKey, id: { not: id } }, select: { name: true } });
       if (clash) return { ok: false as const, status: 409, error: `You already have a mat called ${clash.name}.` };
-      const row = await tx.mat.update({ where: { id }, data: { name, nameKey }, select: { id: true, name: true } });
+      // Scoped by club as well as id (TENANT-SCOPE-CONVENTION): never an update by bare id.
+      const updated = await tx.mat.updateMany({ where: { id, tenantId }, data: { name, nameKey } });
+      if (updated.count === 0) return { ok: false as const, status: 404, error: NOT_FOUND };
+      const row = { id, name };
       // Write-through: a class on a mat always shows that mat's current name.
       const classes = await tx.class.updateMany({ where: { tenantId, matId: id }, data: { location: name } });
       await logAudit({
@@ -79,7 +82,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // Every class on it, archived ones too: the record says exactly which rows lost the mat.
     const classes = await tx.class.findMany({ where: { tenantId, matId: id }, select: { id: true }, orderBy: { id: "asc" } });
     // The class link is ON DELETE SET NULL: the classes stay, with the mat's name as their typed place.
-    await tx.mat.delete({ where: { id } });
+    const removed = await tx.mat.deleteMany({ where: { id, tenantId } });
+    if (removed.count === 0) return { ok: false as const, status: 404, error: NOT_FOUND };
     await logAudit({
       tenantId, userId, action: "mat.delete", entityType: "Mat", entityId: id,
       metadata: { name: existing.name, classIds: classes.map((c) => c.id) }, req, tx,
