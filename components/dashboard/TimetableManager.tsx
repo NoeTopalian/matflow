@@ -323,6 +323,16 @@ function ClassChip({
 /** A day with this many sessions switches the week to the wider, compact layout. */
 export const DENSE_DAY = 7;
 
+/** A refused save: the server's sentence, plus its machine reason when it gives one. */
+class ApiRefusal extends Error {
+  reason?: string;
+  constructor(message: string, reason?: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
+export type SaveError = { message: string; reason?: string };
+
 export type SessionGroup = SessionCluster;
 
 /**
@@ -973,6 +983,7 @@ function ClassForm({
   onSave,
   onCancel,
   saving,
+  error = null,
 }: {
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
@@ -982,6 +993,8 @@ function ClassForm({
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
   saving: boolean;
+  /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
+  error?: SaveError | null;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
@@ -1137,6 +1150,10 @@ function ClassForm({
       ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
       color,
       schedules,
+      // P6: the slot ids this form loaded with. The server refuses the save
+      // (409) if the class's days changed since, instead of taking this list
+      // as the whole truth and quietly undoing another tab's change.
+      ...(initial?.id ? { baseScheduleIds: (initial.schedules ?? []).map((s) => s.id) } : {}),
     });
   }
 
@@ -1650,6 +1667,28 @@ function ClassForm({
 
       {/* Actions — a disabled button always says why (UI-RULES §7). */}
       <div className="pt-2 space-y-2">
+        {error && (
+          // A refused save stays with the form, above the buttons it belongs
+          // to: on a phone a toast sat over Cancel / Save and the class
+          // status controls. A stale-days refusal offers the way out, since
+          // an installed app has no reload control of its own.
+          <div
+            className="flex items-start gap-2 rounded-lg px-3 py-2"
+            style={{
+              background: "color-mix(in srgb, var(--hue-danger) 10%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--hue-danger) 35%, transparent)",
+            }}
+          >
+            <p role="alert" data-testid="class-form-save-error" className="text-xs flex-1" style={{ color: "var(--hue-danger-ink)" }}>
+              {error.message}
+            </p>
+            {error.reason === "stale_schedules" && (
+              <Button variant="secondary" size="compact" onClick={() => window.location.reload()} className="shrink-0">
+                Reload
+              </Button>
+            )}
+          </div>
+        )}
         {missing.length > 0 && (
           <p role="status" className="text-xs" style={{ color: "var(--tx-3)" }}>
             Fill in: {missing.join(", ")}.
@@ -1686,6 +1725,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   // Desktop: the week grid, or one day on a time axis (lanes show what clashes).
@@ -1819,6 +1859,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
   function openAdd() {
     setEditTarget(null);
+    setSaveError(null);
     setDrawerOpen(true);
   }
 
@@ -1833,11 +1874,13 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
   function openEdit(cls: ClassRow) {
     setEditTarget(cls);
+    setSaveError(null);
     setDrawerOpen(true);
   }
 
   async function handleSave(data: Record<string, unknown>) {
     setSaving(true);
+    setSaveError(null);
     try {
       // D2 (booking preservation, approved 21 Oct 2026): a change to who can
       // attend — squad list, rank gate or memberships — is previewed first:
@@ -1852,7 +1895,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         });
         if (!preview.ok) {
           const body = await preview.json().catch(() => null);
-          throw new Error(describeApiError(body));
+          throw new ApiRefusal(describeApiError(body), body?.reason);
         }
         const { restriction } = (await preview.json()) as { restriction?: RestrictionPreview };
         if (previewHasRefusals(restriction)) {
@@ -1872,7 +1915,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         });
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          throw new Error(describeApiError(body));
+          throw new ApiRefusal(describeApiError(body), body?.reason);
         }
         // `scheduleChange` is a report about the save, not a field of the
         // class — destructured out so it never lands on the row.
@@ -1918,7 +1961,11 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
       }
       setDrawerOpen(false);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Something went wrong", "error");
+      // In the form, beside the buttons — not a toast that lands on top of them.
+      setSaveError({
+        message: err instanceof Error && err.message ? err.message : "Something went wrong. Try again.",
+        reason: err instanceof ApiRefusal ? err.reason : undefined,
+      });
     } finally {
       setSaving(false);
     }
@@ -2523,6 +2570,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
           saving={saving}
+          error={saveError}
         />
         {/* T6b: the lifecycle actions, on the class itself as well as its card. */}
         {editTarget && canManage && (
