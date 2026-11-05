@@ -14,7 +14,9 @@ import {
 import { POSTER, FROZEN, seedWeek, sessionsOn, classesOf, daysWithClasses, DAY, chipName } from "./data/timetable-weeks.mjs";
 
 const require = createRequire(import.meta.url);
-const { expect } = require("@playwright/test");
+// Assertions wait 20 s, not the default 5: on a slow path to the test branch (2.2 s a connection, 4 to 6 s a
+// request, measured 5 Nov 2026) a sheet can still be loading at 5 s. A wrong result still fails, just later.
+const expect = require("@playwright/test").expect.configure({ timeout: 20_000 });
 const club = state.club;
 if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture first");
 const L = ledger("timetable-mats");
