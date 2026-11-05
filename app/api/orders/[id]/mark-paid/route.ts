@@ -106,7 +106,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       action: "order.mark_paid",
       entityType: "Order",
       entityId: id,
-      metadata: { reason: parsed.data.reason, previousStatus: existing.status },
+      metadata: { reason: parsed.data.reason, previousStatus: existing.status, ...(updated?.memberId ? { memberId: updated.memberId } : {}) },
       req,
     });
 

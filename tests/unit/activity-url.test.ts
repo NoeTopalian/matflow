@@ -52,8 +52,10 @@ describe("naming a selection", () => {
   it("a selection equal to a view is that view", () => {
     expect(matchingView(defaultTypeKeys("owner"), "owner")).toBe("club");
     expect(matchingView(visibleTypeKeys("owner"), "owner")).toBe("all");
-    expect(matchingView(["checkin", "checkin_exception", "checkin_removed"], "owner")).toBe("attendance");
-    expect(matchingView(["checkin_removed", "checkin", "checkin_exception"], "owner")).toBe("attendance");
+    expect(matchingView(["checkin", "checkin_exception", "checkin_removed", "booking"], "owner")).toBe("attendance");
+    expect(matchingView(["booking", "checkin_removed", "checkin", "checkin_exception"], "owner")).toBe("attendance");
+    // Bookings are attendance too: without them it is a hand-made selection, not the view.
+    expect(matchingView(["checkin", "checkin_exception", "checkin_removed"], "owner")).toBeNull();
     expect(matchingView(["checkin", "refund"], "owner")).toBeNull();
     expect(matchingView([], "owner")).toBeNull();
   });

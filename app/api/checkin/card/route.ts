@@ -329,6 +329,7 @@ export async function POST(req: Request) {
       entityId: classInstanceId,
       metadata: {
         classInstanceId,
+        classId: instance.classId,
         scanned: tokens.length,
         recorded,
         memberIds: results.filter((r) => r.status === "success").map((r) => r.memberId),

@@ -246,6 +246,7 @@ export async function POST(req: Request) {
           entityId: `${classInstanceId}:${resolvedMemberId}`,
           metadata: {
             classInstanceId,
+            ...(result.classId ? { classId: result.classId } : {}),
             memberId: resolvedMemberId,
             method: effectiveMethod,
             // performCheckin only succeeds by creating the row (an existing one
@@ -270,6 +271,7 @@ export async function POST(req: Request) {
           entityId: result.record.id,
           metadata: {
             classInstanceId,
+            ...(result.classId ? { classId: result.classId } : {}),
             memberId: resolvedMemberId,
             method: "self",
             ...(actorMemberId !== resolvedMemberId ? { onBehalfOf: resolvedMemberId } : {}),

@@ -123,10 +123,11 @@ beforeEach(() => {
   db.memberClassPack.findUnique.mockImplementation(async ({ where }: { where: { stripePaymentIntentId?: string } }) =>
     where.stripePaymentIntentId && minted.has(where.stripePaymentIntentId) ? { id: `mcp-${where.stripePaymentIntentId}` } : null,
   );
-  db.memberClassPack.create.mockImplementation(async ({ data }: { data: { stripePaymentIntentId: string | null } }) => {
+  db.memberClassPack.create.mockImplementation(async ({ data }: { data: { stripePaymentIntentId: string | null; creditsRemaining: number } }) => {
     if (data.stripePaymentIntentId && minted.has(data.stripePaymentIntentId)) throw Object.assign(new Error("unique"), { code: "P2002" });
     if (data.stripePaymentIntentId) minted.add(data.stripePaymentIntentId);
-    return { id: `mcp-${data.stripePaymentIntentId}` };
+    // As Prisma answers: the row, which the purchase's activity row is written from.
+    return { id: `mcp-${data.stripePaymentIntentId}`, creditsRemaining: data.creditsRemaining };
   });
 });
 const minted = new Set<string>();
@@ -173,6 +174,10 @@ describe("W6 webhook: forged or unconfirmed class-pack payment evidence", () => 
     expect(minted.size).toBe(1);
     expect(db.memberClassPack.create).toHaveBeenCalledTimes(1);
     expect(db.payment.upsert).toHaveBeenCalledTimes(1);
+    // One purchase, one line on the club's Activity timeline — written with the webhook's own transaction client.
+    const bought = (auditLog.mock.calls as unknown as [Record<string, unknown>][]).map(([row]) => row).filter((row) => row.action === "class_pack.purchased");
+    expect(bought).toHaveLength(1);
+    expect(bought[0]).toMatchObject({ tenantId: "tenant-A", userId: null, entityType: "Member", entityId: "mem-a", tx: db, metadata: { memberId: "mem-a", classPackId: "pack-a", credits: 5, amountPence: 5000, currency: "GBP" } });
   });
 
   it("async_payment_failed mints nothing and is logged to the club's audit", async () => {

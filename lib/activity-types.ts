@@ -107,9 +107,9 @@ export const ACTIVITY_TYPES: ActivityType[] = [
   }),
   // Sign-in help, and the record of who opened a signed waiver: access to a member's account or papers, not a change to them.
   type({ key: "member_access", label: "Member sign-in and access", group: "Members", icon: "KeyRound", actions: ["member.unlock", "member.totp_reset", "member.invite_link.generated", "member.bulk_invite", "member.card_revoked", "waiver.signature.view"], roles: BOTH, defaultOn: false }),
-  // Off by default: the member form sends these fields with every save and the row is written whether or not
-  // they changed, so until the writer records only real changes it would add a line to every profile save.
-  type({ key: "attribution", label: "Conversion credit", group: "Members", icon: "Target", actions: ["member.attribution.update"], roles: BOTH, defaultOn: false }),
+  // Who ran a trial and who is credited with a new member. The row is written only when one of them changed
+  // (it used to be written on every profile save, which is why this type began life switched off).
+  type({ key: "attribution", label: "Conversion credit", group: "Members", icon: "Target", actions: ["member.attribution.update"], roles: BOTH, defaultOn: true }),
 
   // ── Memberships & money ────────────────────────────────────────────────────
   type({ key: "membership_started", label: "Membership started", group: "Memberships & money", icon: "BadgeCheck", actions: ["member.subscription.create.kid", "member.subscription.purchased"], roles: BOTH, defaultOn: true }),

@@ -418,6 +418,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityType: "Payment",
       entityId: payment.id,
       metadata: {
+        // Whose payment it was, so the refund is in that member's History without a second lookup.
+        ...(payment.memberId ? { memberId: payment.memberId } : {}),
         stripeRefundId: refund.id,
         amountPence: refundedAmount,
         cumulativeRefundedPence: newRefundedTotal,

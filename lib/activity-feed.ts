@@ -778,6 +778,9 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
   const { m } = r;
   const who = r.actor();
   const subjectMember = row.entityType === "Member" ? row.entityId : null;
+  /** "… Adult Unlimited membership" when the row names a plan that still exists (rows written since 5 Nov 2026), else "… membership". */
+  const plan = idOf(m.tierId) && ctx.lookups.tiers.has(idOf(m.tierId)!) ? r.tier(m.tierId) : null;
+  const membership: (Part | string)[] = plan ? [" ", plan, " membership"] : [" membership"];
 
   switch (row.action) {
     case "attendance.self_checkin":
@@ -823,7 +826,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const theirs = r.member(subjectMember, true);
       if (!person) return null;
       const type = typeOf(row);
-      if (type === "cancellation") return who ? sentence(who, " cancelled ", theirs, " membership") : sentence(theirs, " membership was cancelled");
+      if (type === "cancellation") return who ? sentence(who, " cancelled ", theirs, ...membership) : sentence(theirs, ...membership, " was cancelled");
       if (type === "membership_changed") {
         const change = record(record(m.changes)?.membershipTierId);
         const from = r.tier(change?.from);
@@ -931,7 +934,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const person = r.member(subjectMember);
       if (!person) return null;
       const ends = dateOf(m.cancelAt);
-      return sentence(person, " asked to cancel their membership", ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null);
+      return sentence(person, " asked to cancel their", ...membership, ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null);
     }
     case "member.subscription.cancel.kid": {
       const child = r.member(subjectMember, true);
@@ -939,17 +942,18 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const parent = r.member(m.parentMemberId);
       const ends = dateOf(m.cancelAt);
       const tail = ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null;
-      return parent ? sentence(parent, " asked to cancel ", child, " membership", tail) : sentence("A cancellation was requested for ", child, " membership", tail);
+      return parent ? sentence(parent, " asked to cancel ", child, ...membership, tail) : sentence("A cancellation was requested for ", child, ...membership, tail);
     }
     case "member.subscription.cancelled_by_stripe": {
       const theirs = r.member(subjectMember, true);
-      return theirs ? sentence(theirs, " membership ended") : null;
+      return theirs ? sentence(theirs, ...membership, " ended") : null;
     }
     case "member.subscription.create.kid": {
       const child = r.member(subjectMember);
       if (!child) return null;
       const parent = r.member(m.parentMemberId);
-      return parent ? sentence(parent, " started a membership for ", child, " — awaiting first payment") : sentence("A membership was started for ", child, " — awaiting first payment");
+      const what = plan ?? text("a membership");
+      return parent ? sentence(parent, " started ", what, " for ", child, " — awaiting first payment") : sentence(what, " was started for ", child, " — awaiting first payment");
     }
     case "member.subscription.purchased": {
       const person = r.member(subjectMember);

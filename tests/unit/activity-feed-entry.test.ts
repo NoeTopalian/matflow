@@ -429,6 +429,55 @@ describe("the events added with the timeline", () => {
   });
 });
 
+describe("rows that name their plan, their class and their member (written since 5 Nov 2026)", () => {
+  it("a cancellation says which membership", () => {
+    const staff = entry(row({ action: "member.update", ...byJack, metadata: { fields: ["status"], changes: { status: { from: "active", to: "cancelled" } }, tierId: "t_adult" } }));
+    expect(staff.plain).toBe("Jack Streeter cancelled Melody Orekoya's Adult Unlimited membership");
+    expect(staff.detailPlain).toBeNull();
+    const self = entry(row({ action: "member.subscription.cancel", metadata: { initiator: "self", cancelAt: 1796040000, tierId: "t_adult", actorId: "m_mel" } }));
+    expect(self.plain).toBe("Melody Orekoya asked to cancel their Adult Unlimited membership — ends 30 Nov 2026");
+    const forKid = entry(row({ action: "member.subscription.cancel.kid", entityId: "m_kid", metadata: { parentMemberId: "m_faisal", cancelAt: 1796040000, tierId: "t_twice", actorId: "m_faisal" } }));
+    expect(forKid.plain).toBe("Faisal Alshukri asked to cancel Zara Alshukri's Twice a week (OLD) membership — ends 30 Nov 2026");
+    const stripe = entry(row({ action: "member.subscription.cancelled_by_stripe", metadata: { stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", tierId: "t_adult" } }));
+    expect(stripe.plain).toBe("Melody Orekoya's Adult Unlimited membership ended");
+    expect(JSON.stringify([staff, self, forKid, stripe])).not.toMatch(/cus_1|sub_1/);
+  });
+
+  it("rows written before the plan was recorded read as they did", () => {
+    expect(entry(row({ action: "member.subscription.cancel", metadata: { initiator: "self", cancelAt: 1796040000, actorId: "m_mel" } })).plain).toBe("Melody Orekoya asked to cancel their membership — ends 30 Nov 2026");
+    expect(entry(row({ action: "member.subscription.cancelled_by_stripe", metadata: { stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" } })).plain).toBe("Melody Orekoya's membership ended");
+  });
+
+  it("a plan that has since been deleted does not break the sentence, and a manager is given the plan as a name", () => {
+    const gone = entry(row({ action: "member.subscription.cancelled_by_stripe", metadata: { stripeSubscriptionId: "sub_1", tierId: "t_gone" } }));
+    expect(gone.plain).toBe("Melody Orekoya's membership ended");
+    expect(gone.plain).not.toContain("t_gone");
+    const forManager = entry(row({ action: "member.update", ...byJack, metadata: { changes: { status: { from: "active", to: "cancelled" } }, tierId: "t_adult" } }), { role: "manager" });
+    expect(forManager.plain).toBe("Jack Streeter cancelled Melody Orekoya's Adult Unlimited membership");
+    expect(links(forManager.parts).some((l) => l.includes("/dashboard/memberships"))).toBe(false);
+  });
+
+  it("a parent starting a child's membership names the plan", () => {
+    const e = entry(row({ action: "member.subscription.create.kid", entityId: "m_kid", metadata: { parentMemberId: "m_faisal", priceId: "price_1", paymentMethodType: "card", tierId: "t_twice", actorId: "m_faisal" } }));
+    expect(e.plain).toBe("Faisal Alshukri started Twice a week (OLD) for Zara Alshukri — awaiting first payment");
+    expect(JSON.stringify(e)).not.toContain("price_1");
+  });
+
+  it("a refund names its member from the row, even when the payment record cannot be read", () => {
+    const e = entry(row({ action: "payment.refund", entityType: "Payment", entityId: "p_unknown", ...byJack, metadata: { memberId: "m_faisal", stripeRefundId: "re_1", amountPence: 2000, cumulativeRefundedPence: 2000, fullyRefunded: true, reason: null } }));
+    expect(e.plain).toBe("Jack Streeter refunded £20.00 to Faisal Alshukri");
+  });
+
+  it("a deleted member keeps their name on the deletion row, and wherever else that row's id is named", () => {
+    const deletion = entry(row({ action: "member.delete", entityId: "m_named", ...byJack, metadata: { name: "Jane Smith", kidsAffected: 0, stripeSubscriptionsCancelled: 0, photosQueued: 0, releasedEmailSha256: "abc" } }));
+    expect(deletion.plain).toBe("Jack Streeter deleted Jane Smith");
+    // The staff member is a link to their activity; the deleted person is a name and nothing to follow.
+    expect(links(deletion.parts)).toEqual(["Jack Streeter -> /dashboard/activity?userId=u_jack"]);
+    const earlier = entry(row({ action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: "rec9", metadata: { classInstanceId: "s_wed", classId: "c_nogi", memberId: "m_named", method: "self", actorId: "m_named" } }));
+    expect(earlier.plain).toBe("Jane Smith (deleted) checked in to Advanced No-Gi · Wed 4 Nov, 19:00");
+  });
+});
+
 describe("what changed", () => {
   const edit = row({
     action: "member.update",

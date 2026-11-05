@@ -137,6 +137,7 @@ export async function POST(
           coverage: result.coverage.kind,
           memberId: verified.memberId,
           classInstanceId,
+          ...(result.classId ? { classId: result.classId } : {}),
         },
       });
       return NextResponse.json(

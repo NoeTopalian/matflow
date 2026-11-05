@@ -295,6 +295,8 @@ export type PerformCheckinResult =
   | {
       kind: "success";
       record: { id: string; tenantId: string; memberId: string; classInstanceId: string; checkInMethod: string };
+      /** The class the session belongs to: recorded on the check-in's activity row, so the class's History finds it. */
+      classId?: string;
       coverage: { kind: "subscription" | "manual" | "pack" | "uncovered_kiosk"; creditsRemaining?: number };
       /**
        * Set when a staff override put the session PAST `Class.maxCapacity`.
@@ -1099,6 +1101,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       return {
         kind: "success",
         record: result.record,
+        classId: instance.classId,
         coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
         ...(result.overCapacity ? { overCapacity: result.overCapacity } : {}),
       };
@@ -1193,6 +1196,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       return {
         kind: "success",
         record,
+        classId: instance.classId,
         coverage: { kind: "pack", creditsRemaining: straight.pack.creditsRemaining },
         ...(overCapacity ? { overCapacity } : {}),
       };
@@ -1201,6 +1205,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       return {
         kind: "success",
         record,
+        classId: instance.classId,
         coverage: { kind: "uncovered_kiosk" },
         ...(overCapacity ? { overCapacity } : {}),
       };
@@ -1209,6 +1214,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     return {
       kind: "success",
       record,
+      classId: instance.classId,
       coverage: { kind: straight.subscribed ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
     };

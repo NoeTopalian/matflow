@@ -139,6 +139,24 @@ describe("each new event is known everywhere a row is read", () => {
   });
 });
 
+describe("something that was added says so, instead of blaming a missing snapshot", () => {
+  const reasonFor = (action: string) => {
+    const d = decideUndo({ action, metadata: {} } as never, false);
+    return d.ok ? "" : d.reason;
+  };
+  const ADDED = "This added something new, so there is nothing earlier to put back. If it was a mistake, remove it from its own page.";
+
+  it.each(["class.created", "member.create", "member.create.kid", "announcement.created", "rank.created", "membership.tier.create", "class_pack.create", "location.create", "task.staff_task.create"])("%s", (action) => {
+    expect(reasonFor(action)).toBe(ADDED);
+  });
+
+  it("more specific reasons still win, and an edit recorded without its old values keeps the snapshot reason", () => {
+    expect(reasonFor("member.subscription.create.kid")).toBe("This talked to Stripe. Undo it from the member's profile so Stripe is told too.");
+    expect(reasonFor("membership.tier.price_created")).toBe("Recorded before snapshots were kept, so the previous values aren't known.");
+    expect(reasonFor("member.update")).toBe("Recorded before snapshots were kept, so the previous values aren't known.");
+  });
+});
+
 // ── One door ─────────────────────────────────────────────────────────────────
 
 function walk(dir: string, out: string[] = []): string[] {

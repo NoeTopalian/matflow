@@ -69,7 +69,7 @@ export async function POST(req: Request) {
         // Only a CONFIRMED guardian acts for a child (lib/guardianship.ts).
         ...CONFIRMED_GUARDIAN,
       },
-      select: { id: true, stripeSubscriptionId: true },
+      select: { id: true, stripeSubscriptionId: true, membershipTierId: true },
     }),
   );
   if (!kid) return apiError("Kid not found in your family", 404);
@@ -91,7 +91,7 @@ export async function POST(req: Request) {
     action: "member.subscription.cancel.kid",
     entityType: "Member",
     entityId: kid.id,
-    metadata: { parentMemberId, cancelAt: outcome.cancelAt },
+    metadata: { parentMemberId, cancelAt: outcome.cancelAt, ...(kid.membershipTierId ? { tierId: kid.membershipTierId } : {}) },
     req,
   });
 

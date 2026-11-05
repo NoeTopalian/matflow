@@ -126,8 +126,8 @@ describe("who sees what", () => {
 
   it("Club activity leaves out the noisy types, and keeps the trust record for the owner", () => {
     const owner = defaultTypeKeys("owner");
-    for (const key of ["staff", "sign_in", "settings", "import", "data_request", "member_access", "billing_details", "attribution"]) expect(owner, key).not.toContain(key);
-    for (const key of ["support", "undo", "other", "plan_setup", "checkin", "payment"]) expect(owner, key).toContain(key);
+    for (const key of ["staff", "sign_in", "settings", "import", "data_request", "member_access", "billing_details"]) expect(owner, key).not.toContain(key);
+    for (const key of ["support", "undo", "other", "plan_setup", "checkin", "payment", "booking", "pack_purchased", "attribution"]) expect(owner, key).toContain(key);
     const manager = defaultTypeKeys("manager");
     expect(manager.every((k) => visibleTypeKeys("manager").includes(k))).toBe(true);
     expect(manager).not.toContain("support");
@@ -140,9 +140,9 @@ describe("what is kept out of the default view, and why", () => {
     expect(typeKeyForAction("waiver.sign")).toBe("waiver");
   });
 
-  it("conversion credit is its own type, off by default: the row is written on every profile save", () => {
+  it("conversion credit is its own type, and in the default view now that its row is written only for a real change", () => {
     expect(typeKeyForAction("member.attribution.update")).toBe("attribution");
-    expect(activityType("attribution")).toMatchObject({ defaultOn: false, roles: ["owner", "manager"] });
+    expect(activityType("attribution")).toMatchObject({ defaultOn: true, roles: ["owner", "manager"] });
   });
 });
 

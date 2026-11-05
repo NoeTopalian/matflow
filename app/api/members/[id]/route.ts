@@ -380,6 +380,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: attributionNotFoundMessage(foreignAttribution) }, { status: 400 });
     }
 
+    const ATTRIBUTION_FIELDS = ["trialRunById", "creditedToUserId", "creditedToMemberId", "creditedToLabel"] as const;
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
       // Version history (2026-08-17): before-values for the from→to diff in
       // the audit row — previously member.update logged field NAMES only,
@@ -399,6 +400,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           // or medical conditions — those never enter the audit log.
           accountType: true, membershipTierId: true, billedBy: true,
           preferredPaymentMethod: true, leaderboardOptOut: true, holdUntil: true,
+          // Who ran the trial and who is credited: read so the attribution row below is written only for a
+          // field whose value this save actually changed (the form sends all four with every save).
+          trialRunById: true, creditedToUserId: true, creditedToMemberId: true, creditedToLabel: true,
         },
       });
       // A new login address is claimed across staff AND members of this club
@@ -533,6 +537,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         metadata: {
           fields: Object.keys(parsed.data),
           ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
+          // A cancellation names the plan that was held, so "what happened to this plan" finds it. (A plan CHANGE
+          // already names both plans in `changes`.)
+          ...(changes.status?.to === "cancelled" && beforeRow?.membershipTierId ? { tierId: beforeRow.membershipTierId } : {}),
           // A3H-6: surface the Stripe outcome in the audit row so the gym
           // owner can trace any billing-state side-effects of this PATCH.
           ...(stripeCancelMetadata ? { stripe: stripeCancelMetadata } : {}),
@@ -550,7 +557,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         },
         req,
       });
-      return { updated: fresh, existing: null };
+      const attributionChanged = beforeRow
+        ? ATTRIBUTION_FIELDS.filter((f) => f in parsed.data && (beforeRow[f] ?? null) !== (parsed.data[f] ?? null))
+        : ATTRIBUTION_FIELDS.filter((f) => f in parsed.data);
+      return { updated: fresh, existing: null, attributionChanged };
     });
 
     if (!result.updated) {
@@ -568,13 +578,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // Attribution (M1): a dedicated audit row when the who-ran-the-trial /
     // who-gets-credit fields were touched, so an attribution change is
     // traceable on its own rather than buried in the generic field list.
-    const ATTRIBUTION_FIELDS = [
-      "trialRunById",
-      "creditedToUserId",
-      "creditedToMemberId",
-      "creditedToLabel",
-    ] as const;
-    const attributionEdited = ATTRIBUTION_FIELDS.filter((f) => f in parsed.data);
+    // Only what changed: the member form sends these four with every save, and a row per save buried the real
+    // changes (and put a line on the Activity timeline for every profile edit).
+    const attributionEdited = result.attributionChanged ?? [];
     if (attributionEdited.length > 0) {
       await logAudit({
         tenantId: session.user.tenantId,
@@ -805,8 +811,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       // residual 1): the preflight read above runs in an earlier transaction, so an address changed in between used to
       // be released with the OLD address digested. FOR UPDATE also blocks a concurrent address change (or a new child
       // pointing here) until the deletion commits.
-      const lockedRows = await tx.$queryRaw<{ id: string; email: string | null; parentMemberId: string | null }[]>`
-        SELECT id, email, "parentMemberId" FROM "Member"
+      const lockedRows = await tx.$queryRaw<{ id: string; name: string | null; email: string | null; parentMemberId: string | null }[]>`
+        SELECT id, name, email, "parentMemberId" FROM "Member"
         WHERE "tenantId" = ${session.user.tenantId} AND (id = ${id} OR "parentMemberId" = ${id})
         ORDER BY id
         FOR UPDATE`;
@@ -825,6 +831,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           .filter((r) => r.id === id || (strategy?.kind === "cascade" && r.parentMemberId === id))
           .map((r) => r.email)
           .filter((e): e is string => !!e);
+        const deletedName = lockedRows.find((r) => r.id === id)?.name?.trim() || null;
         await logAudit({
           tx,
           tenantId: session.user.tenantId,
@@ -833,6 +840,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           entityType: "Member",
           entityId: id,
           metadata: {
+            // The name as it was, on this row and no other: the timeline says "Jane Smith (deleted)" for the year
+            // the log is kept. A member erased under a data-protection request is a different route and keeps none.
+            ...(deletedName ? { name: deletedName } : {}),
             ...(strategy
               ? { kidsAffected: o.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }
               : { kidsAffected: 0, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }),

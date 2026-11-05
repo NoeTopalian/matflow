@@ -104,6 +104,9 @@ export const REASON = {
   membershipStarted: "Cancel the membership from the member's page.",
   bookingMade: "The member can cancel the booking from their app.",
   bookingCancelled: "The member can book again from their app.",
+  // A creation has no earlier state. It used to give the general "recorded before snapshots were kept" reason,
+  // which is about something else and read as a fault.
+  created: "This added something new, so there is nothing earlier to put back. If it was a mistake, remove it from its own page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -698,6 +701,9 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^(report\.|drive\.|onboarding\.|class\.instances_generated|member\.invite_link|member\.waiver_link|member\.waiver\.)/, REASON.record],
   // D2: the record of bookings an access change kept; undo the change itself instead.
   [/^class\.bookings\.kept_ineligible$/, REASON.record],
+  // Last, so every more specific reason above wins: a class, member, plan, pack, rank, venue, announcement or task
+  // that was added (".create", ".created", ".create.kid").
+  [/\.(create|created)(\.kid)?$/, REASON.created],
 ];
 
 export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecision {

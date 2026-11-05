@@ -172,7 +172,8 @@ export async function POST(req: NextRequest) {
       }
       return tx.member.findFirst({
         where: { stripeCustomerId: customerId, tenantId },
-        select: { id: true, tenantId: true, status: true },
+        // The plan is read for the activity row of a Stripe-ended membership ("what happened to this plan").
+        select: { id: true, tenantId: true, status: true, membershipTierId: true },
       });
     }
 
@@ -241,7 +242,7 @@ export async function POST(req: NextRequest) {
             action: "member.subscription.cancelled_by_stripe",
             entityType: "Member",
             entityId: cancelledMember.id,
-            metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId },
+            metadata: { stripeCustomerId: customerId, stripeSubscriptionId: subId, ...(cancelledMember.membershipTierId ? { tierId: cancelledMember.membershipTierId } : {}) },
           });
           // Attribution (M1): complete the conversion-funnel trail for a
           // Stripe-driven cancellation, in the SAME tx as the status flip.
