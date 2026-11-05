@@ -127,6 +127,10 @@ acts on is worse than an error they can see.
   never saved. Once an owner or manager presses a choice it is saved for the club and stays
   until someone changes it. By mat cannot be chosen while no class is on a mat. When an
   action changes the split by itself, the product says so.
+- **One split for the whole club.** The staff week, the staff Day view, the staff phone and the
+  members' day all follow it. A phone, and the members' day, show mat columns while the day
+  needs three side-by-side columns or fewer; a busier day is drawn by time, every class names
+  its mat, and the screen says so.
 - **Who may change them:** owner and manager. A coach or an admin sees the split and the mat
   names and changes neither. In a MatFlow support session a class can be put on a mat (it is
   a class edit) but mats cannot be set up and the split cannot be changed: those are the
