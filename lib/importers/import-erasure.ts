@@ -277,7 +277,10 @@ function otherIdentifier(s: string, w: Who): boolean {
   return false;
 }
 
-type Verdict = { kind: "remove" } | { kind: "blank"; fields: string[] } | { kind: "keep" };
+/** Fields that hold a PERSON's name in import diagnostics (not className, membershipName, fileName…). */
+const PERSON_NAME_FIELDS = new Set(["name", "personName", "sourceName", "customerName", "childName"]);
+
+type Verdict ={ kind: "remove" } | { kind: "blank"; fields: string[] } | { kind: "keep" };
 
 function verdict(entry: Record<string, unknown>, w: Who): Verdict {
   if (entry.memberId === w.memberId) return { kind: "remove" };
@@ -286,13 +289,16 @@ function verdict(entry: Record<string, unknown>, w: Who): Verdict {
   const otherPerson =
     (typeof entry.memberId === "string" && entry.memberId !== "") ||
     strings.some(([, v]) => otherIdentifier(v, w)) ||
-    // A name field naming someone else (a child's entry that carries the parent's address).
-    strings.some(([k, v]) => /name$/i.test(k) && v.trim() !== "" && !hasOwnName(v, w));
+    // A person-name field naming someone else (a child's entry that carries the parent's address).
+    // "Row 12" is a row label, not a person.
+    strings.some(([k, v]) => PERSON_NAME_FIELDS.has(k) && v.trim() !== "" && !/^row \d+$/i.test(v.trim()) && !hasOwnName(v, w));
   if (!otherPerson && strings.some(([, v]) => w.keys.has(norm(v)))) return { kind: "remove" };
   const addressFields = strings.filter(([, v]) => w.ownAddresses.has(norm(v)) || hasOwnAddress(v, w)).map(([k]) => k);
   const nameHit = strings.some(([, v]) => hasOwnName(v, w));
   if (!otherPerson && (nameHit || addressFields.length > 0)) return { kind: "remove" };
-  return addressFields.length > 0 ? { kind: "blank", fields: addressFields } : { kind: "keep" };
+  // Another person's entry: blank the subject's address, and the subject's name anywhere but the entry's own name.
+  const fields = [...new Set([...addressFields, ...strings.filter(([k, v]) => !PERSON_NAME_FIELDS.has(k) && hasOwnName(v, w)).map(([k]) => k)])];
+  return fields.length > 0 ? { kind: "blank", fields } : { kind: "keep" };
 }
 
 function stringIsSubjects(s: string, w: Who): boolean {

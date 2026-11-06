@@ -134,6 +134,20 @@ describe("scrubSubjectFromDiagnostics", () => {
     expect(scrubSubjectFromDiagnostics(exceptions, ADA).value).toEqual([{ kind: "guardian_suggested", childName: "Zara Obi", detail: "" }]);
   });
 
+  it("a refused row labelled 'Row 12' is the subject's when its detail names them", () => {
+    const rows = [{ kind: "refused_row", name: "Row 12", detail: "Zara Obi: a child under 13 needs a parent" }, { kind: "refused_row", name: "Row 13", detail: "Missing name" }];
+    expect(scrubSubjectFromDiagnostics(rows, KID).value).toEqual([{ kind: "refused_row", name: "Row 13", detail: "Missing name" }]);
+  });
+
+  it("in a child's guardian suggestion, the parent's name in the detail is blanked and the child's entry kept", () => {
+    const rows = [{ kind: "guardian_suggested", name: "Zara Obi", email: null, detail: "Ada Obi (shared email)" }];
+    expect(scrubSubjectFromDiagnostics(rows, ADA).value).toEqual([{ kind: "guardian_suggested", name: "Zara Obi", email: null, detail: "" }]);
+  });
+
+  it("a className or fileName field does not make the subject's own entry someone else's", () => {
+    expect(scrubSubjectFromDiagnostics([{ name: "Ada Obi", className: "Adults Gi", fileName: "members.csv" }], ADA).value).toEqual([]);
+  });
+
   it("matches the '<name> (…' form a guardian suggestion writes", () => {
     expect(scrubSubjectFromDiagnostics(["Ada Obi (shared email)", "Ada Obinna (shared email)"], ADA).value).toEqual(["Ada Obinna (shared email)"]);
   });
