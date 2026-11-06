@@ -94,8 +94,10 @@ export default function TermsPage() {
           Your MatFlow subscription is billed monthly. You may cancel at any time. On cancellation, your gym and its
           data are kept, with sign-in disabled, so you can reactivate at any time or ask us for an export. Nothing is
           deleted automatically: your data is kept until you ask in writing for it to be erased, at{" "}
-          <a href="mailto:legal@matflow.studio" className="underline">legal@matflow.studio</a>. We may suspend your
-          account for non-payment, abuse, or breach of these terms, in our reasonable discretion.
+          <a href="mailto:legal@matflow.studio" className="underline">legal@matflow.studio</a>. Erasure removes your
+          gym, its members&apos; records and every file it stored; a record that the erasure happened and your
+          gym&apos;s audit log are kept as evidence. We may suspend your account for non-payment, abuse, or breach of
+          these terms, in our reasonable discretion.
         </p>
       </section>
 

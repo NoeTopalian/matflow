@@ -79,10 +79,18 @@ export default function PrivacyPage() {
             deleted automatically.
           </li>
           <li>Expired sign-in links and password-reset links — kept, and unusable once expired</li>
-          <li>Closed gyms — kept with sign-in disabled so the gym can reopen, and only erased when the gym asks in writing</li>
           <li>
-            Erasure requests — when a gym asks us to erase a member, we still remove that member&apos;s details, and
-            the gym&apos;s Activity history then shows them only as &quot;Deleted member&quot;
+            Closed gyms — kept with sign-in disabled so the gym can reopen. When the gym asks in writing, we erase the
+            gym, its members&apos; records and every file it stored; a record that the erasure happened and the
+            gym&apos;s audit log are kept as evidence
+          </li>
+          <li>
+            Erasure requests — when a gym asks us to erase a member, we remove that member&apos;s name and contact
+            details, date of birth, health, emergency-contact and sign-in details, their photos, their signature on waivers, their sign-in
+            records and links, their notes, their imported booking history, and their rows in every import file and
+            import report the gym keeps; email delivery logs no longer show their address. Attendance counts, payments
+            and the wording of waivers they accepted are kept without their details, and the gym&apos;s Activity history
+            shows them only as &quot;Deleted member&quot;
           </li>
           <li>
             Backups — our database provider keeps continuous point-in-time backups. The window depends on our current

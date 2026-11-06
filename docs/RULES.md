@@ -172,20 +172,28 @@ acts on is worse than an error they can see.
 - "Nothing should be automatically deleted." "All data from the entirety of the club should be
   held." No scheduled job, cron, expiry or clean-up removes a club's records or files: not the
   Activity log, email delivery logs, sign-in records, expired sign-in and reset links, Stripe
-  webhook records, import jobs, their uploaded files or diagnostics, replaced or unsaved photos,
-  push subscriptions (marked inactive instead), or a closed club (kept, sign-in disabled,
-  reopenable at any time; the 16 Oct 2026 rule).
+  webhook records, import jobs, their uploaded files or diagnostics, replaced promotion photos
+  (kept, marked replaced and hidden from photo lists), push subscriptions (marked inactive
+  instead), or a closed club (kept, sign-in disabled, reopenable at any time; the 16 Oct 2026
+  rule).
 - **Deletions a person deliberately makes stay**, because each is recorded in Activity and many
-  can be undone: staff removing a member, a photo, a roster entry or a class; unticking
-  attendance; an import rollback; an erasure request.
+  can be undone: staff removing a member, a photo, an announcement (with its image), a roster
+  entry or a class; unticking attendance; an import rollback; an erasure request. A photo someone
+  uploaded and then did not save was never club data, and is removed (the upload's own
+  clean-up).
+- **Kept data stays erasable — no orphaned files.** A member's erasure reaches everything kept:
+  their rows in every stored import file and every import report entry naming them
+  (`lib/importers/import-erasure.ts`), and their photos, replaced ones included. A club's
+  erasure deletes every file under its store prefix.
 - **Two automatic exceptions, both security records, not club data:** sign-in rate-limit
   counters (`RateLimitHit`, and a bucket cleared after a successful sign-in), which the lockout
   depends on clearing; and password history, trimmed to its limit when a password changes
   (`lib/password-policy.ts`).
 - Removing a class-pack redemption when its attendance is unticked is part of that deliberate
   action, not an automatic deletion.
-- **Erasure is unchanged.** A data-protection erasure still removes a member's details, and a
-  club is erased only when it asks in writing (an operator runs it; never on a schedule).
+- **Erasure on request only.** A data-protection erasure removes a member's details as above,
+  and a club is erased only when it asks in writing: Noe or an operator runs
+  `scripts/erase-closed-club.mjs` by hand (`docs/RUNBOOK.md`); never an agent, a schedule or CI.
 - The nightly retention job keeps its Stripe reconciliation and prunes only the rate-limit
   counters; `tests/unit/retention-cron.test.ts` and `tests/integration/cron-smoke.test.ts` fail
   if it deletes anything else. Do not add a rule that deletes club data.
