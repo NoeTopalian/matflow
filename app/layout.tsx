@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 import { Geist, Geist_Mono } from "next/font/google";
-import { SessionProvider } from "next-auth/react";
 import { ToastProvider } from "@/components/ui/Toast";
 import RegisterSW from "@/components/pwa/RegisterSW";
 import "./globals.css";
@@ -65,9 +64,13 @@ export default async function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased">
-        <SessionProvider>
-          <ToastProvider>{children}</ToastProvider>
-        </SessionProvider>
+        {/* No app-wide SessionProvider (speed quick win 2e, 6 Nov 2026): it
+            fetched /api/auth/session — a jwt() run and a revocation lookup —
+            on every page load and every return to the tab, for the two
+            components that read useSession(). Each of those now has its own
+            provider (ForcedTotpSetup, ImportPanel); signIn/signOut/getSession
+            work without one. */}
+        <ToastProvider>{children}</ToastProvider>
         <RegisterSW />
       </body>
     </html>

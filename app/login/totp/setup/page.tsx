@@ -11,6 +11,7 @@
  * UI itself is the client component ForcedTotpSetup.
  */
 import { redirect } from "next/navigation";
+import { SessionProvider } from "next-auth/react";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import ForcedTotpSetup from "./ForcedTotpSetup";
@@ -35,7 +36,12 @@ export default async function ForcedTotpSetupPage() {
   return (
     <>
       <ImpersonationBanner />
-      <ForcedTotpSetup />
+      {/* ForcedTotpSetup reads useSession(); the session already read above
+          is handed over, so the provider fetches nothing on load or on a
+          return to the tab (the root layout has no provider since 6 Nov). */}
+      <SessionProvider session={session} refetchOnWindowFocus={false}>
+        <ForcedTotpSetup />
+      </SessionProvider>
     </>
   );
 }
