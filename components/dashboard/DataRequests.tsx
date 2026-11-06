@@ -151,7 +151,9 @@ export default function DataRequests({ initialMemberId }: { initialMemberId: str
     if (!selected) return;
     const first = await ask({
       title: `Erase ${selected.name}'s personal data?`,
-      body: "Only do this to fulfil a formal erasure request. Their name, contact details and stored documents are removed. Their visits and payments stay as anonymous records, so club totals don't change, and a record of the erasure is kept. This cannot be undone.",
+      body: eraseChildren
+        ? "Only do this to fulfil a formal erasure request. Their name, contact details and stored documents are removed and they are marked cancelled; their visits and payments stay as anonymous records, and a record of the erasure is kept. The child accounts they are guardian for are deleted entirely, including their visits, belts and class packs. This cannot be undone."
+        : "Only do this to fulfil a formal erasure request. Their name, contact details and stored documents are removed and they are marked cancelled, so they leave the active count. Their visits and payments stay as anonymous records, and a record of the erasure is kept. This cannot be undone.",
       confirmLabel: "Continue",
       destructive: true,
     });
@@ -258,9 +260,10 @@ export default function DataRequests({ initialMemberId }: { initialMemberId: str
           <div className="border-t border-bd-default pt-4">
             <h3 className="text-sm font-semibold text-tx-1">Erase their personal data</h3>
             <p className="mt-1 text-[13px] text-tx-3">
-              Removes their name, email, phone, date of birth, emergency contact, medical notes, photos, password and staff notes.
-              Their visits and payments stay as anonymous records, so club totals don&rsquo;t change, and a record of the erasure is
-              kept as evidence that you fulfilled the request. Export first if they asked for a copy.
+              Removes their name, email, phone, date of birth, emergency contact, medical notes, photos, password and staff notes,
+              and marks them cancelled, so they leave the active count. Their attendance and payment totals stay as anonymised
+              records, and a record of the erasure is kept as evidence that you fulfilled the request. Export first if they asked for
+              a copy.
             </p>
             {selected.erased && <p className="mt-2 text-[13px] text-tx-2">This person&rsquo;s personal data has already been erased.</p>}
             {!selected.erased && needsChildChoice && (
@@ -268,7 +271,7 @@ export default function DataRequests({ initialMemberId }: { initialMemberId: str
                 <div className="flex items-start gap-2">
                   <Checkbox checked={eraseChildren} onCheckedChange={setEraseChildren} aria-labelledby="data-request-erase-children" />
                   <span id="data-request-erase-children" className="text-[13px] text-tx-2">
-                    Also erase the {children} child {children === 1 ? "account" : "accounts"} they are guardian for
+                    Also delete the {children} child {children === 1 ? "account" : "accounts"} they are guardian for, entirely: their visits, belts and class packs go too
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-tx-3">

@@ -48,7 +48,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return o;
     });
     if (outcome.kind === "not-found") {
-      return NextResponse.json({ error: "This member is not archived" }, { status: 404 });
+      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    }
+    if (outcome.kind === "already-current") {
+      return NextResponse.json({ success: true, alreadyCurrent: true, restoredKids: 0, subscriptionEnding: false });
     }
     if (outcome.kind === "erased") {
       return NextResponse.json({ error: "This member's personal data was erased on request, so there is nothing to restore." }, { status: 409 });

@@ -33,6 +33,7 @@ import { GET as membersGET, POST as membersPOST } from "@/app/api/members/route"
 import { parseTeamUp } from "@/lib/importers/teamup";
 import { planRefresh, planRefreshRollback, REFRESH_MEMBER_SELECT } from "@/lib/importers/teamup-refresh";
 import { POST as restorePOST } from "@/app/api/members/[id]/restore/route";
+import { PATCH as memberPATCH } from "@/app/api/members/[id]/route";
 import { DELETE as staffDELETE } from "@/app/api/staff/[id]/route";
 import { POST as reactivatePOST } from "@/app/api/staff/[id]/reactivate/route";
 import { GET as subjectsGET } from "@/app/api/admin/dsar/subjects/route";
@@ -351,6 +352,71 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     expect(kims).toHaveLength(1);
     expect(kims[0]).toMatchObject({ id: kimId, archivedAt: null });
     expect(kims[0].dateOfBirth?.toISOString().slice(0, 10)).toBe("1985-02-02");
+  }, 120_000);
+
+  it("restore edge cases: child under an archived parent, an erased member, a double restore, and an archived record is read-only", async () => {
+    const [pId, kId, eId] = await withRlsBypass(async (tx) => {
+      const p = (await tx.member.create({ data: { tenantId: ids.tenant, name: "Edge Parent", email: `${STAMP}-edgep@example.test`, accountType: "parent" } })).id;
+      const k = (await tx.member.create({ data: { tenantId: ids.tenant, name: "Edge Kid", email: `${STAMP}-edgek@no-login.matflow.local`, accountType: "kids", parentMemberId: p, guardianConfirmedAt: new Date() } })).id;
+      const e = (await tx.member.create({ data: { tenantId: ids.tenant, name: "Edge Erased", email: `${STAMP}-edgee@example.test` } })).id;
+      return [p, k, e];
+    });
+    as(ids.owner, "owner");
+    expect(((await memberDELETE(req(`/api/members/${pId}?strategy=cascade`, "DELETE"), params(pId))) as unknown as { status: number }).status).toBe(200);
+    const restore = async (id: string) => {
+      as(ids.owner, "owner");
+      const r = (await restorePOST(req(`/api/members/${id}/restore`, "POST"), params(id))) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+      return { status: r.status, body: await r.json() };
+    };
+    // A child whose parent is still archived is refused, and stays archived.
+    const kid = await restore(kId);
+    expect(kid.status).toBe(409);
+    expect(String(kid.body.error)).toMatch(/parent/i);
+    // An archived record is read-only on the server.
+    as(ids.owner, "owner");
+    const patch = (await memberPATCH(new Request(`https://test.local/api/members/${pId}`, { method: "PATCH", headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" }, body: JSON.stringify({ phone: "07000 999999" }) }), params(pId))) as unknown as { status: number };
+    expect(patch.status).toBe(409);
+    // The parent comes back with the child; a second restore is a no-op answered 200.
+    expect((await restore(pId)).status).toBe(200);
+    const again = await restore(pId);
+    expect(again).toMatchObject({ status: 200, body: { alreadyCurrent: true } });
+    expect(await withRlsBypass((tx) => tx.member.count({ where: { id: { in: [pId, kId] }, archivedAt: null } }))).toBe(2);
+    // An erased member cannot be restored.
+    as(ids.owner, "owner");
+    await memberDELETE(req(`/api/members/${eId}?confirm=1`, "DELETE"), params(eId));
+    as(ids.owner, "owner");
+    expect(((await erasePOST(req(`/api/admin/dsar/erase?memberId=${eId}`, "POST"))) as unknown as { status: number }).status).toBe(200);
+    const erased = await restore(eId);
+    expect(erased.status).toBe(409);
+    expect(String(erased.body.error)).toMatch(/erased/i);
+  }, 120_000);
+
+  it("Add-member restore: a retry with the same request id replays, and two racing adds restore once", async () => {
+    const leeId = await withRlsBypass(async (tx) => (await tx.member.create({ data: { tenantId: ids.tenant, name: "Lee Back", email: `${STAMP}-lee@example.test`, dateOfBirth: new Date("1988-08-08T00:00:00Z") } })).id);
+    as(ids.owner, "owner");
+    await memberDELETE(req(`/api/members/${leeId}?confirm=1`, "DELETE"), params(leeId));
+    const post = async (requestId: string) => {
+      as(ids.owner, "owner");
+      const r = new Request("https://test.local/api/members", {
+        method: "POST",
+        headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" },
+        body: JSON.stringify({ name: "Lee Back", email: `${STAMP}-lee@example.test`, dateOfBirth: "1988-08-08", requestId }),
+      });
+      return (await membersPOST(r)) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+    };
+    const rid = crypto.randomUUID();
+    const first = await post(rid);
+    expect(first.status).toBe(200);
+    const retry = await post(rid); // the response was lost; the desk retries with the same id
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ id: leeId });
+    // Archive again, then two adds race.
+    as(ids.owner, "owner");
+    await memberDELETE(req(`/api/members/${leeId}?confirm=1`, "DELETE"), params(leeId));
+    const [a, b] = await Promise.all([post(crypto.randomUUID()), post(crypto.randomUUID())]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const rowsNow = await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: ids.tenant, email: `${STAMP}-lee@example.test` }, select: { id: true, archivedAt: true } }));
+    expect(rowsNow).toEqual([{ id: leeId, archivedAt: null }]);
   }, 120_000);
 
   it("a TeamUp refresh plan read from the database leaves an archived member alone and lists them when TeamUp shows them active", async () => {

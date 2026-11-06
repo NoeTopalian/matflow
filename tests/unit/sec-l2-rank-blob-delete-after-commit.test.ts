@@ -51,6 +51,8 @@ const tx = {
   },
 };
 
+// PR 3: the archived-record guard runs its own read before the route's transactions; it is not what this file pins.
+vi.mock("@/lib/archived-member-guard", () => ({ refuseArchivedMember: async () => null }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async (_tenantId: string, fn: (t: typeof tx) => Promise<unknown>) => {
     h.inTx++;

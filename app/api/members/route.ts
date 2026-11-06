@@ -92,12 +92,17 @@ export async function GET(req: Request) {
     parentMemberId?: { not: null };
     accountType?: { not: "parent" };
     OR?: Array<{ name?: { contains: string; mode: "insensitive" }; email?: { contains: string; mode: "insensitive" } }>;
-    archivedAt: null;
+    archivedAt?: null;
   } = {
     tenantId: session.user.tenantId,
     // PR 3: archived members are in no member list or search (lib/member-population NOT_ARCHIVED).
     archivedAt: null,
   };
+  // ?includeArchived=1 (owner and manager): the pickers that look at HISTORY —
+  // the Activity member filter and the attendance import's "pick a member" —
+  // also find archived members, each row marked with its archivedAt.
+  const includeArchived = searchParams.get("includeArchived") === "1" && ["owner", "manager"].includes(session.user.role);
+  if (includeArchived) delete where.archivedAt;
   if (filter === "kids") where.parentMemberId = { not: null };
   // T6d: ?population=training — training members only (lib/member-population).
   // The class roster picker asks for this, so a guardian account, including
@@ -136,6 +141,7 @@ export async function GET(req: Request) {
           dateOfBirth: true,
           parentMemberId: true,
           hasKidsHint: true,
+          archivedAt: true,
           memberRanks: {
             take: 1,
             orderBy: { achievedAt: "desc" },
@@ -171,8 +177,10 @@ export async function GET(req: Request) {
     // nextDueAt, stripeSubscriptionId and membershipTierId are read only to
     // derive the shown payment status; none is a list field (the staff
     // allow-list in tests/e2e/campaign/assess/lc-1-members.spec.ts J22).
-    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, membershipTierId, ...rest }) => ({
+    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, membershipTierId, archivedAt, ...rest }) => ({
       ...rest,
+      // Only on an includeArchived search: the ordinary list's fields are unchanged.
+      ...(includeArchived ? { archivedAt: archivedAt ? archivedAt.toISOString() : null } : {}),
       // Derived like the dashboard and Outstanding tab (lib/overdue.ts).
       paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy, membershipTierId }, now),
       profilePictureUrl: photos[0]?.url ?? null,
@@ -350,7 +358,8 @@ export async function POST(req: Request) {
     // sanity cap so an owner can't create more kids than a parent can self-add.
     const kidCount = await withTenantContext(session.user.tenantId, (tx) =>
       tx.member.count({
-        where: { parentMemberId: parent.id, tenantId: session.user.tenantId },
+        // PR 3: an archived child frees its slot.
+        where: { parentMemberId: parent.id, tenantId: session.user.tenantId, archivedAt: null },
       }),
     );
     if (kidCount >= MAX_KIDS_PER_PARENT) {

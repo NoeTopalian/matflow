@@ -88,6 +88,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           passwordHash: true,
           stripeCustomerId: true,
           updatedAt: true,
+          archivedAt: true,
           _count: {
             select: {
               memberRanks: true, subscriptions: true, waitlists: true, signedWaivers: true,
@@ -132,6 +133,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const reasonsFor = new Map<string, string[]>();
       for (const c of candidates) {
         const r: string[] = [];
+        // PR 3 (keep all data): an archived member is never deleted by a rollback; kept and reported.
+        if (c.archivedAt) r.push("archived in MatFlow — kept with its history");
         if (c.passwordHash) r.push("has signed in");
         if (liveByMember.get(c.id)) r.push("has check-ins made in MatFlow");
         if (historyByMember.get(c.id)) r.push("has imported attendance history — roll back that attendance import first");

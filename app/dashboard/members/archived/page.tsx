@@ -11,18 +11,22 @@ import { formatDate } from "@/lib/date";
  * profile and Restore it. Unguarded on purpose (UI-RULES §7): a load failure
  * reaches the segment error page, never an empty list.
  */
+/** The list shows the most recent removals; past this many it says so (never a silent cut). */
+const LIMIT = 500;
+
 export default async function ArchivedMembersPage() {
   const { session } = await requireOwnerOrManager();
   const tenantId = session!.user.tenantId;
 
-  const rows = await withTenantContext(tenantId, (tx) =>
-    tx.member.findMany({
+  const [rows, total] = await withTenantContext(tenantId, async (tx) => [
+    await tx.member.findMany({
       where: { tenantId, archivedAt: { not: null } },
       select: { id: true, name: true, accountType: true, archivedAt: true, archivedBy: { select: { name: true } } },
       orderBy: { archivedAt: "desc" },
-      take: 500,
+      take: LIMIT,
     }),
-  );
+    await tx.member.count({ where: { tenantId, archivedAt: { not: null } } }),
+  ] as const);
 
   return (
     <>
@@ -35,6 +39,11 @@ export default async function ArchivedMembersPage() {
           </Link>
         }
       />
+      {total > rows.length && (
+        <p className="mb-3 text-[13px] text-tx-3">
+          Showing the {rows.length.toLocaleString("en-GB")} most recent of {total.toLocaleString("en-GB")} archived members. Search for anyone older under Settings → Data requests.
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-6 text-sm text-tx-3">No archived members.</p>
       ) : (

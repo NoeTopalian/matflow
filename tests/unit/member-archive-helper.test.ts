@@ -11,6 +11,8 @@ type Row = { id: string; name: string; tenantId: string; parentMemberId: string 
 function fakeTx(rows: Row[]) {
   const matches = (r: Row, where: Record<string, unknown>) =>
     Object.entries(where).every(([k, v]) => {
+      // NOT { AND: [startsWith "deleted-", endsWith "@deleted.invalid"] } — the erased-address exclusion.
+      if (k === "NOT") return !/^deleted-.*@deleted\.invalid$/.test(String((r as Record<string, unknown>).email ?? ""));
       const val = (r as Record<string, unknown>)[k];
       if (v && typeof v === "object" && !(v instanceof Date)) {
         const o = v as Record<string, unknown>;
@@ -22,6 +24,7 @@ function fakeTx(rows: Row[]) {
     });
   const tx = {
     $queryRaw: vi.fn(async () => [{ id: "locked" }]),
+    auditLog: { findFirst: vi.fn(async () => null) },
     member: {
       findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => rows.find((r) => matches(r, where)) ?? null),
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => rows.filter((r) => matches(r, where))),
@@ -103,7 +106,32 @@ describe("restoreMember", () => {
     expect(rows[0].archivedById).toBeNull();
   });
 
-  it("a member who is not archived is not found", async () => {
-    expect(await restoreMember(fakeTx([row("m1")]) as never, { id: "m1", tenantId: "t1" })).toEqual({ kind: "not-found" });
+  it("a member who is already current is answered as such (idempotent), and an unknown id is not found", async () => {
+    expect(await restoreMember(fakeTx([row("m1")]) as never, { id: "m1", tenantId: "t1" })).toEqual({ kind: "already-current", name: "m1" });
+    expect(await restoreMember(fakeTx([row("m1")]) as never, { id: "nope", tenantId: "t1" })).toEqual({ kind: "not-found" });
+  });
+
+  it("refuses an erased member, and a child whose parent is still archived", async () => {
+    const erased = row("e1", { archivedAt: AT });
+    (erased as Record<string, unknown>).email = "deleted-e1@deleted.invalid";
+    expect(await restoreMember(fakeTx([erased]) as never, { id: "e1", tenantId: "t1" })).toEqual({ kind: "erased" });
+    const tx = fakeTx([row("p", { archivedAt: AT }), row("k", { parentMemberId: "p", accountType: "kids", archivedAt: new Date("2026-01-01") })]);
+    tx.$queryRaw.mockResolvedValueOnce([{ name: "Parent P", archivedAt: AT }] as never);
+    expect(await restoreMember(tx as never, { id: "k", tenantId: "t1" })).toEqual({ kind: "parent-archived", parentName: "Parent P" });
+  });
+
+  it("restoring a parent never brings back a child erased since", async () => {
+    const kid = row("k1", { parentMemberId: "p", accountType: "kids", archivedAt: AT });
+    (kid as Record<string, unknown>).email = "deleted-k1@deleted.invalid";
+    const rows = [row("p", { archivedAt: AT }), kid];
+    const out = await restoreMember(fakeTx(rows) as never, { id: "p", tenantId: "t1" });
+    expect(out).toMatchObject({ kind: "ok", restoredKidIds: [] });
+    expect(rows[1].archivedAt).toEqual(AT);
+  });
+
+  it("says a card subscription is still set to end when the removal cancelled one", async () => {
+    const tx = fakeTx([row("p", { archivedAt: AT })]);
+    tx.auditLog.findFirst.mockResolvedValueOnce({ metadata: { stripeSubscriptionsCancelled: 1 } } as never);
+    expect(await restoreMember(tx as never, { id: "p", tenantId: "t1" })).toMatchObject({ kind: "ok", subscriptionEnding: true });
   });
 });

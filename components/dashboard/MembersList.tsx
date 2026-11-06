@@ -112,6 +112,13 @@ export interface MemberRow {
    */
   moved?: MovementBucket[];
   /**
+   * PR 3: set on an ARCHIVED member the server adds only because the month's
+   * movement counted them (a join before they were removed). Listed in the
+   * movement drill-throughs alone, with an "Archived" tag; every other view
+   * and count leaves them out.
+   */
+  archivedAt?: string | null;
+  /**
    * D10: why a member on a plan is behind — never paid past the first payment
    * date, a failed charge, or an outstanding due date — with the badge label
    * and the sentence the self check-in refusal uses (lib/overdue
@@ -529,8 +536,8 @@ export function memberStatusLabel(m: { status: string; paymentStatus?: string | 
   return null;
 }
 
-function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null } }) {
-  const label = memberStatusLabel(m);
+function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null; archivedAt?: string | null } }) {
+  const label = m.archivedAt ? "Archived" : memberStatusLabel(m);
   if (!label) return null;
   return (
     <span className="shrink-0 rounded-full border border-bd-default bg-sf-2 px-1.5 py-0.5 text-[10px] font-semibold text-tx-2">
@@ -562,7 +569,7 @@ const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
   "churned-this-month": "cancelled",
 };
 
-type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved">>;
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved" | "archivedAt">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single
@@ -575,6 +582,8 @@ export function inStatusView(
   f: StatusFilter,
   month: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart"> = defaultClubMonthWindow(),
 ): boolean {
+  // PR 3: an archived member is in the movement drill-throughs only.
+  if (m.archivedAt) return !!MOVEMENT_FILTERS[f] && !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
   // Payers overdue (review L2): active and taster accounts that owe, of ANY
   // account type — a guardian who pays is a debt, never dropped — so this
   // view is decided before the guardian and cancelled rules below.
@@ -749,7 +758,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const filtered = useMemo(() => {
     // Everyone matching the search, whatever their standing; otherwise the
     // rows under a chip are exactly the ones its count counts.
-    let list = searchingAll ? members : members.filter((m) => inStatusView(m, statusFilter, month));
+    let list = searchingAll ? members.filter((m) => !m.archivedAt) : members.filter((m) => inStatusView(m, statusFilter, month));
     if (membershipFilter !== "all") list = list.filter((m) => m.membershipType === membershipFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -828,7 +837,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const counts: MemberListCounts & { guardianReview: number } = {
     ...(serverCounts
       ? addCounts(serverCounts, countMemberRows(addedSinceLoad, new Date(), month))
-      : countMemberRows(members, new Date(), month)),
+      : countMemberRows(members.filter((m) => !m.archivedAt), new Date(), month)),
     guardianReview: reviewCount ?? 0,
   };
 
@@ -1513,7 +1522,7 @@ function AddMemberModal({
         // PR 3: the same individual as an archived member is restored, not duplicated (lib/member-same-individual.ts).
         toast(
           data.restored === true
-            ? `Restored ${data.name}${typeof data.restoredFromArchivedAt === "string" ? ` (archived ${formatDate(data.restoredFromArchivedAt)})` : ""} with all their history`
+            ? `Restored ${data.name}${typeof data.restoredFromArchivedAt === "string" ? ` (archived ${formatDate(data.restoredFromArchivedAt)})` : ""} with all their history${data.subscriptionEnding === true ? ". Their card subscription is still set to end, so set billing up again." : ""}`
             : `${form.name} added`,
           "success",
         );

@@ -697,6 +697,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // PR 3: a removed account is deactivated; it is listed apart, with Reactivate.
   const activeStaff = staff.filter((s) => !s.deactivatedAt);
   const deactivatedStaff = staff.filter((s) => !!s.deactivatedAt);
+  const [reactivating, setReactivating] = useState<string | null>(null);
 
   // Branding state
   const [gymName, setGymName]           = useState(settings?.name ?? "");
@@ -1335,6 +1336,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }
 
   async function handleStaffReactivate(id: string) {
+    if (reactivating) return;
+    setReactivating(id);
     try {
       const res = await fetch(`/api/staff/${id}/reactivate`, { method: "POST" });
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error);
@@ -1342,6 +1345,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       toast("Staff account reactivated", "success");
     } catch (e: unknown) {
       toast((e as Error).message || "Couldn't reactivate this account. Try again.", "error");
+    } finally {
+      setReactivating(null);
     }
   }
 
@@ -2457,7 +2462,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                       {m.email} · deactivated {m.deactivatedAt ? formatDate(m.deactivatedAt) : ""}
                     </p>
                   </div>
-                  <Button variant="secondary" size="compact" onClick={() => handleStaffReactivate(m.id)} aria-label={`Reactivate ${m.name}`}>
+                  <Button variant="secondary" size="compact" loading={reactivating === m.id} disabled={reactivating !== null} onClick={() => handleStaffReactivate(m.id)} aria-label={`Reactivate ${m.name}`}>
                     Reactivate
                   </Button>
                 </div>

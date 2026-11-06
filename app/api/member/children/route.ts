@@ -92,7 +92,8 @@ export async function POST(req: Request) {
       }
 
       const kidCount = await tx.member.count({
-        where: { parentMemberId, tenantId },
+        // PR 3: an archived child frees its slot.
+        where: { parentMemberId, tenantId, archivedAt: null },
       });
       if (kidCount >= MAX_KIDS_PER_PARENT) return { kind: "limit" } as const;
 

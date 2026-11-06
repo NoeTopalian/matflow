@@ -64,7 +64,8 @@ export function MemberSearchPicker({
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/members?search=${encodeURIComponent(term)}&take=${MAX_RESULTS}`, { signal: controller.signal });
+        // includeArchived: the Activity log is history, and archived members are in it (PR 3).
+        const res = await fetch(`/api/members?search=${encodeURIComponent(term)}&take=${MAX_RESULTS}&includeArchived=1`, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { members?: Option[] };
         if (controller.signal.aborted) return;

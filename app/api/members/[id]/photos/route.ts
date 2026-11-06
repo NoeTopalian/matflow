@@ -7,6 +7,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 export const runtime = "nodejs";
 
@@ -83,6 +84,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const tenantId: string = session.user.tenantId;
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   let body: unknown;
   try {
@@ -153,6 +155,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   const tenantId: string = session.user.tenantId;
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
   const photoId = new URL(req.url).searchParams.get("photoId");
   if (!photoId) return apiError("photoId required", 400);
 

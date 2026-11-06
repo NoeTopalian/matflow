@@ -133,10 +133,11 @@ function PersonPicker({ id, label, candidates, value, onChange }: {
     setSearchError(null);
     if (term.trim().length < 2) { setResults(null); return; }
     try {
-      const res = await fetch(`/api/members?search=${encodeURIComponent(term.trim())}&limit=8`);
+      // includeArchived: imported history can belong to someone archived since (PR 3).
+      const res = await fetch(`/api/members?search=${encodeURIComponent(term.trim())}&limit=8&includeArchived=1`);
       if (!res.ok) { setResults(null); setSearchError("Member search failed. Try again."); return; }
       const data = await res.json();
-      setResults(((data.members ?? []) as { id: string; name: string }[]).map((m) => ({ id: m.id, name: m.name })));
+      setResults(((data.members ?? []) as { id: string; name: string; archivedAt?: string | null }[]).map((m) => ({ id: m.id, name: m.archivedAt ? `${m.name} (archived)` : m.name })));
     } catch {
       setSearchError("Couldn't reach MatFlow to search members.");
     }

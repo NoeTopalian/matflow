@@ -83,6 +83,9 @@ vi.mock("@/lib/rate-limit", async (importOriginal) => ({
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import * as staffRoute from "@/app/api/staff/[id]/route";
+import { POST as memberRestorePOST } from "@/app/api/members/[id]/restore/route";
+import { POST as staffReactivatePOST } from "@/app/api/staff/[id]/reactivate/route";
+import { GET as dsarSubjectsGET } from "@/app/api/admin/dsar/subjects/route";
 import * as rankRoute from "@/app/api/ranks/[id]/route";
 import * as classRoute from "@/app/api/classes/[id]/route";
 import * as classCollectionRoute from "@/app/api/classes/route";
@@ -520,6 +523,48 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   //   Product        app/api/products/[id]        owner/manager; soft delete (deletedAt)
   // The stub list said "app/api/dashboard/users/[id]" for staff — that route
   // does not exist; staff edits go through app/api/staff/[id].
+
+  // PR 3 (6 Nov 2026): the three new routes are tenant-bound like every other.
+  describe("PR 3 — restore, reactivate and the data-request search", () => {
+    it("owner A: POST restore of gym B's ARCHIVED member is 404 AND it stays archived", async () => {
+      const at = new Date();
+      await withRlsBypass((tx) => tx.member.update({ where: { id: memberBId }, data: { archivedAt: at } }));
+      try {
+        actAs("owner");
+        const res = await call(memberRestorePOST, "POST", `/api/members/${memberBId}/restore`, { id: memberBId });
+        expect(res.status).toBe(404);
+        const after = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: memberBId }, select: { archivedAt: true } }));
+        expect(after?.archivedAt?.getTime()).toBe(at.getTime());
+      } finally {
+        await withRlsBypass((tx) => tx.member.update({ where: { id: memberBId }, data: { archivedAt: null } }));
+      }
+    });
+
+    it("owner A: POST reactivate of gym B's DEACTIVATED coach is 404 AND it stays deactivated", async () => {
+      const at = new Date();
+      await withRlsBypass((tx) => tx.user.update({ where: { id: coachBId }, data: { deactivatedAt: at } }));
+      try {
+        actAs("owner");
+        const res = await call(staffReactivatePOST, "POST", `/api/staff/${coachBId}/reactivate`, { id: coachBId });
+        expect(res.status).toBe(404);
+        const after = await withRlsBypass((tx) => tx.user.findUnique({ where: { id: coachBId }, select: { deactivatedAt: true } }));
+        expect(after?.deactivatedAt?.getTime()).toBe(at.getTime());
+      } finally {
+        await withRlsBypass((tx) => tx.user.update({ where: { id: coachBId }, data: { deactivatedAt: null } }));
+      }
+    });
+
+    it("owner A: the data-request search never returns gym B's member, by id or by name", async () => {
+      actAs("owner");
+      const B = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: memberBId }, select: { name: true } }));
+      const byId = await call(dsarSubjectsGET, "GET", `/api/admin/dsar/subjects?id=${memberBId}`, {});
+      expect(byId.status).toBe(200);
+      expect(JSON.stringify(byId.body)).not.toContain(memberBId);
+      const byName = await call(dsarSubjectsGET, "GET", `/api/admin/dsar/subjects?q=${encodeURIComponent(B!.name.slice(0, 20))}`, {});
+      expect(byName.status).toBe(200);
+      expect(JSON.stringify(byName.body)).not.toContain(memberBId);
+    });
+  });
 
   describe("User (staff) — app/api/staff/[id]", () => {
     // newPassword meets the shared rule (lib/password-policy.ts, 8 Oct 2026) so

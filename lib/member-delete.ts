@@ -134,6 +134,8 @@ export type RestoreMemberOutcome =
   | { kind: "ok"; name: string; restoredKidIds: string[]; subscriptionEnding: boolean }
   | { kind: "not-found" }
   | { kind: "race" }
+  /** Already current (a second Restore): nothing to do, not an error. */
+  | { kind: "already-current"; name: string }
   /** Erased on a formal request: nothing personal is left to bring back. */
   | { kind: "erased" }
   /** A child whose guardian is still archived: restore the guardian first (or link the child elsewhere). */
@@ -149,23 +151,32 @@ export async function restoreMember(
   where: { id: string; tenantId: string },
 ): Promise<RestoreMemberOutcome> {
   const member = await tx.member.findFirst({
-    where: { ...where, archivedAt: { not: null } },
-    select: {
-      id: true, name: true, email: true, archivedAt: true, stripeSubscriptionId: true,
-      parent: { select: { name: true, archivedAt: true } },
-    },
+    where,
+    select: { id: true, name: true, email: true, archivedAt: true, parentMemberId: true },
   });
-  if (!member?.archivedAt) return { kind: "not-found" };
+  if (!member) return { kind: "not-found" };
+  // Idempotent: a second Restore (a double click, a retry after a lost
+  // response) finds the member already current and changes nothing.
+  if (!member.archivedAt) return { kind: "already-current", name: member.name };
   if (ERASED_EMAIL.test(member.email)) return { kind: "erased" };
-  if (member.parent?.archivedAt) return { kind: "parent-archived", parentName: member.parent.name };
+  if (member.parentMemberId) {
+    // FOR SHARE on the guardian, so a concurrent archive of the parent waits
+    // for this restore (or this restore sees the parent archived).
+    const [parent] = await tx.$queryRaw<{ name: string; archivedAt: Date | null }[]>`
+      SELECT "name", "archivedAt" FROM "Member" WHERE "id" = ${member.parentMemberId} AND "tenantId" = ${where.tenantId} FOR SHARE
+    `;
+    if (parent?.archivedAt) return { kind: "parent-archived", parentName: parent.name };
+  }
   const at = new Date(member.archivedAt.getTime());
   const done = await tx.member.updateMany({
     where: { ...where, archivedAt: at },
     data: { archivedAt: null, archivedById: null },
   });
   if (done.count === 0) return { kind: "race" };
+  // Kids archived WITH this parent come back, never one erased since.
+  const notErased = { NOT: { AND: [{ email: { startsWith: "deleted-" } }, { email: { endsWith: "@deleted.invalid" } }] } };
   const kids = await tx.member.findMany({
-    where: { tenantId: where.tenantId, parentMemberId: member.id, archivedAt: at },
+    where: { tenantId: where.tenantId, parentMemberId: member.id, archivedAt: at, ...notErased },
     select: { id: true },
   });
   if (kids.length > 0) {
@@ -174,8 +185,15 @@ export async function restoreMember(
       data: { archivedAt: null, archivedById: null },
     });
   }
-  // Remove set any card subscription to end at the period end; restoring does not restart billing.
-  return { kind: "ok", name: member.name, restoredKidIds: kids.map((k) => k.id), subscriptionEnding: !!member.stripeSubscriptionId };
+  // Billing: did the removal set a card subscription to end? The archive's own
+  // audit row says (stripeSubscriptionsCancelled); restoring does not restart it.
+  const archiveRow = await tx.auditLog.findFirst({
+    where: { tenantId: where.tenantId, entityId: member.id, action: { in: ["member.archive", "member.child.archive"] } },
+    orderBy: { createdAt: "desc" },
+    select: { metadata: true },
+  });
+  const cancelled = Number((archiveRow?.metadata as { stripeSubscriptionsCancelled?: unknown } | null)?.stripeSubscriptionsCancelled ?? 0);
+  return { kind: "ok", name: member.name, restoredKidIds: kids.map((k) => k.id), subscriptionEnding: cancelled > 0 };
 }
 
 export async function deleteMemberCascade(

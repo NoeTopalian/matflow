@@ -19,6 +19,7 @@ import { shownPaymentStatus } from "@/lib/overdue";
 import { refuseSupportSession, refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 import { LoginIdentityTaken, claimLoginIdentity, emailDigest, retireEmailBoundTokens } from "@/lib/login-email";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 // feat/member-tickable-notes Phase 1c: rate-limit budget for PATCH so a
 // compromised staff session (or a script) can't carpet-bomb every member row
@@ -219,6 +220,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const { id } = await params;
+  { const archived = await refuseArchivedMember(session.user.tenantId, id); if (archived) return archived; } // PR 3: an archived record is read-only
 
   let body: unknown;
   try {

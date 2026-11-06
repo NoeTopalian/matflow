@@ -218,7 +218,33 @@ export default async function MembersPage({ searchParams }: Props) {
   for (const bucket of Object.keys(movers) as MovementBucket[]) {
     for (const id of movers[bucket]) movedBy.set(id, [...(movedBy.get(id) ?? []), bucket]);
   }
-  const listed = members.map((m) => {
+  // PR 3: a member archived after being counted in this month's movement (a
+  // join, then removed) is still in the figure, as Reports counts them. Their
+  // rows are added for the drill-throughs alone, tagged Archived and linked to
+  // the profile, so a count and its list always agree.
+  const listedIds = new Set(members.map((m) => m.id));
+  const archivedMoverIds = [...movedBy.keys()].filter((id) => !listedIds.has(id));
+  const archivedMovers: MemberRow[] = archivedMoverIds.length === 0
+    ? []
+    : (await withTenantContext(session!.user.tenantId, (tx) =>
+        tx.member.findMany({
+          where: { tenantId: session!.user.tenantId, id: { in: archivedMoverIds }, archivedAt: { not: null } },
+          select: { id: true, name: true, email: true, status: true, paymentStatus: true, accountType: true, parentMemberId: true, joinedAt: true, cancelledAt: true, archivedAt: true },
+        }),
+      )).map((m) => ({
+        id: m.id,
+        name: m.name,
+        email: m.email,
+        status: m.status,
+        paymentStatus: m.paymentStatus,
+        accountType: m.accountType,
+        parentMemberId: m.parentMemberId,
+        joinedAt: m.joinedAt.toISOString(),
+        cancelledAt: m.cancelledAt ? m.cancelledAt.toISOString() : null,
+        archivedAt: m.archivedAt ? m.archivedAt.toISOString() : null,
+        moved: movedBy.get(m.id),
+      }));
+  const listed = [...members.map((m) => {
     const flagged = otherOwingIds.has(m.id)
       ? { ...m, otherOwing: true }
       : toReconcileIds.has(m.id)
@@ -226,7 +252,7 @@ export default async function MembersPage({ searchParams }: Props) {
         : m;
     const moved = movedBy.get(m.id);
     return moved ? { ...flagged, moved } : flagged;
-  });
+  }), ...archivedMovers];
 
   // Guardian links an import suggested and nobody has confirmed — counted
   // across the whole club for the header badge. Owner and manager only: the
