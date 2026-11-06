@@ -228,6 +228,8 @@ export function DayGrid({
         <span className="flex items-center gap-1.5 w-full min-w-0">
           <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: it.color, opacity: dim ? 0.5 : undefined }} />
           <span className={["font-semibold truncate min-w-0 flex-1", short ? "text-[11px]" : "text-xs", state === "cancelled" ? "line-through" : ""].join(" ")}>
+            {/* A short block has no second line: its start time leads the one line, where a cut name cannot hide it. */}
+            {short ? <span className="font-normal tabular-nums" style={{ color: "var(--tx-2)" }}>{it.startTime} </span> : null}
             {it.name}
             {/* A short block has one line: the mat still shows, because it is what tells two of the same class apart. */}
             {short && it.meta ? <span className="font-normal" style={{ color: "var(--tx-2)" }}> · {it.meta}</span> : null}
