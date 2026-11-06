@@ -7,7 +7,8 @@
  * fails the request, and never re-enters the transaction.
  *
  * Superseded 6 Nov 2026: nothing is deleted automatically (product rule, Noe), so the route no longer calls del() at
- * all when a promotion photo is replaced; the old files stay in storage. These tests now pin that.
+ * all when a promotion photo is replaced: the old rows are marked replaced (hidden from photo lists) and their files
+ * stay in storage, still reachable by an erasure. These tests now pin that.
  *
  * No database: withTenantContext is replaced by a fake that records whether a call happens inside a transaction.
  */
@@ -50,6 +51,10 @@ const tx = {
   memberPhoto: {
     findMany: async () => h.oldPhotos,
     deleteMany: async () => { h.events.push("rows-deleted"); return { count: h.oldPhotos.length }; },
+    updateMany: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      h.events.push(args.where.replacedAt === null && args.data.replacedAt instanceof Date ? "rows-marked-replaced" : "rows-updated-otherwise");
+      return { count: h.oldPhotos.length };
+    },
     create: async () => { h.events.push("photo-created"); return { id: "ph-new" }; },
   },
 };
@@ -111,13 +116,14 @@ beforeEach(() => {
 });
 
 describe("replacing a promotion photo keeps the old files (product rule, Noe, 6 Nov 2026)", () => {
-  it("del() is never called: the old rows go so the page shows one photo, the old files stay in storage", async () => {
+  it("del() is never called and no row is deleted: the old rows are marked replaced (hidden), the files stay", async () => {
     const res = await promote();
     expect(res.status).toBe(200);
     expect(vi.mocked(del)).not.toHaveBeenCalled();
     expect(h.events).not.toContain("del-INSIDE-tx");
     expect(h.events).not.toContain("del-after-commit");
-    expect(h.events).toContain("rows-deleted");
+    expect(h.events).not.toContain("rows-deleted");
+    expect(h.events).toContain("rows-marked-replaced");
     expect(h.events).toContain("photo-created");
   });
 
@@ -130,11 +136,12 @@ describe("replacing a promotion photo keeps the old files (product rule, Noe, 6 
     expect(h.txCount).toBe(3);
   });
 
-  it("inline-only old photos: still no delete call; rows still removed", async () => {
+  it("inline-only old photos: still no delete call; rows marked replaced, not removed", async () => {
     h.oldPhotos = [{ id: "ph-inline", url: "data:image/png;base64,AAAA" }];
     const res = await promote();
     expect(res.status).toBe(200);
     expect(vi.mocked(del)).not.toHaveBeenCalled();
-    expect(h.events).toContain("rows-deleted");
+    expect(h.events).toContain("rows-marked-replaced");
+    expect(h.events).not.toContain("rows-deleted");
   });
 });

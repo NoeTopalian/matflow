@@ -38,7 +38,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
         create: vi.fn(async () => ({ id: "mr-1", rankSystemId: "r1", stripes: 0, achievedAt: new Date(), rankSystem: { discipline: "BJJ", name: "Blue", color: "#00a" } })),
         findMany: vi.fn(async () => []),
       },
-      memberPhoto: { findMany: vi.fn(async () => m.oldPhotos), deleteMany: m.photoDeleteMany, create: m.photoCreate },
+      memberPhoto: { findMany: vi.fn(async () => m.oldPhotos), deleteMany: m.photoDeleteMany, updateMany: vi.fn(async () => ({ count: m.oldPhotos.length })), create: m.photoCreate },
       classSubscription: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       $queryRaw: vi.fn(async () => []),
     }),
@@ -113,6 +113,7 @@ describe("rank award — foreign blob URLs", () => {
     const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN }), params);
     expect(res.status).toBe(200);
     expect(m.del).not.toHaveBeenCalled();
+    expect(m.photoDeleteMany).not.toHaveBeenCalled();
   });
 
   it("data: URLs keep working without any blob checks", async () => {

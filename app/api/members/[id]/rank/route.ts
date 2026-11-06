@@ -196,14 +196,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     if (parsed.data.photoUrl && result.kind === "updated") {
-      // The new promotion photo replaces the old one on the page: the old rows go,
-      // so the page shows one. The old FILES are kept in storage (product rule,
-      // Noe, 6 Nov 2026: "nothing should be automatically deleted").
-      await withTenantContext(session.user.tenantId, async (tx) => {
-        await tx.memberPhoto.deleteMany({
-          where: { tenantId: session.user.tenantId, memberRankId: result.value.id, kind: "promotion" },
-        });
-      });
+      // The new promotion photo replaces the old one on the page. The old rows and
+      // their files are KEPT (product rule, Noe, 6 Nov 2026: "nothing should be
+      // automatically deleted"), marked replaced and hidden from every photo list.
+      // Keeping the row keeps the file reachable: the member's erasure finds it by
+      // memberId, the club's erasure by tenantId.
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.memberPhoto.updateMany({
+          where: { tenantId: session.user.tenantId, memberRankId: result.value.id, kind: "promotion", replacedAt: null },
+          data: { replacedAt: new Date() },
+        }),
+      );
     }
 
     if (parsed.data.photoUrl) {
