@@ -25,6 +25,7 @@ import {
 import { requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { recordLoginEvent } from "@/lib/login-event";
 import { after } from "next/server";
+import { cache } from "react";
 import { emailField } from "@/lib/email-normalise";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
@@ -60,7 +61,12 @@ const GOOGLE_OAUTH_ENABLED =
 
 // Pre-computed bcrypt hash used to keep response times constant on the
 // user-not-found path, preventing email enumeration via timing differences.
-const DUMMY_HASH = bcrypt.hashSync("constant-time-padding-only", 12);
+// A literal (cost 12, the same cost as real passwords) rather than hashSync at
+// module load, which spent a full cost-12 hash on every cold start. Not a
+// secret: it is only ever the "expected" side of a compare whose result is
+// discarded when no account matched. Same pattern as lib/operator-auth.ts.
+// nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
+const DUMMY_HASH = "$2b$12$ERNQoDczX1wwXM0ylCBCPeCPFyWcjVb4y4Xk75bVpW.d7EXyCIW9S";
 
 // Production runtime guards (skipped during `next build` page-data collection)
 if (
@@ -1528,10 +1534,21 @@ export const { handlers, signIn, signOut } = nextAuth;
  * touching the browser's session. Every other form (the proxy.ts wrapper, the
  * Request form) passes through unchanged; proxy.ts reads the unavailable shape
  * itself and answers 503.
+ *
+ * The no-argument form is wrapped in React cache(): the layout, the page and
+ * any server component that asks during ONE render share one session check
+ * (one jwt() callback, one revocation lookup) instead of one each. The scope
+ * is a single render pass, never across requests, so every request still runs
+ * the revocation check. Route handlers and server actions are not a render
+ * pass: there cache() memoises nothing and every call checks afresh.
  */
+const sessionForThisRender = cache(() =>
+  (nextAuth.auth as () => Promise<unknown>)().then((s) => usableSession(s)),
+);
+
 export const auth = ((...args: unknown[]) => {
   if (args.length === 0) {
-    return (nextAuth.auth as () => Promise<unknown>)().then((s) => usableSession(s));
+    return sessionForThisRender();
   }
   return (nextAuth.auth as (...a: unknown[]) => unknown)(...args);
 }) as typeof nextAuth.auth;

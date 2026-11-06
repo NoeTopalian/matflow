@@ -27,11 +27,14 @@ export default async function DashboardLayout({
 
   // F-3: a temporary password from an operator reset is not a password of
   // one's own. Until the person sets theirs, every dashboard page goes to
-  // /set-password (outside this layout, so it cannot loop).
-  const gate = await withTenantContext(session.user.tenantId, (tx) =>
-    tx.user.findFirst({ where: { id: session.user.id, tenantId: session.user.tenantId }, select: { mustChangePassword: true } }),
-  ).catch(() => null);
-  if (gate?.mustChangePassword) redirect("/set-password");
+  // /set-password (outside this layout, so it cannot loop). proxy.ts enforces
+  // this first; this is the backstop. It reads the session's claim, not the
+  // row: every write that sets the flag also bumps sessionVersion, so a live
+  // session cannot carry a stale `false`, and auth.ts stamps the claim from
+  // the row for a token minted before the claim existed.
+  if ((session.user as { mustChangePassword?: unknown }).mustChangePassword === true) {
+    redirect("/set-password");
+  }
 
   const tenant = await withTenantContext(session.user.tenantId, (tx) =>
     tx.tenant.findUnique({
