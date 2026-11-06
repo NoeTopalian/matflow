@@ -6,8 +6,26 @@ self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
+// Navigation preload: the browser starts the page request while this worker is
+// still starting up, instead of after it (speed quick win 2g, 6 Nov 2026) —
+// the fetch handler below answers navigations with that response.
+// Old caches: every MatFlow static cache but the current one is deleted, so a
+// version bump frees the hashed chunks of every earlier build.
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      if (self.registration.navigationPreload) {
+        await self.registration.navigationPreload.enable().catch(() => {});
+      }
+      const names = await caches.keys();
+      await Promise.all(
+        names
+          .filter((name) => name.startsWith("matflow-static-") && name !== STATIC_CACHE)
+          .map((name) => caches.delete(name)),
+      );
+      await self.clients.claim();
+    })(),
+  );
 });
 
 const OFFLINE_HTML = `<!doctype html>
@@ -24,7 +42,9 @@ const OFFLINE_HTML = `<!doctype html>
 <body><p>You're offline — check your connection and try again.</p></body>
 </html>`;
 
-const STATIC_CACHE = "matflow-static-v1";
+// v2 (6 Nov 2026): the bump retires v1, which had grown by every build's
+// chunks since the worker shipped; activate deletes it.
+const STATIC_CACHE = "matflow-static-v2";
 
 // Content-hashed build assets + immutable app icons: safe to cache-first
 // forever — a new build emits new hashed URLs, so nothing here ever goes
@@ -56,14 +76,21 @@ self.addEventListener("fetch", (event) => {
   }
 
   // Network-first passthrough; only navigations get an offline fallback.
+  // A navigation uses the preloaded response when there is one (activate turns
+  // preload on), so the page request is not held up by this worker starting.
   if (event.request.mode !== "navigate") return;
   event.respondWith(
-    fetch(event.request).catch(
-      () =>
-        new Response(OFFLINE_HTML, {
+    (async () => {
+      try {
+        const preloaded = await event.preloadResponse;
+        if (preloaded) return preloaded;
+        return await fetch(event.request);
+      } catch {
+        return new Response(OFFLINE_HTML, {
           status: 503,
           headers: { "Content-Type": "text/html; charset=utf-8" },
-        }),
-    ),
+        });
+      }
+    })(),
   );
 });
