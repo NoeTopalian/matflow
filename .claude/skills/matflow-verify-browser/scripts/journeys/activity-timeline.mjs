@@ -904,8 +904,15 @@ try {
       // The toolbar: search on its own line, then the day and Filters; tap targets at least 44px tall.
       const tapHeights = {};
       for (const [name, control] of [["search", phone.getByRole("combobox", { name: "Search members" })], ["day", phone.getByTestId("date-button")], ["filters", phone.getByTestId("filters-button")]]) tapHeights[name] = (await control.boundingBox()).height;
-      // 0.5px for sub-pixel layout: a 44px box can measure 43.99.
-      for (const [name, height] of Object.entries(tapHeights)) expect(height, `${name} is ${height}px tall (all: ${JSON.stringify(tapHeights)})`).toBeGreaterThanOrEqual(43.5);
+      // The 44px floor is a coarse-pointer rule (app/globals.css, UI-RULES §5a). Playwright's phone emulation does
+      // not always report a coarse pointer (measured 6 Nov: 44px in one context, 36px in another of the same build),
+      // so the floor is held where it applies and the fine-pointer field height is held otherwise — and said.
+      const coarse = await phone.evaluate(() => matchMedia("(pointer: coarse)").matches);
+      const floor = coarse ? 43.5 : 35.5; // 0.5px for sub-pixel layout
+      for (const [name, height] of Object.entries(tapHeights)) expect(height, `${name} is ${height}px tall on a ${coarse ? "coarse" : "fine"} pointer (all: ${JSON.stringify(tapHeights)})`).toBeGreaterThanOrEqual(floor);
+      const sameHeight = Math.max(...Object.values(tapHeights)) - Math.min(...Object.values(tapHeights));
+      expect(sameHeight, `toolbar heights ${JSON.stringify(tapHeights)}`).toBeLessThanOrEqual(0.5);
+      L.note("phone-pointer", "the phone context's pointer and the toolbar's heights (the 44px floor applies to a coarse pointer)", { coarse, ...tapHeights });
       await expect(views(phone).getByRole("tab")).toHaveCount(5);
       // Search has the first line to itself; the day and Filters share the second.
       const [search, day, filtersBox] = await Promise.all([phone.getByRole("combobox", { name: "Search members" }), phone.getByTestId("date-button"), phone.getByTestId("filters-button")].map((l) => l.boundingBox()));
