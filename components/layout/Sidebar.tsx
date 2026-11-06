@@ -5,7 +5,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { toBlobProxyUrl } from "@/lib/blob-url";
-import { STAFF_NAV, isNavActive, type StaffNavItem, type StaffRole } from "@/components/layout/routes";
+import { STAFF_NAV, isNavActive, navPrefetch, type StaffNavItem, type StaffRole } from "@/components/layout/routes";
 
 const mainNav = STAFF_NAV.filter((item) => item.section === "main");
 const adminNav = STAFF_NAV.filter((item) => item.section === "admin");
@@ -160,6 +160,7 @@ function NavItem({
   return (
     <Link
       href={item.href}
+      prefetch={navPrefetch(item)}
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all",
