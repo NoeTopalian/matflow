@@ -73,10 +73,17 @@ export default function PrivacyPage() {
         <ul className="list-disc pl-6 space-y-1">
           <li>Active member data — for as long as the gym remains a customer</li>
           <li>Signed waivers — six years after the member leaves (UK limitation period)</li>
-          <li>Audit logs — twelve months, then deleted by a scheduled job that runs daily</li>
-          <li>Email delivery logs — twelve months, deleted by the same daily job</li>
-          <li>Expired sign-in links and password-reset links — purged daily, within 24 hours of expiry</li>
-          <li>Closed gyms — a gym marked for deletion is recoverable for 30 days, after which its records are permanently erased</li>
+          <li>
+            Audit logs (the gym&apos;s Activity history), email delivery logs, sign-in records and import files — kept
+            for as long as the gym uses MatFlow, for the gym&apos;s own records and to resolve disputes. Nothing is
+            deleted automatically.
+          </li>
+          <li>Expired sign-in links and password-reset links — kept, and unusable once expired</li>
+          <li>Closed gyms — kept with sign-in disabled so the gym can reopen, and only erased when the gym asks in writing</li>
+          <li>
+            Erasure requests — when a gym asks us to erase a member, we still remove that member&apos;s details, and
+            the gym&apos;s Activity history then shows them only as &quot;Deleted member&quot;
+          </li>
           <li>
             Backups — our database provider keeps continuous point-in-time backups. The window depends on our current
             plan and is typically between 7 and 30 days. Because a restore rolls the database back in time, we
