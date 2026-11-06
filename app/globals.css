@@ -359,11 +359,26 @@ option {
 .stagger-3 { animation-delay: 90ms; }
 .stagger-4 { animation-delay: 120ms; }
 
+/* Page swap (speed quick win 2a, 6 Nov 2026). Replaces the client-side
+   PageTransition, which held every page at opacity 0 until React had loaded.
+   Pure CSS, so it runs with or without JavaScript and never waits for it; it
+   starts at 0.6, so the page is readable from the first paint; and it sits on
+   the PAGE (the content wrapper's child), which is a new element on every
+   navigation, so it replays there and never on the persistent shell. */
+@keyframes page-fade {
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
+}
+.page-fade > * {
+  animation: page-fade var(--dur-normal) var(--ease-out);
+}
+
 /* Respect reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .animate-fade-in,
-  .animate-scale-in { animation: none; }
+  .animate-scale-in,
+  .page-fade > * { animation: none; }
 }
 
 @layer base {

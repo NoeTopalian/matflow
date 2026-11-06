@@ -210,7 +210,8 @@ export default async function DashboardLayout({
               Left/right and BOTTOM padding stay on <main>: only the top edge is
               load-bearing for sticky. */}
           <main className="flex-1 overflow-y-auto px-4 pb-28 md:px-6 md:pb-6 xl:px-8 xl:pb-8">
-            <div className="dash-content mx-auto w-full max-w-6xl pt-5 md:pt-6 xl:pt-8">{children}</div>
+            {/* page-fade: the CSS-only page swap in app/globals.css. */}
+            <div className="dash-content page-fade mx-auto w-full max-w-6xl pt-5 md:pt-6 xl:pt-8">{children}</div>
           </main>
 
           <MobileNav role={session.user.role} primaryColor={session.user.primaryColor} />
