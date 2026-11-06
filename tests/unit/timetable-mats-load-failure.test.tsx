@@ -32,28 +32,58 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** The SQL text of each $executeRaw tagged-template call, in order. */
+function executed(spy: { mock: { calls: unknown[][] } }): string[] {
+  return spy.mock.calls.map((c) => (c[0] as TemplateStringsArray).join("?"));
+}
+
 describe("readMatsForTimetable", () => {
-  it("returns the club's mats in order and the stored choice, from its own tenant transaction", async () => {
+  it("returns the club's mats in order and the stored choice, inside a savepoint of the page's transaction", async () => {
     const findMany = vi.fn(async () => [{ id: "m1", name: "Mat 1", nameKey: "mat 1", sortOrder: 0 }, { id: "m2", name: "Mat 2", nameKey: "mat 2", sortOrder: 1 }]);
     const findFirst = vi.fn(async () => ({ timetableLayout: "time" }));
-    tenantTx.mockImplementation(async (_t: string, fn: (tx: unknown) => unknown) => fn({ mat: { findMany }, tenant: { findFirst } }));
-    expect(await readMatsForTimetable("t1")).toEqual({ mats: [{ id: "m1", name: "Mat 1" }, { id: "m2", name: "Mat 2" }], storedLayout: "time", failed: false });
-    expect(tenantTx).toHaveBeenCalledTimes(1);
-    expect(tenantTx.mock.calls[0][0]).toBe("t1");
+    const $executeRaw = vi.fn(async () => 0);
+    expect(await readMatsForTimetable({ mat: { findMany }, tenant: { findFirst }, $executeRaw } as never, "t1")).toEqual({
+      mats: [{ id: "m1", name: "Mat 1" }, { id: "m2", name: "Mat 2" }],
+      storedLayout: "time",
+      failed: false,
+    });
+    expect(executed($executeRaw)).toEqual(["SAVEPOINT timetable_mats", "RELEASE SAVEPOINT timetable_mats"]);
+    // It opens no transaction of its own (S3: it runs in the page's one transaction).
+    expect(tenantTx).not.toHaveBeenCalled();
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "t1" } }));
     expect(findFirst).toHaveBeenCalledWith({ where: { id: "t1" }, select: { timetableLayout: true } });
   });
 
   it("reads a value it does not know as nobody having chosen", async () => {
-    tenantTx.mockImplementation(async (_t: string, fn: (tx: unknown) => unknown) => fn({ mat: { findMany: async () => [] }, tenant: { findFirst: async () => ({ timetableLayout: "grid" }) } }));
-    expect((await readMatsForTimetable("t1")).storedLayout).toBeNull();
+    const tx = { mat: { findMany: async () => [] }, tenant: { findFirst: async () => ({ timetableLayout: "grid" }) }, $executeRaw: vi.fn(async () => 0) };
+    expect((await readMatsForTimetable(tx as never, "t1")).storedLayout).toBeNull();
   });
 
-  it("answers a failed read with no mats, no choice and the flag, instead of throwing", async () => {
+  it("answers a failed read with no mats, no choice and the flag, and rolls back to its savepoint so the transaction goes on", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    tenantTx.mockRejectedValue(new Error("relation \"Mat\" does not exist"));
-    expect(await readMatsForTimetable("t1")).toEqual({ mats: [], storedLayout: null, failed: true });
+    const $executeRaw = vi.fn(async () => 0);
+    const findMany = vi.fn(async () => {
+      throw new Error("relation \"Mat\" does not exist");
+    });
+    const tx = { mat: { findMany }, tenant: { findFirst: vi.fn() }, $executeRaw };
+    expect(await readMatsForTimetable(tx as never, "t1")).toEqual({ mats: [], storedLayout: null, failed: true });
+    expect(executed($executeRaw)).toEqual(["SAVEPOINT timetable_mats", "ROLLBACK TO SAVEPOINT timetable_mats"]);
     expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it("throws when even the rollback to its savepoint fails: the transaction cannot answer anything else", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const gone = new Error("Connection terminated unexpectedly");
+    const $executeRaw = vi.fn(async (s: TemplateStringsArray) => {
+      if (s.join("?").startsWith("ROLLBACK")) throw gone;
+      return 0;
+    });
+    const findMany = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const tx = { mat: { findMany }, tenant: { findFirst: vi.fn() }, $executeRaw };
+    await expect(readMatsForTimetable(tx as never, "t1")).rejects.toBe(gone);
     logged.mockRestore();
   });
 });

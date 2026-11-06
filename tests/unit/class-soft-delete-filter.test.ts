@@ -38,6 +38,9 @@ const mockPrisma = {
   member: { findFirst: vi.fn().mockResolvedValue(null) },
   // T6b: a paused-looking class is checked for a pre-T6b archive (class.deleted) row.
   auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+  // S3: the timetable reads its mats last, in the page's one transaction, behind a savepoint.
+  mat: { findMany: vi.fn().mockResolvedValue([]) },
+  $executeRaw: vi.fn(async () => 0),
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

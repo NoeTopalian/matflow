@@ -41,6 +41,10 @@ const mockPrisma = {
   ),
   classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
   membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
+  // S3: the timetable reads its mats last, in the page's one transaction, behind a savepoint.
+  mat: { findMany: vi.fn().mockResolvedValue([]) },
+  tenant: { findFirst: vi.fn().mockResolvedValue(null) },
+  $executeRaw: vi.fn(async () => 0),
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

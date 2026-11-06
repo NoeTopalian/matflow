@@ -61,7 +61,8 @@ describe("dashboard Payments due, by role", () => {
     const page = readFileSync("app/dashboard/page.tsx", "utf8");
     expect(page).toContain("tx.member.count({ where: paymentsDueWhere(tenantId, role, now) })");
     // #36 adds the single At-Risk read as the last argument (release integration, 26 Oct 2026).
-    expect(page).toContain("getStats(tx, session!.user.tenantId, session!.user.role, atRisk)");
+    // S3 adds the one-statement counts and the shared `now` (6 Nov 2026).
+    expect(page).toContain("getStats(tx, tenantId, session!.user.role, atRisk, counts, now)");
     const tile = readFileSync("components/dashboard/DashboardStats.tsx", "utf8");
     expect(tile).toContain("const paymentsDue = paymentsDueCopy(currentUserRole);");
     expect(tile).toContain("label={paymentsDue.label} value={stats.paymentsDue} detail={paymentsDue.detail}");

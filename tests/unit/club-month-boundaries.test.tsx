@@ -13,6 +13,9 @@
 // SQL semantics), build the real CSV, and render the real drill-through.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// S3: the aggregate statements, answered through the faked Prisma delegates (see the support file).
+vi.mock("@/lib/aggregate-counts", () => import("./support/aggregate-counts-via-prisma"));
 import { render, screen, cleanup } from "@testing-library/react";
 import React from "react";
 import { fakeTx } from "./support/prisma-where-eval";

@@ -80,11 +80,22 @@ describe("member population counts", () => {
 
   it("the dashboard home's active, new-this-month, missing-waiver and missing-phone counts carry a named population", () => {
     const src = readFileSync("app/dashboard/page.tsx", "utf8");
-    // Guardian accounts never sign a training waiver (acceptance follow-up, 2 Oct 2026): the count and the list.
-    expect((src.match(/\.\.\.CAN_TRAIN_MEMBER, waiverAccepted: false/g) ?? []).length).toBe(2);
-    expect(src).toMatch(/tx\.member\.count\(\{ where: \{ tenantId, \.\.\.ACTIVE_MEMBER \} \}\)/);
-    expect(src).toMatch(/joinedAt: \{ gte: startOfMonth \}, \.\.\.TRAINING_MEMBER/);
-    expect(src).toMatch(/\.\.\.CAN_TRAIN_MEMBER,\s*OR: \[\{ phone: null \}, \{ phone: "" \}\]/);
+    // Guardian accounts never sign a training waiver (acceptance follow-up, 2 Oct 2026): the list here.
+    expect((src.match(/\.\.\.CAN_TRAIN_MEMBER, waiverAccepted: false/g) ?? []).length).toBe(1);
+    // S3 (6 Nov 2026): the counts are one statement, lib/aggregate-counts readDashboardCounts. Each population is
+    // spelled there in SQL; tests/integration/s3-aggregate-parity-db.test.ts holds every figure equal to the Prisma
+    // count over ACTIVE_MEMBER / TRAINING_MEMBER / CAN_TRAIN_MEMBER it replaced.
+    expect(src).toMatch(/const counts = await readDashboardCounts\(tx, tenantId, statsWindows\(now\)\);/);
+    const sql = readFileSync("lib/aggregate-counts.ts", "utf8");
+    // ACTIVE_MEMBER, TRAINING_MEMBER joined this month, CAN_TRAIN_MEMBER without a waiver / without a phone.
+    expect(sql).toContain(`count(*) FILTER (WHERE "accountType" <> 'parent' AND "status" = 'active')::int AS "totalActive"`);
+    expect(sql).toContain(`count(*) FILTER (WHERE "accountType" <> 'parent' AND "joinedAt" >= \${month}::timestamp)::int AS "newThisMonth"`);
+    expect(sql).toContain(`count(*) FILTER (WHERE "accountType" <> 'parent' AND "status" IN ('active', 'taster') AND "waiverAccepted" = false)::int AS "waiverMissing"`);
+    expect(sql).toContain(`count(*) FILTER (WHERE "accountType" <> 'parent' AND "status" IN ('active', 'taster') AND ("phone" IS NULL OR "phone" = ''))::int AS "missingPhone"`);
+    // The Prisma fragments those predicates spell: a change to one of them must be made in the SQL too.
+    expect(ACTIVE_MEMBER).toEqual({ accountType: { not: "parent" }, status: "active" });
+    expect(TRAINING_MEMBER).toEqual({ accountType: { not: "parent" } });
+    expect(CAN_TRAIN_MEMBER).toEqual({ accountType: { not: "parent" }, status: { in: ["active", "taster"] } });
   });
 
   // Each switched server file: every tx.member query names a population and

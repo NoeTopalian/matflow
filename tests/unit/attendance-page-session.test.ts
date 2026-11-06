@@ -4,6 +4,9 @@
 // falls back to the recent list instead of an empty page.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// S3: the aggregate statements, answered through the faked Prisma delegates (see the support file).
+vi.mock("@/lib/aggregate-counts", () => import("./support/aggregate-counts-via-prisma"));
+
 const { tx } = vi.hoisted(() => ({
   tx: {
     attendanceRecord: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },

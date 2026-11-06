@@ -1,5 +1,7 @@
 import { unstable_cache } from "next/cache";
+import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { countAttendanceInWindows } from "@/lib/aggregate-counts";
 import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
@@ -498,17 +500,27 @@ export function createEmptyReportsData(): ReportsData {
 const ADULT_ACCOUNT_TYPES = ["adult"];
 const KIDS_ACCOUNT_TYPES = ["kids", "junior"];
 
-export async function getReportsData(
-  tenantId: string,
-  options: {
-    /** The page's period (lib/report-period); when absent, `weeksBack` is mapped to the nearest preset. */
-    period?: ReportPeriodParams;
-    weeksBack?: number;
-    classId?: string;
-    ageGroup?: "adult" | "kids";
-    attendanceRateMode?: string;
-  } = {},
-): Promise<ReportsData> {
+export type ReportsOptions = {
+  /** The page's period (lib/report-period); when absent, `weeksBack` is mapped to the nearest preset. */
+  period?: ReportPeriodParams;
+  weeksBack?: number;
+  classId?: string;
+  ageGroup?: "adult" | "kids";
+  attendanceRateMode?: string;
+};
+
+/**
+ * The whole report in ONE tenant transaction (S3, 6 Nov 2026; it used to open four to six, one after another). The
+ * budget is the 30 s the heaviest of them already had, now for all of them together: the pilot load run measured the
+ * whole report at p95 5 s under 25 concurrent staff sessions (docs/readiness/CAPACITY-PILOT), and the chart bars are
+ * now one statement instead of one per bar. Each statement keeps the extended per-statement bound
+ * (lib/prisma-tenant.ts TENANT_STATEMENT_BOUND_EXTENDED_MS).
+ */
+export async function getReportsData(tenantId: string, options: ReportsOptions = {}): Promise<ReportsData> {
+  return withTenantContext(tenantId, (tx) => buildReportsData(tx, tenantId, options), { maxWait: 10_000, timeout: 30_000 });
+}
+
+async function buildReportsData(tx: Prisma.TransactionClient, tenantId: string, options: ReportsOptions): Promise<ReportsData> {
   const requestedClassId = options.classId?.trim() || undefined;
   const ageGroup = options.ageGroup === "adult" || options.ageGroup === "kids" ? options.ageGroup : undefined;
   const attendanceRateMode = resolveAttendanceRateMode(options.attendanceRateMode);
@@ -522,17 +534,15 @@ export async function getReportsData(
   // from an honest query, not a filter nobody asked for).
   // The club's zone is read in the same transaction: every month window below
   // is the CLUB's calendar month, not the server's (review L4).
-  const [classOptionsRaw, club] = await withTenantContext(tenantId, (tx) =>
-    Promise.all([
-      tx.class.findMany({
-        // The timetable's classes (lib/class-live): not paused, archived or imported history.
-        where: liveClassWhere(tenantId),
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      }),
-      tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
-    ]),
-  );
+  const [classOptionsRaw, club] = await Promise.all([
+    tx.class.findMany({
+      // The timetable's classes (lib/class-live): not paused, archived or imported history.
+      where: liveClassWhere(tenantId),
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
+  ]);
   const resolvedClassId = requestedClassId && classOptionsRaw.some((c) => c.id === requestedClassId)
     ? requestedClassId
     : undefined;
@@ -593,8 +603,7 @@ export async function getReportsData(
     activeOnHoldMembers,
     otherOwingRows,
     coverageStart,
-  ] = await withTenantContext(tenantId, (tx) =>
-    Promise.all([
+  ] = await Promise.all([
       // Audit memory-storage 2026-08-16 P1-12: this and the two aggregates
       // below used to run all-time, so every reports visit re-scanned the
       // tenant's whole attendance history with zero caching. They now share
@@ -692,11 +701,7 @@ export async function getReportsData(
       // narrowed by the class or age filter). Before it a count of zero is
       // "no records", not "nobody attended".
       readAttendanceCoverage(tx, tenantId, club?.timezone),
-    ]),
-    // ~12 parallel aggregate queries in one transaction — needs more than the
-    // default budget on large tenants (was expiring with P2028/commit-expired).
-    { maxWait: 10_000, timeout: 30_000 },
-  );
+    ]);
 
   // The attendance chart's buckets (26 Oct 2026): by month when the period is
   // longer than 3 months, otherwise by week — and then at least the 8 weeks
@@ -727,11 +732,13 @@ export async function getReportsData(
       });
     }
   }
-  const [bucketCounts, distinctAttending] = await withTenantContext(
-    tenantId,
-    (tx) =>
-      Promise.all([
-        Promise.all(buckets.map((b) => tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: b.start, lt: b.end }, ...attendanceScope } }))),
+  const [bucketCounts, distinctAttending] = await Promise.all([
+        // S3 (6 Nov 2026): every bar in ONE statement over the same windows and
+        // the same scope (was one count per bar; lib/aggregate-counts.ts).
+        countAttendanceInWindows(tx, tenantId, buckets, {
+          classId: resolvedClassId,
+          accountTypes: ageGroup ? (ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES) : undefined,
+        }),
         // Distinct ACTIVE attendees in the period — the "members who attended"
         // rate mode's numerator, counted in the database (one row per member).
         // Its numerator stays within the active-member denominator: an
@@ -748,9 +755,7 @@ export async function getReportsData(
             },
           })
           .then((groups) => groups.length),
-      ]),
-    { maxWait: 10_000, timeout: 30_000 },
-  );
+      ]);
   const weeklyAttendance = buckets.map((b, i) => ({
     week: b.week,
     count: bucketCounts[i],
@@ -765,21 +770,15 @@ export async function getReportsData(
     lastWeek: coverageOf(coverageStart, previousWeekStart, currentWeekStart),
   };
 
-  // T8c: movement and headcount, in its own read (one events findMany plus the
-  // ledger when the back-fill has not been applied), after the block above so
-  // the report never holds two pooled connections at once.
-  const { report: membership, period: periodMoves } = await withTenantContext(
-    tenantId,
-    (tx) =>
-      loadMembershipForPeriod(tx, tenantId, {
-        now,
-        endMonth: range.toMonth,
-        months: range.months.length,
-        chartMonths: chartMonths.length,
-        previousEndMonth: range.previous.toMonth,
-      }),
-    { maxWait: 10_000, timeout: 30_000 },
-  );
+  // T8c: movement and headcount (one events findMany plus the ledger when the
+  // back-fill has not been applied), in the report's one transaction.
+  const { report: membership, period: periodMoves } = await loadMembershipForPeriod(tx, tenantId, {
+    now,
+    endMonth: range.toMonth,
+    months: range.months.length,
+    chartMonths: chartMonths.length,
+    previousEndMonth: range.previous.toMonth,
+  });
   // D11 (23 Oct 2026): every "joined" on the page is the movement definition
   // (lib/membership-movement.ts) — never Member.joinedAt — so the tiles, the
   // charts, the CSV and the Members drill-throughs count the same events.
@@ -924,9 +923,7 @@ export async function getReportsData(
     .filter((id): id is string => id !== null);
 
   const recoveredCount = failedMemberIds.length > 0
-    ? await withTenantContext(tenantId, (tx) =>
-        tx.member.count({ where: { id: { in: failedMemberIds }, tenantId, paymentStatus: "paid" } }),
-      )
+    ? await tx.member.count({ where: { id: { in: failedMemberIds }, tenantId, paymentStatus: "paid" } })
     : 0;
 
   // No members had a failed payment → recovery rate is UNDEFINED (nothing to
@@ -941,15 +938,13 @@ export async function getReportsData(
   // age filter is set, so the summary tile and the readout agree there. One
   // extra count, only when an age group is selected.
   const scopedActiveMembers = ageGroup
-    ? await withTenantContext(tenantId, (tx) =>
-        tx.member.count({
-          where: {
-            tenantId,
-            status: "active",
-            accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES },
-          },
-        }),
-      )
+    ? await tx.member.count({
+        where: {
+          tenantId,
+          status: "active",
+          accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES },
+        },
+      })
     : statusCount.get("active") ?? 0;
 
   // Net-new by month: join monthlyMap (joined) with cancelledByMonth (cancelled)
