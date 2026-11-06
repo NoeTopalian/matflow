@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, launchWithScrollbars,
   weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare, setAccent, accentOf, contrast, focusRing, weekOnFrozenClock,
-  keepServerHtml, hydrationDiff,
+  keepServerHtml, hydrationDiff, structureDiff,
 } from "../lib.mjs";
 import { POSTER, DAY, FROZEN, FROZEN_DAY, FROZEN_MIN, seedWeek, sessionsOn, countOn, chipName, classesOf } from "./data/timetable-weeks.mjs";
 
@@ -91,11 +91,17 @@ try {
     await kept.stop();
     await expect(weekChips(weekGrid(main))).toHaveCount(SESSIONS, { timeout: 30_000 });
     await main.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    // React reports a mismatch once hydration ends, which on the slow test link can be seconds after the chips show.
+    await main.waitForTimeout(3_000);
     // A mismatch between the server's HTML and the browser's first render: say where before measuring.
-    if (errors.length > before) L.note("real-clock-hydration", "server HTML against the browser render: what only one of them has", await hydrationDiff(main, html));
+    if (errors.length > before) {
+      L.note("real-clock-hydration", "server HTML against the browser render: what only one of them has", await hydrationDiff(main, html));
+      L.note("real-clock-structure", "server HTML against the browser render: where the elements part", await structureDiff(main, html));
+    }
     expect(errors.map((e) => e.slice(0, 160))).toEqual([]);
     const inv = await gridInvariants(main, { sessions: SESSIONS });
-    expect(inv.problems, JSON.stringify(inv.problems.slice(0, 8))).toEqual([]);
+    if (inv.problems.length) L.note("real-clock-problems", "what the layout check found", inv.problems.slice(0, 12));
+    expect(inv.problems).toEqual([]);
     return { chips: inv.chips, errors: errors.length };
   });
 
@@ -416,7 +422,11 @@ try {
         await phone.goto("/dashboard/timetable");
         await kept.stop();
         await phone.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-        if (errors.length > before) L.note(`phone-${width}-hydration`, "server HTML against the browser render: what only one of them has", await hydrationDiff(phone, await kept.html()));
+        await phone.waitForTimeout(3_000);
+        if (errors.length > before) {
+          L.note(`phone-${width}-hydration`, "server HTML against the browser render: what only one of them has", await hydrationDiff(phone, await kept.html()));
+          L.note(`phone-${width}-structure`, "server HTML against the browser render: where the elements part", await structureDiff(phone, await kept.html()));
+        }
         await phone.getByRole("tab", { name: /^Mon/ }).click();
         const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
         const rows = agenda.getByRole("button", { name: /^Edit / });

@@ -397,7 +397,10 @@ try {
     const booked = {};
     let n = 0;
     // One Monday class booked, so a filled block is measured too.
-    const [{ id: bookId }] = await q(`select id from "Class" where "tenantId" = $1 and name = 'Advanced Gi + Sparring'`, [club.tenantId]);
+    // The poster has an "Advanced Gi + Sparring" on Monday and another on Thursday: book Monday's.
+    const mondays = await q(`select c.id from "Class" c join "ClassSchedule" s on s."classId" = c.id where c."tenantId" = $1 and c.name = 'Advanced Gi + Sparring' and s."dayOfWeek" = 1 and s."isActive" = true`, [club.tenantId]);
+    expect(mondays).toHaveLength(1);
+    const bookId = mondays[0].id;
     {
       const { ctx: bctx, page } = await memberPage(browser, 390, "10.95.7.99", member);
       try {
@@ -438,7 +441,10 @@ try {
             booked: await day.locator("button[data-booked]").count(),
             named: await day.getByRole("button", { name: /^Advanced Gi \+ Sparring,/ }).count(),
           });
-          await expect.poll(async () => (await seen()).booked, { message: JSON.stringify({ bookId, ...(await seen()) }) }).toBeGreaterThan(0);
+          await expect.poll(async () => (await seen()).booked).toBeGreaterThan(0).catch(async (e) => {
+            L.note("member-booked-missing", "no booked block on the members' Monday: what the page had", { bookId, ...(await seen()) });
+            throw e;
+          });
           for (let i = 0; i < (await filled.count()); i++) booked[`${shell} ${hex}`] = Math.min(booked[`${shell} ${hex}`] ?? 99, await contrast(filled.nth(i)));
           // The fallen-back Monday (five at 09:00 sit beside two mats) is by time: its '+N more' and panel.
           const more = pane.getByTestId("schedule-more");

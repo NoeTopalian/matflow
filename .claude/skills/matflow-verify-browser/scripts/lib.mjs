@@ -521,6 +521,39 @@ export function hydrationDiff(page, html) {
 }
 
 /**
+ * The elements hydrationDiff cannot see: under every element with a test id that both the server's HTML and the
+ * page have, the run of elements (tag and attribute names, not values) side by side, and the first place they part.
+ * A #418 that leaves every name and text the same is an element one side has and the other has not. A NOTE.
+ */
+export function structureDiff(page, html) {
+  return page.evaluate((html) => {
+    const shape = (el) => {
+      const names = [...el.attributes].map((a) => a.name).filter((n) => n !== "class" && n !== "style").sort();
+      return `${el.tagName.toLowerCase()}[${names.join(",")}]`;
+    };
+    const run = (root) => [...root.querySelectorAll("*")].filter((e) => !e.closest("script, style, template, noscript")).map(shape);
+    const serverDoc = new DOMParser().parseFromString(html ?? "", "text/html");
+    const out = [];
+    const seen = new Map();
+    for (const s of serverDoc.querySelectorAll("[data-testid]")) {
+      const id = s.getAttribute("data-testid");
+      const i = seen.get(id) ?? 0;
+      seen.set(id, i + 1);
+      const c = document.querySelectorAll(`[data-testid="${CSS.escape(id)}"]`)[i];
+      if (!c) { out.push({ testid: id, index: i, only: "server" }); continue; }
+      const a = run(s), b = run(c);
+      const at = a.findIndex((x, k) => x !== b[k]);
+      if (at !== -1 || a.length !== b.length) {
+        const k = at === -1 ? Math.min(a.length, b.length) : at;
+        out.push({ testid: id, index: i, server: a.length, browser: b.length, at: k, serverHas: a.slice(k, k + 3), browserHas: b.slice(k, k + 3) });
+      }
+    }
+    // The smallest differing regions first: they name the element.
+    return out.sort((x, y) => (x.server ?? 0) - (y.server ?? 0)).slice(0, 10);
+  }, html);
+}
+
+/**
  * Waits until React has taken the week over and drawn it on the BROWSER's clock. With the clock frozen, the server's
  * HTML (real clock) and the first client render (frozen clock) disagree: React reports #418 and replaces the nodes.
  * Anything focused or measured before that is on nodes about to be thrown away. `liveAt` is a start time ("18:40") of
