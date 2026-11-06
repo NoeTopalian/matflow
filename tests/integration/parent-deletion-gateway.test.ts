@@ -68,6 +68,7 @@ function rawDeleteReq(id: string, qs: string): Request {
 
 describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
   let tenantId: string;
+  let ownerId = "";
 
   // Each test seeds its own parent + kids so cases stay independent.
   async function seedParentWithKids(suffix: string, kidCount = 2) {
@@ -104,9 +105,11 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
         data: { name: "ParentDelGateway", slug: `pdg-${STAMP}-${Math.random().toString(36).slice(2, 8)}` },
       });
       tenantId = t.id;
+      // PR 3: the archive records WHO archived (Member.archivedById → User), so the session is a real owner row.
+      ownerId = (await tx.user.create({ data: { tenantId: t.id, email: `pdg-owner-${t.id}@example.test`, name: "PDG Owner", role: "owner", passwordHash: "x" } })).id;
     });
     mockAuth.mockResolvedValue({
-      user: { id: "u-owner", tenantId, role: "owner", email: "o@x" },
+      user: { id: ownerId, tenantId, role: "owner", email: "o@x" },
     } as never);
   });
 
@@ -115,6 +118,12 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     // cleans up any leftovers from interrupted runs.
     await withRlsBypass((tx) =>
       tx.member.deleteMany({ where: { email: { contains: `-${STAMP}@` } } }),
+    );
+    await withRlsBypass((tx) =>
+      tx.member.deleteMany({ where: { tenant: { slug: { startsWith: `pdg-${STAMP}-` } } } }),
+    );
+    await withRlsBypass((tx) =>
+      tx.user.deleteMany({ where: { tenant: { slug: { startsWith: `pdg-${STAMP}-` } } } }),
     );
     await withRlsBypass((tx) =>
       tx.tenant.deleteMany({ where: { slug: { startsWith: `pdg-${STAMP}-` } } }),

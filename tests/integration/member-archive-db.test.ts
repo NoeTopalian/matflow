@@ -298,7 +298,7 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     expect(body).toMatchObject({ id: janeId, restored: true });
     const after = await rows();
     expect(after).toHaveLength(1);
-    expect(after[0]).toMatchObject({ id: janeId, archivedAt: null, phone: "07000 000111" });
+    expect(after[0]).toMatchObject({ id: janeId, archivedAt: null, phone: "+447000000111" }); // the phone the form typed, stored in its normal form
     expect(await withRlsBypass((tx) => tx.attendanceRecord.count({ where: { memberId: janeId } }))).toBe(1);
     const audit = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: ids.tenant, action: "member.restore", entityId: janeId } }));
     expect(audit?.userId).toBe(ids.owner);
