@@ -78,7 +78,7 @@ describe("MemberSearchPicker", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
-    expect(pending.map((p) => p.url)).toEqual(["/api/members?search=me&take=8"]);
+    expect(pending.map((p) => p.url)).toEqual(["/api/members?search=me&take=8&includeArchived=1"]);
   });
 
   it("lists the matches, says how many, and marks a child account and a cancelled member", async () => {
