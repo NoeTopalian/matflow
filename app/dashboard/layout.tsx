@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
@@ -30,23 +31,36 @@ export default async function DashboardLayout({
   // /set-password (outside this layout, so it cannot loop).
   // S3 (6 Nov 2026): the layout's reads share ONE tenant transaction (were up
   // to three). Best effort as before: a failed read renders the shell without
-  // the club's logo or banners rather than failing every dashboard page.
-  const { gate, tenant, lastImport } = await withTenantContext(session.user.tenantId, async (tx) => {
-    const gate = await tx.user.findFirst({ where: { id: session.user.id, tenantId: session.user.tenantId }, select: { mustChangePassword: true } });
-    const tenant = await tx.tenant.findUnique({
-      where: { id: session.user.tenantId },
-      select: { logoUrl: true, logoSize: true, onboardingCompleted: true, reviewLockedAt: true, reviewSnapshotAt: true, reviewNote: true },
-    });
-    // Review mode: name the platform the data came from, when an import says so.
-    const lastImport = tenant?.reviewLockedAt
-      ? await tx.importJob.findFirst({
-          where: { tenantId: session.user.tenantId, status: "complete", rolledBackAt: null },
-          orderBy: { createdAt: "desc" },
-          select: { source: true },
-        })
-      : null;
-    return { gate, tenant, lastImport };
-  }).catch(() => ({ gate: null, tenant: null, lastImport: null }));
+  // the club's logo or banners rather than failing every dashboard page. Each
+  // result is kept the moment its read succeeds, so a later read failing (the
+  // transaction then aborts) never drops an earlier answer — the password gate
+  // above all.
+  const read = await (async () => {
+    const readTenant = (tx: Prisma.TransactionClient) =>
+      tx.tenant.findUnique({
+        where: { id: session.user.tenantId },
+        select: { logoUrl: true, logoSize: true, onboardingCompleted: true, reviewLockedAt: true, reviewSnapshotAt: true, reviewNote: true },
+      });
+    const got: {
+      gate?: { mustChangePassword: boolean } | null;
+      tenant?: Awaited<ReturnType<typeof readTenant>>;
+      lastImport?: { source: string } | null;
+    } = {};
+    await withTenantContext(session.user.tenantId, async (tx) => {
+      got.gate = await tx.user.findFirst({ where: { id: session.user.id, tenantId: session.user.tenantId }, select: { mustChangePassword: true } });
+      got.tenant = await readTenant(tx);
+      // Review mode: name the platform the data came from, when an import says so.
+      got.lastImport = got.tenant?.reviewLockedAt
+        ? await tx.importJob.findFirst({
+            where: { tenantId: session.user.tenantId, status: "complete", rolledBackAt: null },
+            orderBy: { createdAt: "desc" },
+            select: { source: true },
+          })
+        : null;
+    }).catch(() => undefined);
+    return { gate: got.gate ?? null, tenant: got.tenant ?? null, lastImport: got.lastImport ?? null };
+  })();
+  const { gate, tenant, lastImport } = read;
   if (gate?.mustChangePassword) redirect("/set-password");
 
   const SOURCE_NAMES: Record<string, string> = { teamup: "TeamUp", mindbody: "Mindbody", glofox: "Glofox", wodify: "Wodify" };
