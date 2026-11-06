@@ -1,10 +1,12 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
+import { isTenantBlobUrl } from "@/lib/blob-url";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
+import { del } from "@vercel/blob";
 
 const updateSchema = z.object({
   title: z.string().min(1).max(120).optional(),
@@ -96,14 +98,28 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { id } = await params;
 
   try {
-    // The announcement's image file is kept in storage (product rule, Noe,
-    // 6 Nov 2026: "nothing should be automatically deleted"); only the row goes.
+    // Read imageUrl before deleting so we can clean up the blob
+    const existing = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.announcement.findFirst({
+        where: { id, tenantId: session.user.tenantId },
+        select: { imageUrl: true },
+      }),
+    );
+
     const result = await withTenantContext(session.user.tenantId, (tx) =>
       tx.announcement.deleteMany({ where: { id, tenantId: session.user.tenantId } }),
     );
 
     if (result.count === 0) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    if (existing?.imageUrl && isTenantBlobUrl(existing.imageUrl, session.user.tenantId)) {
+      try {
+        await del(existing.imageUrl);
+      } catch (e) {
+        console.warn("[announcements/delete] orphan blob cleanup failed:", e);
+      }
     }
 
     await logAudit({

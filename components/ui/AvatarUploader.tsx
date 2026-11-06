@@ -93,9 +93,16 @@ export function AvatarUploader({
         body: JSON.stringify({ url }),
       });
       if (!putRes.ok) {
-        // The uploaded photo is kept even though it was not saved: nothing is
-        // deleted automatically (product rule, Noe, 6 Nov 2026). It used to be
-        // sent to /api/upload/delete-orphan here.
+        // Lane 1 iter-1 V-01 [Critical] fix: PUT failed AFTER the blob was
+        // uploaded. The blob is now orphaned (Vercel Blob has no GC sweep) —
+        // fire a best-effort cleanup so we don't accumulate storage bloat.
+        // Errors here are intentionally swallowed: surfacing them would mask
+        // the original PUT failure that the user actually cares about.
+        void fetch("/api/upload/delete-orphan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        }).catch(() => {});
         const j = (await putRes.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error || "Save failed");
       }
