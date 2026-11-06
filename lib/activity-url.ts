@@ -20,11 +20,28 @@ export type ActivityFilters = {
   tierId: string | null;
   /** Done by this staff member. */
   userId: string | null;
+  /** Done by which kind of actor: staff, members, automatic or MatFlow support (owner only). Null is everyone. */
+  by: ActorKind | null;
   /** "YYYY-MM-DD": show activity up to the end of this club day. Null is today. */
   day: string | null;
 };
 
-const KEYS: (keyof ActivityFilters)[] = ["types", "memberId", "classId", "paymentId", "tierId", "userId", "day"];
+const KEYS: (keyof ActivityFilters)[] = ["types", "memberId", "classId", "paymentId", "tierId", "userId", "by", "day"];
+
+/** "Done by", by kind. The words are the filter's; which rows each holds is decided on the server (lib/activity-feed.ts actorKindWhere). */
+export type ActorKind = "staff" | "members" | "automatic" | "support";
+export const ACTOR_KINDS: { key: ActorKind; label: string; ownerOnly: boolean }[] = [
+  { key: "staff", label: "Staff", ownerOnly: false },
+  { key: "members", label: "Members", ownerOnly: false },
+  { key: "automatic", label: "Automatic", ownerOnly: false },
+  { key: "support", label: "MatFlow support", ownerOnly: true },
+];
+
+/** A kind this reader may ask for, or null (everyone). MatFlow support is the owner's alone (D2). */
+export function parseActorKind(raw: string | null | undefined, role: ActivityRole): ActorKind | null {
+  const kind = ACTOR_KINDS.find((k) => k.key === raw?.trim());
+  return kind && (!kind.ownerOnly || role === "owner") ? kind.key : null;
+}
 
 type Params = { get(name: string): string | null; toString(): string };
 
@@ -44,7 +61,8 @@ function dayKeyOf(raw: string | null): string | null {
 export function readFilters(params: Params): ActivityFilters {
   const text = (key: keyof ActivityFilters) => params.get(key)?.trim() || null;
   const id = (key: keyof ActivityFilters) => parseIdParam(text(key));
-  return { types: text("types"), memberId: id("memberId"), classId: id("classId"), paymentId: id("paymentId"), tierId: id("tierId"), userId: id("userId"), day: dayKeyOf(text("day")) };
+  const by = ACTOR_KINDS.find((k) => k.key === text("by"))?.key ?? null;
+  return { types: text("types"), memberId: id("memberId"), classId: id("classId"), paymentId: id("paymentId"), tierId: id("tierId"), userId: id("userId"), by, day: dayKeyOf(text("day")) };
 }
 
 /**
@@ -65,11 +83,11 @@ export function writeFilters(search: string, patch: Partial<ActivityFilters>): s
 }
 
 /** Everything a filter change resets: the way back to "what happened in my club today". */
-export const NO_FILTERS: ActivityFilters = { types: null, memberId: null, classId: null, paymentId: null, tierId: null, userId: null, day: null };
+export const NO_FILTERS: ActivityFilters = { types: null, memberId: null, classId: null, paymentId: null, tierId: null, userId: null, by: null, day: null };
 
 /** True when anything narrows the timeline beyond the chosen activity types. */
 export function hasSubjectFilter(filters: ActivityFilters): boolean {
-  return Boolean(filters.memberId || filters.classId || filters.paymentId || filters.tierId || filters.userId);
+  return Boolean(filters.memberId || filters.classId || filters.paymentId || filters.tierId || filters.userId || filters.by);
 }
 
 /** The view whose types are exactly these, if any — so a hand-built selection that equals "Money" lights the Money chip. */
@@ -112,7 +130,7 @@ export function dayHeading(dayKey: string, todayKey: string): string {
 export function apiQuery(filters: ActivityFilters, opts: { types: string; cursor?: string | null; take?: number; embed?: boolean }): string {
   const params = new URLSearchParams();
   params.set("types", opts.types);
-  for (const key of ["memberId", "classId", "paymentId", "tierId", "userId", "day"] as const) {
+  for (const key of ["memberId", "classId", "paymentId", "tierId", "userId", "by", "day"] as const) {
     const value = filters[key];
     if (value) params.set(key, value);
   }

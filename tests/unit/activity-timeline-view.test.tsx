@@ -106,6 +106,17 @@ afterEach(() => {
 
 const renderPage = (role: "owner" | "manager" = "owner", viewerId = OWNER) => render(<ActivityTimeline variant="page" role={role} viewerId={viewerId} staff={STAFF} tiers={TIERS} />);
 const table = () => screen.getByRole("table");
+const tab = (name: string) => screen.getByRole("tab", { name });
+/** Opens Filters; returns the sheet. */
+const openFilters = () => {
+  fireEvent.click(screen.getByTestId("filters-button"));
+  return screen.getByRole("dialog", { name: "Filters" });
+};
+/** Opens the day sheet; returns it. */
+const openDay = () => {
+  fireEvent.click(screen.getByTestId("date-button"));
+  return screen.getByRole("dialog", { name: "Jump to date" });
+};
 const loaded = () => waitFor(() => expect(screen.getByTestId("activity-status").textContent).not.toBe(""));
 /** The screen-reader status line, which repeats the empty state's title. */
 const STATUS = '[data-testid="activity-status"]';
@@ -132,24 +143,24 @@ describe("first load", () => {
     // 19:45 UTC is 19:45 in London in November: the club's clock, whatever the reader's is.
     expect(within(table()).getAllByText("19:45").length).toBe(1);
     expect(screen.getByTestId("activity-status").textContent).toBe("Showing 3 activities");
-    expect(screen.getByRole("button", { name: "Club activity" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByTestId("types-trigger").textContent).toBe("Club activity");
+    expect(tab("Club activity").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("date-button").textContent).toBe("Today");
   });
 
   it("the owner has an Undo column; a manager has none, and sees only their own types in the sheet", async () => {
     respond = () => ({ status: 200, body: body([entry({ undo: { ok: true, sinceHere: null } })]) });
     const owner = renderPage("owner");
     await loaded();
-    expect([...table().querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["When", "Type", "What happened", "Undo"]);
+    expect([...table().querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["When", "What happened", "Undo"]);
     expect(within(table()).getByRole("button", { name: "Undo: Melody Orekoya checked in" })).toBeTruthy();
     owner.unmount();
 
     respond = () => ({ status: 200, body: body([entry()]) });
     renderPage("manager", "u_manager");
     await loaded();
-    expect([...table().querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["When", "Type", "What happened"]);
+    expect([...table().querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["When", "What happened"]);
     expect(screen.queryByText(/Undo puts the recorded details back/)).toBeNull();
-    fireEvent.click(screen.getByTestId("types-trigger"));
+    fireEvent.click(within(openFilters()).getByTestId("types-trigger"));
     const sheet = screen.getByRole("dialog", { name: "Activity types" });
     expect(within(sheet).queryByText("Staff accounts")).toBeNull();
     expect(within(sheet).queryByText("MatFlow support")).toBeNull();
@@ -157,12 +168,13 @@ describe("first load", () => {
     expect(within(sheet).getByTestId("types-count").textContent).toBe(`${defaultTypeKeys("manager").length} of ${visibleTypeKeys("manager").length} selected`);
   });
 
-  it("marks a row MatFlow support made, the same way in the table and on the phone card", async () => {
+  it("marks a row MatFlow support made, the same way in the table and on the card — but not when its type already says so", async () => {
     respond = () => ({
       status: 200,
       body: body([
         entry({ id: "support", type: "member_updated", parts: [{ text: "MatFlow support updated " }, { ...member("Melody Orekoya", "m_mel"), possessive: true }, { text: " details" }], plain: "MatFlow support updated Melody Orekoya's details", source: { label: "MatFlow support", staff: null, support: true } }),
         entry({ id: "own", type: "member_updated", source: { label: "Staff", staff: { id: "u_jack", name: "Jack Streeter" }, support: false } }),
+        entry({ id: "typed", type: "support", parts: [{ text: "MatFlow issued the owner a temporary password" }], plain: "MatFlow issued the owner a temporary password", detail: [{ text: "Reason: reset" }], detailPlain: "Reason: reset", source: { label: "MatFlow support", staff: null, support: true } }),
       ]),
     });
     renderPage();
@@ -170,13 +182,143 @@ describe("first load", () => {
     const pills = within(table()).getAllByText("by MatFlow support");
     expect(pills).toHaveLength(1);
     expect(pills[0].getAttribute("title")).toMatch(/made by MatFlow support/);
-    const [supportCard, ownCard] = screen.getAllByTestId("activity-card");
+    const [supportCard, ownCard, typedCard] = screen.getAllByTestId("activity-card");
     expect(within(supportCard).getByText("by MatFlow support").getAttribute("title")).toBe(pills[0].getAttribute("title"));
     expect(within(ownCard).queryByText("by MatFlow support")).toBeNull();
-    // The possessive sits outside the link, and the staff member in the source line is a link to their activity.
+    // A row whose type is MatFlow support says so once, in its type; the reason sits on its own line under the headline.
+    expect(within(typedCard).queryByText("by MatFlow support")).toBeNull();
+    expect(within(typedCard).getByText("MatFlow support")).toBeTruthy();
+    expect(within(typedCard).getByTestId("activity-detail").textContent).toBe("Reason: reset");
+    // The possessive sits outside the link, and who did it is a last line, "By …", linking to their activity.
     expect(within(supportCard).getByText("Melody Orekoya").textContent).toBe("Melody Orekoya");
     expect(supportCard.textContent).toContain("Melody Orekoya's details");
+    expect(within(ownCard).getByTestId("activity-source").textContent).toBe("By Jack Streeter");
     expect(within(ownCard).getByText("Jack Streeter").getAttribute("href")).toBe("/dashboard/activity?userId=u_jack");
+  });
+});
+
+describe("how a row is laid out", () => {
+  const changes3 = [
+    { label: "For children", from: "off", to: "on" },
+    { label: "Price", from: "£30.00", to: "£35.00" },
+    { label: "Classes allowed", from: "Unlimited", to: "1 every week" },
+  ];
+  const joined = (list: { label: string; from: string | null; to: string | null }[]) => list.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(" · ");
+  const planRow = (over: Partial<FeedEntry> = {}) =>
+    entry({
+      id: "plan",
+      type: "plan_setup",
+      parts: [{ text: "Updated a membership plan — " }, { subject: { kind: "tier", name: "Kids Once A Week Membership (OLD)", href: "/dashboard/memberships" } }],
+      plain: "Updated a membership plan — Kids Once A Week Membership (OLD)",
+      changes: changes3,
+      detail: [{ text: joined(changes3) }],
+      detailPlain: joined(changes3),
+      source: { label: "Staff", staff: { id: OWNER, name: "Sean Coates" }, support: false },
+      ...over,
+    });
+  const firstRow = () => table().querySelector("tbody tr:not([data-section])") as HTMLElement;
+
+  it("three changes are a list of three, in sentence case, with no ' · ' anywhere in the row", async () => {
+    respond = () => ({ status: 200, body: body([planRow()]) });
+    renderPage();
+    await loaded();
+    const tr = firstRow();
+    const items = [...tr.querySelectorAll('[data-testid="activity-changes"] li')].map((li) => li.textContent);
+    expect(items).toEqual(["For children: Off → On", "Price: £30.00 → £35.00", "Classes allowed: Unlimited → 1 every week"]);
+    expect(tr.textContent).not.toContain(" · ");
+    // Names exactly as the club wrote them, "(OLD)" included; who did it is the last line.
+    expect(within(tr).getByText("Kids Once A Week Membership (OLD)")).toBeTruthy();
+    expect(within(tr).getByTestId("activity-source").textContent).toBe("By Sean Coates");
+    // The thin first column holds the time, and the type under it.
+    expect(tr.querySelector("td")!.textContent).toBe("19:45Plans and packs (set-up)");
+  });
+
+  it("only MatFlow's own words get a capital: what the club wrote is shown exactly, a case-only rename included", async () => {
+    const changes = [
+      { label: "For children", from: "off", to: "on" },
+      { label: "Name", from: "kids", to: "Kids" },
+      { label: "Surname", from: "de Souza", to: "De Souza" },
+      { label: "Device", from: "iPhone", to: "iPad" },
+      { label: "Classes allowed", from: "unlimited", to: "2" },
+    ];
+    respond = () => ({ status: 200, body: body([planRow({ changes, detail: [{ text: joined(changes) }] })]) });
+    renderPage();
+    await loaded();
+    expect([...firstRow().querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "For children: Off → On",
+      "Name: kids → Kids",
+      "Surname: de Souza → De Souza",
+      "Device: iPhone → iPad",
+      "Classes allowed: Unlimited → 2",
+    ]);
+  });
+
+  it("a reason and the changes: the reason on its own line, the changes as bullets", async () => {
+    respond = () => ({ status: 200, body: body([planRow({ detail: [{ text: "Phone: 0771 → 0772 · Reason: wrong number" }], changes: [{ label: "Phone", from: "0771", to: "0772" }] })]) });
+    renderPage();
+    await loaded();
+    const tr = firstRow();
+    expect(within(tr).getByTestId("activity-detail").textContent).toBe("Reason: wrong number");
+    expect([...tr.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["Phone: 0771 → 0772"]);
+  });
+
+  it("nine changes show six and 'Show all 9 changes'; eight show all eight", async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => ({ label: `Field ${i + 1}`, from: "a", to: "b" }));
+    respond = () => ({
+      status: 200,
+      body: body([planRow({ id: "nine", changes: nine, detail: [{ text: joined(nine) }] }), planRow({ id: "eight", changes: nine.slice(0, 8), detail: [{ text: joined(nine.slice(0, 8)) }] })]),
+    });
+    renderPage();
+    await loaded();
+    const [nineRow, eightRow] = [...table().querySelectorAll("tbody tr:not([data-section])")] as HTMLElement[];
+    expect(nineRow.querySelectorAll("li")).toHaveLength(6);
+    expect(eightRow.querySelectorAll("li")).toHaveLength(8);
+    expect(within(eightRow).queryByRole("button", { name: /Show all/ })).toBeNull();
+    const more = within(nineRow).getByRole("button", { name: "Show all 9 changes" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    expect(nineRow.querySelectorAll("li")).toHaveLength(9);
+    expect(within(nineRow).getByRole("button", { name: "Show fewer changes" })).toBeTruthy();
+  });
+
+  it("a manager, who may not see the values, gets 'Label changed' bullets", async () => {
+    const hidden = changes3.map((c) => ({ label: c.label, from: null, to: null }));
+    respond = () => ({ status: 200, body: body([planRow({ type: "member_updated", changes: hidden, detail: [{ text: `Fields: ${hidden.map((c) => c.label).join(", ")}` }] })]) });
+    renderPage("manager", "u_manager");
+    await loaded();
+    const tr = firstRow();
+    expect([...tr.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["For children changed", "Price changed", "Classes allowed changed"]);
+    expect(tr.textContent).not.toMatch(/→|Fields:/);
+  });
+
+  it("a change the sentence already says is not repeated as a bullet; detail the page does not recognise stays as sent", async () => {
+    respond = () => ({
+      status: 200,
+      body: body([planRow({ id: "told", detail: null, detailPlain: null, changes: [{ label: "Status", from: "Active", to: "Cancelled" }] }), planRow({ id: "pack", detail: [{ text: "Used a class pack credit · 3 left" }], changes: null })]),
+    });
+    renderPage();
+    await loaded();
+    const [told, pack] = [...table().querySelectorAll("tbody tr:not([data-section])")] as HTMLElement[];
+    expect(told.querySelector("ul")).toBeNull();
+    expect(within(pack).getByTestId("activity-detail").textContent).toBe("Used a class pack credit · 3 left");
+  });
+
+  it("the table has three columns, and below 1024px the rows are cards (the table from lg: up)", async () => {
+    respond = () => ({ status: 200, body: body([planRow()]) });
+    renderPage();
+    await loaded();
+    expect(table().querySelectorAll("thead th")).toHaveLength(3);
+    // jsdom has no layout: the breakpoint is the class on each half.
+    const tableHalf = table().closest("div.hidden")!;
+    expect(tableHalf.className).toContain("lg:block");
+    expect(tableHalf.className).not.toContain("sm:block");
+    const cardHalf = screen.getAllByTestId("activity-card")[0].closest(".space-y-2")!;
+    expect(cardHalf.className).toContain("lg:hidden");
+    expect(cardHalf.className).not.toContain("sm:hidden");
+    // A card: time · type on top, then the same description and bullets.
+    const card = screen.getAllByTestId("activity-card")[0];
+    expect(card.firstElementChild!.textContent).toBe("19:45·Plans and packs (set-up)");
+    expect(card.querySelectorAll("li")).toHaveLength(3);
   });
 });
 
@@ -188,22 +330,67 @@ describe("the address bar is the filter", () => {
     await loaded();
     const q = lastQuery();
     expect([q.get("types"), q.get("memberId"), q.get("userId"), q.get("day")]).toEqual(["money", "m_mel", "u_jack", "2026-11-03"]);
-    expect(screen.getByTestId("activity-summary").textContent).toContain("Money · Melody Orekoya · done by Jack Streeter · up to 3 Nov 2026");
     expect(screen.getByRole("heading", { name: "Activity for Melody Orekoya" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open profile" }).getAttribute("href")).toBe("/dashboard/members/m_mel");
-    expect(screen.getByRole("button", { name: "Money" }).getAttribute("aria-pressed")).toBe("true");
+    expect(tab("Money").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("member-picked").textContent).toContain("Melody Orekoya");
+    expect(screen.getByTestId("date-button").textContent).toBe("Tue 3 Nov");
+    expect(screen.getByRole("button", { name: "Remove filter: Done by: Jack Streeter" })).toBeTruthy();
+    expect(screen.getByTestId("filters-button").textContent).toBe("Filters (1)");
+    expect(table().querySelector("caption")!.textContent).toBe("Activity: Money, Melody Orekoya, done by Jack Streeter, up to 3 Nov 2026");
   });
 
-  it("a view chip rewrites the address and asks again; nothing is kept anywhere else", async () => {
+  it("an old copied link with types, a plan, a staff member and a day restores the same view", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=checkin,refund&tierId=t_adult&userId=u_jack&day=2026-11-04");
+    respond = () => ({ status: 200, body: body([entry()]) });
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "Money" }));
+    const q = lastQuery();
+    expect([q.get("types"), q.get("tierId"), q.get("userId"), q.get("day")]).toEqual(["checkin,refund", "t_adult", "u_jack", "2026-11-04"]);
+    // Hand-picked types match no tab: none is selected, and the choice is a chip.
+    expect(screen.getAllByRole("tab").filter((t) => t.getAttribute("aria-selected") === "true")).toHaveLength(0);
+    const chips = within(screen.getByTestId("activity-chips"));
+    expect(chips.getAllByRole("button").map((b) => b.textContent)).toEqual(["Types: 2 activity types", "Plan: Adult Unlimited", "Done by: Jack Streeter", "Clear all"]);
+    expect(screen.getByTestId("date-button").textContent).toBe("Yesterday");
+    expect(screen.getByTestId("filters-button").textContent).toBe("Filters (3)");
+    // The same choices are what the Filters sheet starts from.
+    const sheet = openFilters();
+    expect((within(sheet).getByLabelText("Plan") as HTMLSelectElement).value).toBe("t_adult");
+    expect((within(sheet).getByLabelText("Done by") as HTMLSelectElement).value).toBe("");
+    expect((within(sheet).getByLabelText("Staff member") as HTMLSelectElement).value).toBe("u_jack");
+    expect(within(sheet).getByTestId("types-trigger").textContent).toBe("2 activity types");
+  });
+
+  it("a tab rewrites the address and asks again; nothing is kept anywhere else", async () => {
+    renderPage();
+    await loaded();
+    fireEvent.click(tab("Money"));
     expect(window.location.search).toBe("?types=money");
     await waitFor(() => expect(activityCalls()).toHaveLength(2));
     expect(lastQuery().get("types")).toBe("money");
     // Back to the default: the address says nothing, because nothing needs saying.
-    fireEvent.click(screen.getByRole("button", { name: "Club activity" }));
+    fireEvent.click(tab("Club activity"));
+    expect(window.location.search).toBe("");
+  });
+
+  it("the views are a tab bar: one tab selected, one keyboard stop, arrow keys move and choose", async () => {
+    renderPage();
+    await loaded();
+    const list = screen.getByRole("tablist", { name: "Views" });
+    const tabs = within(list).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Club activity", "Attendance", "Money", "Staff changes", "Everything"]);
+    expect(tabs.filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent)).toEqual(["Club activity"]);
+    expect(tabs.map((t) => t.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    tabs[0].focus();
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabs[1]);
+    expect(window.location.search).toBe("?types=attendance");
+    await waitFor(() => expect(tab("Attendance").getAttribute("aria-selected")).toBe("true"));
+    fireEvent.keyDown(tabs[1], { key: "End" });
+    expect(document.activeElement).toBe(tabs[4]);
+    expect(window.location.search).toBe("?types=all");
+    fireEvent.keyDown(tabs[4], { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabs[0]);
     expect(window.location.search).toBe("");
   });
 
@@ -214,49 +401,108 @@ describe("the address bar is the filter", () => {
     await waitFor(() => expect(lastQuery().get("userId")).toBe("u_jack"));
   });
 
-  it("two changes made inside a moment both land in the address, and one request follows", async () => {
+  it("Filters is staged: Plan and Done by change nothing until Show activity, then land in the address together with one request", async () => {
     renderPage();
     await loaded();
-    fireEvent.change(screen.getAllByLabelText("Plan")[0], { target: { value: "t_adult" } });
-    fireEvent.change(screen.getAllByLabelText("Done by")[0], { target: { value: "u_jack" } });
+    let sheet = openFilters();
+    fireEvent.change(within(sheet).getByLabelText("Plan"), { target: { value: "t_adult" } });
+    fireEvent.change(within(sheet).getByLabelText("Staff member"), { target: { value: "u_jack" } });
+    expect(within(sheet).getByText("Activity that names this plan.")).toBeTruthy();
+    expect(window.location.search).toBe("");
+    // Escape leaves the page as it was.
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull());
+    expect(window.location.search).toBe("");
+    sheet = openFilters();
+    expect((within(sheet).getByLabelText("Plan") as HTMLSelectElement).value).toBe("");
+    fireEvent.change(within(sheet).getByLabelText("Plan"), { target: { value: "t_adult" } });
+    fireEvent.change(within(sheet).getByLabelText("Staff member"), { target: { value: "u_jack" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Show activity" }));
     expect(window.location.search).toBe("?tierId=t_adult&userId=u_jack");
     await waitFor(() => expect(activityCalls()).toHaveLength(2));
     expect([lastQuery().get("tierId"), lastQuery().get("userId")]).toEqual(["t_adult", "u_jack"]);
+    expect(screen.getByTestId("filters-button").textContent).toBe("Filters (2)");
   });
 
-  it("Jump to date sets an absolute day, steps by a day, and Today clears it", async () => {
+  it("Done by offers Everyone, Staff, Members and Automatic — and MatFlow support for the owner only; the choice is in the address", async () => {
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "Yesterday" }));
-    expect(window.location.search).toBe("?day=2026-11-04");
-    fireEvent.click(screen.getByRole("button", { name: "Previous day" }));
-    expect(window.location.search).toBe("?day=2026-11-03");
-    fireEvent.change(screen.getByLabelText("Jump to date"), { target: { value: "2026-10-01" } });
-    expect(window.location.search).toBe("?day=2026-10-01");
-    fireEvent.click(screen.getByRole("button", { name: "Today" }));
-    expect(window.location.search).toBe("");
-    expect((screen.getByRole("button", { name: "Next day" }) as HTMLButtonElement).disabled).toBe(true);
+    let sheet = openFilters();
+    const kinds = () => [...(within(sheet).getByLabelText("Done by") as HTMLSelectElement).options].map((o) => o.textContent);
+    expect(kinds()).toEqual(["Everyone", "Staff", "Members", "Automatic", "MatFlow support"]);
+    // One staff member narrows within Staff; it is there for Everyone and Staff only.
+    fireEvent.change(within(sheet).getByLabelText("Staff member"), { target: { value: "u_jack" } });
+    fireEvent.change(within(sheet).getByLabelText("Done by"), { target: { value: "members" } });
+    expect(within(sheet).queryByLabelText("Staff member")).toBeNull();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Show activity" }));
+    expect(window.location.search).toBe("?by=members");
+    await waitFor(() => expect(lastQuery().get("by")).toBe("members"));
+    expect(lastQuery().get("userId")).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove filter: Done by: Members" })).toBeTruthy();
+    expect(screen.getByTestId("filters-button").textContent).toBe("Filters (1)");
+    sheet = openFilters();
+    expect((within(sheet).getByLabelText("Done by") as HTMLSelectElement).value).toBe("members");
+    fireEvent.change(within(sheet).getByLabelText("Done by"), { target: { value: "staff" } });
+    fireEvent.change(within(sheet).getByLabelText("Staff member"), { target: { value: "u_jack" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Show activity" }));
+    expect(window.location.search).toBe("?by=staff&userId=u_jack");
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter: Done by: Staff" }));
+    expect(window.location.search).toBe("?userId=u_jack");
   });
 
-  it("Jump to date does nothing until the club's day is known, and keeps a typed date inside the year the log holds", async () => {
+  it("a manager is not offered MatFlow support, and a link asking for it is not a filter for them", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?by=support");
+    respond = () => ({ status: 200, body: body([entry()]) });
+    renderPage("manager", "u_manager");
+    await loaded();
+    expect(lastQuery().get("by")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Done by: MatFlow support/ })).toBeNull();
+    expect(screen.getByTestId("filters-button").textContent).toBe("Filters");
+    const sheet = openFilters();
+    const select = within(sheet).getByLabelText("Done by") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Everyone", "Staff", "Members", "Automatic"]);
+    expect(select.value).toBe("");
+  });
+
+  it("the day button opens a sheet: Yesterday closes it, the day steps and a typed date keep it open, Today clears the day", async () => {
+    renderPage();
+    await loaded();
+    expect(screen.getByRole("button", { name: "Day: Today" })).toBeTruthy();
+    fireEvent.click(within(openDay()).getByRole("button", { name: "Yesterday" }));
+    expect(window.location.search).toBe("?day=2026-11-04");
+    expect(screen.queryByRole("dialog", { name: "Jump to date" })).toBeNull();
+    expect(screen.getByTestId("date-button").textContent).toBe("Yesterday");
+    const sheet = openDay();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Previous day" }));
+    expect(window.location.search).toBe("?day=2026-11-03");
+    expect(screen.getByTestId("date-button").textContent).toBe("Tue 3 Nov");
+    fireEvent.change(within(sheet).getByLabelText("Jump to date"), { target: { value: "2026-10-01" } });
+    expect(window.location.search).toBe("?day=2026-10-01");
+    expect(screen.getByRole("dialog", { name: "Jump to date" })).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Today" }));
+    expect(window.location.search).toBe("");
+    expect((within(openDay()).getByRole("button", { name: "Next day" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the day button does nothing until the club's day is known, and keeps a typed date inside the year the log holds", async () => {
     let release: (answer: { status: number; body: unknown }) => void = () => {};
     respond = () => new Promise((resolve) => (release = resolve));
     renderPage();
     await waitFor(() => expect(activityCalls()).toHaveLength(1));
-    // Before the first answer the controls are drawn, in place, and inert.
-    for (const name of ["Today", "Yesterday", "Previous day", "Next day"]) expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled, name).toBe(true);
-    expect((screen.getByLabelText("Jump to date") as HTMLInputElement).disabled).toBe(true);
+    // Before the first answer the button is drawn, in place, and inert.
+    expect((screen.getByTestId("date-button") as HTMLButtonElement).disabled).toBe(true);
     await act(async () => {
       release({ status: 200, body: body([entry()]) });
       await Promise.resolve();
     });
     await loaded();
-    const date = screen.getByLabelText("Jump to date") as HTMLInputElement;
+    const sheet = openDay();
+    const date = within(sheet).getByLabelText("Jump to date") as HTMLInputElement;
     expect([date.min, date.max]).toEqual(["2025-11-05", "2026-11-05"]);
     // Earlier than the log reaches: the first day it holds. Later than today: today, which is no day at all.
     fireEvent.change(date, { target: { value: "2020-01-01" } });
     expect(window.location.search).toBe("?day=2025-11-05");
-    expect((screen.getByRole("button", { name: "Previous day" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(sheet).getByRole("button", { name: "Previous day" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(date, { target: { value: "2030-01-01" } });
     expect(window.location.search).toBe("");
     // Half a date is not a choice.
@@ -264,15 +510,34 @@ describe("the address bar is the filter", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("Reset filters is always there, disabled when there is nothing to reset", async () => {
+  it("'Clear all' only appears when something is filtered, and clears it all but the tab", async () => {
     renderPage();
     await loaded();
-    const reset = screen.getAllByRole("button", { name: "Reset filters" })[0] as HTMLButtonElement;
-    expect(reset.disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Attendance" }));
-    await waitFor(() => expect((screen.getAllByRole("button", { name: "Reset filters" })[0] as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getAllByRole("button", { name: "Reset filters" })[0]);
-    expect(window.location.search).toBe("");
+    expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+    // A tab is what is being looked at, not a filter.
+    fireEvent.click(tab("Money"));
+    expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+    act(() => window.history.replaceState(null, "", "/dashboard/activity?types=money&tierId=t_adult&memberId=m_mel&day=2026-11-03"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Clear all" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(window.location.search).toBe("?types=money");
+    expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+    // A date alone is enough to offer it.
+    act(() => window.history.replaceState(null, "", "/dashboard/activity?day=2026-11-03"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Clear all" })).toBeTruthy());
+  });
+
+  it("no Copy link, no Reset filters, no Show all activity types: one way to do each thing", async () => {
+    window.history.replaceState(null, "", "/dashboard/activity?types=money&tierId=t_adult");
+    respond = () => ({ status: 200, body: body([entry()]) });
+    renderPage();
+    await loaded();
+    const sheet = openFilters();
+    for (const name of [/copy link/i, /reset filters/i, /show all activity types/i]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+      expect(within(sheet).queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByText(/Undo puts the recorded details back/)).toBeNull();
   });
 
   it("says what a link left out, and when a date was before the log began", async () => {
@@ -298,36 +563,46 @@ describe("the address bar is the filter", () => {
 });
 
 describe("activity types", () => {
-  it("ticks are staged: nothing is asked until Show activity, and Cancel changes nothing", async () => {
+  /** Opens Filters, then the types sheet on top of it. */
+  const openTypes = () => {
+    const filtersSheet = openFilters();
+    fireEvent.click(within(filtersSheet).getByTestId("types-trigger"));
+    return { filtersSheet, sheet: screen.getByRole("dialog", { name: "Activity types" }) };
+  };
+
+  it("ticks are staged twice over: nothing is asked until Done and then Show activity, and Cancel changes nothing", async () => {
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByTestId("types-trigger"));
-    let sheet = screen.getByRole("dialog", { name: "Activity types" });
+    let { filtersSheet, sheet } = openTypes();
     fireEvent.click(within(sheet).getByRole("checkbox", { name: "Refund" }));
     fireEvent.click(within(sheet).getByRole("checkbox", { name: "Check-in" }));
     expect(activityCalls()).toHaveLength(1);
     fireEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog", { name: "Activity types" })).toBeNull();
-    expect(window.location.search).toBe("");
+    expect(within(filtersSheet).getByTestId("types-trigger").textContent).toBe("Club activity");
 
-    fireEvent.click(screen.getByTestId("types-trigger"));
+    fireEvent.click(within(filtersSheet).getByTestId("types-trigger"));
     sheet = screen.getByRole("dialog", { name: "Activity types" });
-    // Reopened from what the page shows, not from the abandoned ticks.
+    // Reopened from what Filters holds, not from the abandoned ticks.
     expect(within(sheet).getByRole("checkbox", { name: "Refund" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(within(sheet).getByRole("checkbox", { name: "Refund" }));
-    fireEvent.click(within(sheet).getByRole("button", { name: "Show activity" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
+    expect(within(filtersSheet).getByTestId("types-trigger").textContent).toBe(`${defaultTypeKeys("owner").length - 1} activity types`);
+    expect(window.location.search).toBe("");
+    expect(activityCalls()).toHaveLength(1);
+    fireEvent.click(within(filtersSheet).getByRole("button", { name: "Show activity" }));
     await waitFor(() => expect(activityCalls()).toHaveLength(2));
     const asked = lastQuery().get("types")!.split(",");
     expect(asked).not.toContain("refund");
     expect(asked).toContain("checkin");
-    expect(screen.getByTestId("types-trigger").textContent).toBe(`${defaultTypeKeys("owner").length - 1} activity types`);
+    ({ filtersSheet } = { filtersSheet: openFilters() });
+    expect(within(filtersSheet).getByTestId("types-trigger").textContent).toBe(`${defaultTypeKeys("owner").length - 1} activity types`);
   });
 
   it("a group box ticks or clears its whole group and shows a dash when the group is partly ticked", async () => {
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByTestId("types-trigger"));
-    const sheet = screen.getByRole("dialog", { name: "Activity types" });
+    const { sheet } = openTypes();
     const group = () => within(sheet).getByRole("checkbox", { name: "Attendance: all" });
     expect(group().getAttribute("aria-checked")).toBe("true");
     fireEvent.click(within(sheet).getByRole("checkbox", { name: "Check-in removed" }));
@@ -342,18 +617,18 @@ describe("activity types", () => {
   it("nothing ticked cannot be applied, and says why", async () => {
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByTestId("types-trigger"));
-    const sheet = screen.getByRole("dialog", { name: "Activity types" });
+    const { filtersSheet, sheet } = openTypes();
     for (const name of ["Attendance: all", "Members: all", "Memberships & money: all", "Classes: all", "Communication: all", "Staff & club: all"]) {
       const box = within(sheet).getByRole("checkbox", { name });
       if (box.getAttribute("aria-checked") !== "true") fireEvent.click(box);
       fireEvent.click(within(sheet).getByRole("checkbox", { name }));
     }
     expect(within(sheet).getByTestId("types-count").textContent).toBe(`0 of ${ACTIVITY_TYPES.length} selected`);
-    expect((within(sheet).getByRole("button", { name: "Show activity" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(sheet).getByRole("button", { name: "Done" }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(sheet).getByText("Choose at least one activity type")).toBeTruthy();
     fireEvent.click(within(sheet).getByRole("button", { name: "Everything" }));
-    fireEvent.click(within(sheet).getByRole("button", { name: "Show activity" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
+    fireEvent.click(within(filtersSheet).getByRole("button", { name: "Show activity" }));
     expect(window.location.search).toBe("?types=all");
   });
 });
@@ -368,7 +643,7 @@ describe("a person's own default view", () => {
     await loaded();
     expect(activityCalls()).toHaveLength(1);
     expect(lastQuery().get("types")).toBe("money");
-    expect(screen.getByRole("button", { name: "Money" }).getAttribute("aria-pressed")).toBe("true");
+    expect(tab("Money").getAttribute("aria-selected")).toBe("true");
     expect(window.location.search).toBe("");
   });
 
@@ -386,52 +661,63 @@ describe("a person's own default view", () => {
     expect(lastQuery().get("types")).toBe("club");
   });
 
-  it("Make this my default saves it for this person on this device, and Use MatFlow's default drops it", async () => {
+  it("Make this my default, in the Filters footer, saves it for this person on this device, and Use MatFlow's default drops it", async () => {
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "Attendance" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Make this my default" }));
+    // At the default there is nothing to save.
+    let sheet = openFilters();
+    expect(within(sheet).queryByRole("button", { name: "Make this my default" })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull());
+    fireEvent.click(tab("Attendance"));
+    sheet = openFilters();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Make this my default" }));
     expect(h.toasts.at(-1)).toEqual({ message: "Saved. Activity will open like this on this device.", type: "success" });
     expect(JSON.parse(window.localStorage.getItem(storedDefaultKey(OWNER))!)).toMatchObject({ v: 1, view: "attendance" });
     expect(window.location.search).toBe("");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Attendance" }).getAttribute("aria-pressed")).toBe("true"));
-    fireEvent.click(screen.getByRole("button", { name: "Use MatFlow's default" }));
+    expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull();
+    await waitFor(() => expect(tab("Attendance").getAttribute("aria-selected")).toBe("true"));
+    sheet = openFilters();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Use MatFlow's default" }));
     expect(window.localStorage.getItem(storedDefaultKey(OWNER))).toBeNull();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Club activity" }).getAttribute("aria-pressed")).toBe("true"));
+    await waitFor(() => expect(tab("Club activity").getAttribute("aria-selected")).toBe("true"));
   });
 
   it("says so when the device will not keep it, and carries on working", async () => {
     renderPage();
     await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "Attendance" }));
+    fireEvent.click(tab("Attendance"));
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Make this my default" }));
+    const sheet = openFilters();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Make this my default" }));
     expect(h.toasts.at(-1)).toEqual({ message: "Couldn't save on this device.", type: "error" });
     expect(window.location.search).toBe("?types=attendance");
+    expect(screen.getByRole("dialog", { name: "Filters" })).toBeTruthy();
   });
 });
 
 describe("what is drawn when there is nothing, or something went wrong", () => {
-  it("nothing at all, with nothing filtered and everything shown", async () => {
+  it("nothing at all, with nothing filtered and everything shown: no button", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=all");
     renderPage();
     await waitFor(() => expect(screen.getByText("Nothing has been recorded yet.", { ignore: STATUS })).toBeTruthy());
     // Said once on the page and once to a screen reader, in the same words.
     expect(screen.getByTestId("activity-status").textContent).toBe("Nothing has been recorded yet.");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
-  it("nothing for these filters: says which, and offers the two ways out", async () => {
+  it("nothing for these filters: says which, and offers exactly one way out, which clears everything including the date", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=refund&userId=u_jack&day=2026-11-03");
     renderPage();
     await waitFor(() => expect(screen.getByText("Nothing matches these filters.", { ignore: STATUS })).toBeTruthy());
     expect(screen.getByTestId("activity-status").textContent).toBe("Nothing matches these filters.");
     expect(screen.getByText("Refund · done by Jack Streeter · up to 3 Nov 2026", { selector: "p" })).toBeTruthy();
-    const everything = screen.getAllByRole("button", { name: "Show everything" }).at(-1)!;
-    fireEvent.click(everything);
-    // The date is kept: "everything up to that day" is still a question worth asking.
-    expect(window.location.search).toBe("?types=all&day=2026-11-03");
+    const empty = screen.getByText("Nothing matches these filters.", { ignore: STATUS }).parentElement!.parentElement!;
+    expect(within(empty).getAllByRole("button").map((b) => b.textContent)).toEqual(["Clear filters"]);
+    fireEvent.click(within(empty).getByRole("button", { name: "Clear filters" }));
+    expect(window.location.search).toBe("");
   });
 
   it("a failed first page is an error with a retry that sends one request — never an empty list", async () => {
@@ -488,7 +774,7 @@ describe("undo (owner)", () => {
     }
   });
 
-  it("undoing a row asks first, names it, and strikes it through where it is", async () => {
+  it("undoing a row asks first, names it, explains what Undo does, and strikes it through where it is", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=all");
     // After the undo the page asks for page one again, and here that answer never comes: the row is struck through anyway.
     let undone = false;
@@ -505,6 +791,8 @@ describe("undo (owner)", () => {
     fireEvent.click(within(table()).getByRole("button", { name: "Undo: Jack Streeter updated Melody Orekoya's details" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Undo: Jack Streeter updated Melody Orekoya's details?")).toBeTruthy();
+    // The explanation that used to sit above the list is here, where it applies.
+    expect(dialog.textContent).toContain("Linked records it created or removed alongside (a booking, rank history, a Stripe change, an email) are not changed.");
     fireEvent.click(within(dialog).getByRole("button", { name: "Undo this" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url === "/api/audit-log/r1/undo")).toBe(true));
     await waitFor(() => expect(within(table()).getAllByText("Undone").length).toBeGreaterThan(0));
@@ -514,13 +802,15 @@ describe("undo (owner)", () => {
     expect(window.location.search).toBe("?types=all");
   });
 
-  it("a row that cannot be undone says why: in a dialog from the table, in words on the card", async () => {
+  it("a row that cannot be undone shows nothing in the Undo column, in the table or on the card", async () => {
     respond = () => ({ status: 200, body: body([entry({ id: "r1", undo: { ok: false, reason: "Money moved — reverse it from Payments (refund), not from here." } })]) });
     renderPage();
     await loaded();
-    expect(within(screen.getAllByTestId("activity-card")[0]).getByText(/Can't undo: Money moved/)).toBeTruthy();
-    fireEvent.click(within(table()).getByRole("button", { name: /^Can't undo: / }));
-    expect(within(screen.getByRole("dialog", { name: "Why this can't be undone" })).getByText("Money moved — reverse it from Payments (refund), not from here.")).toBeTruthy();
+    expect(screen.queryByText(/Can't undo/)).toBeNull();
+    expect(screen.queryByText(/Money moved/)).toBeNull();
+    const tr = table().querySelector("tbody tr:not([data-section])")!;
+    expect(tr.querySelectorAll("td")[2].textContent).toBe("");
+    expect(within(screen.getAllByTestId("activity-card")[0]).queryByRole("button")).toBeNull();
   });
 
   it("'Since here' lists what will be put back, with times and sentences, before anything is undone", async () => {
@@ -549,7 +839,7 @@ describe("undo (owner)", () => {
     await waitFor(() => expect(within(table()).getAllByText("Undone").length).toBeGreaterThan(0));
   });
 
-  it("an undo the server refuses stops being offered, and the row says why", async () => {
+  it("an undo the server refuses stops being offered", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=all");
     respond = (call) => (call.method === "POST" ? { status: 409, body: { error: "Already undone." } } : { status: 200, body: body([reversible({ id: "r1" })]) });
     renderPage();
@@ -559,7 +849,7 @@ describe("undo (owner)", () => {
     await waitFor(() => expect(within(table()).queryByRole("button", { name: /^Undo: / })).toBeNull());
     expect(h.toasts.at(-1)).toEqual({ message: "Already undone.", type: "error" });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(within(screen.getAllByTestId("activity-card")[0]).getByText(/Can't undo: Already undone\./)).toBeTruthy();
+    expect(within(screen.getAllByTestId("activity-card")[0]).queryByRole("button", { name: /^Undo: / })).toBeNull();
     // Not struck through: nothing here was undone by this person.
     expect(within(table()).queryByText("Undone")).toBeNull();
   });
@@ -611,25 +901,12 @@ describe("a link that has been mangled, and words that mean one thing", () => {
     renderPage();
     await loaded();
     expect([lastQuery().get("day"), lastQuery().get("memberId")]).toEqual([null, null]);
-    expect(screen.getByTestId("activity-summary").textContent).not.toMatch(/Invalid|member|up to/);
+    expect(table().querySelector("caption")!.textContent).toBe("Activity: Club activity");
     expect(screen.queryByTestId("member-picked")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
     // The day controls still work from today.
-    fireEvent.click(screen.getByRole("button", { name: "Previous day" }));
+    fireEvent.click(within(openDay()).getByRole("button", { name: "Previous day" }));
     expect(new URLSearchParams(window.location.search).get("day")).toBe("2026-11-04");
-  });
-
-  it("'Show all activity types' widens the types and keeps the member; 'Show everything' (when nothing matches) clears the member too", async () => {
-    window.history.replaceState(null, "", "/dashboard/activity?types=refund&memberId=m_mel");
-    respond = () => ({ status: 200, body: body([]) });
-    renderPage();
-    await loaded();
-    expect(screen.getAllByRole("button", { name: "Show everything" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Show all activity types" }));
-    expect(window.location.search).toBe("?types=all&memberId=m_mel");
-    await waitFor(() => expect(lastQuery().get("types")).toBe("all"));
-    await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "Show everything" }));
-    expect(window.location.search).toBe("?types=all");
   });
 
   it("the rows are marked busy while different filters load, and the status says what the page says when there is nothing", async () => {
@@ -638,7 +915,7 @@ describe("a link that has been mangled, and words that mean one thing", () => {
     renderPage();
     await loaded();
     hold = true;
-    fireEvent.click(screen.getByRole("button", { name: "Money" }));
+    fireEvent.click(tab("Money"));
     await waitFor(() => expect(table().closest("[aria-busy]")?.getAttribute("aria-busy")).toBe("true"));
     // The rows for the old filters are still there, dimmed, not swapped for an empty list.
     expect(within(table()).getByText("Melody Orekoya")).toBeTruthy();
@@ -654,7 +931,8 @@ describe("a link that has been mangled, and words that mean one thing", () => {
     renderPage();
     await loaded();
     hold = true;
-    const field = screen.getByRole("combobox", { name: "Member" });
+    const field = screen.getByRole("combobox", { name: "Search members" });
+    expect(field.getAttribute("placeholder")).toBe("Search members…");
     fireEvent.focus(field);
     fireEvent.change(field, { target: { value: "mel" } });
     fireEvent.mouseDown(await screen.findByRole("option", { name: /Melody Orekoya/ }));

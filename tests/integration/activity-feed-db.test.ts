@@ -8,6 +8,7 @@
 //  - the SQL model the unit tests rely on (tests/unit/activity-where-eval.ts)
 //    answers as Postgres does;
 //  - a manager cannot be sent an owner-only row by any parameter;
+//  - "Done by" by kind puts every row in exactly one kind, and pages exactly;
 //  - names come only from this club, and an erased member's old values are in
 //    nobody's response.
 //
@@ -23,7 +24,7 @@ import { auth } from "@/auth";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { GET } from "@/app/api/activity/route";
 import { ACTIVITY_TYPES, visibleTypeKeys, type ActivityResponse } from "@/lib/activity-types";
-import { typeOf, typesFinding, visibleWhere, whereForTypes } from "@/lib/activity-feed";
+import { actorKindOf, actorKindWhere, typeOf, typesFinding, visibleWhere, whereForTypes } from "@/lib/activity-feed";
 import { selects } from "../unit/activity-where-eval";
 
 const STAMP = randomUUID().slice(0, 8);
@@ -345,6 +346,82 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     const query = `?types=checkin,checkin_exception,member_updated&memberId=${m.mel}&userId=${JACK}`;
     expect((await all(`${query}&day=${ROW_DAY}`)).map((e) => e.id).sort()).toEqual(expected.map((r) => r.id).sort());
     expect(await all(`${query}&day=${DAY_BEFORE}`)).toEqual([]);
+  }, 240_000);
+
+  it("Done by, by kind: Postgres puts every row in exactly the kind the row itself says, the SQL model agrees, and a kind pages exactly", async () => {
+    const C = id("clubC");
+    const extra: Row[] = [];
+    let n = 0;
+    const put = (action: string, over: Partial<Row> = {}) => {
+      const row: Row = { id: id(`k${String(n).padStart(3, "0")}`), tenantId: C, action, entityType: "Member", entityId: m.mel, metadata: null, createdAt: new Date(BASE - 2 * 3_600_000 - n * 1000), userId: null, operatorId: null, ...over };
+      n++;
+      extra.push(row);
+      return row;
+    };
+    // Members and staff, interleaved, so a page filtered after the fetch would come back short.
+    for (let i = 0; i < 60; i++) {
+      put("attendance.self_checkin", { entityType: "AttendanceRecord", metadata: { memberId: m.mel, actorId: m.mel } });
+      put("attendance.mark", { entityType: "AttendanceRecord", userId: OWNER, metadata: { memberId: m.mel } });
+    }
+    // The other shapes each kind is made of.
+    put("member.update", { metadata: { changes: { phone: { from: "1", to: "2" } } } }); // staff whose account has gone
+    put("task.staff_task.create", { metadata: { actorType: "user" } });
+    put("member.self_update", { metadata: { actorId: m.mel, fields: ["phone"] } });
+    put("member.waiver.signed_via_kiosk", { metadata: { memberId: m.mel } });
+    put("class.booking.created", { metadata: { memberId: m.mel } });
+    put("payment.manual", { metadata: { collectedBy: "self" } });
+    put("stripe.invoice.paid", { metadata: { actorId: m.mel } });
+    put("order.paid");
+    put("import.commit", { metadata: { fileName: "members.csv" } });
+    put("attendance.kiosk_checkin", { metadata: { memberId: m.mel, actingAs: OPERATOR } });
+    try {
+      await withRlsBypass(async (tx) => {
+        await tx.tenant.create({ data: { id: C, name: `Synthetic activity C ${STAMP}`, slug: `mfv-act-c-${STAMP}`, timezone: "Europe/London" } });
+        await tx.auditLog.createMany({ data: extra.map((r) => ({ ...r, metadata: r.metadata === null ? undefined : (r.metadata as object) })) });
+      });
+      const KINDS = ["staff", "members", "automatic", "support"] as const;
+      const every = [...inA(), ...extra];
+      const disagreements: string[] = [];
+      const inKinds = new Map<string, string[]>(every.map((r) => [r.id, []]));
+      for (const kind of KINDS) {
+        const where = actorKindWhere(kind);
+        const found = new Set((await withRlsBypass((tx) => tx.auditLog.findMany({ where: { AND: [{ tenantId: { in: [A, C] } }, where] }, select: { id: true } }))).map((r) => r.id));
+        for (const row of every) {
+          if (found.has(row.id)) inKinds.get(row.id)!.push(kind);
+          if (selects(where, row) !== found.has(row.id)) disagreements.push(`${kind}: ${row.action} ${JSON.stringify(row.metadata)} — model ${selects(where, row)}, Postgres ${found.has(row.id)}`);
+        }
+      }
+      expect(disagreements).toEqual([]);
+      const wrong = every.filter((r) => inKinds.get(r.id)!.join() !== actorKindOf(r)).map((r) => `${r.action} ${JSON.stringify(r.metadata)} user=${r.userId}: row says ${actorKindOf(r)}, query found [${inKinds.get(r.id)}]`);
+      expect(wrong).toEqual([]);
+      expect(inKinds.get(named.supportByColumn.id)).toEqual(["support"]);
+      expect(inKinds.get(named.supportByMeta.id)).toEqual(["support"]);
+      expect(inKinds.get(named.kiosk.id)).toEqual(["members"]);
+      expect(inKinds.get(named.scan.id)).toEqual(["staff"]);
+      expect(inKinds.get(named.paid.id)).toEqual(["automatic"]);
+      expect(inKinds.get(named.editNoMeta.id)).toEqual(["staff"]);
+
+      // Through the route, page by page: exactly the kind's rows, none twice, none missing.
+      as("owner", C);
+      for (const kind of KINDS) {
+        const entries = await all(`?types=all&by=${kind}`);
+        const expected = extra.filter((r) => actorKindOf(r) === kind).map((r) => r.id).sort();
+        expect(entries.map((e) => e.id).sort(), kind).toEqual(expected);
+        expect(new Set(entries.map((e) => e.id)).size, kind).toBe(expected.length);
+      }
+
+      // A manager cannot ask for MatFlow support: the kind is ignored, and no support row comes back.
+      as("manager");
+      const plain = (await all("?types=all")).map((e) => e.id).sort();
+      const asked = (await all("?types=all&by=support")).map((e) => e.id).sort();
+      expect(asked).toEqual(plain);
+      for (const row of [named.supportByColumn, named.supportByMeta, named.operatorRow]) expect(asked).not.toContain(row.id);
+    } finally {
+      await withRlsBypass(async (tx) => {
+        await tx.auditLog.deleteMany({ where: { tenantId: C } });
+        await tx.tenant.deleteMany({ where: { id: C } });
+      });
+    }
   }, 240_000);
 
   it("120 rows written in the same instant page at 50 to exactly 120 different rows", async () => {
