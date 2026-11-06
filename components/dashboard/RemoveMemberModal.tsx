@@ -1,6 +1,9 @@
 "use client";
 
-// Three-strategy delete modal for the F5 parent-deletion gateway.
+// Three-strategy REMOVE modal for the F5 parent gateway. Since PR 3 (6 Nov
+// 2026; Noe: "Save all past user data") removing a member ARCHIVES them: they
+// leave every list, count and door, every record is kept, and Restore on
+// their profile brings them back. Nothing here deletes data.
 //
 // First call is now a read-only PROBE: DELETE /api/members/[id]?probe=1
 // returns `{ noKids: true }` or `{ hasKids: true, kids: [] }` WITHOUT
@@ -17,7 +20,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertTriangle, Users, Trash2 } from "lucide-react";
+import { Loader2, AlertTriangle, Users, Archive } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -182,7 +185,7 @@ export function RemoveMemberModal({
         const data = (await res.json().catch(() => ({}))) as { kidsAffected?: number };
         const kidsAffected = data.kidsAffected ?? 0;
         toast(
-          `${memberName} removed${kidsAffected > 0 ? ` (${kidsAffected} kid${kidsAffected === 1 ? "" : "s"} ${strategy === "cascade" ? "deleted" : strategy === "orphan" ? "orphaned" : "reassigned"})` : ""}`,
+          `${memberName} archived${kidsAffected > 0 ? ` (${kidsAffected} kid${kidsAffected === 1 ? "" : "s"} ${strategy === "cascade" ? "archived" : strategy === "orphan" ? "orphaned" : "reassigned"})` : ""}`,
           "success",
         );
         setPhase("done");
@@ -238,7 +241,7 @@ export function RemoveMemberModal({
       open={open}
       onClose={requestClose}
       title={`Remove ${memberName}`}
-      description="This permanently deletes the member and walks every dependent record. Cannot be undone."
+      description="They will be archived: hidden from lists and counts, unable to check in or sign in, and any card subscription is set to end. Their attendance, payments and history are kept, and you can restore them from their profile."
       footer={
         <>
           <Button variant="secondary" onClick={requestClose} disabled={busy}>
@@ -253,7 +256,7 @@ export function RemoveMemberModal({
             // destructive DELETE unreachable. Wire to execute() so the
             // explicit user click fires the actual delete (with ?confirm=1).
             <Button variant="destructive" onClick={() => void execute()} loading={busy}>
-              <Trash2 className="size-3.5" /> Yes, remove permanently
+              <Archive className="size-3.5" /> Archive member
             </Button>
           )}
           {showPickerAction && (
@@ -263,7 +266,7 @@ export function RemoveMemberModal({
               loading={busy}
               disabled={!strategy || (strategy === "reassign" && !reassignTo)}
             >
-              <Trash2 className="size-3.5" /> Remove + apply
+              <Archive className="size-3.5" /> Archive + apply
             </Button>
           )}
         </>
@@ -284,7 +287,7 @@ export function RemoveMemberModal({
               </p>
             ) : (
               <p className="text-sm" style={{ color: "var(--tx-2)" }}>
-                {memberName} has no linked kids — safe to remove.
+                {memberName} has no linked kids. Archiving keeps all of their records.
               </p>
             )}
           </div>
@@ -296,7 +299,7 @@ export function RemoveMemberModal({
               <Users className="w-4 h-4 shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold mb-0.5">{memberName} is a parent of {kids.length} {kids.length === 1 ? "kid" : "kids"}.</p>
-                <p>Pick how to handle them before deletion. The choice is logged in the audit trail.</p>
+                <p>Pick what happens to them before {memberName} is archived. The choice is logged in the audit trail.</p>
               </div>
             </div>
 
@@ -324,8 +327,8 @@ export function RemoveMemberModal({
                 value="cascade"
                 selected={strategy === "cascade"}
                 onSelect={() => setStrategy("cascade")}
-                title="Delete every kid too"
-                body="Every linked kid runs through the same cascade walk and is removed permanently. Use when the whole family is leaving."
+                title="Archive every kid too"
+                body="Every linked kid is archived with them and keeps all of their records. Restoring this member restores the kids too. Use when the whole family is leaving."
                 primaryColor={primaryColor}
               />
               <StrategyOption
@@ -392,7 +395,7 @@ export function RemoveMemberModal({
         {(phase === "running" || phase === "done") && (
           <div className="flex items-center gap-2 py-6 text-sm" style={{ color: "var(--tx-3)" }}>
             <Loader2 className="w-4 h-4 animate-spin" />
-            {phase === "done" ? "Removed — returning to Members…" : "Removing…"}
+            {phase === "done" ? "Archived — returning to Members…" : "Archiving…"}
           </div>
         )}
     </Dialog>

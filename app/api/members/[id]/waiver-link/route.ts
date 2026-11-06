@@ -54,7 +54,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id: memberId } = await params;
 
   const member = await withTenantContext(tenantId, (tx) =>
-    tx.member.findFirst({ where: { id: memberId, tenantId }, select: { id: true, email: true } }),
+    tx.member.findFirst({ where: { id: memberId, tenantId, archivedAt: null }, select: { id: true, email: true } }),
   );
   if (!member) return NextResponse.json({ error: "Member not found" }, { status: 404 });
   const email = member.email;

@@ -21,6 +21,7 @@ function matches(row: Row, where: Record<string, Cond>): boolean {
   return Object.entries(where).every(([field, cond]) => {
     const v = (row as Record<string, unknown>)[field];
     if (typeof cond === "string") return v === cond;
+    if (cond === null) return v == null; // archivedAt: null (PR 3)
     if (cond.not !== undefined && v === cond.not) return false;
     if (cond.in !== undefined && !cond.in.includes(v as string)) return false;
     const t = v instanceof Date ? v.getTime() : NaN;

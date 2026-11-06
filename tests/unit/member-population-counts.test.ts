@@ -22,7 +22,8 @@ import {
   TRAINING_MEMBER,
 } from "@/lib/member-population";
 
-const POPULATIONS = /\.\.\.(TRAINING_MEMBER|ACTIVE_MEMBER|CURRENT_MEMBER|CAN_TRAIN_MEMBER|LEFT_MEMBER|GUARDIAN_ACCOUNT)\b/;
+// The _EVER populations are the history-only twins (PR 3): archived members included on purpose.
+const POPULATIONS = /\.\.\.(TRAINING_MEMBER|ACTIVE_MEMBER|CURRENT_MEMBER|CAN_TRAIN_MEMBER|LEFT_MEMBER|GUARDIAN_ACCOUNT|TRAINING_MEMBER_EVER|LEFT_MEMBER_EVER)\b/;
 
 const memberQueries = (src: string) => {
   const out: string[] = [];
@@ -33,16 +34,17 @@ const memberQueries = (src: string) => {
 };
 
 describe("member population counts", () => {
-  it("TRAINING_MEMBER excludes parent accounts and nothing else", () => {
-    expect(TRAINING_MEMBER).toEqual({ accountType: { not: "parent" } });
+  it("TRAINING_MEMBER excludes parent accounts and archived members, and nothing else", () => {
+    expect(TRAINING_MEMBER).toEqual({ archivedAt: null, accountType: { not: "parent" } });
   });
 
   it("the named populations are TRAINING_MEMBER plus one status rule each; holds and guardians are their own axes", () => {
-    expect(ACTIVE_MEMBER).toEqual({ accountType: { not: "parent" }, status: "active" });
-    expect(CURRENT_MEMBER).toEqual({ accountType: { not: "parent" }, status: { not: "cancelled" } });
-    expect(CAN_TRAIN_MEMBER).toEqual({ accountType: { not: "parent" }, status: { in: ["active", "taster"] } });
-    expect(LEFT_MEMBER).toEqual({ accountType: { not: "parent" }, status: "cancelled" });
-    expect(GUARDIAN_ACCOUNT).toEqual({ accountType: "parent" });
+    // PR 3: every named population leaves archived members out (NOT_ARCHIVED).
+    expect(ACTIVE_MEMBER).toEqual({ archivedAt: null, accountType: { not: "parent" }, status: "active" });
+    expect(CURRENT_MEMBER).toEqual({ archivedAt: null, accountType: { not: "parent" }, status: { not: "cancelled" } });
+    expect(CAN_TRAIN_MEMBER).toEqual({ archivedAt: null, accountType: { not: "parent" }, status: { in: ["active", "taster"] } });
+    expect(LEFT_MEMBER).toEqual({ archivedAt: null, accountType: { not: "parent" }, status: "cancelled" });
+    expect(GUARDIAN_ACCOUNT).toEqual({ archivedAt: null, accountType: "parent" });
     expect(ON_HOLD).toEqual({ paymentStatus: "paused" });
     // No fragment carries a tenant: every caller spreads it beside its own.
     for (const f of [TRAINING_MEMBER, ACTIVE_MEMBER, CURRENT_MEMBER, CAN_TRAIN_MEMBER, LEFT_MEMBER, GUARDIAN_ACCOUNT, ON_HOLD]) {

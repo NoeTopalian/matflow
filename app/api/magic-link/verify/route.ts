@@ -101,14 +101,15 @@ export async function GET(req: NextRequest) {
   // Resolve user OR member — tenantId MUST match token row (defense in depth)
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
     const u = await tx.user.findFirst({
-      where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
+      // PR 3: a link minted before a deactivation or an archive signs nobody in.
+      where: { tenantId: tokenRow.tenantId, email: tokenRow.email, deactivatedAt: null },
       select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true, loginEmailProvisionalSince: true },
     });
     const m = !u
       ? await tx.member.findFirst({
           // Sprint 3 K: defence-in-depth — kid sub-accounts (passwordHash null) cannot mint a session
           // even if a token row exists for the synthesised email.
-          where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null } },
+          where: { tenantId: tokenRow.tenantId, email: tokenRow.email, passwordHash: { not: null }, archivedAt: null },
           select: {
             id: true, tenantId: true, email: true, name: true, sessionVersion: true,
             totpEnabled: true, notifyOnNewLogin: true,

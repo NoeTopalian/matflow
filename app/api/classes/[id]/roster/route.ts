@@ -18,7 +18,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const tenantId = session.user.tenantId;
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.classRoster.findMany({
-      where: { classId: id, tenantId },
+      // PR 3: an archived member's place is kept but not listed.
+      where: { classId: id, tenantId, member: { archivedAt: null } },
       include: { member: { select: { id: true, name: true, email: true } } },
       orderBy: { addedAt: "desc" },
     }),
@@ -53,7 +54,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       if (cls.requiredRankId || cls.maxRankId) throw new Error("RANK_GATED");
 
       const member = await tx.member.findFirst({
-        where: { id: parsed.data.memberId, tenantId },
+        where: { id: parsed.data.memberId, tenantId, archivedAt: null },
         select: { id: true, tenantId: true },
       });
       if (!member) throw new Error("MEMBER_NOT_FOUND");

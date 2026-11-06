@@ -208,7 +208,8 @@ export async function POST(req: Request) {
   const members = memberIds.length
     ? await withTenantContext(tenantId, (tx) =>
         tx.member.findMany({
-          where: { id: { in: memberIds }, tenantId },
+          // An archived member's card opens nothing (PR 3).
+          where: { id: { in: memberIds }, tenantId, archivedAt: null },
           select: { id: true, name: true, cardVersion: true },
         }),
       )

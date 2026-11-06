@@ -59,7 +59,7 @@ export async function GET(req: Request) {
       tx.member.findMany({
         // Only children whose guardian link is CONFIRMED are shown to the parent
         // (an import may have SUGGESTED a link; that grants nothing).
-        where: { parentMemberId: memberId, tenantId: session.user.tenantId, ...CONFIRMED_GUARDIAN },
+        where: { parentMemberId: memberId, tenantId: session.user.tenantId, archivedAt: null, ...CONFIRMED_GUARDIAN },
         select: {
           id: true,
           name: true,

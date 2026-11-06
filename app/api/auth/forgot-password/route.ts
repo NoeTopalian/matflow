@@ -63,11 +63,12 @@ export async function POST(req: Request) {
   const [user, member] = await withTenantContext(tenant.id, (tx) =>
     Promise.all([
       tx.user.findFirst({
-        where: { email: normEmail, tenantId: tenant.id },
+        // PR 3: no reset code for a deactivated staff account or an archived member.
+        where: { email: normEmail, tenantId: tenant.id, deactivatedAt: null },
         select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true },
       }),
       tx.member.findFirst({
-        where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+        where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null }, archivedAt: null },
         select: { id: true },
       }),
     ]),

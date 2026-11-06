@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { usableTimezone } from "./class-time";
-import { TRAINING_MEMBER } from "./member-population";
+import { TRAINING_MEMBER_EVER } from "./member-population";
 import {
   buildMembership,
   combinedBasis,
@@ -252,12 +252,13 @@ export async function loadMembershipInput(tx: TxClient, tenantId: string, now: D
   // Sequential, not Promise.all: one interactive transaction is one connection.
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   const timeZone = usableTimezone(tenant?.timezone);
+  // History counts archived members too (PR 3): archiving never rewrites a past month.
   const members = await tx.member.findMany({
-    where: { tenantId, ...TRAINING_MEMBER },
+    where: { tenantId, ...TRAINING_MEMBER_EVER },
     select: { id: true, status: true, joinedAt: true, cancelledAt: true },
   });
   const rows = await tx.memberStatusEvent.findMany({
-    where: { tenantId, member: { tenantId, ...TRAINING_MEMBER } },
+    where: { tenantId, member: { tenantId, ...TRAINING_MEMBER_EVER } },
     select: { id: true, memberId: true, fromStatus: true, toStatus: true, reason: true, sourceAction: true, occurredAt: true, createdAt: true },
   });
   const ledgerMembers = await tx.importedMembership.findMany({

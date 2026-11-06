@@ -100,7 +100,7 @@ export async function GET(
       });
       if (instance) {
         const rows = await tx.classRoster.findMany({
-          where: { tenantId: tenant.id, classId: instance.classId },
+          where: { tenantId: tenant.id, classId: instance.classId, member: { archivedAt: null } },
           select: { memberId: true },
         });
         if (rows.length > 0) roster = new Set(rows.map((r) => r.memberId));
@@ -111,6 +111,7 @@ export async function GET(
       where: {
         tenantId: tenant.id,
         status: { in: ["active", "taster"] },
+        archivedAt: null,
         name: { contains: q, mode: "insensitive" },
         ...(roster
           ? {
@@ -118,7 +119,7 @@ export async function GET(
                 { id: { in: rosterList } },
                 {
                   children: {
-                    some: { id: { in: rosterList }, status: { in: ["active", "taster"] }, ...CONFIRMED_GUARDIAN },
+                    some: { id: { in: rosterList }, status: { in: ["active", "taster"] }, archivedAt: null, ...CONFIRMED_GUARDIAN },
                   },
                 },
               ],
@@ -147,7 +148,7 @@ export async function GET(
         // Only children whose guardianship is CONFIRMED: an import only
         // suggests a parent, and a suggestion grants nothing (lib/guardianship).
         children: {
-          where: { status: { in: ["active", "taster"] }, ...CONFIRMED_GUARDIAN },
+          where: { status: { in: ["active", "taster"] }, archivedAt: null, ...CONFIRMED_GUARDIAN },
           select: {
             id: true,
             name: true,

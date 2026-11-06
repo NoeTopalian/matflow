@@ -49,6 +49,18 @@
  * the top and the final `member.deleteMany` to guard against TOCTOU races.
  */
 
+/**
+ * ARCHIVE, NOT DELETE (6 Nov 2026, PR 3; Noe: "Save all past user data").
+ * Staff "Remove member" and a parent removing their own child now ARCHIVE:
+ * `archiveMember` / `archiveParentMemberWithKidsResolution` below stamp
+ * `archivedAt` and delete nothing, so attendance, status events, imported plan
+ * history, sign-in records, photos and roster places all stay, and Restore
+ * brings the member back exactly as they were. `deleteMemberCascade` remains
+ * ONLY for the two true deletes: a formal erasure request (DSAR, owner-only,
+ * Settings → Data requests) and the operator's tenant purge.
+ */
+
+
 import type { Prisma } from "@prisma/client";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
 
@@ -57,22 +69,25 @@ export type DeleteMemberCascadeOutcome =
   | { kind: "not-found" }
   | { kind: "race" };
 
-// F5 parent-deletion gateway (see plans/.../majestic-bubbling-gosling.md and
-// docs/KIDS-PARENT-LINKAGE-ASSESSMENT-2026-05-15.md). When the Member being
-// deleted has one or more linked kids, the caller MUST pick a strategy:
+// F5 parent gateway (see plans/.../majestic-bubbling-gosling.md and
+// docs/KIDS-PARENT-LINKAGE-ASSESSMENT-2026-05-15.md), now for ARCHIVING. When
+// the Member being archived has one or more linked kids, the caller MUST pick
+// a strategy, so an archived parent never silently archives or orphans a
+// child:
 //
 //   - reassign — kids point at a different parent (same tenant, not a kid
-//     themselves). Atomic update before the parent row is dropped.
-//   - cascade  — every kid runs through deleteMemberCascade alongside the
-//     parent. The parent is deleted last. One audit log row per kid.
-//   - orphan   — kids stay in the tenant but lose their parent link. To keep
-//     invariant I1 (`accountType='kids' ⇒ parentMemberId IS NOT NULL`)
-//     intact, each kid's accountType is forced to 'junior' first. A flag
-//     surfaces them in the dashboard as "needs new guardian".
+//     themselves, not archived). Atomic update before the parent is archived.
+//   - cascade  — every kid is archived alongside the parent, with the SAME
+//     archivedAt instant, so restoring the parent restores exactly those kids.
+//   - orphan   — kids stay current but lose their parent link. To keep
+//     invariant I1 (`accountType='kids' ⇒ parentMemberId IS NOT NULL`) intact,
+//     each kid's accountType is forced to 'junior' first. (Deletion used to
+//     null the link through ON DELETE SET NULL; archiving keeps the parent row,
+//     so the link is cleared explicitly.)
 //
 // A first-pass call with strategy=undefined is the discovery shape: returns
-// `kids-present` so the UI can show the three-option picker without spending
-// a transaction.
+// `kids-present` so the UI can show the three-option picker. Kids already
+// archived on their own are not "present": nothing happens to them.
 export type ParentDeletionStrategy =
   | { kind: "reassign"; toParentMemberId: string }
   | { kind: "cascade" }
@@ -80,11 +95,77 @@ export type ParentDeletionStrategy =
   | undefined;
 
 export type ParentDeletionOutcome =
-  | { kind: "ok"; name: string; kidsAffected: number }
+  | { kind: "ok"; name: string; kidsAffected: number; kidIds: string[] }
   | { kind: "not-found" }
   | { kind: "race" }
   | { kind: "kids-present"; kids: Array<{ id: string; name: string }> }
   | { kind: "invalid-reassign"; reason: string };
+
+export type ArchiveMemberOutcome = { kind: "ok"; name: string } | { kind: "not-found" } | { kind: "race" };
+
+/**
+ * Archive one member: stamp archivedAt (and who), bump sessionVersion so every
+ * live member-app session ends at its next request. Deletes nothing. `where`
+ * must carry `id` and `tenantId`; an already-archived member is not-found.
+ */
+export async function archiveMember(
+  tx: Prisma.TransactionClient,
+  where: Prisma.MemberWhereInput & { id: string; tenantId: string },
+  by: { userId: string | null; at: Date },
+): Promise<ArchiveMemberOutcome> {
+  const member = await tx.member.findFirst({ where: { ...where, archivedAt: null }, select: { id: true, name: true } });
+  if (!member) return { kind: "not-found" };
+  // Same lock order as the check-in engine (Class, then Member): a check-in in
+  // flight finishes first, or waits and then finds the member archived.
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Member" WHERE "id" = ${member.id} AND "tenantId" = ${where.tenantId} AND "archivedAt" IS NULL FOR UPDATE
+  `;
+  if (locked.length === 0) return { kind: "race" };
+  const done = await tx.member.updateMany({
+    where: { ...where, archivedAt: null },
+    data: { archivedAt: by.at, archivedById: by.userId, sessionVersion: { increment: 1 } },
+  });
+  if (done.count === 0) return { kind: "race" };
+  return { kind: "ok", name: member.name };
+}
+
+export type RestoreMemberOutcome =
+  | { kind: "ok"; name: string; restoredKidIds: string[] }
+  | { kind: "not-found" }
+  | { kind: "race" };
+
+/**
+ * Restore an archived member: clear archivedAt and archivedById. Kids archived
+ * WITH this parent (same parent, same archivedAt instant: the cascade
+ * strategy) come back with them; a kid archived on its own stays archived.
+ */
+export async function restoreMember(
+  tx: Prisma.TransactionClient,
+  where: { id: string; tenantId: string },
+): Promise<RestoreMemberOutcome> {
+  const member = await tx.member.findFirst({
+    where: { ...where, archivedAt: { not: null } },
+    select: { id: true, name: true, archivedAt: true },
+  });
+  if (!member?.archivedAt) return { kind: "not-found" };
+  const at = new Date(member.archivedAt.getTime());
+  const done = await tx.member.updateMany({
+    where: { ...where, archivedAt: at },
+    data: { archivedAt: null, archivedById: null },
+  });
+  if (done.count === 0) return { kind: "race" };
+  const kids = await tx.member.findMany({
+    where: { tenantId: where.tenantId, parentMemberId: member.id, archivedAt: at },
+    select: { id: true },
+  });
+  if (kids.length > 0) {
+    await tx.member.updateMany({
+      where: { tenantId: where.tenantId, id: { in: kids.map((k) => k.id) }, archivedAt: at },
+      data: { archivedAt: null, archivedById: null },
+    });
+  }
+  return { kind: "ok", name: member.name, restoredKidIds: kids.map((k) => k.id) };
+}
 
 export async function deleteMemberCascade(
   tx: Prisma.TransactionClient,
@@ -174,39 +255,42 @@ export async function deleteMemberCascade(
   return { kind: "ok", name: member.name };
 }
 
-// Parent-aware deletion. Use this from any route that deletes a Member that
-// might be a parent (every staff-side delete path; not needed on the parent
-// self-serve kid-delete since kids cannot themselves be parents — no nesting).
+// Parent-aware ARCHIVE. Use this from any route that removes a Member that
+// might be a parent (every staff-side remove path; not needed on the parent
+// self-serve kid removal since kids cannot themselves be parents).
 //
-// First call (strategy=undefined): probes whether kids exist. Returns
-// `kids-present` if yes — the caller surfaces the picker UI. Otherwise falls
-// through to the standard cascade.
+// First call (strategy=undefined): probes whether current kids exist. Returns
+// `kids-present` if yes — the caller surfaces the picker UI. Otherwise
+// archives the member alone.
 //
 // Subsequent call (strategy supplied): applies the chosen branch inside the
-// same transaction, then runs deleteMemberCascade on the parent row.
-export async function deleteParentMemberWithKidsResolution(
+// same transaction, then archives the parent.
+export async function archiveParentMemberWithKidsResolution(
   tx: Prisma.TransactionClient,
   where: Prisma.MemberWhereInput & { id: string; tenantId: string },
   strategy: ParentDeletionStrategy,
+  by: { userId: string | null; at: Date },
 ): Promise<ParentDeletionOutcome> {
   const member = await tx.member.findFirst({
-    where,
+    where: { ...where, archivedAt: null },
     select: { id: true, name: true },
   });
   if (!member) return { kind: "not-found" };
 
   const kids = await tx.member.findMany({
-    where: { parentMemberId: member.id, tenantId: where.tenantId },
+    where: { parentMemberId: member.id, tenantId: where.tenantId, archivedAt: null },
     select: { id: true, name: true, accountType: true },
     orderBy: { name: "asc" },
   });
 
-  // No kids — standard cascade, nothing to disambiguate.
-  if (kids.length === 0) {
-    const result = await deleteMemberCascade(tx, where);
-    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: 0 };
-    return result; // not-found | race
-  }
+  const archiveParent = async (kidIds: string[]): Promise<ParentDeletionOutcome> => {
+    const result = await archiveMember(tx, where, by);
+    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kidIds.length, kidIds };
+    return result;
+  };
+
+  // No current kids — archive the member, nothing to disambiguate.
+  if (kids.length === 0) return archiveParent([]);
 
   // Kids exist but caller hasn't picked a strategy. Surface the picker.
   if (!strategy) {
@@ -215,15 +299,16 @@ export async function deleteParentMemberWithKidsResolution(
       kids: kids.map((k) => ({ id: k.id, name: k.name })),
     };
   }
+  const kidIds = kids.map((k) => k.id);
 
   if (strategy.kind === "reassign") {
-    // Validate the target parent: same tenant, not the member being deleted,
-    // not itself a kid (parentMemberId must be null).
+    // Validate the target parent: same tenant, not the member being archived,
+    // not itself a kid (parentMemberId must be null), not archived.
     if (strategy.toParentMemberId === member.id) {
-      return { kind: "invalid-reassign", reason: "Cannot reassign kids to the member being deleted" };
+      return { kind: "invalid-reassign", reason: "Cannot reassign kids to the member being removed" };
     }
     const target = await tx.member.findFirst({
-      where: { id: strategy.toParentMemberId, tenantId: where.tenantId },
+      where: { id: strategy.toParentMemberId, tenantId: where.tenantId, archivedAt: null },
       select: { id: true, parentMemberId: true, accountType: true },
     });
     if (!target) {
@@ -237,44 +322,33 @@ export async function deleteParentMemberWithKidsResolution(
     }
 
     await tx.member.updateMany({
-      where: { parentMemberId: member.id, tenantId: where.tenantId },
+      where: { parentMemberId: member.id, tenantId: where.tenantId, archivedAt: null },
       data: { parentMemberId: target.id },
     });
-
-    const result = await deleteMemberCascade(tx, where);
-    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kids.length };
-    return result;
+    return archiveParent(kidIds);
   }
 
   if (strategy.kind === "cascade") {
-    // Delete each kid through the same cascade walk so all FK-RESTRICT
-    // dependents (ranks, attendance, photos, etc.) are handled identically
-    // to a stand-alone kid deletion.
+    // Each kid is archived with the parent's instant, so Restore on the parent
+    // brings back exactly these kids (restoreMember).
     for (const kid of kids) {
-      const result = await deleteMemberCascade(tx, {
-        id: kid.id,
-        tenantId: where.tenantId,
-      });
+      const result = await archiveMember(tx, { id: kid.id, tenantId: where.tenantId, parentMemberId: member.id }, by);
       if (result.kind === "race") return { kind: "race" };
-      // not-found is fine — the kid may have been deleted by another caller
-      // mid-transaction. Keep going.
+      // not-found is fine — the kid may have been archived by another caller.
     }
-
-    const result = await deleteMemberCascade(tx, where);
-    if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kids.length };
-    return result;
+    return archiveParent(kidIds);
   }
 
-  // orphan: flip each kid's accountType to 'junior' (preserves CHECK
-  // constraint Member_kids_must_have_parent once parentMemberId becomes null
-  // via onDelete: SetNull when the parent row drops below).
-  // The kids stay in the tenant; staff surface them as "needs new guardian".
+  // orphan: flip each kid's accountType to 'junior' (keeps CHECK constraint
+  // Member_kids_must_have_parent), then clear the link explicitly. The kids
+  // stay current; staff surface them as "needs new guardian".
   await tx.member.updateMany({
-    where: { parentMemberId: member.id, tenantId: where.tenantId, accountType: "kids" },
+    where: { parentMemberId: member.id, tenantId: where.tenantId, archivedAt: null, accountType: "kids" },
     data: { accountType: "junior" },
   });
-
-  const result = await deleteMemberCascade(tx, where);
-  if (result.kind === "ok") return { kind: "ok", name: result.name, kidsAffected: kids.length };
-  return result;
+  await tx.member.updateMany({
+    where: { parentMemberId: member.id, tenantId: where.tenantId, archivedAt: null },
+    data: { parentMemberId: null },
+  });
+  return archiveParent(kidIds);
 }

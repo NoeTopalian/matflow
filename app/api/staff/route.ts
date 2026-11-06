@@ -47,7 +47,9 @@ export async function GET() {
         // Unlock action, and re-reads this list after an unlock.
         // totpEnabled: Settings → Staff shows "Reset authenticator" only for
         // someone who has enrolled (1 Oct 2026, lib/mfa-policy.ts).
-        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true },
+        // deactivatedAt (PR 3): Settings → Staff lists deactivated accounts
+        // apart, with Reactivate. Every other staff list leaves them out.
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true, deactivatedAt: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
     );

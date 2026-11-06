@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { requireStaff } from "@/lib/authz";
+import { NOT_ARCHIVED } from "@/lib/member-population";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow, type MonthWindowProp } from "@/components/dashboard/MembersList";
 import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
@@ -34,7 +36,8 @@ const MEMBERS_SSR_TAKE = 1500;
 async function getMembers(tenantId: string, now: Date, timeZone: string): Promise<{ rows: MemberRow[]; truncated: boolean }> {
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.member.findMany({
-      where: { tenantId },
+      // PR 3: archived members are listed only under Members → Archived.
+      where: { tenantId, ...NOT_ARCHIVED },
       // Explicit select to skip the wide columns (passwordHash, sessionVersion,
       // totpSecret, medicalConditions, etc.) that this page never renders.
       // Cuts the row payload from Postgres -> Node by ~60-80% on this hot path.
@@ -235,9 +238,14 @@ export default async function MembersPage({ searchParams }: Props) {
   const guardianReviewCount =
     role === "owner" || role === "manager"
       ? await withTenantContext(tenantId, (tx) =>
-          tx.member.count({ where: { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null } }),
+          tx.member.count({ where: { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null, ...NOT_ARCHIVED } }),
         )
       : null;
+  // The way to an archived member's profile, where Restore lives (owner and manager).
+  const archivedCount =
+    role === "owner" || role === "manager"
+      ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, archivedAt: { not: null } } }))
+      : 0;
 
   return (
     <>
@@ -266,6 +274,14 @@ export default async function MembersPage({ searchParams }: Props) {
         moversBasis={{ basis: moversBasis, caption: moversCaption }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
+      {archivedCount > 0 && (
+        <p className="mt-4 text-[13px] text-tx-3">
+          <Link href="/dashboard/members/archived" className="font-medium text-tx-2 underline underline-offset-2">
+            {archivedCount.toLocaleString("en-GB")} archived {archivedCount === 1 ? "member" : "members"}
+          </Link>{" "}
+          · removed members are kept and can be restored.
+        </p>
+      )}
     </>
   );
 }

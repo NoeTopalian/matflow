@@ -91,7 +91,8 @@ export async function POST(req: Request) {
 
   const member = await withTenantContext(session.user.tenantId, (tx) =>
     tx.member.findFirst({
-      where: { id: memberId, tenantId: session.user.tenantId },
+      // An archived (removed) member is not billed (PR 3).
+      where: { id: memberId, tenantId: session.user.tenantId, archivedAt: null },
       select: {
         id: true,
         email: true,

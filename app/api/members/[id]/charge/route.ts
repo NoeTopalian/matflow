@@ -126,7 +126,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { member, tenant, currency } = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
-      where: { id: memberId, tenantId },
+      // An archived (removed) member is not charged (PR 3).
+      where: { id: memberId, tenantId, archivedAt: null },
       select: { id: true, name: true, email: true, stripeCustomerId: true },
     });
     const tenant = await tx.tenant.findUnique({

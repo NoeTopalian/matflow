@@ -8,6 +8,7 @@ import OwnerFamilyManagement, {
   FamilyParentSummary,
 } from "@/components/dashboard/OwnerFamilyManagement";
 import MemberTotpResetButton from "@/components/dashboard/MemberTotpResetButton";
+import ArchivedMemberBanner from "@/components/dashboard/ArchivedMemberBanner";
 import { Card } from "@/components/ui/card";
 import { shownPaymentStatus } from "@/lib/overdue";
 
@@ -45,6 +46,9 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         // TeamUp bridge (readiness spec v3 §7): who collects, and how old the standing is.
         billedBy: true,
         billingStatusAsOf: true,
+        // PR 3: an archived member's profile still opens (Restore lives here).
+        archivedAt: true,
+        archivedBy: { select: { name: true } },
         notes: true,
         joinedAt: true,
         // Optimistic concurrency: the edit form sends this back so a save made
@@ -163,6 +167,8 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     holdUntil: m.holdUntil ? m.holdUntil.toISOString() : null,
     billedBy: m.billedBy,
     billingStatusAsOf: m.billingStatusAsOf ? m.billingStatusAsOf.toISOString() : null,
+    archivedAt: m.archivedAt ? m.archivedAt.toISOString() : null,
+    archivedByName: m.archivedBy?.name ?? null,
     notes: m.notes ?? null,
     profilePictureUrl: m.photos[0]?.url ?? null,
     joinedAt: m.joinedAt.toISOString(),
@@ -288,6 +294,7 @@ async function getFamily(memberId: string, tenantId: string): Promise<{
         guardianSuggestedBy: true,
         parent: { select: { id: true, name: true, email: true, unverifiedEmail: true } },
         children: {
+          where: { archivedAt: null },
           select: {
             id: true,
             name: true,
@@ -395,6 +402,15 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
       {/* MemberProfile first — the page should open with the member you clicked,
           not with the family management panel. The family panel is supplementary
           context and lives below the member detail. */}
+      {member.archivedAt && (
+        <ArchivedMemberBanner
+          memberId={member.id}
+          name={member.name}
+          archivedAt={member.archivedAt}
+          archivedByName={member.archivedByName ?? null}
+          canRestore={["owner", "manager"].includes(session!.user.role)}
+        />
+      )}
       <MemberProfile
         member={member}
         rankOptions={rankOptions}

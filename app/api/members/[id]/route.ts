@@ -7,12 +7,11 @@ import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { stripTotpFields } from "@/lib/totp-immutable";
 import {
-  deleteParentMemberWithKidsResolution,
+  archiveParentMemberWithKidsResolution,
   type ParentDeletionStrategy,
 } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { isTenantBlobUrl } from "@/lib/blob-url";
 import { resolveMembershipTier, membershipTierWrite } from "@/lib/membership-tier";
 import { firstForeignAttribution, attributionNotFoundMessage } from "@/lib/attribution-scope";
 import { recordStatusEvent } from "@/lib/member-status";
@@ -636,11 +635,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           where: { id, tenantId: session.user.tenantId },
           select: {
             id: true,
-            children: { select: { id: true, name: true } },
+            archivedAt: true,
+            // Kids already archived on their own are not affected (lib/member-delete.ts).
+            children: { where: { archivedAt: null }, select: { id: true, name: true } },
           },
         }),
       );
-      if (!probeResult) {
+      if (!probeResult || probeResult.archivedAt) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       if (probeResult.children.length === 0) {
@@ -679,59 +680,36 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     }
   }
 
-  // Audit P1-8 (audit-memory-storage-2026-08-16): a hard DELETE used to go
-  // straight to the cascade, leaving the member's Stripe subscription live.
-  // Stripe kept charging a card for someone who no longer exists in MatFlow,
-  // and the resulting Payment rows landed with memberId = null (that FK is
-  // SET NULL), so nobody could even tell who was still being billed. Same
-  // fail-closed contract as the PATCH-to-cancelled path above and the DSAR
-  // erase route: if Stripe refuses, we refuse the delete, and the operator
-  // fixes Stripe (or cancels manually there) and retries.
+  // PR 3 (6 Nov 2026; Noe: "Save all past user data"): Remove ARCHIVES. The
+  // member and everything they made stay (attendance, status events, imported
+  // plan history, sign-in records, photos and their files, roster places,
+  // waivers); they leave every list, count and door, and Restore on the
+  // profile brings them back. Nothing here deletes a row or a file. Erasure on
+  // a formal request (Settings → Data requests) is the only true delete.
   //
-  // Whose subscriptions: the member being deleted always, plus — under
-  // ?strategy=cascade — every kid, because deleteParentMemberWithKidsResolution
-  // deletes those rows too. reassign and orphan leave the kids in the tenant,
-  // so their subscriptions stay live along with them.
+  // Billing (audit P1-8, kept): an archived member must not go on being
+  // charged while hidden, so their Stripe subscription — and, under
+  // ?strategy=cascade, each archived kid's — is set to cancel at the period
+  // end BEFORE the archive, fail-closed: if Stripe refuses, nothing is
+  // archived and the owner fixes Stripe and retries. reassign and orphan leave
+  // the kids current, so their subscriptions stay live.
   //
   // Known ordering caveat: an invalid ?strategy=reassign target is only
-  // detected inside the helper, so a bad target 400s after we have already
-  // flagged this member's subscription cancel_at_period_end. That is
-  // reversible in Stripe and only ever touches the member the owner explicitly
-  // asked to delete, so we accept it rather than duplicating the helper's
-  // target validation out here where the two copies would drift.
-  //
-  // The same preflight also captures the photo URLs that are about to become
-  // unreachable. MemberPhoto is ON DELETE CASCADE, so Postgres destroys the
-  // rows — and with them the only record of where the files live — while the
-  // files themselves survive in Vercel Blob with nothing pointing at them.
-  // The DSAR erase path deletes them; ordinary deletion did not, which made
-  // this a GDPR erasure gap rather than untidiness. Read them BEFORE the
-  // cascade for exactly that reason: afterwards the URLs no longer exist.
-  //
-  // Only `photos` (MemberPhotoSubject) — photos OF the doomed member. Not
-  // `uploadedPhotos`, which are photos of somebody else who is staying, and
-  // not SignedWaiver.signatureImageUrl, which is deliberately retained under
-  // legal hold when a member is deleted (see lib/member-delete.ts).
+  // detected inside the helper, so a bad target 400s after this member's
+  // subscription was flagged cancel_at_period_end. That is reversible in
+  // Stripe and only touches the member the owner asked to remove.
   let stripeSubscriptionsCancelled = 0;
-  let doomedPhotos: Array<{ id: string; url: string }> = [];
   try {
     const preflight = await withTenantContext(session.user.tenantId, async (tx) => {
       const target = await tx.member.findFirst({
-        where: { id, tenantId: session.user.tenantId },
+        where: { id, tenantId: session.user.tenantId, archivedAt: null },
         select: {
           id: true,
           name: true,
-          email: true,
           stripeSubscriptionId: true,
-          photos: { select: { id: true, url: true } },
           children: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              stripeSubscriptionId: true,
-              photos: { select: { id: true, url: true } },
-            },
+            where: { archivedAt: null },
+            select: { id: true, name: true, stripeSubscriptionId: true },
           },
         },
       });
@@ -748,8 +726,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     }
 
     // No strategy + kids present means the helper returns the picker without
-    // deleting anything, so nothing may be cancelled yet.
-    const willBeDeleted =
+    // archiving anything, so nothing may be cancelled yet.
+    const willBeArchived =
       !strategy && preflight.target.children.length > 0
         ? []
         : [
@@ -757,19 +735,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
             ...(strategy?.kind === "cascade" ? preflight.target.children : []),
           ];
 
-    // Same membership as the Stripe set, and for the same reason: reassign and
-    // orphan leave the kids in the tenant, so their photos stay with them.
-    // `?? []` because nothing about cleaning up files may ever be load-bearing
-    // for the delete itself — see deleteMemberPhotoBlobs.
-    doomedPhotos = willBeDeleted.flatMap((m) => m.photos ?? []);
-
-    for (const doomed of willBeDeleted) {
-      if (!doomed.stripeSubscriptionId) continue;
+    for (const leaving of willBeArchived) {
+      if (!leaving.stripeSubscriptionId) continue;
       if (!preflight.stripeAccountId) {
         return NextResponse.json(
           {
             error:
-              `Cannot delete: ${doomed.name} has an active Stripe subscription but this gym has no ` +
+              `Cannot remove: ${leaving.name} has an active Stripe subscription but this gym has no ` +
               "connected Stripe account. Cancel the subscription directly in Stripe first, then retry.",
           },
           { status: 422 },
@@ -777,13 +749,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       }
       const cancelResult = await cancelSubscriptionAtPeriodEnd({
         tenant: { stripeAccountId: preflight.stripeAccountId },
-        stripeSubscriptionId: doomed.stripeSubscriptionId,
+        stripeSubscriptionId: leaving.stripeSubscriptionId,
       });
       if (!cancelResult.ok) {
         return NextResponse.json(
           {
             error:
-              `Cannot delete: Stripe subscription cancellation failed for ${doomed.name} (` +
+              `Cannot remove: Stripe subscription cancellation failed for ${leaving.name} (` +
               cancelResult.error +
               "). Cancel it manually in Stripe, then retry.",
           },
@@ -801,43 +773,33 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   try {
     const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
-      // The release digest is taken from the rows this transaction deletes, read under a row lock (lane D3, review R4
-      // residual 1): the preflight read above runs in an earlier transaction, so an address changed in between used to
-      // be released with the OLD address digested. FOR UPDATE also blocks a concurrent address change (or a new child
-      // pointing here) until the deletion commits.
-      const lockedRows = await tx.$queryRaw<{ id: string; email: string | null; parentMemberId: string | null }[]>`
-        SELECT id, email, "parentMemberId" FROM "Member"
+      // Lock the member and its children first (a concurrent address change,
+      // or a new child pointing here, waits until the archive commits).
+      await tx.$queryRaw`
+        SELECT id FROM "Member"
         WHERE "tenantId" = ${session.user.tenantId} AND (id = ${id} OR "parentMemberId" = ${id})
         ORDER BY id
         FOR UPDATE`;
-      const o = await deleteParentMemberWithKidsResolution(
+      const o = await archiveParentMemberWithKidsResolution(
         tx,
         { id, tenantId: session.user.tenantId },
         strategy,
+        { userId: session.user.id, at: new Date() },
       );
-      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74): written after the commit, a
-      // crash in between left the address free with no digest telling the attendance import it had been released.
-      // A failure here rolls the deletion back. Photo files are removed after the commit, so the row records how many
-      // were queued; the response reports how many went.
+      // The audit row commits WITH the archive: a failure here rolls it back.
       if (o.kind === "ok") {
-        // Same membership as the preflight's willBeDeleted: the member, plus its children under ?strategy=cascade.
-        const releasedEmails = lockedRows
-          .filter((r) => r.id === id || (strategy?.kind === "cascade" && r.parentMemberId === id))
-          .map((r) => r.email)
-          .filter((e): e is string => !!e);
         await logAudit({
           tx,
           tenantId: session.user.tenantId,
           userId: session.user.id,
-          action: "member.delete",
+          action: "member.archive",
           entityType: "Member",
           entityId: id,
           metadata: {
-            ...(strategy
-              ? { kidsAffected: o.kidsAffected, strategy: strategy.kind, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }
-              : { kidsAffected: 0, stripeSubscriptionsCancelled, photosQueued: doomedPhotos.length }),
-            // The addresses this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
-            releasedEmailSha256: releasedEmails.length === 1 ? emailDigest(releasedEmails[0]) : releasedEmails.map((e) => emailDigest(e)),
+            name: o.name,
+            kidsAffected: o.kidsAffected,
+            ...(strategy ? { strategy: strategy.kind, kidIds: o.kidIds } : {}),
+            stripeSubscriptionsCancelled,
           },
           req,
         });
@@ -865,67 +827,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: outcome.reason }, { status: 400 });
     }
 
-    // Stripe subscriptions are already dealt with: the audit P1-8 preflight
-    // above cancels them BEFORE the delete and refuses the whole operation if
-    // Stripe says no. This branch used to run a second, best-effort
-    // stripe.subscriptions.cancel pass here after the commit; it is gone
-    // deliberately. Cancelling after the rows are gone is fail-open — a Stripe
-    // error at that point leaves a deleted member still being billed with no
-    // row to attribute the charges to — and it would also hard-cancel a
-    // subscription the preflight had just set to cancel_at_period_end, which
-    // is the contract the PATCH-to-cancelled and DSAR erase paths both use.
-    //
-    // Photo files are the opposite case, and belong here rather than in the
-    // preflight: the rows are already gone, so a Blob API failure must leave
-    // an orphaned file rather than fail an operation the operator has been
-    // told is done. Best-effort per file, exactly like the DSAR erase path;
-    // the warning names the photo id so it can be cleaned up by hand.
-    const photosDeleted = await deleteMemberPhotoBlobs(doomedPhotos, session.user.tenantId);
-
     return NextResponse.json({
       success: true,
+      archived: true,
       kidsAffected: outcome.kidsAffected,
       stripeSubscriptionsCancelled,
-      photosDeleted,
     });
   } catch {
-    return NextResponse.json({ error: "Failed to delete member" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to remove member" }, { status: 500 });
   }
-}
-
-/**
- * Best-effort blob cleanup for photos whose rows have already been cascaded
- * away. Never throws. Returns how many files were actually deleted.
- *
- * `data:` URLs are skipped: MemberPhoto.url carries an inline fallback when
- * the Blob store is unavailable at upload time, and there is no file behind
- * one to delete. `del` is imported dynamically for the same reason the other
- * delete paths do it (profile-picture, photos) — the SDK is not needed on the
- * far commoner non-deleting requests through this module.
- */
-async function deleteMemberPhotoBlobs(photos: Array<{ id: string; url: string }>, tenantId: string): Promise<number> {
-  // NOTHING in here may throw. The member IS deleted by the time we run, so an
-  // exception escaping would be caught by the handler's outer try and answered
-  // "Failed to delete member" for a delete that succeeded — the same class of
-  // lie as reporting success for a failure (docs/RULES.md §2). Hence the outer
-  // try around the whole body rather than only around each del().
-  let deleted = 0;
-  try {
-    // Only this club's own store files (cross-tenant blob deletion, 14 Oct 2026).
-    const blobPhotos = photos.filter((p) => p?.url && isTenantBlobUrl(p.url, tenantId));
-    if (blobPhotos.length === 0) return 0;
-
-    const { del } = await import("@vercel/blob");
-    for (const photo of blobPhotos) {
-      try {
-        await del(photo.url);
-        deleted += 1;
-      } catch (e) {
-        console.warn(`[members/[id] DELETE] blob cleanup failed for MemberPhoto ${photo.id}; file orphaned`, e);
-      }
-    }
-  } catch (e) {
-    console.warn("[members/[id] DELETE] photo blob cleanup aborted; files orphaned", e);
-  }
-  return deleted;
 }

@@ -151,7 +151,7 @@ export async function GET(req: Request) {
         // For each class, count whether it has ANY roster (i.e., is roster-only mode).
         const counts = await tx.classRoster.groupBy({
           by: ["classId"],
-          where: { tenantId: session.user.tenantId, classId: { in: cls.map((c) => c.id) } },
+          where: { tenantId: session.user.tenantId, classId: { in: cls.map((c) => c.id) }, member: { archivedAt: null } },
           _count: { _all: true },
         });
         const countMap = new Map<string, number>(counts.map((c) => [c.classId, c._count._all]));

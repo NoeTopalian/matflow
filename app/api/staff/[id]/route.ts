@@ -232,36 +232,39 @@ export async function DELETE(req: Request, { params }: Params) {
 
   // Cannot delete yourself
   if (id === session.user.id) {
-    return NextResponse.json({ error: "Cannot delete your own account" }, { status: 400 });
+    return NextResponse.json({ error: "Cannot remove your own account" }, { status: 400 });
   }
 
+  // PR 3 (6 Nov 2026): Remove DEACTIVATES. The User row stays, so every
+  // Activity row, attendance mark, roster add, task and status change this
+  // person made keeps their name (deleting it nulled those links). The
+  // account cannot sign in by any door (auth.ts, magic link, reset), every
+  // live session is refused at its next request (lib/session-revocation.ts,
+  // plus the sessionVersion bump), and it leaves every staff list except
+  // Settings → Staff's "Deactivated accounts", where the owner can reactivate.
   try {
-    const deleted = await withTenantContext(session.user.tenantId, async (tx) => {
-      // Read under a row lock (lane D3, review R4 residual 1): the release digest is of the address actually deleted.
-      const [row] = await tx.$queryRaw<{ email: string }[]>`
-        SELECT email FROM "User" WHERE id = ${id} AND "tenantId" = ${session.user.tenantId} AND role <> 'owner' FOR UPDATE`;
-      const out = await tx.user.deleteMany({
-        where: { id, tenantId: session.user.tenantId, role: { not: "owner" } },
+    const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      const out = await tx.user.updateMany({
+        where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, deactivatedAt: null },
+        data: { deactivatedAt: new Date(), sessionVersion: { increment: 1 } },
       });
-      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74): a crash between the two used
-      // to leave the address free with no digest; a failure here now rolls the deletion back.
       if (out.count > 0) {
+        const row = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId }, select: { name: true, role: true } });
         await logAudit({
           tx,
           tenantId: session.user.tenantId,
           userId: session.user.id,
-          action: "staff.delete",
+          action: "staff.deactivate",
           entityType: "User",
           entityId: id,
-          // The address this delete releases (keyed digest; the attendance import refuses a released address — SF-54).
-          metadata: row?.email ? { releasedEmailSha256: emailDigest(row.email) } : {},
+          metadata: { name: row?.name ?? null, role: row?.role ?? null },
           req,
         });
       }
-      return { count: out.count, email: row?.email ?? null };
+      return out.count;
     });
-    if (deleted.count === 0) return NextResponse.json({ error: "Not found or cannot delete owner" }, { status: 404 });
-    return NextResponse.json({ success: true });
+    if (result === 0) return NextResponse.json({ error: "Not found, already deactivated, or the owner" }, { status: 404 });
+    return NextResponse.json({ success: true, deactivated: true });
   } catch {
     return NextResponse.json({ error: "Failed to remove staff member" }, { status: 500 });
   }

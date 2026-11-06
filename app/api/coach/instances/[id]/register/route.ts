@@ -34,7 +34,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             id: true, name: true, location: true, coachName: true, maxCapacity: true, color: true, isKids: true,
             // T6a: the memberships that include the class, for the desk ask.
             allowedTiers: { select: { tier: { select: { id: true, name: true } } } },
-            _count: { select: { rosterMembers: true } },
+            _count: { select: { rosterMembers: { where: { member: { archivedAt: null } } } } },
             // D2: the rank gate, so a booked member the door now turns away is flagged.
             requiredRank: { select: { order: true } },
             maxRank: { select: { order: true } },
@@ -45,7 +45,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!instance) return null;
     const [bookings, attendances, waitlist] = await Promise.all([
       tx.classSubscription.findMany({
-        where: { classId: instance.class.id, member: { tenantId } },
+        // An archived member's standing booking is kept but not listed (PR 3).
+        where: { classId: instance.class.id, member: { tenantId, archivedAt: null } },
         include: {
           member: {
             select: {
@@ -76,7 +77,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         select: { id: true, memberId: true, checkInTime: true, checkInMethod: true },
       }),
       tx.classWaitlist.findMany({
-        where: { classInstanceId, status: "waiting" },
+        where: { classInstanceId, status: "waiting", member: { archivedAt: null } },
         orderBy: { position: "asc" },
         include: {
           member: { select: { id: true, name: true, email: true, status: true } },

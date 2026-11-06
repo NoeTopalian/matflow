@@ -112,11 +112,11 @@ export async function POST(req: Request) {
     // computes a different hash and finds nothing. Same precedence as
     // forgot-password: a staff user, else a member who can sign in.
     if (!resetToken) {
-      const holderUser = await tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id }, select: { id: true } });
+      const holderUser = await tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id, deactivatedAt: null }, select: { id: true } });
       const holderMember = holderUser
         ? null
         : await tx.member.findFirst({
-            where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+            where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null }, archivedAt: null },
             select: { id: true },
           });
       const holder: TokenSubject | null = holderUser
@@ -138,7 +138,8 @@ export async function POST(req: Request) {
     // into server memory — no wire leak today but fragile if response
     // shape ever changes.
     const user = await tx.user.findFirst({
-      where: { email: normEmail, tenantId: tenant.id },
+      // PR 3: a deactivated staff account or an archived member cannot reset its way back in.
+      where: { email: normEmail, tenantId: tenant.id, deactivatedAt: null },
       select: { id: true, passwordHash: true, mustChangePassword: true, loginEmailProvisionalSince: true },
     });
     // A provisional login email (7 Oct 2026, lib/login-email.ts) never
@@ -167,7 +168,7 @@ export async function POST(req: Request) {
     // (they sign in via magic link). Members do not have password history
     // tracking today; the history check is staff-only.
     const member = await tx.member.findFirst({
-      where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+      where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null }, archivedAt: null },
       select: { id: true, passwordHash: true },
     });
     if (!member || !member.passwordHash) {

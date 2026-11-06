@@ -81,7 +81,7 @@ describe("repository route invariants", () => {
 
   it("tenant-owner routes under /api/admin carry an owner/role marker", () => {
     const owner = all.filter((r) => /^\/api\/admin\/(import|dsar|email\/test)(\/|$)/.test(r.url));
-    expect(owner.length).toBe(16); // + GET admin/import/[id]/conflicts (25 Oct 2026, requireApiOwner)
+    expect(owner.length).toBe(17); // + GET admin/import/[id]/conflicts (25 Oct 2026, requireApiOwner); + GET admin/dsar/subjects (PR 3, 6 Nov 2026, requireApiOwner)
     expect(owner.filter((r) => !r.guards.some((g) => ["owner", "role", "ownerOrManager", "magicLinkToken"].includes(String(g)))).map((r) => r.url)).toEqual([]);
   });
 });

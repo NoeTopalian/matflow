@@ -97,7 +97,7 @@ export async function POST(req: Request) {
     // Composite guard: kid.id AND tenantId AND parentMemberId — never reveal
     // existence of someone else's child.
     const k = await tx.member.findFirst({
-      where: { id: parsed.data.childMemberId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
+      where: { id: parsed.data.childMemberId, tenantId, parentMemberId, archivedAt: null, ...CONFIRMED_GUARDIAN },
       select: { id: true, name: true, waiverAccepted: true },
     });
     const p = await tx.member.findFirst({

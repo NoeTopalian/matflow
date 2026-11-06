@@ -40,14 +40,15 @@ export async function POST(req: Request) {
   // not MatFlow's noreply void).
   const lookups = await withTenantContext(tenant.id, async (tx) => {
     const u = await tx.user.findFirst({
-      where: { tenantId: tenant.id, email: normEmail },
+      // PR 3: a deactivated staff account and an archived member get no link.
+      where: { tenantId: tenant.id, email: normEmail, deactivatedAt: null },
       select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true },
     });
     const m = !u
       ? await tx.member.findFirst({
           // Sprint 3 K: passwordHash IS NOT NULL excludes kid sub-accounts
           // (which have synthesised emails and are intentionally non-loginable).
-          where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null } },
+          where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null }, archivedAt: null },
           select: { id: true },
         })
       : null;

@@ -37,7 +37,7 @@ async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promi
     // archived or imported history has nothing scheduled, so the banner says
     // "Schedule a class".
     tx.class.count({ where: liveClassWhere(tenantId) }),
-    tx.member.count({ where: { tenantId } }),
+    tx.member.count({ where: { tenantId, archivedAt: null } }),
   ]);
 
   // Don't show the banner until the wizard has been completed at least once
@@ -206,7 +206,7 @@ async function getActionItems(tx: TxClient, tenantId: string, atRisk: AtRiskRead
 
   const [overdue, recentFailed, missingWaiver, birthdayCandidates] = await Promise.all([
     tx.member.findMany({
-      where: { tenantId, status: { in: ["active", "taster"] }, OR: owesMoneyClause(now) },
+      where: { tenantId, status: { in: ["active", "taster"] }, archivedAt: null, OR: owesMoneyClause(now) },
       select: { id: true, name: true, paymentStatus: true, membershipTierId: true, billedBy: true },
       take: 25,
     }),

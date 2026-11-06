@@ -189,8 +189,13 @@ export const OTHER_OWING_STATUSES = ["inactive", "cancelled"] as const;
  */
 export function otherOwingCandidateWhere() {
   return {
-    status: { in: [...OTHER_OWING_STATUSES] },
-    OR: [{ paymentStatus: "overdue" }, { payments: { some: { status: "failed" } } }],
+    // PR 3: an ARCHIVED member is out of every payer total (CHASEABLE_PAYER),
+    // so a debt they still carry lands here, whatever their status: a debt is
+    // never hidden (D9). Removed reads as "left" for money.
+    AND: [
+      { OR: [{ status: { in: [...OTHER_OWING_STATUSES] } }, { archivedAt: { not: null } }] },
+      { OR: [{ paymentStatus: "overdue" }, { payments: { some: { status: "failed" } } }] },
+    ],
   };
 }
 
@@ -230,8 +235,10 @@ export function otherOwingEvidence(m: {
   status: string;
   paymentStatus: string;
   payments?: readonly SettledPaymentInput[] | null;
+  /** PR 3: an archived member counts here whatever their status. */
+  archivedAt?: Date | string | null;
 }): OtherOwingEvidence | null {
-  if (!(OTHER_OWING_STATUSES as readonly string[]).includes(m.status)) return null;
+  if (m.archivedAt == null && !(OTHER_OWING_STATUSES as readonly string[]).includes(m.status)) return null;
   const latest = latestSettledPayment(m.payments ?? []);
   const failed: FailedChargeDetail | null =
     latest?.status === "failed"

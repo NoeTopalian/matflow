@@ -141,9 +141,12 @@ describe.skipIf(!HAS_DB)("sign-in credentials are bound to the person they were 
     const oldToken = linkToken(lastMail("magic_link", X).link);
     expect(oldToken, "the link carries a subject tag").toMatch(/^[a-f0-9]{64}\.[a-f0-9]{32}$/);
 
-    // The real staff-removal route (retires nothing), then a new person at X.
+    // The real staff-removal route (retires nothing). Since PR 3 it DEACTIVATES and the row keeps the address, so the
+    // address passing to a different person is modelled by removing the row outright (as a tenant purge would).
     const del = await staffDelete(new Request(`${ORIGIN}/api/staff/${c1}`, { method: "DELETE", headers: { origin: ORIGIN, host: "localhost:3847" } }), { params: Promise.resolve({ id: c1 }) });
     expect(del.status).toBe(200);
+    expect((await withRlsBypass((tx) => tx.user.findUnique({ where: { id: c1 }, select: { deactivatedAt: true } })))?.deactivatedAt).toBeInstanceOf(Date);
+    await withRlsBypass((tx) => tx.user.delete({ where: { id: c1 } }));
     const c2 = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: X, name: "secA Coach Two", role: "coach", passwordHash: "synthetic-not-a-hash" } })).id);
 
     const stolen = await verify(oldToken);

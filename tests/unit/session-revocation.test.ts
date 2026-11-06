@@ -54,6 +54,23 @@ describe("a deleted account is a revoked session", () => {
   });
 });
 
+describe("an archived member or a deactivated staff account is a revoked session (PR 3)", () => {
+  it("REVOKES a member token whose row is archived, even at a matching version", async () => {
+    memberFindUniqueMock.mockResolvedValue({ sessionVersion: 2, archivedAt: new Date() });
+    expect(await checkSessionVersion({ memberId: "mem-1", tokenVersion: 2 })).toBe("revoked");
+  });
+
+  it("REVOKES a staff token whose account is deactivated, even at a matching version", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 3, deactivatedAt: new Date() });
+    expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3 })).toBe("revoked");
+  });
+
+  it("keeps a session whose row is current", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 3, deactivatedAt: null });
+    expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3 })).toBe("ok");
+  });
+});
+
 describe("version comparison", () => {
   it("revokes when the version has moved (password reset, log out everywhere)", async () => {
     userFindUniqueMock.mockResolvedValue({ sessionVersion: 4 });

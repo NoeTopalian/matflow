@@ -75,7 +75,7 @@ export async function POST(req: Request) {
     // `remaining` array, un-consuming the earlier code.
     const outcome = await withTenantContext(tenant.id, async (tx) => {
       const user = await tx.user.findFirst({
-        where: { tenantId: tenant.id, email },
+        where: { tenantId: tenant.id, email, deactivatedAt: null },
         select: { id: true, totpRecoveryCodes: true, totpEnabled: true },
       });
       if (!user) return { kind: "not-found" as const };

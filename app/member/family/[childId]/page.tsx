@@ -38,6 +38,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         id: childId,
         parentMemberId: memberId,
         tenantId: session.user.tenantId,
+        archivedAt: null,
         // A link an import only SUGGESTED grants no sight of the child
         // (independent acceptance S6, 2 Oct 2026 — this page was the one
         // parent→child door without the gate). lib/guardianship.ts.

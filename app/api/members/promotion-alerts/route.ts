@@ -20,6 +20,7 @@ export async function GET() {
         tenantId,
         accountType: { in: ["junior", "kids"] },
         dateOfBirth: { lte: cutoff },
+        archivedAt: null,
       },
       select: {
         id: true,

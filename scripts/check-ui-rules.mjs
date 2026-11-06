@@ -40,7 +40,7 @@ const BASELINE = {
   // hand-rolled copy of the avatar upload flow was deleted in favour of
   // <AvatarUploader>; its Camera and "Remove picture" buttons went with it.
   // 2026-09-23 Reports UX cycle: the Export CSV button became the Button primitive.
-  rawButton: 332, // 5 Nov 2026: 336 → 332, the phone timetable's day tabs and class chip, and the members' class block, on the primitives. 17 Oct 2026: 337 → 336, the timetable roster block on the primitives. 30 Sep 2026: 342 → 337, the Import panel and member waiver sheet on the Button primitive
+  rawButton: 330, // 6 Nov 2026: 332 → 330, the member-profile DSAR buttons (DsarActions) removed with the move to Settings → Data requests. 5 Nov 2026: 336 → 332, the phone timetable's day tabs and class chip, and the members' class block, on the primitives. 17 Oct 2026: 337 → 336, the timetable roster block on the primitives. 30 Sep 2026: 342 → 337, the Import panel and member waiver sheet on the Button primitive
   // 2026-08-17 honest correction: the UI phase-1 branch added a 22nd confirm()
   // while the ratchet sat red and ignored — a permanently-failing gate teaches
   // people to skip it. Re-baselined at today's truth; the D2 ConfirmDialog
@@ -114,7 +114,8 @@ const BASELINE = {
   // 9 Oct 2026: 724 → 718 — admin conflict panel built from primitives + adminPalette (lane F).
   // 17 Oct 2026: 718 → 713 — Settings member-status rows on hue tokens (T1).
   // 17 Oct 2026: 713 → 707 — dead primaryColor ternaries on the Reports health tiles removed (T2b).
-  hexLiteral: 707,
+  // 6 Nov 2026: 707 → 701 — DsarActions and the old member DSAR page (hex fills) removed; Data requests uses tokens.
+  hexLiteral: 701,
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

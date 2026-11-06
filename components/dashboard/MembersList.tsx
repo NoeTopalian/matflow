@@ -51,6 +51,7 @@ import {
   type PopulationKey,
 } from "@/lib/member-population";
 import { defaultClubMonthWindow, inMonthWindow, type ClubMonthWindow } from "@/lib/club-month";
+import { formatDate } from "@/lib/date";
 import {
   QUIET_THRESHOLD_DAYS,
   addCounts,
@@ -1501,7 +1502,13 @@ function AddMemberModal({
         setFormError(failure.message);
         toast(failure.kind === "invalid" ? failure.message : "Member not added", "error");
       } else {
-        toast(`${form.name} added`, "success");
+        // PR 3: the same individual as an archived member is restored, not duplicated (lib/member-same-individual.ts).
+        toast(
+          data.restored === true
+            ? `Restored ${data.name}${typeof data.restoredFromArchivedAt === "string" ? ` (archived ${formatDate(data.restoredFromArchivedAt)})` : ""} with all their history`
+            : `${form.name} added`,
+          "success",
+        );
         onAdded({
           ...data,
           joinedAt: data.joinedAt ?? new Date().toISOString(),

@@ -51,7 +51,7 @@ export async function GET() {
           select: {
             id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true,
             // T6d: a squad / comp class (it has a roster) shows "Squad only".
-            _count: { select: { rosterMembers: true } },
+            _count: { select: { rosterMembers: { where: { member: { archivedAt: null } } } } },
           },
         },
         _count: { select: { attendances: true, waitlists: true } },

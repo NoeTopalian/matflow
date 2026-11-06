@@ -273,7 +273,7 @@ export async function computeMemberStats(
             requiredRank: { select: { discipline: true, order: true } },
             maxRank: { select: { discipline: true, order: true } },
             rosterMembers: { where: { memberId }, select: { id: true } },
-            _count: { select: { rosterMembers: true } },
+            _count: { select: { rosterMembers: { where: { member: { archivedAt: null } } } } },
             allowedTiers: { select: { tierId: true } },
             tenant: { select: { timezone: true } },
           },

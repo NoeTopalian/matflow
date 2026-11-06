@@ -95,7 +95,7 @@ export async function GET(
             // T6d: whether the class has a roster (a squad / comp class). A
             // COUNT, never the rows: this door is unauthenticated, so it says
             // only that a list exists, never who is on it.
-            _count: { select: { rosterMembers: true } },
+            _count: { select: { rosterMembers: { where: { member: { archivedAt: null } } } } },
           },
         },
       },

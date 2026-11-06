@@ -448,6 +448,8 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
       expect(res.status).toBe(404);
       const stillThere = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: memberBId } }));
       expect(stillThere).not.toBeNull();
+      // PR 3: Remove archives, so "still exists" is not enough — it must not be archived either.
+      expect(stillThere?.archivedAt).toBeNull();
     });
   });
 
@@ -539,6 +541,8 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
       expect(res.status).toBe(404);
       const after = await withRlsBypass((tx) => tx.user.findUnique({ where: { id: coachBId } }));
       expect(after).not.toBeNull();
+      // PR 3: Remove deactivates, so it must not be deactivated either.
+      expect(after?.deactivatedAt).toBeNull();
     });
 
     it("manager, coach, admin and member of gym A: 403 on PATCH and DELETE, row unchanged", async () => {

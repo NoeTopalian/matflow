@@ -132,6 +132,8 @@ type RefreshExceptions = {
   billedByMatFlow: { memberId: string; name: string }[];
   refused: { row: number; reason: string }[];
   holdKept?: { memberId: string; name: string; teamUpSays: string }[];
+  /** PR 3: archived in MatFlow while TeamUp shows them active; never changed by a refresh. */
+  archivedInMatFlow?: { memberId: string; name: string; teamUpSays: string }[];
 };
 
 /** POST admin/import/[id]/preview for a status refresh (lib/importers/teamup-refresh). */
@@ -923,7 +925,8 @@ function TeamUpFacts({ jobId, facts, committed = false }: { jobId: string; facts
 
 function RefreshExceptionList({ exceptions }: { exceptions: RefreshExceptions }) {
   const holdKept = exceptions.holdKept ?? [];
-  const total = exceptions.notInMatFlow.length + exceptions.notInFile.length + exceptions.billedByMatFlow.length + exceptions.refused.length + holdKept.length;
+  const archivedActive = exceptions.archivedInMatFlow ?? [];
+  const total = exceptions.notInMatFlow.length + exceptions.notInFile.length + exceptions.billedByMatFlow.length + exceptions.refused.length + holdKept.length + archivedActive.length;
   if (total === 0) return <p className="mt-2 text-xs text-tx-2">No exceptions: everyone in the file matched, and everyone TeamUp bills is in the file.</p>;
   return (
     <div className="mt-2 space-y-2 text-xs text-tx-2" data-testid="refresh-exceptions">
@@ -949,6 +952,21 @@ function RefreshExceptionList({ exceptions }: { exceptions: RefreshExceptions })
             {exceptions.notInFile.map((e) => <li key={e.memberId}><strong>{e.name}</strong></li>)}
           </ul>
         </details>
+      )}
+      {archivedActive.length > 0 && (
+        <div data-testid="refresh-archived-active">
+          <p className="text-xs font-semibold text-tx-1">Archived in MatFlow, active in TeamUp</p>
+          <p className="text-xs text-tx-2">
+            {plural(archivedActive.length, "member", "members")} you removed in MatFlow whom TeamUp still shows as active. The refresh leaves them archived and changes nothing. Open a profile to restore them if they are back.
+          </p>
+          <ul className="mt-1 space-y-0.5 text-xs text-tx-2">
+            {archivedActive.map((e) => (
+              <li key={e.memberId}>
+                <a href={`/dashboard/members/${encodeURIComponent(e.memberId)}`} className="font-semibold text-tx-1 underline underline-offset-2">{e.name}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {holdKept.length > 0 && (
         <div>
