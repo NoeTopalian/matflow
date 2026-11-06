@@ -15,8 +15,12 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { GET } from "@/app/api/activity/route";
 
 const ROWS = Math.max(1_000, Number(process.env.ROWS ?? 200_000));
+/** Days the rows are spread over. Two years by default: Activity is kept permanently since 6 Nov 2026, so no age floor bounds a scan. */
+const SPAN_DAYS = Math.max(30, Number(process.env.SPAN_DAYS ?? 730));
 const BATCH = 5_000;
 const PASS_MS = 300;
+/** Rows a scan may read to fill one page before an index on the action is needed (plan for PR 1, 6 Nov 2026). */
+const READ_LINE = 5_000;
 const DAY = 86_400_000;
 const STAMP = randomUUID().slice(0, 8);
 const id = (name: string) => `mfvperf${STAMP}${name}`;
@@ -49,7 +53,7 @@ function makeRow(tenant: string, i: number): AuditInput {
   const who = (userId: string) => (real ? userId : null);
   const member = i % 300 === 0 ? BUSY : i < 40 && i % 10 === 3 ? GONE : MEMBERS[(i * 7919) % MEMBERS.length];
   const session = SESSIONS[(i * 31) % SESSIONS.length];
-  const base = { id: `${tenant}r${i}`, tenantId: tenant, createdAt: new Date(NOW - Math.floor((i * 365 * DAY) / ROWS) - 60_000), userId: null as string | null };
+  const base = { id: `${tenant}r${i}`, tenantId: tenant, createdAt: new Date(NOW - Math.floor((i * SPAN_DAYS * DAY) / ROWS) - 60_000), userId: null as string | null };
   // One member whose only activity is in the oldest month: the worst case for the member filter.
   if (i > ROWS * 0.92 && i % 400 === 0) return { ...base, action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: `rec${i}`, metadata: { classInstanceId: session, memberId: NEEDLE, method: "self", actorId: NEEDLE } };
   const k = i % 100;
@@ -101,25 +105,29 @@ function literal(value: unknown): string {
 /** The statement with its parameters written in, so it can be explained as one string. Synthetic values only. */
 const inline = (sent: Sent) => sent.text.replace(/\$(\d+)\b/g, (_, n: string) => literal(sent.values[Number(n) - 1]));
 
-type PlanNode = { "Node Type": string; "Index Name"?: string; "Actual Rows"?: number; "Rows Removed by Filter"?: number; "Shared Hit Blocks"?: number; "Shared Read Blocks"?: number; Plans?: PlanNode[] };
+type PlanNode = { "Node Type": string; "Index Name"?: string; "Actual Rows"?: number; "Actual Loops"?: number; "Rows Removed by Filter"?: number; "Shared Hit Blocks"?: number; "Shared Read Blocks"?: number; Plans?: PlanNode[] };
 
-function describePlan(node: PlanNode): { nodes: string[]; removed: number } {
+/** `read`: rows the scan nodes touched — returned plus removed by a filter, times their loops. */
+function describePlan(node: PlanNode): { nodes: string[]; removed: number; read: number } {
   const nodes: string[] = [];
   let removed = 0;
+  let read = 0;
   (function walk(n: PlanNode) {
     nodes.push(n["Index Name"] ? `${n["Node Type"]} ${n["Index Name"]}` : n["Node Type"]);
-    removed += n["Rows Removed by Filter"] ?? 0;
+    const loops = n["Actual Loops"] ?? 1;
+    removed += (n["Rows Removed by Filter"] ?? 0) * loops;
+    if (/Scan/.test(n["Node Type"])) read += ((n["Actual Rows"] ?? 0) + (n["Rows Removed by Filter"] ?? 0)) * loops;
     for (const child of n.Plans ?? []) walk(child);
   })(node);
-  return { nodes, removed };
+  return { nodes, removed, read };
 }
 
 async function explain(tenantId: string, sent: Sent) {
   const rows = await withTenantContext(tenantId, (tx) => tx.$queryRawUnsafe<{ "QUERY PLAN": unknown }[]>(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${inline(sent)}`), { timeout: 60_000 });
   const raw = rows[0]["QUERY PLAN"];
   const plan = (typeof raw === "string" ? JSON.parse(raw) : raw) as { Plan: PlanNode; "Execution Time": number; "Planning Time": number }[];
-  const { nodes, removed } = describePlan(plan[0].Plan);
-  return { execMs: plan[0]["Execution Time"], planMs: plan[0]["Planning Time"], nodes, removed, hit: plan[0].Plan["Shared Hit Blocks"] ?? 0, read: plan[0].Plan["Shared Read Blocks"] ?? 0 };
+  const { nodes, removed, read: rowsRead } = describePlan(plan[0].Plan);
+  return { execMs: plan[0]["Execution Time"], planMs: plan[0]["Planning Time"], nodes, removed, rowsRead, hit: plan[0].Plan["Shared Hit Blocks"] ?? 0, read: plan[0].Plan["Shared Read Blocks"] ?? 0 };
 }
 
 const isAudit = (s: Sent) => /FROM\s+"public"\."AuditLog"/.test(s.text) && !/^\s*EXPLAIN/i.test(s.text);
@@ -127,7 +135,7 @@ const pageQuery = (all: Sent[]) => all.find((s) => isAudit(s) && /ORDER BY/.test
 const undoQuery = (all: Sent[]) => all.find((s) => isAudit(s) && /LIKE/.test(s.text));
 const deletedNameQuery = (all: Sent[]) => all.find((s) => isAudit(s) && !/ORDER BY/.test(s.text) && !/LIKE/.test(s.text) && /"entityId" IN/.test(s.text));
 
-type Result = { label: string; status: number; entries: number; execMs: number; planMs: number; wallMs: number; plan: string };
+type Result = { label: string; status: number; entries: number; execMs: number; planMs: number; wallMs: number; rowsRead: number; plan: string };
 const results: Result[] = [];
 
 const as = (role: "owner" | "manager") => vi.mocked(auth).mockResolvedValue({ user: { id: role === "owner" ? OWNER : MANAGER, role, tenantId: T1 } } as never);
@@ -143,20 +151,21 @@ async function scenario(label: string, query: string, role: "owner" | "manager" 
   const body = (await res.json()) as { entries?: unknown[] };
   const sent = pick(sentSince());
   if (!sent) {
-    results.push({ label, status: res.status, entries: body.entries?.length ?? 0, execMs: NaN, planMs: NaN, wallMs, plan: "the query was not issued" });
+    results.push({ label, status: res.status, entries: body.entries?.length ?? 0, execMs: NaN, planMs: NaN, wallMs, rowsRead: NaN, plan: "the query was not issued" });
     return;
   }
   const plan = await explain(T1, sent);
-  results.push({ label, status: res.status, entries: body.entries?.length ?? 0, execMs: plan.execMs, planMs: plan.planMs, wallMs, plan: `${plan.nodes.join(" > ")} | filtered out ${plan.removed} | buffers hit ${plan.hit} read ${plan.read}` });
+  results.push({ label, status: res.status, entries: body.entries?.length ?? 0, execMs: plan.execMs, planMs: plan.planMs, wallMs, rowsRead: plan.rowsRead, plan: `${plan.nodes.join(" > ")} | rows read ${plan.rowsRead} | filtered out ${plan.removed} | buffers hit ${plan.hit} read ${plan.read}` });
 }
 
 const dayKey = (daysAgo: number) => new Date(NOW - daysAgo * DAY).toISOString().slice(0, 10);
 
-describe.skipIf(!process.env.ACTIVITY_PERF || !process.env.TEST_DATABASE_URL)("Activity feed — query cost on a year of rows", () => {
+describe.skipIf(!process.env.ACTIVITY_PERF || !process.env.TEST_DATABASE_URL)("Activity feed — query cost on the whole history", () => {
   beforeAll(async () => {
     const started = Date.now();
     await withRlsBypass(async (tx) => {
-      await tx.tenant.createMany({ data: [T1, T2].map((t, i) => ({ id: t, name: `Synthetic perf ${i + 1} ${STAMP}`, slug: `mfv-perf-${i + 1}-${STAMP}`, timezone: "Europe/London" })) });
+      // Each club opened the day before its oldest row, as a club with SPAN_DAYS of history would have.
+      await tx.tenant.createMany({ data: [T1, T2].map((t, i) => ({ id: t, name: `Synthetic perf ${i + 1} ${STAMP}`, slug: `mfv-perf-${i + 1}-${STAMP}`, timezone: "Europe/London", createdAt: new Date(NOW - (SPAN_DAYS + 1) * DAY) })) });
       await tx.user.createMany({
         data: [
           { id: OWNER, tenantId: T1, email: `perf-owner-${STAMP}@example.test`, passwordHash: "x", name: "Perf Owner", role: "owner" },
@@ -176,7 +185,7 @@ describe.skipIf(!process.env.ACTIVITY_PERF || !process.env.TEST_DATABASE_URL)("A
         await withRlsBypass((tx) => tx.auditLog.createMany({ data }), { timeout: 60_000 });
       }
     }
-    say(`SEED ${ROWS} rows in each of 2 clubs in ${Math.round((Date.now() - started) / 1000)} s`);
+    say(`SEED ${ROWS} rows in each of 2 clubs over ${SPAN_DAYS} days in ${Math.round((Date.now() - started) / 1000)} s`);
     // Fresh statistics, as a table that grew over a year would have. Needs the owner role; the wrapper supplies its URL.
     if (process.env.PERF_ANALYZE_URL) {
       const client = new pg.Client({ connectionString: process.env.PERF_ANALYZE_URL });
@@ -195,7 +204,7 @@ describe.skipIf(!process.env.ACTIVITY_PERF || !process.env.TEST_DATABASE_URL)("A
   afterAll(async () => {
     const tenants = [T1, T2];
     // In slices: one statement deleting 400,000 rows would run past the statement bound.
-    for (let slice = 0; slice < 14; slice++) {
+    for (let slice = 0; slice < Math.ceil(SPAN_DAYS / 30) + 2; slice++) {
       const newest = new Date(NOW - slice * 30 * DAY + DAY);
       const oldest = new Date(NOW - (slice + 1) * 30 * DAY);
       await withRlsBypass((tx) => tx.auditLog.deleteMany({ where: { tenantId: { in: tenants }, createdAt: { gte: oldest, lt: newest } } }), { timeout: 60_000 });
@@ -217,6 +226,11 @@ describe.skipIf(!process.env.ACTIVITY_PERF || !process.env.TEST_DATABASE_URL)("A
 
   it(`each scenario runs in ${PASS_MS} ms or less`, async () => {
     await scenario("default first page (Club activity)", "");
+    // Every view, first page (ACTIVITY_VIEWS in lib/activity-types.ts). With no age floor, a rare view walks back
+    // through the whole history until its page fills: these are the scans the read line is about.
+    for (const view of ["club", "attendance", "money", "staff_changes", "all"]) await scenario(`view ${view}, first page`, `?types=${view}`);
+    await scenario("view staff_changes, manager", "?types=staff_changes", "manager");
+    await scenario("jump to a date 700 days back", `?types=all&day=${dayKey(Math.min(700, SPAN_DAYS - 1))}`);
     await scenario("everything, first page", "?types=all");
     await scenario("one member, active all year", `?types=all&memberId=${BUSY}`);
     await scenario("one member whose rows are all in the oldest month", `?types=all&memberId=${NEEDLE}`);
@@ -236,7 +250,8 @@ describe.skipIf(!process.env.ACTIVITY_PERF || !process.env.TEST_DATABASE_URL)("A
 
     for (const r of results) {
       const verdict = Number.isFinite(r.execMs) ? (r.execMs <= PASS_MS ? "pass" : "OVER") : "n/a";
-      say(`PERF | ${verdict} | ${r.label} | http ${r.status} | ${r.entries} entries | exec ${Number.isFinite(r.execMs) ? r.execMs.toFixed(1) : "-"} ms | plan ${Number.isFinite(r.planMs) ? r.planMs.toFixed(1) : "-"} ms | wall ${Math.round(r.wallMs)} ms`);
+      const reads = Number.isFinite(r.rowsRead) ? (r.rowsRead <= READ_LINE ? "reads ok" : "READS OVER") : "reads n/a";
+      say(`PERF | ${verdict} | ${reads} | ${r.label} | http ${r.status} | ${r.entries} entries | rows read ${Number.isFinite(r.rowsRead) ? r.rowsRead : "-"} | exec ${Number.isFinite(r.execMs) ? r.execMs.toFixed(1) : "-"} ms | plan ${Number.isFinite(r.planMs) ? r.planMs.toFixed(1) : "-"} ms | wall ${Math.round(r.wallMs)} ms`);
       say(`PLAN |      | ${r.label} | ${r.plan}`);
     }
     expect(results.every((r) => r.status === 200)).toBe(true);
