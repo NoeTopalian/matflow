@@ -424,8 +424,8 @@ const ID_FIELD_KIND: Record<string, "tier" | "venue" | "staff" | "rank"> = {
 };
 
 /**
- * `member.waiver.signed_via_kiosk` stores the signer's EMAIL as its entity id.
- * It is never looked up and never returned.
+ * `member.waiver.signed_via_kiosk` stored the signer's EMAIL as its entity id until 6 Nov 2026 (now the
+ * member's id; a member's erasure repoints the old rows). It is never looked up and never returned.
  */
 const ENTITY_IS_NOT_AN_ID = new Set(["member.waiver.signed_via_kiosk"]);
 

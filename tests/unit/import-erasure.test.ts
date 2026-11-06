@@ -26,7 +26,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
     }),
 }));
 
-import { csvRecords, decodeImportBytes, eraseSubjectFromImportFiles, removeSubjectRows, scrubSubjectFromDiagnostics, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { csvRecords, decodeImportBytes, eraseSubjectFromImportFiles, isSubjectsOwnAddress, removeSubjectRows, scrubSubjectFromDiagnostics, type ErasureSubject } from "@/lib/importers/import-erasure";
 
 const TEAMUP = "Customer Name,Customer Email,Phone,Emergency Contact Name,Membership";
 // An adult whose own address is in the file, and her child, whose TeamUp row carries her address.
@@ -87,6 +87,28 @@ describe("removeSubjectRows — a row is the subject's only by name AND address"
     const digest = (a: string) => `d:${a.trim().toLowerCase()}`;
     const renamed: ErasureSubject = { memberId: "m_ada", sourceKey: null, email: "ada.new@example.test", name: "Ada Obi-Hart", pastNames: ["Ada Obi"], pastAddressDigests: [digest("ada.old@example.test")], addressDigest: digest };
     expect(removeSubjectRows("Name,Email\nAda Obi,ada.old@example.test\nBen Ray,ben@example.test\n", renamed)).toMatchObject({ removed: 1, text: "Name,Email\nBen Ray,ben@example.test\n" });
+  });
+
+  it("a junior first recorded under the parent's address: that address marks the junior's own row only, never blanked or treated as theirs", () => {
+    const digest = (a: string) => `d:${a.trim().toLowerCase()}`;
+    // The parent still holds parent@example.test, so the route passes its digest as SHARED, not own.
+    const junior: ErasureSubject = { memberId: "m_jo", sourceKey: null, email: "jo@example.test", name: "Jo Obi", pastSharedAddressDigests: [digest("parent@example.test")], addressDigest: digest };
+    const file = "Name,Email,Payer\nJo Obi,parent@example.test,\nPat Obi,parent@example.test,\nZed Ray,zed@example.test,parent@example.test\n";
+    const r = removeSubjectRows(file, junior);
+    expect(r).toEqual({ removed: 1, blanked: 0, nameOnly: 0, text: "Name,Email,Payer\nPat Obi,parent@example.test,\nZed Ray,zed@example.test,parent@example.test\n" });
+    // The parent's diagnostics entries stay: the address is not the junior's alone.
+    const diag = [{ row: 3, reason: "Duplicate email parent@example.test" }];
+    expect(scrubSubjectFromDiagnostics(diag, junior).value).toEqual(diag);
+    expect(isSubjectsOwnAddress(junior, "parent@example.test")).toBe(false);
+    // Held by nobody else, the same earlier address IS theirs alone.
+    const own: ErasureSubject = { ...junior, pastSharedAddressDigests: [], pastAddressDigests: [digest("parent@example.test")] };
+    expect(isSubjectsOwnAddress(own, "Parent@Example.test")).toBe(true);
+    expect(removeSubjectRows(file, own).text).toBe("Name,Email,Payer\nPat Obi,,\nZed Ray,zed@example.test,\n");
+  });
+
+  it("isSubjectsOwnAddress: the current address counts, another member's does not", () => {
+    expect(isSubjectsOwnAddress(ADA, "ADA@example.test")).toBe(true);
+    expect(isSubjectsOwnAddress(ADA, "ben@example.test")).toBe(false);
   });
 
   it("reports a row with the subject's name at another address instead of skipping it silently", () => {
@@ -226,7 +248,7 @@ describe("eraseSubjectFromImportFiles", () => {
     vi.mocked(storage.rewriteImportFile).mockImplementationOnce(async () => {}).mockRejectedValueOnce(new Error("store down"));
     const progress = { files: 0, rows: 0, cells: 0 };
     await expect(eraseSubjectFromImportFiles("t1", ADA, progress)).rejects.toThrow("store down");
-    expect(progress).toMatchObject({ files: 1, rows: 1, cells: 0 });
+    expect(progress).toEqual({ files: 1, rows: 1, cells: 0, nameOnly: 0 });
   });
 
   it("a rewrite failure is thrown, so the erasure refuses rather than reporting success", async () => {

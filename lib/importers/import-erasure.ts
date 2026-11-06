@@ -66,6 +66,8 @@ export type ErasureSubject = {
    * report whose digest is one of these was the subject's own when it was written there, so it counts as theirs.
    */
   pastAddressDigests?: string[];
+  /** Digests of earlier addresses another member of the club now holds: they mark rows, never blanked as theirs. */
+  pastSharedAddressDigests?: string[];
   /** Names a staff edit replaced (member.update changes.name.from): an import made under an old name is theirs too. */
   pastNames?: string[];
   addressDigest?: (address: string) => string;
@@ -75,19 +77,27 @@ const EMAIL_TOKEN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 
 /** Adds to the subject's addresses every address in `texts` whose digest is one of their earlier addresses. */
 function widenWithPastAddresses(w: Who, subject: ErasureSubject, texts: Iterable<string>): void {
-  const digests = subject.pastAddressDigests;
   const digest = subject.addressDigest;
-  if (!digests || digests.length === 0 || !digest) return;
-  const wanted = new Set(digests);
+  const own = new Set(subject.pastAddressDigests ?? []);
+  const shared = new Set(subject.pastSharedAddressDigests ?? []);
+  if ((own.size === 0 && shared.size === 0) || !digest) return;
   for (const t of texts) {
     for (const m of t.toLowerCase().matchAll(EMAIL_TOKEN)) {
       const a = m[0];
-      if (!w.ownAddresses.has(a) && wanted.has(digest(a))) {
-        w.ownAddresses.add(a);
-        w.rowAddresses.add(a);
-      }
+      if (w.ownAddresses.has(a)) continue;
+      const d = digest(a);
+      // Theirs alone: blanked wherever it appears. Held by another member now: it only marks the subject's own rows.
+      if (own.has(d)) w.ownAddresses.add(a);
+      if (own.has(d) || shared.has(d)) w.rowAddresses.add(a);
     }
   }
+}
+
+/** Whether `address` is the subject's own: a current own address, or an earlier one no other member holds. */
+export function isSubjectsOwnAddress(subject: ErasureSubject, address: string): boolean {
+  const a = norm(address);
+  if (who(subject).ownAddresses.has(a)) return true;
+  return !!subject.addressDigest && (subject.pastAddressDigests ?? []).includes(subject.addressDigest(a));
 }
 
 function allStrings(value: unknown, out: string[] = []): string[] {
@@ -219,7 +229,7 @@ const EMAIL_HEADERS = ["customer email", "email", "email address", "e-mail"];
 export function removeSubjectRows(text: string, subject: ErasureSubject): { text: string; removed: number; blanked: number; nameOnly: number } {
   const w = who(subject);
   const none = { text, removed: 0, blanked: 0, nameOnly: 0 };
-  if (w.rowAddresses.size === 0 && w.names.size === 0 && !subject.pastAddressDigests?.length) return none;
+  if (w.rowAddresses.size === 0 && w.names.size === 0 && !subject.pastAddressDigests?.length && !subject.pastSharedAddressDigests?.length) return none;
   const delimiter = csvDelimiter(text);
   const records = csvRecords(text, delimiter);
   const h = records.findIndex((r) => r.cells.some((c) => c.trim() !== ""));

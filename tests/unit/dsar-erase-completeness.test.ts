@@ -512,6 +512,13 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(fulfilment?.metadata.erasedCounts).toMatchObject({ importDiagnosticsEntriesRemoved: 2, importFilesRewritten: 0, importFileRowsRemoved: 0 });
   });
 
+  it("reads earlier addresses and names from both a staff edit (member.update) and the member's own edit (member.self_update)", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    await erase();
+    const lookups = vi.mocked(prisma.auditLog.findMany).mock.calls.map(([a]) => a as { where: { entityId?: unknown; action?: unknown } });
+    expect(lookups).toContainEqual(expect.objectContaining({ where: { tenantId: TENANT_ID, entityId: MEMBER_ID, action: { in: ["member.update", "member.self_update"] } } }));
+  });
+
   it("records the erase counts in the pre-erase audit row", async () => {
     await erase();
 

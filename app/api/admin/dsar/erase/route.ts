@@ -62,7 +62,7 @@ import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
-import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, isSubjectsOwnAddress, type ErasureSubject } from "@/lib/importers/import-erasure";
 import { redactSubjectFromAuditLog } from "@/lib/audit-redact";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -403,14 +403,15 @@ export async function POST(req: Request) {
   type SubjectRow = { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null };
   // An unverified address is the subject's own only when no other member of the club holds it: the second adult at
   // a TeamUp address keeps the FIRST adult's login there (lib/importers/teamup.ts), and erasing them must not blank it.
-  // Earlier login addresses and names: a member.update row records the keyed digest of the address it replaced and
-  // the name a staff edit replaced, so an import made under an old address or name is still recognised (L2, 6 Nov
-  // 2026). Read here, before the transaction below redacts those rows. Digests only; no address is read back.
+  // Earlier login addresses and names: a member.update (staff edit) or member.self_update (the member's own edit) row
+  // records the keyed digest of the address it replaced and the name it replaced, so an import made under an old
+  // address or name is still recognised (L2, 6 Nov 2026). Read here, before the transaction below redacts those rows.
+  // Digests only; no address is read back.
   const pastIdentity = async (id: string): Promise<{ digests: string[]; names: string[] }> => {
     const rows = await withTenantContext(tenantId, (tx) =>
       tx.auditLog.findMany({
         // Every edit row of this member (a handful), filtered below in code: no JSON-path filter to depend on.
-        where: { tenantId, entityId: id, action: "member.update" },
+        where: { tenantId, entityId: id, action: { in: ["member.update", "member.self_update"] } },
         select: { metadata: true },
       }),
     );
@@ -420,13 +421,26 @@ export async function POST(req: Request) {
       names: metas.map((m) => m?.changes?.name?.from).filter((n): n is string => typeof n === "string"),
     };
   };
+  // An earlier address another member of the club now holds (a junior first recorded under the parent's address,
+  // later given their own) is checked the same way as a shared unverified address: it still marks the subject's own
+  // rows, but is never blanked or treated as theirs alone.
+  const heldByOthers = async (id: string, digests: string[]): Promise<Set<string>> => {
+    if (digests.length === 0) return new Set();
+    const others = await withTenantContext(tenantId, (tx) =>
+      tx.member.findMany({ where: { tenantId, id: { not: id } }, select: { email: true, unverifiedEmail: true } }),
+    );
+    const held = new Set(others.flatMap((o) => [o.email, o.unverifiedEmail]).filter((a): a is string => !!a).map((a) => emailDigest(a)));
+    return new Set(digests.filter((d) => held.has(d)));
+  };
   const toSubject = async (m: SubjectRow): Promise<ErasureSubject> => {
     const past = await pastIdentity(m.id);
+    const shared = await heldByOthers(m.id, past.digests);
     return {
       memberId: m.id,
       sourceKey: m.externalRef,
       email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
-      pastAddressDigests: past.digests,
+      pastAddressDigests: past.digests.filter((d) => !shared.has(d)),
+      pastSharedAddressDigests: past.digests.filter((d) => shared.has(d)),
       pastNames: past.names,
       addressDigest: (a: string) => emailDigest(a),
       unverifiedEmail: m.unverifiedEmail,
@@ -497,7 +511,7 @@ export async function POST(req: Request) {
   let auditRowsRedacted = 0;
   for (const subject of importSubjects) {
     importDiagnosticsEntries += await withTenantContext(tenantId, (tx) => eraseSubjectFromImportDiagnostics(tx, tenantId, subject, { dryRun: true }));
-    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true }));
+    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true, isOwnAddress: (a) => isSubjectsOwnAddress(subject, a) }));
   }
   const filesNote = importFiles.files > 0 ? `The member's rows were already removed from ${importFiles.files} stored import file(s). ` : "";
 
@@ -620,7 +634,7 @@ export async function POST(req: Request) {
     for (const subject of importSubjects) await eraseSubjectFromImportDiagnostics(tx, tenantId, subject);
     // …and the personal values recorded on their own Activity rows, kept permanently since 6 Nov 2026: metadata
     // only, the actor columns untouched (lib/audit-redact.ts, the one documented write to an existing row).
-    for (const subject of importSubjects) await redactSubjectFromAuditLog(tx, tenantId, subject.memberId);
+    for (const subject of importSubjects) await redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { isOwnAddress: (a) => isSubjectsOwnAddress(subject, a) });
 
     await tx.member.update({
       where: { id: memberId },

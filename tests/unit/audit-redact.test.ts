@@ -59,4 +59,39 @@ describe("redactSubjectFromAuditLog", () => {
       data: { metadata: { changes: { phone: { from: null, to: null } }, redactedForErasure: true } },
     });
   });
+
+  it("a kiosk row keyed by one of the subject's own addresses is redacted (signerName) and repointed to the member; another address is left", async () => {
+    const byAddress = [
+      { id: "k1", entityId: "Cara.Old@example.test", metadata: { signerName: "Cara Lee", method: "kiosk_waiver_link" } },
+      { id: "k2", entityId: "ben@example.test", metadata: { signerName: "Ben Ray", method: "kiosk_waiver_link" } },
+      { id: "k3", entityId: "cara@example.test", metadata: null },
+    ];
+    const findMany = vi.fn(async (args: { where: { entityId?: unknown } }) => (args.where.entityId ? byAddress : []));
+    const tx = { auditLog: { findMany, updateMany: vi.fn(async () => ({ count: 1 })) } };
+    const own = new Set(["cara.old@example.test", "cara@example.test"]);
+    const isOwnAddress = (a: string) => own.has(a.toLowerCase());
+    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true, isOwnAddress })).toBe(2);
+    expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
+    expect(findMany).toHaveBeenCalledWith({ where: { tenantId: "t1", entityId: { contains: "@" } }, select: { id: true, entityId: true, metadata: true } });
+    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { isOwnAddress })).toBe(2);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
+      where: { id: "k1", tenantId: "t1" },
+      data: { metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true }, entityId: "m1" },
+    });
+    // No metadata to redact: only the address is replaced.
+    expect(tx.auditLog.updateMany).toHaveBeenCalledWith({ where: { id: "k3", tenantId: "t1" }, data: { entityId: "m1" } });
+  });
+
+  it("without isOwnAddress, no address-keyed rows are read", async () => {
+    const tx = { auditLog: { findMany: vi.fn(async () => []), updateMany: vi.fn() } };
+    await redactSubjectFromAuditLog(tx as never, "t1", "m1");
+    expect(tx.auditLog.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("redactAuditMetadata — signerName", () => {
+  it("nulls the kiosk signer's name", () => {
+    expect(redactAuditMetadata({ signerName: "Cara Lee", method: "kiosk_waiver_link" })).toEqual({ signerName: null, method: "kiosk_waiver_link", redactedForErasure: true });
+  });
 });
