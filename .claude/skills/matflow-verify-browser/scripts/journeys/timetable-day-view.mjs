@@ -1,11 +1,10 @@
-// Timetable Day view: one day on a time axis, clashes side by side (synthetic data only).
+// Timetable Day view: one day as the poster grid, on a desktop as on a phone (synthetic data only).
 //   node run-journeys.mjs timetable-day-view
 // Seeds the busy-gym week (a staggered trio and a three-way clash on Monday, a four-way clash on
 // Saturday) through the app's create API from the signed-in page, then checks the Week ⇄ Day toggle,
-// lane placement by measured geometry, the folded four-way group, that each block opens its own
-// class, keyboard reach, the phone (no toggle; the agenda stays), and that the member view would
-// label the mat beside side-by-side sessions (unit-tested; not driven here — no member sign-in in
-// this harness).
+// that the day starts at its first class and says its gaps in words, placement by measured geometry,
+// the four-way clash behind "+2 more", that each chip opens its own class, keyboard reach, and the
+// phone (no toggle; the same day).
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, gridInvariants } from "../lib.mjs";
 
@@ -30,7 +29,8 @@ const SEED = [
 const MONDAY = SEED.flatMap(([, , s]) => s.filter(([d]) => d === 1)).length; // 10
 
 const dayView = (page) => page.getByTestId("day-view");
-const grid = (page) => page.getByTestId("day-grid");
+const grid = (page) => dayView(page).getByTestId("phone-day-grid");
+const dayTab = (page, name) => dayView(page).getByRole("tab", { name });
 const blocks = (loc) => loc.getByRole("button", { name: /^Edit / });
 const stripped = (l) => l?.replace(/ \((?:live|next|ended|cancelled)\)/, "").replace(/ \(possible duplicate\)$/, "");
 async function section(id, desc, fn) {
@@ -70,92 +70,104 @@ try {
     return { created: statuses.length };
   });
 
-  await section("toggle", "Week is the default; Day replaces the grid with a time axis for today and keeps the week navigation; Week brings the grid back", async () => {
+  await section("toggle", "Week is the default; Day replaces the week with one day and keeps the week navigation; Monday starts at its first class (06:30, not an empty 06:00) and says its gaps; Week brings the grid back", async () => {
     await expect(dayView(main)).toHaveCount(0);
-    await main.getByTestId("timetable-view-day").click();
+    // A press before the page has hydrated is lost on the slow test link: press until it takes.
+    await expect(async () => {
+      await main.getByTestId("timetable-view-day").click();
+      await expect(main.getByTestId("timetable-view-day")).toHaveAttribute("aria-pressed", "true", { timeout: 2_000 });
+    }).toPass({ timeout: 45_000 });
     await expect(dayView(main)).toBeVisible();
     await expect(main.getByTestId("week-scroller")).toHaveCount(0);
-    await expect(main.getByTestId("timetable-view-day")).toHaveAttribute("aria-pressed", "true");
     await expect(main.getByRole("button", { name: "Previous week" })).toBeVisible();
     await expect(main.getByRole("button", { name: "Next week" })).toBeVisible();
-    const hours = await grid(main).evaluate((g) => [...g.querySelectorAll("span")].map((s) => s.textContent).filter((t) => /^\d\d:00$/.test(t)));
+    await dayTab(main, /^Monday/).click();
+    await expect(grid(main)).toHaveAttribute("data-day", "mon");
+    const ticks = await grid(main).locator(".pg-tick").allTextContents();
+    const gaps = await grid(main).locator(".pg-break > span").allTextContents();
     await main.getByTestId("timetable-view-week").click();
     await expect(main.getByTestId("week-scroller")).toBeVisible();
     await main.getByTestId("timetable-view-day").click();
-    expect(hours[0]).toBe("06:00"); // earliest 06:30 → clamp floor
-    expect(hours[hours.length - 1]).toBe("22:00"); // latest 21:00 + 1 h
-    return { hours: `${hours[0]}–${hours[hours.length - 1]}` };
+    expect(ticks[0]).toBe("06:30");
+    expect(ticks).not.toContain("06:00");
+    expect(gaps).toContain("No classes 07:20 to 09:30");
+    return { firstTime: ticks[0], gaps };
   });
 
-  await section("lanes", `Monday: ${MONDAY} blocks in time order; the staggered trio shares two lanes by measured position; the 18:40 trio sits three abreast with its duplicates flagged`, async () => {
-    await dayView(main).getByRole("button", { name: /^Monday/ }).click();
+  await section("lanes", `Monday: ${MONDAY} chips, nothing cut or overlapping; the staggered trio shares two lanes by measured position; the 18:40 trio sits three abreast with its duplicates flagged; the card stops at a readable width`, async () => {
+    await dayTab(main, /^Monday/).click();
     const all = blocks(grid(main));
     await expect(all).toHaveCount(MONDAY);
+    const inv = await gridInvariants(main, { sessions: MONDAY, grid: "phone-day-grid", within: '[data-testid="day-view"]' });
+    expect(inv.problems).toEqual([]);
     const labels = (await all.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map(stripped);
-    expect(labels).toEqual([
-      "Edit Beginners Course Gi, 06:30 to 07:20",
-      "Edit Open Mat, 09:30 to 11:00",
-      "Edit Beginners Course Gi, 12:00 to 12:50",
-      "Edit Little Champs, 16:30 to 17:15",
-      "Edit Kids BJJ, 17:00 to 17:45",
-      "Edit Teens, 17:30 to 18:30",
-      "Edit Beginners Course Gi, 18:40 to 19:30",
-      "Edit Beginners Course Gi, 18:40 to 19:30",
-      "Edit Beginners Course Gi, 18:40 to 19:30",
-      "Edit Advanced Gi Comp Class, 19:30 to 21:00",
+    expect([...labels].sort()).toEqual([
+      "Edit Advanced Gi Comp Class, Monday 19:30 to 21:00, Mat 1",
+      "Edit Beginners Course Gi, Monday 06:30 to 07:20, Mat 1",
+      "Edit Beginners Course Gi, Monday 12:00 to 12:50, Mat 1",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 1",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 1",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 2",
+      "Edit Kids BJJ, Monday 17:00 to 17:45, Mat 2",
+      "Edit Little Champs, Monday 16:30 to 17:15, Mat 1",
+      "Edit Open Mat, Monday 09:30 to 11:00",
+      "Edit Teens, Monday 17:30 to 18:30, Mat 3",
     ]);
-    const boxes = await all.evaluateAll((els) => els.map((e) => { const b = e.getBoundingClientRect(); return { x: Math.round(b.x), w: Math.round(b.width), y: Math.round(b.y), h: Math.round(b.height) }; }));
-    const [, , , champs, kids, teens, gi1, gi2, gi3] = boxes;
+    const boxOf = (re) => blocks(grid(main)).filter({ hasText: re }).evaluateAll((els) => els.map((e) => { const b = e.getBoundingClientRect(); return { x: Math.round(b.x), w: Math.round(b.width), y: Math.round(b.y), h: Math.round(b.height) }; }));
+    const [champs] = await boxOf(/Little Champs/), [kids] = await boxOf(/Kids BJJ/), [teens] = await boxOf(/Teens/);
+    const trio = await boxOf(/18:40/);
     expect(kids.x).toBeGreaterThan(champs.x + champs.w - 8); // side by side
     expect(teens.x).toBe(champs.x); // back in lane 1 once Little Champs has finished
     expect(teens.y).toBeGreaterThan(champs.y + champs.h - 1);
-    expect(new Set([gi1.x, gi2.x, gi3.x]).size).toBe(3); // three abreast
-    expect(gi1.y).toBe(gi2.y);
+    expect(trio).toHaveLength(3);
+    expect(new Set(trio.map((b) => b.x)).size).toBe(3); // three abreast
+    expect(new Set(trio.map((b) => b.y)).size).toBe(1);
     const dupes = await all.evaluateAll((els) => els.filter((e) => /possible duplicate/.test(e.getAttribute("aria-label"))).length);
     expect(dupes).toBe(2);
-    return { labels: labels.length, trio: { champs, kids, teens }, duplicates: dupes };
+    const card = await dayView(main).getByTestId("phone-day").evaluate((el) => Math.round(el.getBoundingClientRect().width));
+    // Three lanes at about 300 px each, never the whole window.
+    expect(card).toBeLessThanOrEqual(961);
+    return { labels: labels.length, trio: { champs, kids, teens }, duplicates: dupes, cardWidth: card };
   });
 
-  await section("opens-own-class", "a block opens its own class; Escape closes without a save", async () => {
-    await blocks(grid(main)).nth(4).click();
+  await section("opens-own-class", "a chip opens its own class; Escape closes without a save", async () => {
+    await blocks(grid(main)).filter({ hasText: /Kids BJJ/ }).click();
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue("Kids BJJ");
     await main.keyboard.press("Escape");
     await expect(main.getByRole("dialog")).toHaveCount(0);
-    await blocks(grid(main)).nth(1).click();
+    await blocks(grid(main)).filter({ hasText: /Open Mat/ }).click();
     await expect(main.getByLabel("Class Name", { exact: true })).toHaveValue("Open Mat");
     await main.keyboard.press("Escape");
     await expect(main.getByRole("dialog")).toHaveCount(0);
     return "Kids BJJ, Open Mat";
   });
 
-  await section("four-way", "Saturday's four-way clash is one group block; it opens to four blocks with their mats and collapses", async () => {
-    await dayView(main).getByRole("button", { name: /^Saturday/ }).click();
-    const group = main.getByTestId("day-grid-cluster");
-    await expect(group).toBeVisible();
-    await expect(group).toContainText("4 classes at once");
-    await expect(blocks(grid(main))).toHaveCount(0);
-    // Open it from the keyboard: focus lands on the first row; Collapse returns focus to the group.
-    await group.focus();
+  await section("four-way", "Saturday's four-way clash is two chips and '+2 more'; from the keyboard it lists all four with their mats over the grid, and Escape gives focus back", async () => {
+    await dayTab(main, /^Saturday/).click();
+    await expect(blocks(grid(main))).toHaveCount(2);
+    const more = grid(main).getByTestId("week-more");
+    await expect(more).toHaveAttribute("aria-label", "2 more sessions, 10:00 to 10:45. Show them.");
+    await more.focus();
     await main.keyboard.press("Enter");
-    const open = main.getByTestId("day-grid-cluster-open");
-    await expect(blocks(open)).toHaveCount(4);
-    expect(await main.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toMatch(/^Edit Juniors Comp, 10:00 to 10:45/);
-    const rows = await blocks(open).allTextContents();
-    // Rows keep the day's order (same start → by name), each with its own mat.
-    expect(rows.map((t) => t.replace(/ · Mat \d.*$/, "").replace(/\d\d:\d\d.*$/, "").trim())).toEqual(["Juniors Comp", "Kids BJJ", "Little Champs", "Teens"]);
-    expect(rows.map((t) => t.match(/Mat \d/)?.[0]).sort()).toEqual(["Mat 1", "Mat 2", "Mat 3", "Mat 4"]);
-    await open.getByRole("button", { name: "Collapse" }).click();
-    await expect(main.getByTestId("day-grid-cluster-open")).toHaveCount(0);
-    expect(await main.evaluate(() => document.activeElement?.getAttribute("data-testid"))).toBe("day-grid-cluster");
-    return { rows: rows.map((t) => t.match(/^[A-Za-z ]+/)?.[0].trim() + " / " + t.match(/Mat \d/)?.[0]) };
+    const panel = grid(main).getByTestId("more-panel");
+    const rows = panel.getByTestId("more-row");
+    await expect(rows).toHaveCount(4);
+    expect(await main.evaluate(() => document.activeElement?.getAttribute("data-testid"))).toBe("more-row");
+    const names = await rows.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+    expect(names.map((n) => n.replace(/^Edit /, "").split(",")[0]).sort()).toEqual(["Juniors Comp", "Kids BJJ", "Little Champs", "Teens"]);
+    expect(names.map((n) => n.match(/Mat \d/)?.[0]).sort()).toEqual(["Mat 1", "Mat 2", "Mat 3", "Mat 4"]);
+    await main.keyboard.press("Escape");
+    await expect(grid(main).getByTestId("more-panel")).toHaveCount(0);
+    expect(await main.evaluate(() => document.activeElement?.getAttribute("data-testid"))).toBe("week-more");
+    return { rows: names.map((n) => n.replace(/^Edit /, "")) };
   });
 
-  await section("keyboard", "Tab reaches each Monday block in order and Enter opens it; focus is visible", async () => {
-    await dayView(main).getByRole("button", { name: /^Monday/ }).click();
+  await section("keyboard", "Tab reaches each Monday chip in time order and Enter opens it; focus is visible", async () => {
+    await dayTab(main, /^Monday/).click();
     await blocks(grid(main)).first().focus();
     const seen = [];
     for (let i = 0; i < 4; i++) {
-      seen.push(await main.evaluate(() => document.activeElement?.getAttribute("aria-label")?.match(/, (\d\d:\d\d) to/)?.[1] ?? null));
+      seen.push(await main.evaluate(() => document.activeElement?.getAttribute("aria-label")?.match(/ (\d\d:\d\d) to/)?.[1] ?? null));
       if (i < 3) await main.keyboard.press("Tab");
     }
     const ring = await main.evaluate(() => { const s = getComputedStyle(document.activeElement); return { outline: s.outlineStyle, shadow: s.boxShadow }; });
@@ -170,7 +182,7 @@ try {
 
   await shot(main, "timetable-day-view-desktop");
 
-  await section("phone", "375 x 812: no Week/Day toggle; the phone's Monday is one day of the poster grid with every session on it; no sideways scroll", async () => {
+  await section("phone", "375 x 812: no Week/Day toggle; the phone's Monday is the same one-day poster grid with every session on it; no sideways scroll", async () => {
     const mobile = await context(browser, "10.94.5.2", { viewport: { width: 375, height: 812 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
@@ -194,6 +206,28 @@ try {
     } finally {
       await mobile.close();
     }
+  });
+
+  await section("by-mat-sets-up", "with no mats yet, By mat says what it will do and names the typed places; pressing it opens the set-up with the four places ticked; adding them splits the club by mat (saved), closes the sheet and says so; Monday then has a column per mat it teaches on", async () => {
+    await main.getByTestId("timetable-view-week").click();
+    await expect(main.getByTestId("week-scroller")).toBeVisible();
+    await expect(main.getByTestId("timetable-split-hint")).toHaveText(/^By mat gives each mat its own column\. Press it to set up your mats: your classes say .+ and 2 more\.$/);
+    await main.getByTestId("timetable-split-mat").click();
+    const sheet = main.getByRole("dialog");
+    // The sheet reads the mats and the typed places first: slow on the test link.
+    await expect(sheet.getByRole("checkbox")).toHaveCount(4, { timeout: 45_000 });
+    await sheet.getByRole("button", { name: "Add these as mats" }).click();
+    await expect(main.getByText("Your timetable is now split by mat. Saved for the whole club.")).toBeVisible({ timeout: 30_000 });
+    await expect(main.getByRole("dialog")).toHaveCount(0);
+    await expect(main.getByTestId("week-grid")).toHaveAttribute("data-mats", "true", { timeout: 30_000 });
+    await expect(main.getByTestId("timetable-split-mat")).toHaveAttribute("aria-pressed", "true");
+    const stored = (await q(`select "timetableLayout" v from "Tenant" where id = $1`, [club.tenantId]))[0].v;
+    expect(stored).toBe("mat");
+    const heads = (await main.locator('[data-testid="week-grid"] [data-day="mon"] [data-mat-head]').allTextContents()).map((h) => h.trim());
+    // Monday teaches on Mats 1 to 3 (Mat 4 only on Saturday) and has one class on no mat.
+    expect(heads).toEqual(["Mat 1", "Mat 2", "Mat 3", "No mat"]);
+    await shot(main, "timetable-day-view-by-mat-after-set-up");
+    return { stored, mondayColumns: heads };
   });
 
   await section("database", "exactly the seeded sessions are stored", async () => {

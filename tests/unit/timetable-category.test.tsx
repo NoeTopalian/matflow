@@ -103,7 +103,7 @@ describe("class form — Category", () => {
   });
 });
 
-describe("timetable — category chip and filter", () => {
+describe("timetable — category chip", () => {
   it("shows the chip on the card and the week chip; a Kids-category kids class is tagged Kids once", async () => {
     stubFetch();
     render(<TimetableManager {...props([
@@ -115,30 +115,19 @@ describe("timetable — category chip and filter", () => {
     expect(screen.getAllByTestId("class-chip-category").every((n) => n.textContent === "Competition")).toBe(true);
   });
 
-  it("no filter until a class has a category", async () => {
-    stubFetch();
-    render(<TimetableManager {...props([makeClass("c1", "Advanced", null)])} />);
-    await act(async () => {});
-    expect(screen.queryByTestId("timetable-category-filter")).toBeNull();
-  });
-
-  it("filters the timetable by category, and Uncategorised shows the rest", async () => {
+  it("has no category filter above the timetable, with or without categorised classes (removed 6 Nov 2026)", async () => {
     stubFetch();
     render(<TimetableManager {...props([
       makeClass("c1", "Gi Fundamentals", "fundamentals"),
       makeClass("c2", "No-Gi Advanced", "nogi"),
       makeClass("c3", "Drop-in", null),
     ])} />);
-    const filter = await screen.findByTestId("timetable-category-filter");
-    fireEvent.change(filter.querySelector("select") ?? filter, { target: { value: "nogi" } });
-    await waitFor(() => expect(screen.queryByText("Gi Fundamentals")).toBeNull());
-    expect(screen.getAllByText("No-Gi Advanced").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Drop-in")).toBeNull();
-    expect(screen.getByTestId("timetable-category-count").textContent).toBe("Showing 1 of 3 classes");
-
-    fireEvent.change(filter.querySelector("select") ?? filter, { target: { value: "__uncategorised" } });
-    await waitFor(() => expect(screen.getAllByText("Drop-in").length).toBeGreaterThan(0));
-    expect(screen.queryByText("No-Gi Advanced")).toBeNull();
+    await act(async () => {});
+    expect(screen.queryByTestId("timetable-category-filter")).toBeNull();
+    expect(screen.queryByLabelText("Filter by category")).toBeNull();
+    // Every class is on the page, and each still says its category on its chip and card.
+    for (const name of ["Gi Fundamentals", "No-Gi Advanced", "Drop-in"]) expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("class-card-category").map((n) => n.textContent)).toEqual(["Fundamentals", "No-Gi"]);
   });
 });
 

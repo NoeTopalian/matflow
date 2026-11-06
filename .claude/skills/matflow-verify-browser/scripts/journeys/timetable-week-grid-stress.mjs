@@ -143,10 +143,9 @@ try {
     const day = main.getByTestId("day-view");
     await expect(day).toBeVisible();
     await expect(main.getByTestId("timetable-view-day")).toHaveAttribute("aria-pressed", "true");
-    await expect(day.getByRole("button", { name: new RegExp(`^Saturday \\d+, ${countOn(STRESS, 5)} sessions$`) })).toHaveAttribute("aria-pressed", "true");
-    const open = day.getByTestId("day-grid-cluster-open");
-    await expect(open).toBeVisible();
-    const blocks = open.locator("[data-day-grid-block]");
+    await expect(day.getByRole("tab", { name: new RegExp(`^Saturday \\d+, ${countOn(STRESS, 5)} sessions$`) })).toHaveAttribute("aria-selected", "true");
+    // The day opens with that clash listed over its grid.
+    const blocks = day.getByTestId("more-panel").getByTestId("more-row");
     await expect(blocks).toHaveCount(FIVE.length);
     const names = await blocks.evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") ?? "").replace(/^Edit /, "").split(",")[0]));
     expect([...names].sort()).toEqual(FIVE.map((s) => s.name).sort());
@@ -186,7 +185,7 @@ try {
     });
   }
 
-  await section("empty-today", "Sunday (no classes) as today: the Today pill takes the dash line, is at most 36 px wide and stays inside its 40 px column; no header spills", async () => {
+  await section("empty-today", "Sunday (no classes) as today: squeezed to 40 px, the Today pill takes the dash line and is at most 36 px wide; with room, the pill is beside the name with 'No classes' under it; either way it stays inside its column and no header spills", async () => {
     const sctx = await context(browser, "10.94.7.30", { viewport: { width: 1440, height: 900 }, timezoneId: "Europe/London", storageState: await ctx.storageState() });
     try {
       const page = await sctx.newPage();
@@ -200,16 +199,22 @@ try {
       const inv = await gridInvariants(page, { sessions: SESSIONS });
       expect(inv.problems).toEqual([]);
       await expect(sun).toHaveAccessibleName(/^Sunday 8 November, no sessions, today$/);
-      const pill = sun.getByText("Today", { exact: true });
-      await expect(pill).toBeVisible();
+      // Both forms are in the page; the header's own width shows one (a container query).
+      const pill = sun.getByText("Today", { exact: true }).filter({ visible: true });
+      await expect(pill).toHaveCount(1);
       const [p, column] = [await pill.boundingBox(), await page.locator('[data-day-head="sun"]').boundingBox()];
-      expect(p.width).toBeLessThanOrEqual(36);
       expect(p.x).toBeGreaterThanOrEqual(column.x - 1);
       expect(p.x + p.width).toBeLessThanOrEqual(column.x + column.width + 1);
-      expect(column.width).toBeLessThanOrEqual(41);
-      await expect(sun.getByText("—")).toHaveCount(0);
+      const squeezed = column.width <= 41;
+      if (squeezed) {
+        expect(p.width).toBeLessThanOrEqual(36);
+        await expect(sun.getByText("—").filter({ visible: true })).toHaveCount(0);
+      } else {
+        await expect(sun.getByText("No classes", { exact: true }).filter({ visible: true })).toHaveCount(1);
+        expect(p.y).toBeLessThan(column.y + column.height);
+      }
       await shot(page, "timetable-week-grid-stress-empty-today");
-      return { pillWidth: p.width, columnWidth: column.width, problems: inv.problems.length };
+      return { squeezed, pillWidth: p.width, columnWidth: column.width, problems: inv.problems.length };
     } finally {
       await sctx.close();
     }

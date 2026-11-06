@@ -19,9 +19,12 @@ export const GUTTER_PX = 36;
 export const DAY_GAP_PX = 6;
 export const EMPTY_DAY_PX = 40;
 export const LANE_MIN_PX = 82;
-export const LANE_MAX_PX = 220;
 export const DAY_HEAD_PX = 44;
 export const MAT_HEAD_PX = 34;
+
+/** A row's track: as tall as its text and never under its floor; a sliver row (`fixed`) exactly its floor. */
+const rowTrack = (r: TimetableGrid["rows"][number]) =>
+  r.kind === "used" ? (r.fixed ? `${r.floorPx}px` : `minmax(${r.floorPx}px, auto)`) : r.kind === "break" ? "26px" : "10px";
 
 const DAY_SLUG = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const vars = (v: Record<string, string | number>) => v as CSSProperties;
@@ -76,8 +79,12 @@ export function PosterGrid({
   const hasMats = grid.days.some((d) => d.columns.length > 0);
   const band = DAY_HEAD_PX + (hasMats ? MAT_HEAD_PX : 0);
 
-  // Columns: the gutter, then per day a gap and its tracks. A day's width
-  // follows its lanes; a track is that share of a lane.
+  // Columns: the gutter, then per day a gap and its tracks. Every day takes an
+  // equal share of the width (1fr, split between its tracks), an empty day
+  // too, and the week fills its box: seven days read as seven equal columns
+  // (Noe, 6 Nov 2026). A day never goes under what its lanes need, so a busy
+  // day is wider than its share when it must be, and an empty day is the first
+  // to give way, down to EMPTY_DAY_PX, before the box has to scroll.
   const columns: string[] = [`${GUTTER_PX}px`];
   const dayStart = new Map<number, number>();
   let line = 2;
@@ -88,11 +95,12 @@ export function PosterGrid({
     minWidth += DAY_GAP_PX;
     dayStart.set(day.day, line);
     if (day.count === 0) {
-      columns.push(`${EMPTY_DAY_PX}px`);
+      columns.push(`minmax(${EMPTY_DAY_PX}px, 1fr)`);
       minWidth += EMPTY_DAY_PX;
     } else {
       const share = day.lanes / day.tracks;
-      for (let t = 0; t < day.tracks; t++) columns.push(`minmax(${LANE_MIN_PX * share}px, ${LANE_MAX_PX * share}px)`);
+      const fr = Number((1 / day.tracks).toFixed(4));
+      for (let t = 0; t < day.tracks; t++) columns.push(`minmax(${LANE_MIN_PX * share}px, ${fr}fr)`);
       minWidth += LANE_MIN_PX * day.lanes;
     }
     line += day.tracks;
@@ -100,7 +108,7 @@ export function PosterGrid({
   const rows = [
     `${DAY_HEAD_PX}px`,
     hasMats ? `${MAT_HEAD_PX}px` : "0px",
-    ...grid.rows.map((r) => (r.kind === "used" ? `minmax(${r.floorPx}px, auto)` : r.kind === "break" ? "26px" : "10px")),
+    ...grid.rows.map((r) => rowTrack(r)),
   ];
   const firstBusyDay = grid.days.find((d) => d.count > 0);
   const breakFrom = firstBusyDay ? (dayStart.get(firstBusyDay.day) ?? 2) : 2;
@@ -325,7 +333,7 @@ export function PosterDay({
 
   if (!day) return null;
   const hasMats = day.columns.length > 0;
-  const rows = ["0px", hasMats ? "auto" : "0px", ...grid.rows.map((r) => (r.kind === "used" ? `minmax(${r.floorPx}px, auto)` : r.kind === "break" ? "26px" : "10px"))];
+  const rows = ["0px", hasMats ? "auto" : "0px", ...grid.rows.map((r) => rowTrack(r))];
 
   return (
     <div
