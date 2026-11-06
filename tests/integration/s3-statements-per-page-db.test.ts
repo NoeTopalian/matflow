@@ -149,6 +149,8 @@ async function seed() {
           waiverAccepted: i % 2 === 0,
           joinedAt: new Date(now - (i % 4 === 0 ? 3 : 200) * DAY),
           ...kinds[i % kinds.length],
+          // A kids account must have a parent (CHECK Member_kids_must_have_parent): member 4 is a parent account.
+          ...(kinds[i % kinds.length].accountType === "kids" ? { parentMemberId: `${STAMP}-m04` } : {}),
         })),
       });
       const classes = [

@@ -48,16 +48,17 @@ const KINDS = [
   { status: "cancelled", type: "adult" },
   { status: "active", type: "junior" },
 ];
-const members = [];
-for (let i = 0; i < 21; i += 1) {
+const members = Array.from({ length: 21 }, (_, i) => `${P}-m${String(i).padStart(2, "0")}`);
+// Kids accounts last: each must have a parent (CHECK Member_kids_must_have_parent); member 04 is a parent account.
+const order = [...members.keys()].sort((a, b) => Number(KINDS[a % KINDS.length].type === "kids") - Number(KINDS[b % KINDS.length].type === "kids"));
+for (const i of order) {
   const k = KINDS[i % KINDS.length];
-  const id = `${P}-m${String(i).padStart(2, "0")}`;
-  members.push(id);
+  const id = members[i];
   const joined = i % 5 === 0 ? at(2) : at(300);
   const phone = i % 3 === 0 ? null : i % 3 === 1 ? "" : `07700 9${String(i).padStart(5, "0")}`;
   await q(
-    `insert into "Member" (id, "tenantId", email, name, status, "accountType", phone, "waiverAccepted", "joinedAt", "updatedAt") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-    [id, tenantId, `${id}@example.test`, `S3 Member ${String(i).padStart(2, "0")}`, k.status, k.type, phone, i % 2 === 0, joined],
+    `insert into "Member" (id, "tenantId", email, name, status, "accountType", phone, "waiverAccepted", "joinedAt", "parentMemberId", "updatedAt") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+    [id, tenantId, `${id}@example.test`, `S3 Member ${String(i).padStart(2, "0")}`, k.status, k.type, phone, i % 2 === 0, joined, k.type === "kids" ? members[4] : null],
   );
 }
 const classes = [

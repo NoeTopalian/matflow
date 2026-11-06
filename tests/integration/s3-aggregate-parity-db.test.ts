@@ -45,7 +45,7 @@ type Visit = { at: string; member: string; cls: string; method?: string };
 async function mkClub(
   label: string,
   spec: {
-    members?: Record<string, Partial<Prisma.MemberUncheckedCreateInput>>;
+    members?: Record<string, Partial<Prisma.MemberUncheckedCreateInput> & { parent?: string }>;
     classes?: Record<string, Partial<Prisma.ClassUncheckedCreateInput> & { imported?: boolean }>;
     tiers?: number;
     visits?: Visit[];
@@ -60,10 +60,13 @@ async function mkClub(
         data: { tenantId: t.id, createdById: `${STAMP}-${label}`, source: "teamup-attendance", fileName: `${STAMP}.csv`, fileBlobUrl: "none", status: "complete" },
       });
       const member: Record<string, string> = {};
-      for (const [k, m] of Object.entries(spec.members ?? {})) {
+      // A kids account must have a parent (CHECK Member_kids_must_have_parent): `parent` names an earlier member's key.
+      for (const [k, { parent, ...m }] of Object.entries(spec.members ?? {}) as [string, Partial<Prisma.MemberUncheckedCreateInput> & { parent?: string }][]) {
         const id = nextId(`m-${k}`);
         member[k] = id;
-        await tx.member.create({ data: { id, tenantId: t.id, name: `${label} ${k}`, email: `${id}@example.test`, ...m } as Prisma.MemberUncheckedCreateInput });
+        await tx.member.create({
+          data: { id, tenantId: t.id, name: `${label} ${k}`, email: `${id}@example.test`, ...(parent ? { parentMemberId: member[parent] } : {}), ...m } as Prisma.MemberUncheckedCreateInput,
+        });
       }
       const cls: Record<string, string> = {};
       for (const [k, { imported, ...c }] of Object.entries(spec.classes ?? {})) {
@@ -186,7 +189,7 @@ describe.skipIf(!HAS_DB)("S3 aggregate statements return exactly what the replac
       cancelled: { status: "cancelled", accountType: "adult", phone: null, waiverAccepted: false, joinedAt: new Date("2026-10-10T00:00:00.000Z") },
       guardian: { status: "active", accountType: "parent", phone: null, waiverAccepted: false, joinedAt: new Date("2026-10-05T00:00:00.000Z") },
       guardianTaster: { status: "taster", accountType: "parent", phone: "", waiverAccepted: false, joinedAt: new Date("2026-11-02T00:00:00.000Z") },
-      kid: { status: "active", accountType: "kids", phone: "x", waiverAccepted: false, joinedAt: new Date("2026-10-15T00:00:00.000Z") },
+      kid: { status: "active", accountType: "kids", phone: "x", waiverAccepted: false, joinedAt: new Date("2026-10-15T00:00:00.000Z"), parent: "guardian" },
       junior: { status: "taster", accountType: "junior", phone: null, waiverAccepted: true, joinedAt: new Date("2026-09-01T00:00:00.000Z") },
     };
     const classes = {
