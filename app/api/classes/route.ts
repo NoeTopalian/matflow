@@ -8,12 +8,15 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
-import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError } from "@/lib/class-refs";
 import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
 import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
+import { lockClubMats } from "@/lib/mats";
 
 /** A tier vanished between the club check and the write: roll the class back. */
 class TierRefError extends Error {}
+/** The mat is not this club's, or was removed between the club check and the write. */
+class MatRefError extends Error {}
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -99,7 +102,7 @@ export async function POST(req: Request) {
   // coach ids follow the same rule — they were written unchecked, so gym A
   // could attach gym B's belt or coach and read their names back.
   if (
-    classData.locationId || classData.requiredRankId || classData.maxRankId || classData.coachUserId ||
+    classData.locationId || classData.matId || classData.requiredRankId || classData.maxRankId || classData.coachUserId ||
     (allowedTierIds && allowedTierIds.length > 0)
   ) {
     const refError = await withTenantContext(session.user.tenantId, (tx) =>
@@ -133,6 +136,17 @@ export async function POST(req: Request) {
 
   try {
     const { cls, instancesCreated, tierIdsWritten, tiersWritten, rosterWritten } = await withTenantContext(session.user.tenantId, async (tx) => {
+      // A class created on a mat: the club's mats lock FIRST (so the mat
+      // cannot be renamed or removed under this write), then the mat's name,
+      // which becomes the class's place whatever was typed (the write-through
+      // rule, lib/mats.ts). A class with no mat takes no mats lock.
+      let matName: string | null = null;
+      if (classData.matId) {
+        await lockClubMats(tx, session.user.tenantId);
+        const mat = await tx.mat.findFirst({ where: { id: classData.matId, tenantId: session.user.tenantId }, select: { name: true } });
+        if (!mat) throw new MatRefError();
+        matName = mat.name;
+      }
       // The club's zone is needed BEFORE the write, not only for the window
       // below: `startDate` is a day marker and the club's calendar date is what
       // it must say (see `scheduleStartMarker`).
@@ -143,6 +157,7 @@ export async function POST(req: Request) {
         data: {
           tenantId: session.user.tenantId,
           ...classData,
+          ...(matName !== null ? { location: matName } : {}),
           schedules: {
             create: schedules.map((s: typeof schedules[number]) => ({
               dayOfWeek: s.dayOfWeek,
@@ -243,6 +258,10 @@ export async function POST(req: Request) {
   } catch (e) {
     if (e instanceof TierRefError) {
       return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
+    }
+    // The mat went between the club check and the write, or the foreign key refused it.
+    if (e instanceof MatRefError || isMatForeignKeyError(e)) {
+      return NextResponse.json({ error: CLASS_REF_ERRORS.mat }, { status: 400 });
     }
     return NextResponse.json({ error: "Failed to create class" }, { status: 500 });
   }

@@ -20,7 +20,9 @@ import { DayGrid } from "@/components/schedule/DayGrid";
 import { PosterGrid } from "@/components/schedule/PosterGrid";
 import { MoreChip, WeekChip } from "@/components/schedule/WeekChip";
 import { buildTimetableGrid } from "@/lib/timetable-grid";
-import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
+import type { ClassRow, CoachUserOption, MatOption, TierOption } from "@/app/dashboard/timetable/page";
+import { MatsSheet } from "@/components/dashboard/MatsSheet";
+import { effectiveLayout, matsInUse, type TimetableLayout } from "@/lib/timetable-layout";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
 import type { RestrictionPreview } from "@/lib/booking-eligibility";
@@ -43,12 +45,22 @@ interface Props {
   coachUsers: CoachUserOption[];
   /** T6a: every membership tier of the club, for "Who can attend". */
   membershipTiers?: TierOption[];
+  /** The club's mats, in the club's order (the order of the columns). */
+  mats?: MatOption[];
+  /** How same-time classes are split, if somebody has chosen: "mat" | "time". null = nobody has. */
+  storedLayout?: TimetableLayout | null;
+  /** The mats could not be read: the timetable is drawn by time and says so. */
+  matsLoadFailed?: boolean;
+  /** A MatFlow support session: mats and the split are the club's to change, so neither control is shown. */
+  supportSession?: boolean;
   primaryColor: string;
   role: string;
   // Session F: drives the "My classes" filter. When null (e.g. no
   // currentUserId resolvable from session) the toggle is suppressed.
   currentUserId: string | null;
 }
+
+const NO_MATS: MatOption[] = [];
 
 interface ScheduleInput {
   dayOfWeek: number;
@@ -995,6 +1007,7 @@ function ClassForm({
   rankSystems,
   coachUsers,
   membershipTiers = [],
+  mats = NO_MATS,
   primaryColor,
   onSave,
   onCancel,
@@ -1005,6 +1018,8 @@ function ClassForm({
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
   membershipTiers?: TierOption[];
+  /** The club's mats. None: the form is exactly as it was, with its typed Location. */
+  mats?: MatOption[];
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -1016,6 +1031,20 @@ function ClassForm({
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
   const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
   const [location, setLocation] = useState(initial?.location ?? "");
+  // The mat the class runs on ("" = no mat). A club with mats chooses one here
+  // instead of typing a Location; on a mat, the class's place is the mat's
+  // name and the server writes it (lib/mats.ts, the write-through rule).
+  const initialMatId = initial?.matId && mats.some((m) => m.id === initial.matId) ? initial.matId : "";
+  const [matId, setMatId] = useState(initialMatId);
+  function chooseMat(next: string) {
+    if (next === "") {
+      // Leaving a mat: the place box must not carry a mat's name (the one just left, or one passed through on the
+      // way: Mat 1, then Mat 2, then No mat would otherwise leave "Mat 1" typed).
+      const typed = location.trim().toLowerCase();
+      if (typed && mats.some((m) => m.name.trim().toLowerCase() === typed)) setLocation("");
+    }
+    setMatId(next);
+  }
   // ADR-001 D2: the venue. The picker only appears once the club has more
   // than one location; a single-venue club never sees it.
   const [locationId, setLocationId] = useState(initial?.locationId ?? "");
@@ -1146,7 +1175,15 @@ function ClassForm({
       // free-text fallback for clubs that haven't put their coaches in Users yet.
       coachName: coachName.trim() || null,
       coachUserId: coachUserId || null,
-      location: location.trim() || null,
+      ...(mats.length > 0
+        ? {
+            // The mat is sent on create, and on edit only when it changed, so an edit that
+            // does not move the class takes no mats lock on the server.
+            ...(!initial?.id || matId !== initialMatId ? { matId: matId || null } : {}),
+            // On a mat the server writes the mat's name as the place; a typed place is sent only for a class on no mat.
+            ...(matId ? {} : { location: location.trim() || null }),
+          }
+        : { location: location.trim() || null }),
       locationId: locationId || null,
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
@@ -1337,17 +1374,40 @@ function ClassForm({
             {...focusHandlers}
           />
         </div>
-        <div>
-          <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Location</label>
-          <input aria-label="Location"
-            className={inputCls}
-            style={inputStyle}
-            placeholder="Mat 1"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            {...focusHandlers}
-          />
-        </div>
+        {mats.length === 0 ? (
+          <div>
+            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Location</label>
+            <input aria-label="Location"
+              className={inputCls}
+              style={inputStyle}
+              placeholder="Mat 1"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              {...focusHandlers}
+            />
+          </div>
+        ) : (
+          <div>
+            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Mat</label>
+            <Select aria-label="Mat" value={matId} onChange={(e) => chooseMat(e.target.value)} className="w-full" data-testid="class-form-mat">
+              <option value="">No mat</option>
+              {mats.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </Select>
+            {/* Off a mat, a typed place still works (a hall down the road, the beach). */}
+            {matId === "" && (
+              <input aria-label="Place (not on a mat)"
+                className={inputCls + " mt-2"}
+                style={inputStyle}
+                placeholder="Place (not on a mat)"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                {...focusHandlers}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {venuesError && (
@@ -1742,7 +1802,11 @@ function ClassForm({
 // which the snapshot check below would read as a new server snapshot.
 const NO_CLASSES: ClassRow[] = [];
 
-export default function TimetableManager({ initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [], primaryColor, role, currentUserId }: Props) {
+export default function TimetableManager({
+  initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [],
+  mats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportSession = false,
+  primaryColor, role, currentUserId,
+}: Props) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const openedFromQuery = useRef(false);
@@ -1799,6 +1863,71 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   const { ask, dialogProps } = useConfirmDialog();
 
   const canManage = ["owner", "manager"].includes(role);
+
+  // ── Mats and the same-time split ──────────────────────────────────────────
+  // The choice somebody pressed follows the server's: a refresh brings a new
+  // prop, and a press shows at once and is put back if the save fails.
+  const [matsOpen, setMatsOpen] = useState(false);
+  const [choice, setChoice] = useState<{ from: TimetableLayout | null; stored: TimetableLayout | null }>({ from: storedLayout, stored: storedLayout });
+  if (choice.from !== storedLayout) setChoice({ from: storedLayout, stored: storedLayout });
+  const [savingLayout, setSavingLayout] = useState(false);
+  // Mats with a live class on them, over the whole club (not the filtered view).
+  const inUse = matsInUse(classes, mats);
+  // Until someone chooses, the timetable follows the mats (lib/timetable-layout.ts).
+  const layout: TimetableLayout = matsLoadFailed ? "time" : effectiveLayout(choice.stored, inUse);
+  const canChangeMats = canManage && !supportSession;
+  // When the split changes by itself (a class put on a second mat, a mat
+  // removed), say so once. A change the reader has just been told about — the
+  // control's own toast, the Mats sheet's own line — sets `quietSplit` first.
+  const quietSplit = useRef(false);
+  const lastLayout = useRef(layout);
+  // A failed mats read draws the week by time and says why in its own line; neither that nor the recovery is a
+  // change of the split, so neither gets the toast.
+  const lastLoadFailed = useRef(matsLoadFailed);
+  useEffect(() => {
+    const readChanged = lastLoadFailed.current !== matsLoadFailed;
+    lastLoadFailed.current = matsLoadFailed;
+    if (lastLayout.current === layout) return;
+    lastLayout.current = layout;
+    if (quietSplit.current) {
+      quietSplit.current = false;
+      return;
+    }
+    if (readChanged || matsLoadFailed) return;
+    showToast(`The staff week is now split by ${layout === "mat" ? "mat" : "time"}.`, "info");
+  }, [layout, matsLoadFailed, showToast]);
+
+  async function chooseLayout(next: TimetableLayout) {
+    if (savingLayout) return;
+    if (next === "mat" && inUse === 0) return; // aria-disabled: its sentence says what to do first
+    if (choice.stored === next) return; // already saved: nothing to send
+    const before = choice.stored;
+    const changes = effectiveLayout(next, inUse) !== layout;
+    if (changes) quietSplit.current = true;
+    setChoice((c) => ({ ...c, stored: next }));
+    setSavingLayout(true);
+    // What the reader is told if the save does not land. A refusal the server
+    // explains (no class is on a mat any more: 409) is shown in its words.
+    let failure = "Couldn't save that. Try again.";
+    try {
+      const res = await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: next }) });
+      if (!res.ok) {
+        if (res.status === 409) {
+          const said = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
+          if (typeof said === "string" && said) failure = said;
+        }
+        throw new Error("refused");
+      }
+      showToast(`Saved. The staff week is now split by ${next === "mat" ? "mat" : "time"}.`, "success");
+      router.refresh();
+    } catch {
+      if (changes) quietSplit.current = true;
+      setChoice((c) => ({ ...c, stored: before }));
+      showToast(failure, "error");
+    } finally {
+      setSavingLayout(false);
+    }
+  }
 
   // Session F: "My classes" filter. Default ON for coaches (the role most
   // likely to want it on every load), OFF for owner/manager. Persists per-
@@ -1895,11 +2024,22 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         || a.cls.id.localeCompare(b.cls.id))
   );
   // The week as a poster grid: rows are the real times, same-time sessions sit
-  // side by side (lib/timetable-grid). Equal starts order by the typed place.
+  // side by side (lib/timetable-grid) — one column per mat, or in lanes by
+  // time. Equal starts order by the club's mat order, then by the typed place,
+  // so Mat 1 stays left of Mat 2 when the week is split by time too.
   const sessionByKey = new Map(byDay.flat().map((session) => [session.slot.id, session] as const));
+  const matOrder = new Map(mats.map((m, i) => [m.id, i] as const));
+  const matNames = new Map(mats.map((m) => [m.id, m.name] as const));
   const weekGrid = buildTimetableGrid(
-    byDay.flat().map(({ cls, slot }) => ({ key: slot.id, day: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime, matId: null, tie: cls.location ?? "" })),
-    { days: [1, 2, 3, 4, 5, 6, 0], layout: "time", mats: [] },
+    byDay.flat().map(({ cls, slot }) => {
+      const position = cls.matId ? matOrder.get(cls.matId) : undefined;
+      return {
+        key: slot.id, day: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime,
+        matId: cls.matId ?? null,
+        tie: position !== undefined ? String(position).padStart(2, "0") : (cls.location ?? ""),
+      };
+    }),
+    { days: [1, 2, 3, 4, 5, 6, 0], layout, mats: mats.map((m) => ({ id: m.id })) },
   );
   // The Day view's hours: the club's earliest and latest session ± 1 h over
   // the whole week, the same clamp the member day view uses.
@@ -2299,8 +2439,24 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         </div>
       )}
 
+      {/* UI-RULES §7: the mats could not be read, so the timetable says what it is showing instead. */}
+      {matsLoadFailed && (
+        <p className="mb-3 flex flex-wrap items-center gap-2 text-sm text-tx-1" role="alert" data-testid="timetable-mats-load-failed">
+          Couldn&rsquo;t load the mats, so this is split by time.
+          <Button variant="secondary" size="compact" onClick={() => router.refresh()}>Try again</Button>
+        </p>
+      )}
+
       {classes.length === 0 ? (
-        <EmptyState onAdd={openAdd} primaryColor={primaryColor} canManage={canManage} />
+        <>
+          {/* Mats do not depend on classes: a club can name its mats before its first class. */}
+          {canChangeMats && !matsLoadFailed && (
+            <div className="mb-3 flex justify-end">
+              <Button variant="secondary" size="compact" onClick={() => setMatsOpen(true)} data-testid="timetable-mats-empty">Mats</Button>
+            </div>
+          )}
+          <EmptyState onAdd={openAdd} primaryColor={primaryColor} canManage={canManage} />
+        </>
       ) : (
         <div className="space-y-6">
           {/* Weekly view */}
@@ -2308,10 +2464,17 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
             const weekDates = getWeekDates(weekOffset);
             const todayMidnight = new Date();
             todayMidnight.setHours(0, 0, 0, 0);
+            // PR 2: the split shows on the desktop week only, so its control does too.
+            const showSplit = desktopView === "week" && !supportSession && !matsLoadFailed;
+            const splitHint = !showSplit || !canManage || inUse > 0
+              ? null
+              : mats.length === 0
+                ? "Add your mats first."
+                : "Put a class on a mat first: open a class and choose its mat.";
             return (
               <>
-                {/* Week navigation */}
-                <div className="flex items-center justify-between mb-3">
+                {/* Week navigation. One wrapping row: when it wraps, the right-hand group moves down as a unit. */}
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
@@ -2335,7 +2498,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                       <ChevronRight className="w-4 h-4" />
                     </Button>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     {(weekOffset !== 0 || (desktopView === "day" && dayDow !== new Date().getDay())) && (
                       <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setDayDow(new Date().getDay()); }}>
                         Today
@@ -2359,11 +2522,62 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         </Button>
                       ))}
                     </div>
+                    {/* How classes at the same time are split: one column per mat, or lanes by
+                        time. Owner and manager choose (saved for the club); a coach reads it. */}
+                    {showSplit && (
+                      <div className="hidden md:flex items-center gap-2" data-testid="timetable-split">
+                        {canManage ? (
+                          <>
+                            <span id="timetable-split-label" className="whitespace-nowrap text-xs font-medium text-tx-2">Split same-time classes (staff week)</span>
+                            <div className="flex items-center gap-1 rounded-lg bg-sf-2 p-0.5" role="group" aria-labelledby="timetable-split-label">
+                              {(["mat", "time"] as const).map((v) => {
+                                const unavailable = v === "mat" && inUse === 0;
+                                return (
+                                  <Button
+                                    key={v}
+                                    variant="ghost"
+                                    size="compact"
+                                    aria-pressed={layout === v}
+                                    // Still focusable, so its sentence can be read: aria-disabled, not disabled.
+                                    aria-disabled={unavailable || undefined}
+                                    aria-describedby={unavailable ? "timetable-split-hint" : undefined}
+                                    onClick={() => void chooseLayout(v)}
+                                    data-testid={`timetable-split-${v}`}
+                                    className={[layout === v ? "border border-bd-active bg-sf-1 text-tx-1 shadow-sm" : "text-tx-2", unavailable ? "cursor-not-allowed opacity-60" : ""].join(" ")}
+                                  >
+                                    {v === "mat" ? "By mat" : "By time"}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="whitespace-nowrap text-xs font-medium text-tx-2" data-testid="timetable-split-text">Split by {layout === "mat" ? "mat" : "time"}</span>
+                        )}
+                      </div>
+                    )}
+                    {canChangeMats && !matsLoadFailed && (
+                      <Button variant="secondary" size="compact" className="hidden md:inline-flex" onClick={() => setMatsOpen(true)} data-testid="timetable-mats">
+                        Mats
+                      </Button>
+                    )}
                     <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-hide-menu" onClick={() => setHideMenu((v) => !v)}>
                       {hideMenu ? "Show menu" : "Hide menu"}
                     </Button>
                   </div>
                 </div>
+                {/* Why "By mat" cannot be pressed yet, on its own line under the control. */}
+                {splitHint && (
+                  <p id="timetable-split-hint" className="-mt-1 mb-3 hidden text-right text-xs text-tx-2 md:block" data-testid="timetable-split-hint">
+                    {splitHint}
+                  </p>
+                )}
+                {/* Phone: the Mats button on its own row (the split control arrives with the phone grid). */}
+                {canChangeMats && !matsLoadFailed && (
+                  <div className="mb-2 flex justify-end md:hidden">
+                    <Button variant="secondary" size="compact" onClick={() => setMatsOpen(true)} data-testid="timetable-mats-phone">Mats</Button>
+                  </div>
+                )}
 
                 {/* ── Mobile: day-at-a-time agenda ──────────────────────────
                     Below `md:` the 7-column grid was a 980px canvas inside a
@@ -2478,6 +2692,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         grid={weekGrid}
                         label="Week timetable"
                         today={todayDow}
+                        matName={(matId) => (matId === null ? "No mat" : (matNames.get(matId) ?? "No mat"))}
                         dayLabel={(day) => {
                           const date = dateOf(day.day);
                           return `${DAYS_FULL[day.day]} ${date.getDate()} ${date.toLocaleDateString("en-GB", { month: "long" })}, ${count(day.count)}${day.day === todayDow ? ", today" : ""}`;
@@ -2519,7 +2734,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                               endTime={slot.endTime}
                               color={cls.color ?? primaryColor}
                               place={placeOf(cls)}
-                              showPlace
+                              // Under a pinned mat header the column already says the mat; by time, and under "No mat", the chip says its place.
+                              showPlace={layout === "time" || item.matId === null}
+                              noPlaceLabel={mats.length > 0 ? "no mat" : undefined}
                               state={stateByKey.get(slot.id) ?? null}
                               duplicate={duplicates.has(slot.id)}
                               kids={cls.isKids}
@@ -2677,6 +2894,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           rankSystems={rankSystems}
           coachUsers={coachUsers}
           membershipTiers={membershipTiers}
+          mats={mats}
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
@@ -2719,6 +2937,18 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
           </div>
         )}
       </Sheet>
+
+      {canChangeMats && (
+        <MatsSheet
+          open={matsOpen}
+          onClose={() => setMatsOpen(false)}
+          onChanged={(opts) => {
+            // The sheet has already said what the split is now: the page need not say it again.
+            if (opts?.quiet) quietSplit.current = true;
+            router.refresh();
+          }}
+        />
+      )}
 
       <ConfirmDialog {...dialogProps} />
     </>

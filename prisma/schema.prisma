@@ -29,6 +29,7 @@ model Tenant {
   // ADR-001 D2: venues inside this club. Additive; a class with no location
   // belongs to all of them, so a single-venue club never notices.
   locations              Location[]
+  mats                   Mat[]
   importedMemberships    ImportedMembership[]
   importedBookings       ImportedBooking[]
   importSourceMappings   ImportSourceMapping[]
@@ -56,6 +57,10 @@ model Tenant {
   // POST /api/checkin; the desk, the kiosk, the card scanner and the coach
   // register are unaffected.
   memberAppCheckin       Boolean   @default(true)
+  // How classes at the same time are split on the timetable: "mat" | "time".
+  // NULL = nobody has chosen, and the timetable follows the mats
+  // (lib/timetable-layout.ts). Written only by PATCH /api/timetable/layout.
+  timetableLayout        String?
   // The club's public contact address (1 Oct 2026): what members see and
   // reply to. Not a login — owner alerts and resets go to each staff member's
   // own address. billingContactEmail / privacyContactEmail fall back to it
@@ -569,6 +574,12 @@ model Class {
   // can never delete a class.
   locationId     String?
   locationRef    Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  // The training area this class runs on (one of the club's mats). NULL = not
+  // on a mat. SetNull so removing a mat can never delete a class. While it is
+  // set, `location` holds that mat's current name (the write-through rule,
+  // lib/mats.ts).
+  matId          String?
+  mat            Mat?        @relation(fields: [matId], references: [id], onDelete: SetNull)
   // Minutes. NULL = not known: a historical class created from an attendance
   // export, whose source states no duration (3 Oct 2026). Never invented.
   duration       Int?
@@ -611,6 +622,7 @@ model Class {
 
   @@index([tenantId, deletedAt])
   @@index([sourceImportJobId])
+  @@index([matId])
 }
 
 model ClassSchedule {
@@ -1562,6 +1574,26 @@ model Location {
 
   @@unique([tenantId, name])
   @@index([tenantId])
+}
+
+/// One of a club's training areas ("Mat 1", "Cage", "Upstairs"). Club-wide, in
+/// the club's own order: the order of the columns on a timetable split by mat.
+/// `nameKey` is the name trimmed, single-spaced and lower-cased; it is written
+/// only by lib/mats.ts and makes "Mat 1" and "mat  1" the same mat.
+model Mat {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  name      String
+  nameKey   String
+  sortOrder Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classes   Class[]
+
+  @@unique([tenantId, nameKey])
+  @@index([tenantId, sortOrder])
 }
 
 // ── Attendance-history import (TeamUp attendance export, 3 Oct 2026) ──────────

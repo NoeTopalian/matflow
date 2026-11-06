@@ -19,12 +19,15 @@ import {
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
-import { classRefError, CLASS_REF_ERRORS } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError } from "@/lib/class-refs";
+import { lockClubMats } from "@/lib/mats";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 
 /** A tier vanished between the pre-flight and the write: roll the edit back. */
 class TierRefError extends Error {}
+/** The mat is not this club's, or was removed between the pre-flight and the write. */
+class MatRefError extends Error {}
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -42,6 +45,12 @@ const updateSchema = z.object({
   location: z.string().max(100).optional().nullable(),
   // ADR-001 D2: the venue. Must be one of this club's locations; null = all.
   locationId: z.string().min(1).max(64).optional().nullable(),
+  // The mat the class runs on. Omitted = unchanged; null = no mat; an id must
+  // be one of this club's mats. While a class is on a mat its `location` is
+  // that mat's name (the write-through rule, lib/mats.ts): a sent `location`
+  // is replaced by the mat's name when `matId` names a mat, and dropped when
+  // the key is omitted and the class is on a mat.
+  matId: z.string().min(1).max(64).optional().nullable(),
   duration: z.number().int().min(1).max(480).optional(),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
@@ -528,6 +537,12 @@ export async function PATCH(req: Request, { params }: Params) {
     }
 
     const updated = await withTenantContext(tenantId, async (tx) => {
+      // MATS LOCK FIRST, and only when this edit names a mat: it is the first
+      // lock of every transaction that takes it (lib/mats.ts), ahead of the
+      // Class row lock below, so a rename of that mat and this save are
+      // serial and cannot deadlock. An edit that does not name a mat takes no
+      // mats lock at all.
+      if (parsed.data.matId) await lockClubMats(tx, tenantId);
       // OWNERSHIP FIRST — before any destructive statement.
       //
       // This check used to sit AFTER the deletes below, as the `updateMany`
@@ -546,11 +561,24 @@ export async function PATCH(req: Request, { params }: Params) {
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
       const owned = await tx.$queryRaw<{
-        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null;
+        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null;
       }[]>`
-        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
+      // The write-through rule (lib/mats.ts). Naming a mat: read its name now,
+      // under the mats lock, before any other write; a mat that is not this
+      // club's (or went since the pre-flight) refuses the whole edit. Not
+      // naming one while the class is on a mat: the place text belongs to the
+      // mat, so a sent `location` is dropped — and no mats lock is needed.
+      let placeOverride: { location: string } | { location: undefined } | null = null;
+      if (parsed.data.matId) {
+        const mat = await tx.mat.findFirst({ where: { id: parsed.data.matId, tenantId }, select: { name: true } });
+        if (!mat) throw new MatRefError();
+        placeOverride = { location: mat.name };
+      } else if (parsed.data.matId === undefined && owned[0].matId != null) {
+        placeOverride = { location: undefined };
+      }
       // P6: checked again now that the Class lock is held — the pre-flight ran
       // outside it. First thing after the lock, so a doomed save does no
       // roster, tier or booking work and holds the lock no longer than needed.
@@ -693,7 +721,9 @@ export async function PATCH(req: Request, { params }: Params) {
         description: parsed.data.description,
         coachName: parsed.data.coachName,
         coachUserId: parsed.data.coachUserId,
-        location: parsed.data.location,
+        // On a mat, the place is the mat's name; off one (or leaving one), the text that was sent.
+        location: placeOverride ? placeOverride.location : parsed.data.location,
+        matId: parsed.data.matId,
         duration: parsed.data.duration,
         maxCapacity: parsed.data.maxCapacity,
         // Roster mode and rank gates are mutually exclusive, so entering roster
@@ -794,7 +824,7 @@ export async function PATCH(req: Request, { params }: Params) {
           const { before: b, after: a, changed } = snapshotDiff(
             updated.before as unknown as Record<string, unknown> | null,
             updated.cls as unknown as Record<string, unknown>,
-            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "duration", "maxCapacity", "isKids", "category", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
+            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "matId", "duration", "maxCapacity", "isKids", "category", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
           );
           // A pre-T6b archive carried no deletedAt; record the archive date
           // it is read by, so undoing this Restore puts it back as archived
@@ -826,6 +856,10 @@ export async function PATCH(req: Request, { params }: Params) {
     }
     if (e instanceof StaleScheduleError) {
       return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
+    }
+    // The mat went between the pre-flight and the write, or the foreign key refused it.
+    if (e instanceof MatRefError || isMatForeignKeyError(e)) {
+      return NextResponse.json({ error: CLASS_REF_ERRORS.mat }, { status: 400 });
     }
     return NextResponse.json({ error: "Failed to update class" }, { status: 500 });
   }

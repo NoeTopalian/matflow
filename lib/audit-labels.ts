@@ -85,6 +85,13 @@ export const AUDIT_LABELS: Record<string, string> = {
   "location.create": "Added a venue",
   "location.update": "Updated a venue",
   "location.delete": "Removed a venue",
+  // Mats (the club's training areas) and how the timetable splits same-time classes.
+  "mat.create": "Added a mat",
+  "mat.update": "Renamed a mat",
+  "mat.delete": "Removed a mat",
+  "mat.reorder": "Reordered the mats",
+  "mat.adopt": "Made mats from typed places",
+  "timetable.layout.update": "Changed how same-time classes are split",
 
   // ── Memberships, packs, ranks ─────────────────────────────────────────────
   "membership.tier.create": "Created a membership plan",

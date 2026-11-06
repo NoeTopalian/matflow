@@ -31,7 +31,9 @@ row, a booking, a new session) until the holder commits.
 `ON DELETE CASCADE` deletes the child rows inside the parent's DELETE (row
 `FOR UPDATE` on each). Advisory transaction locks (`pg_advisory_xact_lock`)
 are held to commit: rate limiting (`lib/rate-limit.ts`), sign-in lockout
-(`lib/auth-lockout.ts`), login-address claims (`lib/login-email.ts`, LGID).
+(`lib/auth-lockout.ts`), login-address claims (`lib/login-email.ts`, LGID),
+and, from 5 Nov 2026, the per-club mats lock (`lib/mats.ts` `lockClubMats`,
+MATS): one key per club, so every mats write of a club is serial.
 
 Every tenant transaction sets `lock_timeout` 10 s and `statement_timeout`
 15 s (`lib/prisma-tenant.ts`); a wait past 10 s fails with 55P03. Postgres
@@ -40,8 +42,10 @@ the check-in engine answers it as `{ kind: "error" }`).
 
 ## 2. The order every writer follows
 
-1. **Advisory locks first** (rate limit, lockout, LGID claim), in their own
-   short transaction or as the first statement of the writer's transaction.
+1. **Advisory locks first** (rate limit, lockout, LGID claim, the club's mats
+   lock), in their own short transaction or as the first statement of the
+   writer's transaction. The mats lock is level 1 for every writer that takes
+   it: nothing that already holds a Class or Member row may ask for it.
 2. **Class rows**, `FOR UPDATE` (check-in, booking, class PATCH, squad
    removal) or `FOR NO KEY UPDATE` (undo batch); several Class rows in id order.
 3. **Member rows**, `FOR NO KEY UPDATE` (check-in, undo batch, every member
@@ -66,6 +70,10 @@ Locks in the order taken. "Plain reads" take no row lock.
 | Booking | Class `FOR UPDATE` → plain reads → booking `INSERT` (KEY SHARE Member, Class held) | `app/api/member/class-subscriptions/[classId]/route.ts` |
 | Member's own cancel | booking `DELETE` (still deletes — D2 keeps this) | same file, DELETE |
 | Class PATCH | plain pre-flight → Class `FOR UPDATE` → (D2) plain reads of the rules and bookings → membership-list `DELETE`/`INSERT` → (D1, 24 Oct) new squad's Members `FOR KEY SHARE` in id order → roster `DELETE`/`INSERT` → durable audit `INSERT` → schedule `UPDATE`/`INSERT`, session `DELETE`/`INSERT`/`UPDATE` → Class `UPDATE` (held) | `app/api/classes/[id]/route.ts` |
+| Class create or PATCH **naming a mat** (5 Nov 2026) | MATS advisory → (PATCH) Class `FOR UPDATE` → Mat plain read by `{ id, tenantId }` → the rest as above; the mat's name is written as the class's place. A PATCH that names no mat takes no MATS lock: under its Class lock it reads the row's own `matId` and drops a sent place if the class is on a mat | `app/api/classes/route.ts`, `app/api/classes/[id]/route.ts` |
+| Mat add, rename, remove, reorder (5 Nov 2026) | MATS advisory → Mat rows → (rename) Class `UPDATE` of every class on the mat, (remove) the foreign key's `SET NULL` on them, in no particular order → audit `INSERT` in the same transaction. Several Class rows are updated, so every other holder of several Class rows (the undo batch) takes MATS first | `app/api/mats/route.ts`, `app/api/mats/[id]/route.ts`, `app/api/mats/order/route.ts` |
+| Mats from typed places (adopt) (5 Nov 2026) | MATS advisory → plain reads → Mat `INSERT` → Class `UPDATE` (mat and place) for the matching classes → audit `INSERT` | `app/api/mats/adopt/route.ts`, `lib/mats-store.ts` `adoptPlaces` |
+| The same-time split (5 Nov 2026) | MATS advisory → plain reads → Tenant `UPDATE` (one column) → audit `INSERT` | `app/api/timetable/layout/route.ts` |
 | Class archive | Class `UPDATE` (one statement) | same file, DELETE |
 | Single squad removal | (D2, 24 Oct) Class `FOR UPDATE` → roster row `DELETE` → plain booking read → durable audit `INSERT`. Before: roster `DELETE` → booking `DELETE`, no Class lock | `app/api/classes/[id]/roster/[memberId]/route.ts` |
 | Squad add | roster `INSERT` (KEY SHARE Class, Member) | `app/api/classes/[id]/roster/route.ts` |
@@ -73,8 +81,8 @@ Locks in the order taken. "Plain reads" take no row lock.
 | Demotion | member-rank `UPDATE`, history `INSERT` → (D2) plain reads → durable audit `INSERT` per class. Before: booking `DELETE` | `app/api/members/[id]/rank/demote/route.ts` |
 | Member PATCH (plan, status, hold, details) | LGID advisory (address change only) → Member `UPDATE` → token retirement → status event `INSERT` → audit `INSERT` (durable) | `app/api/members/[id]/route.ts` |
 | Member deletion | Member `FOR UPDATE` → imported bookings, mappings, rank history, ranks, redemptions, packs, attendance, bookings, waitlist, login events `DELETE` → Member `DELETE` (cascades: roster rows, status events) | `lib/member-delete.ts` |
-| Undo to a point (≥ 2 rows) | Class rows `FOR NO KEY UPDATE` in id order → Member rows `FOR NO KEY UPDATE` in id order → handlers (snapshot `UPDATE`s, roster `INSERT`/`DELETE`, attendance `DELETE` with pack restore) → audit `INSERT`s | `lib/undo-batch.ts` `lockBatchRows` |
-| Undo of one row | that handler's statements only | `lib/undo-registry.ts` |
+| Undo to a point (≥ 2 rows) | (5 Nov 2026, when any row touches a class) MATS advisory → Class rows `FOR NO KEY UPDATE` in id order → Member rows `FOR NO KEY UPDATE` in id order → handlers (snapshot `UPDATE`s, roster `INSERT`/`DELETE`, attendance `DELETE` with pack restore) → audit `INSERT`s | `lib/undo-batch.ts` `lockBatchRows` |
+| Undo of one row | (5 Nov 2026, when the row touches a class) MATS advisory → that handler's statements only; undoing a class edit may read a Mat and write its name as the class's place | `lib/undo-batch.ts` `executeUndo`, `lib/undo-registry.ts` |
 | TeamUp import, create | per 25 rows: Member `INSERT`, ledger `INSERT`; job `UPDATE` | `app/api/admin/import/[id]/commit/route.ts` |
 | TeamUp status refresh | (since the 25 Oct later-upload rule) no Member `UPDATE` and no status event: the differences are listed for review → job `UPDATE` only. Before: per 25 members, Member `UPDATE` × 25 (id order from 24 Oct, file order before) → status events → job `UPDATE` | same file, `commitRefresh` |
 | Refresh rollback | ONE transaction: Member `UPDATE` for every changed member (**id order since 24 Oct**) → status events → job `UPDATE` → audit. Writes only for a refresh recorded before 25 Oct; a later refresh changed nobody, so its rollback restores nobody | `app/api/admin/import/[id]/rollback/route.ts` |
