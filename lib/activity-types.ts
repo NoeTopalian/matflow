@@ -145,7 +145,11 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     label: "Classes",
     group: "Classes",
     icon: "Calendar",
-    actions: ["class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.bookings.kept_ineligible", "class.instances_generated"],
+    // Mats and the split are set on the Timetable page, by owners and managers (RULES §5b): club life a manager sees.
+    actions: [
+      "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.bookings.kept_ineligible", "class.instances_generated",
+      "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
+    ],
     roles: BOTH,
     defaultOn: true,
   }),

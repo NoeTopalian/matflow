@@ -383,6 +383,7 @@ export const RESOLVED_ID_KEYS: Record<string, RefKind> = {
 export const IGNORED_ID_KEYS = new Set([
   "allowedTierIds",
   "bookingsKeptIneligibleClassIds",
+  "classIds",
   "folderId",
   "hasStripePriceId",
   "holderId",
