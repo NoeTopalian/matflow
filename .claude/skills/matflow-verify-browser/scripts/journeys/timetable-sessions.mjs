@@ -164,7 +164,7 @@ try {
 
   await shot(main, "timetable-sessions-desktop");
 
-  await section("phone", "375 x 812: Monday's agenda lists four sessions in time order, the day picker counts 4, no sideways scroll, rows are tappable", async () => {
+  await section("phone", "375 x 812: the phone's Monday shows four sessions in time order, the day picker counts 4, no sideways scroll, rows are tappable", async () => {
     const mobile = await context(browser, "10.94.3.2", { viewport: { width: 375, height: 812 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));

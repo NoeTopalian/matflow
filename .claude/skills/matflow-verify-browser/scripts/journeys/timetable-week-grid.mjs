@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, launchWithScrollbars,
   weekGrid, weekDay, weekChips, gridInvariants, noSidewaysScroll, spare, setAccent, accentOf, contrast, focusRing, weekOnFrozenClock,
-  keepServerHtml, hydrationDiff,
+  keepServerHtml, hydrationDiff, structureDiff,
 } from "../lib.mjs";
 import { POSTER, DAY, FROZEN, FROZEN_DAY, FROZEN_MIN, seedWeek, sessionsOn, countOn, chipName, classesOf } from "./data/timetable-weeks.mjs";
 
@@ -91,11 +91,17 @@ try {
     await kept.stop();
     await expect(weekChips(weekGrid(main))).toHaveCount(SESSIONS, { timeout: 30_000 });
     await main.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    // React reports a mismatch once hydration ends, which on the slow test link can be seconds after the chips show.
+    await main.waitForTimeout(3_000);
     // A mismatch between the server's HTML and the browser's first render: say where before measuring.
-    if (errors.length > before) L.note("real-clock-hydration", "server HTML against the browser render: what only one of them has", await hydrationDiff(main, html));
+    if (errors.length > before) {
+      L.note("real-clock-hydration", "server HTML against the browser render: what only one of them has", await hydrationDiff(main, html));
+      L.note("real-clock-structure", "server HTML against the browser render: where the elements part", await structureDiff(main, html));
+    }
     expect(errors.map((e) => e.slice(0, 160))).toEqual([]);
     const inv = await gridInvariants(main, { sessions: SESSIONS });
-    expect(inv.problems.slice(0, 5)).toEqual([]);
+    if (inv.problems.length) L.note("real-clock-problems", "what the layout check found", inv.problems.slice(0, 12));
+    expect(inv.problems).toEqual([]);
     return { chips: inv.chips, errors: errors.length };
   });
 
@@ -111,7 +117,7 @@ try {
     const where = await main.evaluate(() => {
       const scroller = document.querySelector('[data-testid="week-scroller"]');
       const head = document.querySelector('[data-day-head="thu"]').getBoundingClientRect();
-      const chip = document.querySelector('[data-day="thu"] [data-session-state="live"]').getBoundingClientRect();
+      const chip = document.querySelector('[data-testid="week-grid"] [data-day="thu"] [data-session-state="live"]').getBoundingClientRect();
       const b = scroller.getBoundingClientRect();
       return { belowBand: chip.top >= head.bottom - 1, insideBox: chip.bottom <= b.bottom + 1, scrollTop: scroller.scrollTop, focusOnBody: document.activeElement === document.body };
     });
@@ -219,9 +225,9 @@ try {
       scroller.scrollTop = 0;
       scroller.scrollLeft = 0;
       await frame();
-      const chip = document.querySelector('[data-day="mon"] [data-cell-key] button');
+      const chip = document.querySelector('[data-testid="week-grid"] [data-day="mon"] [data-cell-key] button');
       const head = document.querySelector('[data-day-head="mon"]');
-      const tick = document.querySelector(".pg-tick");
+      const tick = document.querySelector('[data-testid="week-grid"] .pg-tick');
       const before = { chipTop: chip.getBoundingClientRect().top, headTop: head.getBoundingClientRect().top, boxTop: scroller.getBoundingClientRect().top, boxBottom: scroller.getBoundingClientRect().bottom, tickLeft: tick.getBoundingClientRect().left };
       scroller.scrollTop = scroller.scrollHeight;
       await frame();
@@ -403,7 +409,7 @@ try {
   });
 
   for (const width of [375, 390]) {
-    await section(`phone-${width}`, `${width} px on the real clock: the day tabs and the list work as before, every Monday session is listed, rows are at least 44 px, and the page does not scroll sideways`, async () => {
+    await section(`phone-${width}`, `${width} px on the real clock: the day tabs and the day grid work, every Monday session is on it, chips are at least 44 px, and the page does not scroll sideways`, async () => {
       const mobile = await context(browser, `10.94.6.${width === 375 ? 30 : 31}`, { viewport: { width, height: 812 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState(), timezoneId: "Europe/London" });
       const phone = await mobile.newPage();
       const before = errors.length;
@@ -416,7 +422,11 @@ try {
         await phone.goto("/dashboard/timetable");
         await kept.stop();
         await phone.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-        if (errors.length > before) L.note(`phone-${width}-hydration`, "server HTML against the browser render: what only one of them has", await hydrationDiff(phone, await kept.html()));
+        await phone.waitForTimeout(3_000);
+        if (errors.length > before) {
+          L.note(`phone-${width}-hydration`, "server HTML against the browser render: what only one of them has", await hydrationDiff(phone, await kept.html()));
+          L.note(`phone-${width}-structure`, "server HTML against the browser render: where the elements part", await structureDiff(phone, await kept.html()));
+        }
         await phone.getByRole("tab", { name: /^Mon/ }).click();
         const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
         const rows = agenda.getByRole("button", { name: /^Edit / });

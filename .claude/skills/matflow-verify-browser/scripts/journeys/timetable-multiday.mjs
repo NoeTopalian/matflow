@@ -303,7 +303,7 @@ try {
 
   await shot(main, "timetable-multiday-desktop");
 
-  await section("phone", "390 x 844: the Monday and Tuesday agenda each show Gi once; no sideways scroll", async () => {
+  await section("phone", "390 x 844: the phone's Monday and Tuesday each show Gi once; no sideways scroll", async () => {
     const mobile = await context(browser, "10.94.2.2", { viewport: { width: 390, height: 844 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
@@ -312,7 +312,7 @@ try {
     const sizes = {};
     for (const day of ["Mon", "Tue"]) {
       await phone.getByRole("tab", { name: new RegExp(`^${day}`) }).click();
-      const gi = agenda.getByRole("button", { name: "Edit Gi", exact: true });
+      const gi = agenda.getByRole("button", { name: weekName("Gi") });
       await expect(gi).toHaveCount(1);
       const box = await gi.boundingBox();
       sizes[day] = box ? { w: Math.round(box.width), h: Math.round(box.height) } : null;

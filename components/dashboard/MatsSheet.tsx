@@ -169,7 +169,7 @@ export function MatsSheet({
 
   const adoptLine = (b: { matsAdded: number; classesAttached: number; layoutChanged: boolean; layout: { effective: "mat" | "time" } }) =>
     `${plural(b.matsAdded, "mat", "mats")} added. ${b.classesAttached === 1 ? "1 class is" : `${b.classesAttached} classes are`} now on a mat.` +
-    (b.layoutChanged ? ` The staff week is now split by ${b.layout.effective === "mat" ? "mat" : "time"}.` : "");
+    (b.layoutChanged ? ` The timetable is now split by ${b.layout.effective === "mat" ? "mat" : "time"}.` : "");
 
   // ── The list ───────────────────────────────────────────────────────────────
   /** After a 404 or 409 the list is read again first, so the message sits beside what is really there. */
@@ -446,7 +446,7 @@ export function MatsSheet({
                       variant="secondary"
                       size="compact"
                       disabled={adoptBusy}
-                      onClick={() => adopt([s.key], (b) => `${b.classesAttached === 1 ? "1 class is" : `${b.classesAttached} classes are`} now on ${mat.name}.` + (b.layoutChanged ? ` The staff week is now split by ${b.layout.effective === "mat" ? "mat" : "time"}.` : ""))}
+                      onClick={() => adopt([s.key], (b) => `${b.classesAttached === 1 ? "1 class is" : `${b.classesAttached} classes are`} now on ${mat.name}.` + (b.layoutChanged ? ` The timetable is now split by ${b.layout.effective === "mat" ? "mat" : "time"}.` : ""))}
                     >
                       Put them on {mat.name}
                     </Button>

@@ -4,15 +4,15 @@
 // overlap sit SIDE BY SIDE on the row of their start time (the poster grid,
 // .omc/plans/timetable-side-by-side-plan-2026-11-05.md): a staggered
 // 16:30 / 17:00 / 17:30 needs two lanes, not three; every chip shows start–end
-// and its place. On the phone they still sit in a group with a rail and
-// "Up to N at once". The same name, day, start and mat twice is flagged
-// "Duplicate?"; the form refuses an identical slot in one class.
+// and its place. The phone's day is the same grid for one day. The same name,
+// day, start and mat twice is flagged "Duplicate?"; the form refuses an
+// identical slot in one class.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import React from "react";
-import TimetableManager, { groupSessions, groupLabel } from "@/components/dashboard/TimetableManager";
-import { duplicateSessionKeys } from "@/lib/schedule-state";
+import TimetableManager from "@/components/dashboard/TimetableManager";
+import { clusterLabel, clusterSessions, duplicateSessionKeys } from "@/lib/schedule-state";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
 import { weekCells, weekChips, weekDay, weekGrid } from "./helpers/week";
 
@@ -78,8 +78,8 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-const chipsIn = (el: HTMLElement) => within(el).getAllByRole("button", { name: /^Edit / });
-const groupsIn = (el: HTMLElement) => within(el).queryAllByRole("group");
+/** The overlap groups of one day's slots: lib/schedule-state's clustering (what the Day view and the old phone list used). */
+const groupSessions = (sessions: { slot: { startTime: string; endTime: string } }[]) => clusterSessions(sessions.map(({ slot }) => slot));
 /** A Monday cell of the week grid by its start time and (optionally) a word of its text. */
 const cellAt = (container: HTMLElement, start: string, word = "") => {
   const hit = weekCells(weekDay(container, "mon")).filter((c) => c.textContent?.startsWith(`${start}–`) && c.textContent.includes(word));
@@ -158,26 +158,32 @@ describe("overlapping sessions sit side by side", () => {
     const staggered = [champs, kids, teens].map((c) => ({ cls: c, slot: c.schedules[0] }));
     expect(groupSessions(staggered).map((g) => [g.members, g.lanes])).toEqual([[[0, 1, 2], 2]]);
     const trio = [gi, BUSY[7], BUSY[8]].map((c) => ({ cls: c, slot: c.schedules.find((s) => s.startTime === "18:40")! }));
-    expect(groupSessions(trio).map(groupLabel)).toEqual(["3 at once"]);
+    expect(groupSessions(trio).map(clusterLabel)).toEqual(["3 at once"]);
     const apart = [gi.schedules[0], gi.schedules[1]].map((slot) => ({ cls: gi, slot }));
     expect(groupSessions(apart).map((g) => g.members)).toEqual([[0], [1]]);
   });
 
-  it("the phone agenda shows the same groups with full-width rows", () => {
+  it("the phone's day is the same grid: the 18:40 clash shares a row line in three lanes, ordered by place, each with its place", () => {
     render(<TimetableManager initialClasses={BUSY} {...PROPS} />);
     fireEvent.click(screen.getAllByRole("tab")[0]); // Monday
-    const agenda = screen.getByRole("tablist", { name: "Day of week" }).nextElementSibling as HTMLElement;
-    expect(groupsIn(agenda)).toHaveLength(5);
-    const clash = groupsIn(agenda)[3];
-    const texts = chipsIn(clash).map((b) => b.textContent);
+    const day = screen.getByTestId("phone-day-grid");
+    expect(day.dataset.day).toBe("mon");
+    const cells = [...day.querySelectorAll<HTMLElement>("[data-cell-key]")];
+    expect(cells).toHaveLength(14);
+    const clash = cells.filter((c) => c.textContent?.startsWith("18:40–"));
+    expect(new Set(clash.map((c) => c.dataset.rowStart)).size).toBe(1);
+    expect(clash.map((c) => c.dataset.lane)).toEqual(["0", "1", "2"]);
+    const texts = clash.map((c) => c.textContent ?? "");
     // Same name and start: ordered by place, so the two Mat 1 entries sit together.
-    expect(texts[0]).toContain("18:40–19:30");
-    expect(texts[0]).toContain("· Mat 1");
+    expect(texts[0]).toContain("Mat 1");
     expect(texts[0]).toContain("Duplicate?");
     expect(texts[1]).toContain("Duplicate?");
-    expect(texts[2]).toContain("· Mat 2");
+    expect(texts[2]).toContain("Mat 2");
     expect(texts[2]).not.toContain("Duplicate?");
-    expect(chipsIn(clash).some((b) => b.dataset.chipSize === "compact")).toBe(false);
+    // Three lanes keep the smaller chip; the old list's groups and brackets are gone.
+    expect(clash.every((c) => c.querySelector("button")?.dataset.chipSize === "week")).toBe(true);
+    expect(day.querySelector('[data-testid="overlap-group"]')).toBeNull();
+    expect(within(screen.getByTestId("phone-day")).getByText("14 sessions")).toBeTruthy();
   });
 });
 

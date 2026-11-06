@@ -10,14 +10,16 @@ import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Button } from "@/components/ui/button";
 import {
-  packLanes,
+  minToTime,
   sessionProgress,
   sessionStateLabel,
-  hourWindow as sharedHourWindow,
   sessionStates,
   spanMinutes,
   type SessionState,
 } from "@/lib/schedule-state";
+import { buildTimetableGrid, type GridLayout } from "@/lib/timetable-grid";
+import { PosterDay } from "@/components/schedule/PosterGrid";
+import { MorePanel, useMoreToggle } from "@/components/schedule/MorePanel";
 
 const PRIMARY = "#3b82f6";
 
@@ -37,6 +39,8 @@ type ScheduleClass = {
   endTime: string;
   coach: string;
   location: string;
+  /** The mat the class runs on (null = none): the day draws a column per mat when the club splits by mat. */
+  matId: string | null;
   capacity: number | null;
   /** A kids class — tagged "Kids" on the timetable. */
   isKids?: boolean;
@@ -67,7 +71,16 @@ type ScheduleClass = {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-const HOUR_H = 64;
+/**
+ * Secondary ink on the members' day: the shell's own text at 72 %. The shell's muted ink measures 4.4:1 on a light
+ * club shell, under the 4.5:1 floor; this reads on dark and light shells and over a block's tint.
+ */
+const QUIET_INK = "color-mix(in srgb, var(--member-text) 72%, transparent)";
+
+/** How the club splits same-time classes, and its mats in the club's order (GET /api/member/timetable). */
+type ClubTimetable = { layout: GridLayout; mats: { id: string; name: string }[] };
+const BY_TIME: ClubTimetable = { layout: "time", mats: [] };
+const FELL_BACK = "Too much on at once to show by mat on this screen. Each class shows its mat.";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -94,25 +107,6 @@ function readableText(color: string) {
   const b = n & 255;
   const luma = (r * 299 + g * 587 + b * 114) / 1000;
   return luma > 155 ? "#0f172a" : "#ffffff";
-}
-
-function timeToMinutes(t: string) {
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function topPx(time: string, startHour: number) {
-  return ((timeToMinutes(time) - startHour * 60) / 60) * HOUR_H;
-}
-
-// The clamp itself lives in lib/schedule-state (shared with the staff Day
-// view, so both show the same hours for the same club).
-function hourWindow(classes: ScheduleClass[]): { startHour: number; endHour: number } {
-  return sharedHourWindow(classes.map((c) => ({ startTime: c.time, endTime: c.endTime })));
-}
-
-function heightPx(start: string, end: string) {
-  return Math.max(((timeToMinutes(end) - timeToMinutes(start)) / 60) * HOUR_H, 28);
 }
 
 function getWeekDays(anchor: Date): Date[] {
@@ -292,9 +286,18 @@ function EventSheet({
   );
 }
 
-// ─── Day grid panel ───────────────────────────────────────────────────────────
+// ─── Day pane ─────────────────────────────────────────────────────────────────
 
-function DayGrid({
+/**
+ * One day of the members' timetable: the poster grid (components/schedule/
+ * PosterGrid `PosterDay`), the same rows and columns as the staff timetable.
+ * Two classes at the same time start on the same line and sit side by side;
+ * a 20-minute class never sits over the class after it. By mat, one column per
+ * mat with the names pinned at the top of the pane, while the day needs three
+ * lanes or fewer; a busier day is drawn by time and says so. More than three
+ * at once: two classes and "+N more", which lists them all over the grid.
+ */
+function DayPane({
   dow,
   primaryColor,
   subscribed,
@@ -303,8 +306,7 @@ function DayGrid({
   scrollRef,
   loading,
   allClasses,
-  startHour,
-  endHour,
+  club,
 }: {
   dow: number;
   primaryColor: string;
@@ -314,8 +316,7 @@ function DayGrid({
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   loading: boolean;
   allClasses: ScheduleClass[];
-  startHour: number;
-  endHour: number;
+  club: ClubTimetable;
 }) {
   // "Now" is the member's own device clock — their phone, in the club. Nothing
   // carries Tenant.timezone to this screen yet (lib/schedule-state.ts).
@@ -323,14 +324,7 @@ function DayGrid({
   const todayDow = today.getDay() === 0 ? 7 : today.getDay();
   const showNow = dow === todayDow;
   const nowMinutes = today.getHours() * 60 + today.getMinutes();
-  const nowTop = ((nowMinutes - startHour * 60) / 60) * HOUR_H;
   const dayClasses = allClasses.filter((c) => c.dow === dow);
-
-  // One source of truth for what each block says about time, and for where
-  // it sits: two sessions at the same hour used to paint on top of each other
-  // (`left-1 right-4` on every block). Lanes come from the interval maths in
-  // lib/schedule-state.ts; a cluster wider than three lanes collapses into one
-  // group the member expands, instead of slivers nobody can read or tap.
   // The API keys today's instance by class + start time, so a class that meets
   // on several days carries today's flag on every day's entry; it only means
   // anything on today's grid.
@@ -338,15 +332,62 @@ function DayGrid({
   // ^ the same classes Home's next class leaves out (pickNextClass in
   //   lib/member-stats.ts): ones the door would refuse this member.
   const states = sessionStates(spans, nowMinutes, showNow);
-  const packed = packLanes(spans, { maxLanes: 3 });
-  const [expandedClusters, setExpandedClusters] = useState<Set<number>>(() => new Set());
-  const toggleCluster = (index: number) =>
-    setExpandedClusters((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
+  const indexOf = new Map(dayClasses.map((c, i) => [c.id, i] as const));
+  const matOrder = new Map(club.mats.map((m, i) => [m.id, i] as const));
+  const matNames = new Map(club.mats.map((m) => [m.id, m.name] as const));
+  const jsDay = dow === 7 ? 0 : dow;
+  const grid = buildTimetableGrid(
+    dayClasses.map((c) => {
+      const position = c.matId ? matOrder.get(c.matId) : undefined;
+      return {
+        key: c.id, day: jsDay, startTime: c.time, endTime: c.endTime, matId: c.matId,
+        tie: position !== undefined ? String(position).padStart(2, "0") : c.location,
+      };
+    }),
+    { days: [jsDay], layout: club.layout, mats: club.mats.map((m) => ({ id: m.id })), maxTracks: 3 },
+  );
+  const day = grid.days[0];
+  // Three lanes leave each block about a third of the screen: it keeps the smaller sizes.
+  const size = day.lanes >= 3 ? "small" : "large";
+  const root = useRef<HTMLDivElement>(null);
+  // The open "+N more". It closes on a day change (plan §4.12): this pane shows another day after a swipe, and on
+  // the way back the panel must not open again and take focus.
+  const [more, setMore] = useState<{ dow: number; id: string } | null>(null);
+  const [moreDay, setMoreDay] = useState(dow);
+  if (moreDay !== dow) {
+    setMoreDay(dow);
+    setMore(null);
+  }
+  const openMore = more && more.dow === dow ? more.id : null;
+  const matOf = (cls: ScheduleClass) => (cls.matId ? (matNames.get(cls.matId) ?? null) : null);
+  // The last line names the place only where it is what tells classes apart:
+  // side by side on a day by time, under "No mat", and on a day that fell back
+  // to time. Under a pinned mat name, and for a class on its own, it names the coach.
+  const placeShown = (item: { matId: string | null; lanes: number }) =>
+    day.layout === "mat" ? item.matId === null : day.fellBack || item.lanes > 1;
+  // A class folded into "+N more" has no block of its own: the button says whether it hides the live or next class,
+  // so the scroll to it on opening the day lands on the button.
+  const foldedState = (keys: string[]) => {
+    const hidden = keys.map((key) => states[indexOf.get(key) ?? -1]);
+    return hidden.includes("live") ? "live" : hidden.includes("next") ? "next" : undefined;
+  };
+  const blockFor = (cls: ScheduleClass, showPlace: boolean) => {
+    const i = indexOf.get(cls.id) ?? 0;
+    return (
+      <SessionBlock
+        cls={cls}
+        state={states[i]}
+        progress={sessionProgress(spans[i], nowMinutes)}
+        isSub={subscribed.has(cls.classId)}
+        isSel={selected === cls.id}
+        primaryColor={primaryColor}
+        onSelect={onSelect}
+        size={size}
+        showPlace={showPlace}
+        matName={matOf(cls)}
+      />
+    );
+  };
 
   return (
     <div
@@ -356,157 +397,99 @@ function DayGrid({
       // our non-passive horizontal handler overrides when needed
       style={{ scrollbarWidth: "none", touchAction: "pan-y" }}
     >
-      <div className="relative ml-12" style={{ height: (endHour - startHour) * HOUR_H }}>
-        {/* Hour lines + labels */}
-        {Array.from({ length: endHour - startHour + 1 }, (_, i) => {
-          const hour = startHour + i;
-          return (
-            <div
-              key={hour}
-              className="absolute left-0 right-4 flex items-start"
-              style={{ top: i * HOUR_H }}
-            >
-              <span
-                className="absolute text-[10px] font-medium leading-none"
-                style={{ left: -44, top: -6, color: "var(--member-text-muted)", width: 36, textAlign: "right" }}
-              >
-                {hour === 12 ? "12 PM" : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
-              </span>
-              <div className="w-full" style={{ height: 1, background: "var(--member-hr)" }} />
-            </div>
-          );
-        })}
-
-        {/* Now indicator */}
-        {showNow && nowTop > 0 && nowTop < (endHour - startHour) * HOUR_H && (
-          <div
-            className="absolute left-0 right-4 flex items-center z-10 pointer-events-none"
-            style={{ top: nowTop }}
-          >
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500 -ml-1.5 shrink-0" />
-            <div className="flex-1 h-0.5 bg-red-500" />
-          </div>
-        )}
-
-        {/* Empty state */}
-        {!loading && dayClasses.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-gray-700 text-sm">No classes today</p>
-          </div>
-        )}
-
-        {/* Events — one track, lanes inside it */}
-        <div className="absolute left-1 right-4 top-0 bottom-0">
-          {/* Dense clusters (more than three at once): one group block, or the
-              cluster's sessions as full-width rows once expanded. */}
-          {packed.clusters.map((cluster, index) => {
-            if (!cluster.dense) return null;
-            const expanded = expandedClusters.has(index);
-            const top = ((cluster.startMin - startHour * 60) / 60) * HOUR_H;
-            const span = Math.max(((cluster.endMin - cluster.startMin) / 60) * HOUR_H, 44);
-            const first = dayClasses[cluster.members[0]];
-            const last = dayClasses[cluster.members[cluster.members.length - 1]];
-            if (!expanded) {
+      <div ref={root} className="px-3 pb-6">
+        {day.fellBack ? (
+          <p className="mb-2 px-1 text-xs" style={{ color: QUIET_INK }} data-testid="schedule-fallback">
+            {FELL_BACK}
+          </p>
+        ) : null}
+        {!loading && dayClasses.length === 0 ? (
+          <p className="py-16 text-center text-gray-700 text-sm">No classes today</p>
+        ) : dayClasses.length > 0 ? (
+          <PosterDay
+            grid={grid}
+            tone="member"
+            pinMats
+            label={`${DAY_FULL[dow - 1]}, ${dayClasses.length} ${dayClasses.length === 1 ? "class" : "classes"}`}
+            matName={(matId) => (matId === null ? "No mat" : (matNames.get(matId) ?? "No mat"))}
+            testId="schedule-day"
+            renderSession={(item) => {
+              const cls = dayClasses[indexOf.get(item.key) ?? -1];
+              return cls ? blockFor(cls, placeShown(item)) : null;
+            }}
+            renderMore={(item) => (
+              <MemberMore
+                folded={foldedState(item.keys)}
+                count={item.keys.length}
+                label={`${item.keys.length} more classes, ${minToTime(item.startMin)} to ${minToTime(item.endMin)}. Show them.`}
+                expanded={openMore === item.id}
+                onOpen={() => setMore({ dow, id: item.id })}
+                onClose={() => setMore(null)}
+              />
+            )}
+            openMore={openMore}
+            renderMorePanel={(item) => {
+              const inCluster = item.clusterKeys.map((key) => dayClasses[indexOf.get(key) ?? -1]).filter((c): c is ScheduleClass => !!c);
+              const from = Math.min(...inCluster.map((c) => spanMinutes(c.time, c.endTime).startMin));
+              const to = Math.max(...inCluster.map((c) => spanMinutes(c.time, c.endTime).endMin));
               return (
-                <Button
-                  key={`cluster-${index}`}
-                  variant="ghost"
-                  onClick={() => toggleCluster(index)}
-                  aria-expanded={false}
-                  className="absolute left-0 right-0 h-auto flex-col items-start justify-start gap-0 rounded-xl px-2 py-1.5 text-left active:scale-[0.98] overflow-hidden hover:bg-transparent"
-                  style={{
-                    top,
-                    height: span,
-                    background: `linear-gradient(135deg, ${hex(primaryColor, 0.32)}, ${hex(primaryColor, 0.2)})`,
-                    border: `1px solid ${hex(primaryColor, 0.58)}`,
-                    color: "var(--member-text)",
+                <MorePanel
+                  label={`${inCluster.length} classes, ${minToTime(from)} to ${minToTime(to)}`}
+                  className="shadow-lg"
+                  style={{ background: "var(--member-elevated)" }}
+                  closeClassName="text-[color-mix(in_srgb,var(--member-text)_72%,transparent)]"
+                  onClose={(returnFocus) => {
+                    if (returnFocus) root.current?.querySelector<HTMLElement>(`[data-cell-more="${item.id}"] button`)?.focus();
+                    setMore(null);
                   }}
                 >
-                  <span className="block w-full font-semibold leading-tight truncate text-xs">
-                    {cluster.members.length} classes at once
-                  </span>
-                  <span className="block w-full leading-tight truncate mt-0.5 text-[10px]" style={{ color: "var(--member-text-muted)" }}>
-                    {first.time}–{last.endTime} · tap to see them
-                  </span>
-                </Button>
+                  {inCluster.map((cls) => (
+                    <div key={cls.id} className="grid min-h-11">
+                      {/* The panel's rows are not under a mat name: each says its mat. */}
+                      {blockFor(cls, true)}
+                    </div>
+                  ))}
+                </MorePanel>
               );
-            }
-            return (
-              <div
-                key={`cluster-${index}`}
-                className="absolute left-0 right-0 z-20 rounded-xl p-1 flex flex-col gap-1"
-                style={{ top, background: "var(--member-elevated)", border: "1px solid var(--member-border)" }}
-              >
-                {cluster.members.map((memberIndex) => {
-                  const cls = dayClasses[memberIndex];
-                  const state = states[memberIndex];
-                  return (
-                    <SessionBlock
-                      key={cls.id}
-                      cls={cls}
-                      state={state}
-                      progress={sessionProgress(spans[memberIndex], nowMinutes)}
-                      isSub={subscribed.has(cls.classId)}
-                      isSel={selected === cls.id}
-                      primaryColor={primaryColor}
-                      onSelect={onSelect}
-                      layout={{ position: "relative", height: 44 }}
-                    />
-                  );
-                })}
-                <Button
-                  variant="ghost"
-                  size="compact"
-                  onClick={() => toggleCluster(index)}
-                  aria-expanded={true}
-                  className="w-full text-[11px] font-semibold"
-                  style={{ color: "var(--member-text-muted)" }}
-                >
-                  Collapse
-                </Button>
-              </div>
-            );
-          })}
-
-          {dayClasses.map((cls, i) => {
-            const placement = packed.placements[i];
-            if (packed.clusters[placement.cluster]?.dense) return null;
-            const top    = topPx(cls.time, startHour);
-            const height = heightPx(cls.time, cls.endTime);
-            const width  = 100 / placement.lanes;
-            return (
-              <SessionBlock
-                key={cls.id}
-                cls={cls}
-                state={states[i]}
-                progress={sessionProgress(spans[i], nowMinutes)}
-                isSub={subscribed.has(cls.classId)}
-                isSel={selected === cls.id}
-                primaryColor={primaryColor}
-                onSelect={onSelect}
-                showPlace={placement.lanes > 1}
-                layout={{
-                  position: "absolute",
-                  top,
-                  height,
-                  left: `${placement.lane * width}%`,
-                  width: `calc(${width}% - ${placement.lane === placement.lanes - 1 ? 0 : 4}px)`,
-                }}
-              />
-            );
-          })}
-        </div>
+            }}
+            breakLabel={(fromMin, toMin) => `No classes ${minToTime(fromMin)} to ${minToTime(toMin)}`}
+          />
+        ) : null}
       </div>
     </div>
   );
 }
 
+/** "+N more" on the members' day: a dashed block in the member shell's inks that opens the list over the grid. */
+function MemberMore({ count, label, expanded, onOpen, onClose, folded }: { count: number; label: string; expanded: boolean; onOpen: () => void; onClose: () => void; folded?: "live" | "next" }) {
+  const press = useMoreToggle(expanded, onOpen, onClose);
+  return (
+    <Button
+      variant="ghost"
+      {...press}
+      aria-label={label}
+      aria-expanded={expanded}
+      data-testid="schedule-more"
+      data-folded-state={folded}
+      className="h-auto min-h-[44px] flex-col items-stretch justify-start gap-0.5 whitespace-normal rounded-xl border border-dashed px-[7px] pb-[8px] pt-[7px] text-left font-normal hover:bg-transparent"
+      style={{ borderColor: "var(--member-border)", background: "var(--member-surface)", color: "var(--member-text)" }}
+    >
+      <span className="text-[13px] font-semibold leading-[17px]">+{count} more</span>
+      <span className="text-[11px] leading-[14px]" style={{ color: QUIET_INK }}>Show them</span>
+    </Button>
+  );
+}
+
 /**
- * One session on the day grid. Carries its temporal state in words (a pill and
- * the accessible name), never in colour or opacity alone: "Live" gets the
- * accent edge, a pulsing dot (motion-safe) and an elapsed hairline; "Next" a
- * pill; "Ended" the pill plus dimming; "Cancelled" the pill plus a struck
- * name. The same vocabulary appears on the staff timetable's chips.
+ * One class on the members' day. The time range is the first line (never cut),
+ * then the name in full, then the pills on a wrapping row (the Bell with them),
+ * then one last line that may be cut: the place where it tells two classes
+ * apart — side by side by time, under "No mat", on a day drawn by time — and
+ * the coach under a pinned mat name. Its temporal state is in words (a pill
+ * and the accessible name), never in colour or opacity alone: "Live" gets the
+ * accent edge, a pulsing dot (motion-safe) and an elapsed hairline; "Ended"
+ * the pill and a paler fill (the ink is unchanged); "Cancelled" the pill and
+ * a struck name. The same vocabulary appears on the staff timetable's chips.
  */
 function SessionBlock({
   cls,
@@ -516,8 +499,9 @@ function SessionBlock({
   isSel,
   primaryColor,
   onSelect,
-  layout,
-  showPlace = false,
+  size,
+  showPlace,
+  matName,
 }: {
   cls: ScheduleClass;
   state: SessionState;
@@ -526,22 +510,22 @@ function SessionBlock({
   isSel: boolean;
   primaryColor: string;
   onSelect: (id: string) => void;
-  layout: React.CSSProperties;
-  /** Side by side with another session: the mat is what tells two of the same class apart. */
-  showPlace?: boolean;
+  /** "large" for one or two lanes, "small" for three (plan §4.7). */
+  size: "large" | "small";
+  /** The last line names the place (the mat, else the typed place) rather than the coach. */
+  showPlace: boolean;
+  /** The class's mat, for its accessible name. */
+  matName: string | null;
 }) {
-  const height = typeof layout.height === "number" ? layout.height : 44;
-  const short  = height < 44;
   const color  = normalizeHex(cls.color ?? primaryColor);
   const text   = readableText(color);
   // Subscribed blocks are filled with the class colour, so the ink is whatever
-  // reads on it. Unsubscribed blocks are a 20–32% tint of that colour over the
-  // DARK member shell, which is dark whatever the tenant colour is — so their
-  // ink is the shell's own text, never a hard-coded dark navy (the contact
-  // sheet of 26 Sep showed near-invisible class names on a blue club).
-  const muted  = isSub
-    ? (text === "#ffffff" ? "rgba(255,255,255,0.74)" : "rgba(15,23,42,0.68)")
-    : "var(--member-text-muted)";
+  // reads on it. Unsubscribed blocks are a tint of that colour over the member
+  // shell, so their ink is the shell's own text, never a hard-coded dark navy
+  // (the contact sheet of 26 Sep showed near-invisible class names on a blue club).
+  // On a booked block the secondary text (the last line, the category, the Bell) is the block's own ink: a
+  // see-through ink measured about 2.7:1 on a blue class (plan Appendix B 19).
+  const muted  = isSub ? text : QUIET_INK;
   const ink    = isSub ? text : "var(--member-text)";
   const ended  = state === "ended";
   const cancelled = state === "cancelled";
@@ -549,99 +533,97 @@ function SessionBlock({
   const label  = sessionStateLabel(state);
   const pillTint =
     live ? "var(--hue-success)" : state === "next" ? "var(--hue-info)" : cancelled ? "var(--hue-danger)" : undefined;
+  const place  = showPlace ? (cls.location || cls.coach) : cls.coach;
+  const where  = matName ?? (cls.location || null);
+  const large  = size === "large";
+  const pill   = "inline-flex items-center rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4";
+  const category = classCategoryTag(cls);
 
   return (
-    <button
+    <Button
+      variant="ghost"
       onClick={() => onSelect(cls.id)}
       data-session-state={state}
-      aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
-      className="rounded-xl px-2 py-1.5 text-left transition-all active:scale-[0.98] overflow-hidden"
+      data-block-size={size}
+      data-booked={isSub || undefined}
+      aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${where ? `, ${where}` : ""}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
+      className={[
+        "relative h-auto flex-col items-stretch justify-start gap-0.5 overflow-hidden whitespace-normal rounded-xl text-left font-normal transition-all active:scale-[0.98] hover:bg-transparent",
+        large ? "min-h-[56px] px-[7px] pb-[8px] pt-[7px]" : "min-h-[44px] px-[5px] pb-[6px] pt-[5px]",
+      ].join(" ")}
       style={{
-        ...layout,
+        // A booked class is filled with its colour; an ended one that is not booked has a paler tint, its ink unchanged (UI-RULES §8).
         background: isSub
           ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
-          : `linear-gradient(135deg, ${hex(color, 0.32)}, ${hex(color, 0.2)})`,
-        border: `1px solid ${isSub ? hex(color, 0.9) : hex(color, 0.58)}`,
+          : `linear-gradient(135deg, ${hex(color, ended ? 0.16 : 0.32)}, ${hex(color, ended ? 0.1 : 0.2)})`,
+        border: `1px solid ${isSub ? hex(color, 0.9) : hex(color, ended ? 0.3 : 0.58)}`,
         borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : color}` : undefined,
         boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
-        opacity: ended ? 0.55 : undefined,
+        color: ink,
+        // A booked class that has ended is greyed. Desaturating keeps each colour's brightness, so its ink still
+        // reads; a see-through fill would not on a light shell.
+        filter: isSub && ended ? "saturate(0.35)" : undefined,
       }}
     >
-      <div className="flex items-start gap-1">
-        <p
-          className="font-semibold leading-tight truncate min-w-0 flex-1"
-          style={{
-            color: ink,
-            fontSize: short ? 10 : 12,
-            textDecoration: cancelled ? "line-through" : undefined,
-          }}
-        >
-          {cls.name}
-          {/* A short block has no second line; the mat still shows when it is the differentiator. */}
-          {short && showPlace && cls.location ? <span className="font-normal" style={{ color: muted }} data-testid="schedule-cell-place"> · {cls.location}</span> : null}
-        </p>
-        {cls.isKids && (
-          <span
-            className="shrink-0 inline-flex items-center rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
-            style={{ color: ink, border: `1px solid color-mix(in srgb, ${ink} 30%, transparent)` }}
-          >
-            Kids
-          </span>
-        )}
-        {isSub && cls.bookedIneligible && (
-          // D2: booked, but the door now refuses this member; the sheet says why.
-          <span
-            className="shrink-0 inline-flex items-center rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
-            style={{ color: ink, border: `1px solid color-mix(in srgb, ${ink} 30%, transparent)` }}
-            data-testid="schedule-cell-booked-ineligible"
-            title={`Not eligible: ${cls.bookedIneligible.sentence}`}
-          >
-            Not eligible
-          </span>
-        )}
-        {cls.eligibility === "tier_not_included" && (
-          // T6a: locked, not hidden; the sheet says why.
-          <span
-            className="shrink-0 inline-flex items-center"
-            style={{ color: ink }}
-            title={TIER_LOCKED_LABEL}
-            aria-label={TIER_LOCKED_LABEL}
-            data-testid="schedule-cell-tier-locked"
-          >
-            <Lock className="w-3 h-3" aria-hidden="true" />
-          </span>
-        )}
-        {state !== "upcoming" && (
-          <span
-            className="shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4"
-            style={{
-              background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
-              color: ink,
-              border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : `color-mix(in srgb, ${ink} 30%, transparent)`}`,
-            }}
-          >
-            {live && (
-              <span
-                aria-hidden="true"
-                className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse"
-                style={{ background: "var(--hue-success)" }}
-              />
-            )}
-            {label}
-          </span>
-        )}
-      </div>
-      {!short && (
-        <p className="leading-tight truncate mt-0.5" style={{ color: muted, fontSize: 10 }}>
-          {/* T6c: the category leads the line when the class has one. */}
-          {classCategoryTag(cls) && <span data-testid="schedule-cell-category">{classCategoryTag(cls)} · </span>}
-          {/* Side by side with another session, the mat replaces the coach: it is what tells two of the same class apart. */}
-          {cls.time}–{cls.endTime} · {showPlace && cls.location ? <span data-testid="schedule-cell-place">{cls.location}</span> : cls.coach}
-        </p>
-      )}
-      {isSub && !short && !live && (
-        <Bell className="absolute bottom-1.5 right-1.5 w-2.5 h-2.5" style={{ color: muted }} />
-      )}
+      <span className={["font-bold tabular-nums", large ? "text-xs leading-[15px]" : "text-[11px] leading-[14px]"].join(" ")} data-block-part="time">
+        {cls.time}–{cls.endTime}
+      </span>
+      <span
+        className={["font-semibold [overflow-wrap:anywhere]", large ? "text-[13px] leading-[17px]" : "text-xs leading-[15px]"].join(" ")}
+        style={{ textDecoration: cancelled ? "line-through" : undefined }}
+        data-block-part="name"
+      >
+        {cls.name}
+      </span>
+      {cls.isKids || (isSub && cls.bookedIneligible) || cls.eligibility === "tier_not_included" || state !== "upcoming" || category || isSub ? (
+        <span className="flex flex-wrap items-center gap-1">
+          {state !== "upcoming" && (
+            <span
+              className={`${pill} gap-1`}
+              style={{
+                background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
+                border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : `color-mix(in srgb, ${ink} 30%, transparent)`}`,
+              }}
+            >
+              {live && (
+                <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse" style={{ background: "var(--hue-success)" }} />
+              )}
+              {label}
+            </span>
+          )}
+          {cls.isKids && (
+            <span className={pill} style={{ border: `1px solid color-mix(in srgb, ${ink} 30%, transparent)` }}>
+              Kids
+            </span>
+          )}
+          {isSub && cls.bookedIneligible && (
+            // D2: booked, but the door now refuses this member; the sheet says why.
+            <span
+              className={pill}
+              style={{ border: `1px solid color-mix(in srgb, ${ink} 30%, transparent)` }}
+              data-testid="schedule-cell-booked-ineligible"
+              title={`Not eligible: ${cls.bookedIneligible.sentence}`}
+            >
+              Not eligible
+            </span>
+          )}
+          {cls.eligibility === "tier_not_included" && (
+            // T6a: locked, not hidden; the sheet says why.
+            <span className="inline-flex items-center" title={TIER_LOCKED_LABEL} aria-label={TIER_LOCKED_LABEL} data-testid="schedule-cell-tier-locked">
+              <Lock className="w-3 h-3" aria-hidden="true" />
+            </span>
+          )}
+          {category && (
+            <span className="text-[10px] leading-4" style={{ color: muted }} data-testid="schedule-cell-category">{category}</span>
+          )}
+          {isSub && !live && <Bell className="w-2.5 h-2.5" style={{ color: muted }} aria-hidden="true" />}
+        </span>
+      ) : null}
+      {place ? (
+        <span className="truncate text-[11px] leading-[14px]" style={{ color: muted }} data-testid={showPlace && cls.location ? "schedule-cell-place" : undefined} data-block-part="place">
+          {place}
+        </span>
+      ) : null}
       {live && (
         <span
           aria-hidden="true"
@@ -649,7 +631,7 @@ function SessionBlock({
           style={{ width: `${Math.round(progress * 100)}%`, background: isSub ? text : color }}
         />
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -662,6 +644,10 @@ export default function MemberSchedulePage() {
   const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [allClasses, setAllClasses] = useState<ScheduleClass[]>([]);
+  // By mat or by time, and the mats. Read beside the schedule and waited for,
+  // so the day never draws by time and then jumps to mat columns. If it cannot
+  // be read the day is drawn by time: every class is still there.
+  const [club, setClub] = useState<ClubTimetable>(BY_TIME);
   const [scheduleLoading, setScheduleLoading] = useState(true);
   // UI-RULES §7: a failed load is an error, never "No classes today".
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -704,9 +690,6 @@ export default function MemberSchedulePage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Active-hours window for the week (recomputed when the schedule loads)
-  const { startHour, endHour } = hourWindow(allClasses);
-
   // Prev/curr/next DOW (1-indexed: 1=Mon…7=Sun)
   const currDow = selectedDay + 1;
   const prevDow = selectedDay === 0 ? 7 : selectedDay;
@@ -730,13 +713,25 @@ export default function MemberSchedulePage() {
     };
   }, [selectedDay, anchor]);
 
-  // Scroll center panel to current time whenever the day (or the computed
-  // hour window, once classes load) changes
+  // On opening a day the pane scrolls — no animation, focus stays where it is —
+  // so the class that is on now, or the next one, is in view under the pinned
+  // mat names. Any other day opens at its top. Runs when the day changes and
+  // once the schedule has loaded.
   useEffect(() => {
-    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-    const scrollTop = Math.max(0, ((nowMinutes - startHour * 60) / 60) * HOUR_H - 100);
-    centerRef.current?.scrollTo({ top: scrollTop });
-  }, [selectedDay, startHour]);
+    const pane = centerRef.current;
+    if (!pane || scheduleLoading) return;
+    const band = pane.querySelector<HTMLElement>("[data-mat-head]")?.getBoundingClientRect().height ?? 0;
+    pane.style.scrollPaddingTop = `${Math.ceil(band)}px`;
+    const target =
+      pane.querySelector<HTMLElement>('[data-session-state="live"], [data-folded-state="live"]') ??
+      pane.querySelector<HTMLElement>('[data-session-state="next"], [data-folded-state="next"]');
+    if (!target) {
+      pane.scrollTo({ top: 0 });
+      return;
+    }
+    const top = target.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+    pane.scrollTo({ top: Math.max(0, top - band - 8) });
+  }, [selectedDay, scheduleLoading]);
 
   // Scroll day pills to keep selected visible
   useEffect(() => {
@@ -843,7 +838,7 @@ export default function MemberSchedulePage() {
       // the type checker. Keep it in step with app/api/member/schedule/route.ts.
       .then((data: Array<{
         id: string; classId: string; name: string; startTime: string; endTime: string;
-        coach: string; location: string; capacity: number | null; color?: string | null;
+        coach: string; location: string; matId?: string | null; capacity: number | null; color?: string | null;
         isKids?: boolean;
         kidsClassForAdult?: boolean;
         category?: string | null;
@@ -869,6 +864,7 @@ export default function MemberSchedulePage() {
           endTime: c.endTime,
           coach: c.coach,
           location: c.location,
+          matId: c.matId ?? null,
           capacity: c.capacity,
           isKids: c.isKids === true,
           kidsClassForAdult: c.kidsClassForAdult === true,
@@ -885,7 +881,7 @@ export default function MemberSchedulePage() {
           maxRankName: c.maxRankName ?? null,
           bookedIneligible: c.bookedIneligible ?? null,
         }));
-        setAllClasses(mapped);
+        return mapped;
       });
 
     // Hydrate the subscribed set from the server so reload preserves state.
@@ -903,8 +899,26 @@ export default function MemberSchedulePage() {
       })
       .catch(() => setAllowance({ kind: "error" }));
 
-    // Raw exception text never reaches the member (UI-RULES §7/§10).
-    Promise.all([classes, subs])
+    // How the club splits same-time classes. Never rejects: without it the day
+    // is drawn by time, which shows every class (only the mat columns are lost).
+    const timetable = fetch("/api/member/timetable", { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d: { layout?: unknown; mats?: unknown }): ClubTimetable => {
+        const mats = Array.isArray(d.mats)
+          ? d.mats.filter((m): m is { id: string; name: string } => !!m && typeof (m as { id?: unknown }).id === "string" && typeof (m as { name?: unknown }).name === "string")
+          : [];
+        return { layout: d.layout === "mat" ? "mat" : "time", mats };
+      })
+      .catch(() => BY_TIME);
+
+    // Raw exception text never reaches the member (UI-RULES §7/§10). The
+    // classes and the layout are set together, once both are in, so the day is
+    // drawn once — never by time first and then again in mat columns.
+    Promise.all([classes, subs, timetable])
+      .then(([mapped, , layout]) => {
+        setAllClasses(mapped);
+        setClub(layout);
+      })
       .catch(() => setLoadError("Couldn't load your timetable — tap to retry"))
       .finally(() => setScheduleLoading(false));
   }
@@ -976,10 +990,10 @@ export default function MemberSchedulePage() {
   const selectedCls = allClasses.find((c) => c.id === selected);
 
   return (
-    // Audit U5: height derived from the real header + nav tokens — the old
-    // h-[calc(100dvh-56px-64px)] guessed both constants and spilled the
-    // grid ~18px under the fixed tab bar.
-    <div className="flex flex-col" style={{ height: "calc(100dvh - var(--member-header-clearance) - var(--member-nav-clearance))" }}>
+    // The height of the layout's content area, which already leaves room for the header, the two-factor
+    // banner when it shows, and the bottom tab bar. Sizing from fixed header and tab-bar heights instead
+    // (audit U5) put the end of the day under the tab bar whenever the banner was showing.
+    <div className="flex h-full flex-col">
 
       {/* ── Top controls ── */}
       <div className="px-4 pt-4 pb-2 shrink-0">
@@ -1101,9 +1115,10 @@ export default function MemberSchedulePage() {
           className="flex h-full"
           style={{ width: "300%", transform: "translateX(-33.333%)" }}
         >
-          {/* Previous day */}
-          <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }}>
-            <DayGrid
+          {/* Previous day. The side panes are off screen until a swipe brings one in: `inert`
+              keeps their classes out of the Tab order and away from screen readers. */}
+          <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }} inert data-testid="schedule-pane-prev">
+            <DayPane
               dow={prevDow}
               primaryColor={primaryColor}
               subscribed={subscribed}
@@ -1111,14 +1126,13 @@ export default function MemberSchedulePage() {
               onSelect={setSelected}
               loading={scheduleLoading}
               allClasses={allClasses}
-              startHour={startHour}
-              endHour={endHour}
+              club={club}
             />
           </div>
 
           {/* Current day */}
-          <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }}>
-            <DayGrid
+          <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }} data-testid="schedule-pane">
+            <DayPane
               dow={currDow}
               primaryColor={primaryColor}
               subscribed={subscribed}
@@ -1127,14 +1141,13 @@ export default function MemberSchedulePage() {
               scrollRef={centerRef}
               loading={scheduleLoading}
               allClasses={allClasses}
-              startHour={startHour}
-              endHour={endHour}
+              club={club}
             />
           </div>
 
           {/* Next day */}
-          <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }}>
-            <DayGrid
+          <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }} inert data-testid="schedule-pane-next">
+            <DayPane
               dow={nextDow}
               primaryColor={primaryColor}
               subscribed={subscribed}
@@ -1142,8 +1155,7 @@ export default function MemberSchedulePage() {
               onSelect={setSelected}
               loading={scheduleLoading}
               allClasses={allClasses}
-              startHour={startHour}
-              endHour={endHour}
+              club={club}
             />
           </div>
         </div>

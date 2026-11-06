@@ -15,11 +15,12 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
-import { clusterLabel, clusterSessions, duplicateSessionKeys, hourWindow, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionCluster, type SessionState } from "@/lib/schedule-state";
+import { duplicateSessionKeys, hourWindow, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
 import { DayGrid } from "@/components/schedule/DayGrid";
-import { PosterGrid } from "@/components/schedule/PosterGrid";
-import { MoreChip, WeekChip } from "@/components/schedule/WeekChip";
-import { buildTimetableGrid } from "@/lib/timetable-grid";
+import { PosterDay, PosterGrid } from "@/components/schedule/PosterGrid";
+import { MorePanel } from "@/components/schedule/MorePanel";
+import { MoreChip, MoreRow, WeekChip } from "@/components/schedule/WeekChip";
+import { buildTimetableGrid, matColumns } from "@/lib/timetable-grid";
 import type { ClassRow, CoachUserOption, MatOption, TierOption } from "@/app/dashboard/timetable/page";
 import { MatsSheet } from "@/components/dashboard/MatsSheet";
 import { effectiveLayout, matsInUse, type TimetableLayout } from "@/lib/timetable-layout";
@@ -142,199 +143,6 @@ const CLASS_COLORS = [
 /** Value of the timetable category filter that selects uncategorised classes. */
 const UNCATEGORISED = "__uncategorised";
 
-/**
- * One class as it appears inside a day — used by BOTH the desktop week grid and
- * the mobile agenda, so the two views can never drift apart in what they show
- * or how they behave. Extracting it also means the mobile view adds no new raw
- * <button> site (UI-RULES §11): there is one clickable class chip in this file,
- * not one per layout.
- *
- * `canManage` gates the click. A coach or admin sees the same chip but it is a
- * genuine `disabled` button rather than something that merely looks clickable —
- * the UI audit flagged fake-clickable cells here specifically.
- */
-function ClassChip({
-  cls,
-  startTime,
-  endTime,
-  place,
-  duplicate = false,
-  primaryColor,
-  canManage,
-  onEdit,
-  size = "grid",
-  state = null,
-}: {
-  cls: ClassRow;
-  startTime: string | undefined;
-  /** With `endTime` the chip shows `start–end` (inside an overlap group, where the end decides the clash). */
-  endTime?: string;
-  /** Mat or coach, shown inside an overlap group — the only thing that tells two same-time sessions apart. */
-  place?: string | null;
-  /** Looks like the same session entered twice (lib/schedule-state#duplicateSessionKeys). A flag for staff, never a merge. */
-  duplicate?: boolean;
-  primaryColor: string;
-  canManage: boolean;
-  onEdit: (cls: ClassRow) => void;
-  /** "grid" = 7-column cell, "compact" = two-line cell for a busy day, "agenda" = full-width mobile row. */
-  size?: "grid" | "agenda" | "compact";
-  /**
-   * Today's temporal state for this slot (lib/schedule-state.ts) — the same
-   * words the member's day view uses. `null` on any other day. Today's
-   * cancelled sessions come from /api/coach/today (D6) and read "Cancelled".
-   */
-  state?: SessionState | null;
-}) {
-  const color = cls.color ?? primaryColor;
-  const agenda = size === "agenda";
-  const showState = state !== null && state !== "upcoming";
-  const stateTint =
-    state === "live" ? "var(--hue-success)" : state === "next" ? "var(--hue-info)" : null;
-  const stateInk =
-    state === "live" ? "var(--hue-success-ink)" : state === "next" ? "var(--hue-info-ink)" : "var(--tx-3)";
-  const label = canManage
-    ? `Edit ${cls.name}${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}`
-    : undefined;
-  const timeText = endTime ? `${startTime}–${endTime}` : `${startTime}${cls.duration != null ? ` · ${cls.duration}m` : ""}`;
-  const statePill = showState && (
-    <span
-      className="inline-flex items-center gap-1 rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
-      style={{
-        background: stateTint ? `color-mix(in srgb, ${stateTint} 14%, transparent)` : "var(--sf-2)",
-        border: `1px solid ${stateTint ? `color-mix(in srgb, ${stateTint} 45%, transparent)` : "var(--bd-default)"}`,
-        color: stateInk,
-      }}
-    >
-      {state === "live" && (
-        <span
-          aria-hidden="true"
-          className="w-1.5 h-1.5 rounded-full motion-safe:animate-pulse"
-          style={{ background: "var(--hue-success)" }}
-        />
-      )}
-      {sessionStateLabel(state)}
-    </span>
-  );
-  // A tag beside the name, not in the place's slot (the mat still shows — it is
-  // part of what makes it a duplicate). Ink is the text colour: amber ink
-  // measures under 4.5:1 on the chip's tint (UI-RULES §8). The amber edge and
-  // tint carry the colour; the accessible name says "(possible duplicate)".
-  const duplicateTag = duplicate && (
-    <span
-      className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px] shrink-0"
-      style={{
-        background: "color-mix(in srgb, var(--hue-warning) 18%, transparent)",
-        border: "1px solid color-mix(in srgb, var(--hue-warning) 55%, transparent)",
-        color: "var(--tx-1)",
-      }}
-    >
-      Duplicate?
-    </span>
-  );
-  const frame = {
-    background: hex(color, 0.12),
-    border: `1px solid ${hex(color, 0.2)}`,
-    borderLeft: duplicate ? "3px solid var(--hue-warning)" : state === "live" ? `3px solid ${color}` : undefined,
-    opacity: state === "ended" || state === "cancelled" ? 0.55 : undefined,
-  };
-  const compact = size === "compact";
-  // One button element for every size (the UI-RULES ratchet counts raw buttons;
-  // this one predates it). Compact — a busy day or an overlap group — puts the
-  // time range and place on one line and the full name on its own line.
-  return (
-    <button
-      type="button"
-      onClick={() => canManage && onEdit(cls)}
-      disabled={!canManage}
-      aria-label={label}
-      data-session-state={state ?? undefined}
-      data-chip-size={compact ? "compact" : undefined}
-      className={[
-        "w-full text-left transition-all enabled:hover:brightness-110 disabled:cursor-default",
-        compact ? "rounded-[10px] px-2 py-1" : agenda ? "flex items-start gap-2.5 rounded-xl px-3 py-2.5" : "flex items-start gap-1.5 rounded-xl px-2 py-1.5",
-      ].join(" ")}
-      style={frame}
-    >
-      {compact ? (<>
-        <span className="flex items-center gap-1.5 min-w-0">
-          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
-          <span className="text-[11px] font-bold tabular-nums shrink-0" style={{ color: "var(--tx-1)" }}>{timeText}</span>
-          {statePill}
-          {place && <span className="ml-auto text-[10px] truncate" style={{ color: "var(--tx-2)" }}>{place}</span>}
-        </span>
-        <span className="flex items-start gap-1 min-w-0 pl-3">
-          <span
-            className={["text-xs font-semibold leading-tight break-words line-clamp-2 min-w-0 flex-1", state === "cancelled" ? "line-through" : ""].join(" ")}
-            style={{ color: "var(--tx-1)" }}
-            title={cls.name}
-          >
-            {cls.name}
-          </span>
-          {duplicateTag}
-          {cls.isKids && (
-            <span
-              className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px] shrink-0"
-              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-            >
-              Kids
-            </span>
-          )}
-          {classCategoryTag(cls) && (
-            <span
-              data-testid="class-chip-category"
-              className="inline-flex items-center rounded-full px-1.5 font-semibold tracking-wide leading-4 text-[9px] shrink-0"
-              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-            >
-              {classCategoryTag(cls)}
-            </span>
-          )}
-        </span>
-      </>) : (<>
-      <div
-        className={agenda ? "w-2 h-2 rounded-full shrink-0 mt-1.5" : "w-1.5 h-1.5 rounded-full shrink-0 mt-1"}
-        style={{ background: color }}
-      />
-      <div className="min-w-0 flex-1">
-        {/* break-words (not truncate) so class names like "Fundamentals BJJ"
-            wrap to two lines on narrow viewports instead of cutting off. */}
-        <p
-          className={[
-            agenda ? "text-sm font-semibold leading-tight break-words" : "text-[11px] font-semibold leading-tight break-words",
-            state === "cancelled" ? "line-through" : "",
-          ].join(" ")}
-          style={{ color: "var(--tx-1)" }}
-        >
-          {cls.name}
-        </p>
-        <p className={agenda ? "text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" : "text-[10px] mt-0.5 flex items-center gap-1 flex-wrap"} style={{ color: "var(--tx-3)" }}>
-          <span className="tabular-nums">{timeText}</span>
-          {place && <span>· {place}</span>}
-          {duplicateTag}
-          {cls.isKids && (
-            <span
-              className="inline-flex items-center rounded-full px-1.5 font-bold uppercase tracking-wide leading-4 text-[9px]"
-              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-            >
-              Kids
-            </span>
-          )}
-          {classCategoryTag(cls) && (
-            <span
-              data-testid="class-chip-category"
-              className="inline-flex items-center rounded-full px-1.5 font-semibold tracking-wide leading-4 text-[9px]"
-              style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
-            >
-              {classCategoryTag(cls)}
-            </span>
-          )}
-          {statePill}
-        </p>
-      </div>
-      </>)}
-    </button>
-  );
-}
-
 /** A refused save: the server's sentence, plus its machine reason when it gives one. */
 class ApiRefusal extends Error {
   reason?: string;
@@ -345,89 +153,7 @@ class ApiRefusal extends Error {
 }
 export type SaveError = { message: string; reason?: string };
 
-export type SessionGroup = SessionCluster;
-
-/**
- * One day's sessions as overlap groups, in time order — lib/schedule-state's
- * `clusterSessions` over the slots, the same clustering the member day view
- * and the staff Day view lay out in lanes. "Up to 2" for a staggered
- * 16:30–17:15 / 17:00–17:45 / 17:30–18:30, never 3.
- */
-export const groupSessions = (sessions: DaySession[]): SessionGroup[] => clusterSessions(sessions.map(({ slot }) => slot));
-export const groupLabel = clusterLabel;
 const placeOf = (cls: ClassRow) => cls.location ?? cls.coachUser?.name ?? cls.coachName ?? null;
-
-/**
- * The chips of one day: a plain chip per session, and an overlap group (rail,
- * "Up to N at once", compact chips showing start–end and place) wherever
- * sessions overlap. Used by the phone agenda only (`size="agenda"`): the
- * desktop week is the poster grid (components/schedule/PosterGrid). The other
- * sizes, with ClassChip, go when the phone moves to the grid.
- */
-function DaySessions({
-  sessions,
-  states,
-  size,
-  duplicates,
-  primaryColor,
-  canManage,
-  onEdit,
-}: {
-  sessions: DaySession[];
-  states: (SessionState | null)[];
-  /** Chip size outside an overlap group; inside one the grid uses "compact", the agenda stays "agenda". */
-  size: "grid" | "compact" | "agenda";
-  duplicates: ReadonlySet<string>;
-  primaryColor: string;
-  canManage: boolean;
-  onEdit: (cls: ClassRow) => void;
-}) {
-  const chip = (i: number, grouped: boolean) => {
-    const { cls, slot } = sessions[i];
-    // A compact chip always carries its range and place — on a busy day the
-    // class duration is not the slot's span (Open Mat 09:30–11:00 on a 60 min class).
-    const ranged = grouped || size === "compact";
-    return (
-      <ClassChip
-        key={slot.id}
-        cls={cls}
-        startTime={slot.startTime}
-        endTime={ranged ? slot.endTime : undefined}
-        place={ranged ? placeOf(cls) : undefined}
-        duplicate={duplicates.has(slot.id)}
-        primaryColor={primaryColor}
-        canManage={canManage}
-        onEdit={onEdit}
-        size={grouped && size !== "agenda" ? "compact" : size}
-        state={states[i]}
-      />
-    );
-  };
-  return (
-    <>
-      {groupSessions(sessions).map((g) =>
-        g.members.length === 1 ? (
-          chip(g.members[0], false)
-        ) : (
-          <div
-            key={`group-${sessions[g.members[0]].slot.id}`}
-            role="group"
-            aria-label={`${groupLabel(g)}, ${minToTime(g.startMin)} to ${minToTime(g.endMin)}`}
-            data-testid="overlap-group"
-            className="space-y-1 pl-1.5 ml-0.5 border-l-2"
-            style={{ borderColor: "var(--bd-active)" }}
-          >
-            {/* The group's accessible name already says this (with the range); don't read it twice. */}
-            <p aria-hidden="true" className={size === "agenda" ? "text-xs font-semibold" : "text-[10px] font-semibold"} style={{ color: "var(--tx-2)" }}>
-              {groupLabel(g)}
-            </p>
-            {g.members.map((i) => chip(i, true))}
-          </div>
-        ),
-      )}
-    </>
-  );
-}
 
 /**
  * Today's states for one day column of the template: the owner's own device
@@ -1859,6 +1585,10 @@ export default function TimetableManager({
   // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
   // on the day the owner almost always wants, rather than on Sunday.
   const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
+  // The phone day's open "+N more" panel. Keyed by day as well as by the
+  // button, so it is closed again when another day is chosen.
+  const [phoneMore, setPhoneMore] = useState<{ day: number; id: string } | null>(null);
+  const phoneDay = useRef<HTMLDivElement>(null);
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
 
@@ -1894,7 +1624,7 @@ export default function TimetableManager({
       return;
     }
     if (readChanged || matsLoadFailed) return;
-    showToast(`The staff week is now split by ${layout === "mat" ? "mat" : "time"}.`, "info");
+    showToast(`The timetable is now split by ${layout === "mat" ? "mat" : "time"}.`, "info");
   }, [layout, matsLoadFailed, showToast]);
 
   async function chooseLayout(next: TimetableLayout) {
@@ -1918,7 +1648,8 @@ export default function TimetableManager({
         }
         throw new Error("refused");
       }
-      showToast(`Saved. The staff week is now split by ${next === "mat" ? "mat" : "time"}.`, "success");
+      // Every screen follows the choice: the staff week, the Day view, the phone and the members' day.
+      showToast("Saved for the whole club.", "success");
       router.refresh();
     } catch {
       if (changes) quietSplit.current = true;
@@ -2030,17 +1761,20 @@ export default function TimetableManager({
   const sessionByKey = new Map(byDay.flat().map((session) => [session.slot.id, session] as const));
   const matOrder = new Map(mats.map((m, i) => [m.id, i] as const));
   const matNames = new Map(mats.map((m) => [m.id, m.name] as const));
-  const weekGrid = buildTimetableGrid(
-    byDay.flat().map(({ cls, slot }) => {
-      const position = cls.matId ? matOrder.get(cls.matId) : undefined;
-      return {
-        key: slot.id, day: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime,
-        matId: cls.matId ?? null,
-        tie: position !== undefined ? String(position).padStart(2, "0") : (cls.location ?? ""),
-      };
-    }),
-    { days: [1, 2, 3, 4, 5, 6, 0], layout, mats: mats.map((m) => ({ id: m.id })) },
-  );
+  const gridSession = ({ cls, slot }: DaySession) => {
+    const position = cls.matId ? matOrder.get(cls.matId) : undefined;
+    return {
+      key: slot.id, day: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime,
+      matId: cls.matId ?? null,
+      tie: position !== undefined ? String(position).padStart(2, "0") : (cls.location ?? ""),
+    };
+  };
+  const gridMats = mats.map((m) => ({ id: m.id }));
+  const weekGrid = buildTimetableGrid(byDay.flat().map(gridSession), { days: [1, 2, 3, 4, 5, 6, 0], layout, mats: gridMats });
+  // The phone's day: the same grid for one day. A phone shows mat columns
+  // while the day needs three lanes or fewer; a busier day is laid out by time
+  // and says so (`fellBack`).
+  const phoneGrid = buildTimetableGrid(byDay[agendaDow].map(gridSession), { days: [agendaDow], layout, mats: gridMats, maxTracks: 3 });
   // The Day view's hours: the club's earliest and latest session ± 1 h over
   // the whole week, the same clamp the member day view uses.
   const dayHours = hourWindow(visibleClasses.flatMap((c) => c.schedules));
@@ -2464,8 +2198,13 @@ export default function TimetableManager({
             const weekDates = getWeekDates(weekOffset);
             const todayMidnight = new Date();
             todayMidnight.setHours(0, 0, 0, 0);
-            // PR 2: the split shows on the desktop week only, so its control does too.
-            const showSplit = desktopView === "week" && !supportSession && !matsLoadFailed;
+            // Every screen follows the split (the week, the Day view, the phone, the members' day), so its control is on all three here.
+            const showSplit = !supportSession && !matsLoadFailed;
+            const todayPill = (
+              <span className="rounded-full border border-[color-mix(in_srgb,var(--hue-info)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[9px] font-bold uppercase leading-4 tracking-wide text-[var(--hue-info-ink)]">
+                Today
+              </span>
+            );
             const splitHint = !showSplit || !canManage || inUse > 0
               ? null
               : mats.length === 0
@@ -2498,7 +2237,8 @@ export default function TimetableManager({
                       <ChevronRight className="w-4 h-4" />
                     </Button>
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  {/* On a phone this group is the toolbar's second row: the split control across the width, Mats beside it. */}
+                  <div className="flex w-full flex-wrap items-end justify-end gap-2 md:w-auto md:items-center">
                     {(weekOffset !== 0 || (desktopView === "day" && dayDow !== new Date().getDay())) && (
                       <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setDayDow(new Date().getDay()); }}>
                         Today
@@ -2525,11 +2265,11 @@ export default function TimetableManager({
                     {/* How classes at the same time are split: one column per mat, or lanes by
                         time. Owner and manager choose (saved for the club); a coach reads it. */}
                     {showSplit && (
-                      <div className="hidden md:flex items-center gap-2" data-testid="timetable-split">
+                      <div className="flex min-w-0 flex-1 flex-col gap-1 md:flex-none md:flex-row md:items-center md:gap-2" data-testid="timetable-split">
                         {canManage ? (
                           <>
-                            <span id="timetable-split-label" className="whitespace-nowrap text-xs font-medium text-tx-2">Split same-time classes (staff week)</span>
-                            <div className="flex items-center gap-1 rounded-lg bg-sf-2 p-0.5" role="group" aria-labelledby="timetable-split-label">
+                            <span id="timetable-split-label" className="text-xs font-medium text-tx-2 md:whitespace-nowrap">Split same-time classes (whole club)</span>
+                            <div className="flex items-center gap-1 rounded-lg bg-sf-2 p-0.5 [&>*]:flex-1 md:[&>*]:flex-none" role="group" aria-labelledby="timetable-split-label">
                               {(["mat", "time"] as const).map((v) => {
                                 const unavailable = v === "mat" && inUse === 0;
                                 return (
@@ -2557,9 +2297,14 @@ export default function TimetableManager({
                       </div>
                     )}
                     {canChangeMats && !matsLoadFailed && (
-                      <Button variant="secondary" size="compact" className="hidden md:inline-flex" onClick={() => setMatsOpen(true)} data-testid="timetable-mats">
-                        Mats
-                      </Button>
+                      <>
+                        <Button variant="secondary" size="compact" className="hidden md:inline-flex" onClick={() => setMatsOpen(true)} data-testid="timetable-mats">
+                          Mats
+                        </Button>
+                        <Button variant="secondary" size="compact" className="md:hidden" onClick={() => setMatsOpen(true)} data-testid="timetable-mats-phone">
+                          Mats
+                        </Button>
+                      </>
                     )}
                     <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-hide-menu" onClick={() => setHideMenu((v) => !v)}>
                       {hideMenu ? "Show menu" : "Hide menu"}
@@ -2568,23 +2313,17 @@ export default function TimetableManager({
                 </div>
                 {/* Why "By mat" cannot be pressed yet, on its own line under the control. */}
                 {splitHint && (
-                  <p id="timetable-split-hint" className="-mt-1 mb-3 hidden text-right text-xs text-tx-2 md:block" data-testid="timetable-split-hint">
+                  <p id="timetable-split-hint" className="-mt-1 mb-3 text-xs text-tx-2 md:text-right" data-testid="timetable-split-hint">
                     {splitHint}
                   </p>
                 )}
-                {/* Phone: the Mats button on its own row (the split control arrives with the phone grid). */}
-                {canChangeMats && !matsLoadFailed && (
-                  <div className="mb-2 flex justify-end md:hidden">
-                    <Button variant="secondary" size="compact" onClick={() => setMatsOpen(true)} data-testid="timetable-mats-phone">Mats</Button>
-                  </div>
-                )}
 
-                {/* ── Mobile: day-at-a-time agenda ──────────────────────────
-                    Below `md:` the 7-column grid was a 980px canvas inside a
-                    horizontal scroller, so a phone showed roughly two days at a
-                    time and the owner had to swipe sideways to find Thursday.
-                    An agenda shows one day full-width with real tap targets.
-                    Same data, same ClassChip, same edit gating. */}
+                {/* ── Phone: one day at a time, as the poster grid ───────────
+                    Day tabs, then the day as one card: the same row lines and
+                    columns as the week (lib/timetable-grid), so two classes at
+                    the same time sit side by side and a 20-minute class never
+                    sits over the one after it. Columns share the width: no
+                    sideways scroll. Same chips, same edit gating. */}
                 <div className="md:hidden">
                   <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-2" role="tablist" aria-label="Day of week">
                     {weekDates.map((date, rawIdx) => {
@@ -2593,62 +2332,142 @@ export default function TimetableManager({
                       const selected = agendaDow === dow;
                       const count = byDay[dow].length;
                       return (
-                        <button
+                        // Selected and today are told apart without the club's colour: a border and
+                        // weight for the selected tab, an underline for today (as the Day view's chooser).
+                        <Button
                           key={rawIdx}
-                          type="button"
+                          variant="ghost"
                           role="tab"
                           aria-selected={selected}
+                          data-today={isToday || undefined}
                           onClick={() => setAgendaDow(dow)}
-                          className="shrink-0 rounded-xl border px-3 py-2 text-center transition-colors"
-                          style={{
-                            background: selected ? hex(primaryColor, 0.12) : "var(--sf-1)",
-                            borderColor: selected ? hex(primaryColor, 0.4) : "var(--bd-default)",
-                          }}
+                          className={[
+                            "h-auto shrink-0 flex-col gap-0 rounded-xl border px-3 py-2 text-center font-normal",
+                            selected ? "border-bd-active bg-sf-2 hover:bg-sf-2" : "border-bd-default bg-sf-1",
+                          ].join(" ")}
                         >
-                          <span
-                            className="block text-[10px] font-semibold uppercase tracking-wider"
-                            style={{ color: isToday ? primaryColor : "var(--tx-3)" }}
-                          >
+                          <span className={["block text-[10px] uppercase tracking-wider text-tx-2", selected ? "font-bold text-tx-1" : "font-semibold", isToday ? "underline underline-offset-2" : ""].join(" ")}>
                             {DAYS[dow]}
                           </span>
-                          <span className="block text-sm font-bold" style={{ color: "var(--tx-1)" }}>
-                            {date.getDate()}
-                          </span>
-                          <span className="block text-[10px] tabular-nums" style={{ color: "var(--tx-4)" }}>
-                            {count === 0 ? "—" : count}
-                          </span>
-                        </button>
+                          <span className="block text-sm font-bold text-tx-1">{date.getDate()}</span>
+                          <span className="block text-[10px] tabular-nums text-tx-2">{count === 0 ? "—" : count}</span>
+                        </Button>
                       );
                     })}
                   </div>
 
-                  <div className="space-y-2 mt-1">
-                    <p className="text-xs font-semibold" style={{ color: "var(--tx-2)" }}>
-                      {DAYS_FULL[agendaDow]}
-                    </p>
-                    {byDay[agendaDow].length === 0 ? (
-                      <p className="text-sm py-6 text-center" style={{ color: "var(--tx-4)" }}>
-                        No classes scheduled.
-                      </p>
-                    ) : (
-                      (() => {
-                        const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
-                        const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
-                        const chipStates = chipStatesFor(byDay[agendaDow], agendaIsToday, cancelledToday);
-                        return (
-                          <DaySessions
-                            sessions={byDay[agendaDow]}
-                            states={chipStates}
-                            size="agenda"
-                            duplicates={duplicates}
-                            primaryColor={primaryColor}
-                            canManage={canManage}
-                            onEdit={openEdit}
+                  {(() => {
+                    const sessions = byDay[agendaDow];
+                    const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
+                    const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
+                    const states = chipStatesFor(sessions, agendaIsToday, cancelledToday);
+                    const stateOf = new Map(sessions.map(({ slot }, i) => [slot.id, states[i]] as const));
+                    const day = phoneGrid.days[0];
+                    const countText = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
+                    // Three lanes leave a phone chip about a third of the card: it keeps the week's smaller sizes.
+                    const chipSize = day.lanes >= 3 ? "week" : "phone";
+                    const openId = phoneMore && phoneMore.day === agendaDow ? phoneMore.id : null;
+                    const labelOf = ({ cls, slot }: DaySession) => {
+                      const place = placeOf(cls);
+                      const state = stateOf.get(slot.id) ?? null;
+                      return (
+                        `${canManage ? "Edit " : ""}${cls.name}, ${DAYS_FULL[slot.dayOfWeek]} ${slot.startTime} to ${slot.endTime}${place ? `, ${place}` : mats.length > 0 ? ", no mat" : ""}` +
+                        `${state !== null && state !== "upcoming" ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicates.has(slot.id) ? " (possible duplicate)" : ""}`
+                      );
+                    };
+                    return (
+                      <div ref={phoneDay} className="mt-1 rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3" data-testid="phone-day">
+                        <div className="mb-2 flex items-center gap-2">
+                          <h2 className="text-[15px] font-bold leading-5 text-tx-1">{DAYS_FULL[agendaDow]}</h2>
+                          {agendaIsToday ? todayPill : null}
+                          {sessions.length > 0 ? <span className="ml-auto text-xs text-tx-2">{countText}</span> : null}
+                        </div>
+                        {day.fellBack ? (
+                          <p className="mb-2 text-xs text-tx-2" data-testid="phone-day-fallback">
+                            Too much on at once to show by mat on this screen. Each class shows its mat.
+                          </p>
+                        ) : null}
+                        {sessions.length === 0 ? (
+                          <p className="py-6 text-center text-sm text-tx-2">No classes scheduled.</p>
+                        ) : (
+                          <PosterDay
+                            grid={phoneGrid}
+                            label={`${DAYS_FULL[agendaDow]} ${agendaDate.getDate()} ${agendaDate.toLocaleDateString("en-GB", { month: "long" })}, ${countText}`}
+                            matName={(matId) => (matId === null ? "No mat" : (matNames.get(matId) ?? "No mat"))}
+                            testId="phone-day-grid"
+                            renderSession={(item) => {
+                              const session = sessionByKey.get(item.key);
+                              if (!session) return null;
+                              const { cls, slot } = session;
+                              return (
+                                <WeekChip
+                                  size={chipSize}
+                                  name={cls.name}
+                                  dayName={DAYS_FULL[slot.dayOfWeek]}
+                                  startTime={slot.startTime}
+                                  endTime={slot.endTime}
+                                  color={cls.color ?? primaryColor}
+                                  place={placeOf(cls)}
+                                  // Nothing is pinned on a phone, so every chip says its place, under a mat name too.
+                                  showPlace
+                                  noPlaceLabel={mats.length > 0 ? "no mat" : undefined}
+                                  state={stateOf.get(slot.id) ?? null}
+                                  duplicate={duplicates.has(slot.id)}
+                                  kids={cls.isKids}
+                                  category={classCategoryTag(cls)}
+                                  canManage={canManage}
+                                  onEdit={() => openEdit(cls)}
+                                />
+                              );
+                            }}
+                            renderMore={(item) => (
+                              <MoreChip
+                                count={item.keys.length}
+                                label={`${item.keys.length} more sessions, ${minToTime(item.startMin)} to ${minToTime(item.endMin)}. Show them.`}
+                                hint="Show them"
+                                expanded={openId === item.id}
+                                onOpen={() => setPhoneMore({ day: agendaDow, id: item.id })}
+                                onClose={() => setPhoneMore(null)}
+                              />
+                            )}
+                            openMore={openId}
+                            renderMorePanel={(item) => {
+                              const inCluster = item.clusterKeys.map((key) => sessionByKey.get(key)).filter((s): s is DaySession => !!s);
+                              const from = Math.min(...inCluster.map(({ slot }) => spanMinutes(slot.startTime, slot.endTime).startMin));
+                              const to = Math.max(...inCluster.map(({ slot }) => spanMinutes(slot.startTime, slot.endTime).endMin));
+                              return (
+                                <MorePanel
+                                  label={`${inCluster.length} sessions, ${minToTime(from)} to ${minToTime(to)}`}
+                                  className="bg-sf-1 shadow-md"
+                                  closeClassName="text-tx-2"
+                                  onClose={(returnFocus) => {
+                                    // The button stays in the grid, so focus can go back before the panel is gone.
+                                    if (returnFocus) phoneDay.current?.querySelector<HTMLElement>(`[data-cell-more="${item.id}"] button`)?.focus();
+                                    setPhoneMore(null);
+                                  }}
+                                >
+                                  {inCluster.map((session) => (
+                                    <MoreRow
+                                      key={session.slot.id}
+                                      label={labelOf(session)}
+                                      name={session.cls.name}
+                                      startTime={session.slot.startTime}
+                                      endTime={session.slot.endTime}
+                                      color={session.cls.color ?? primaryColor}
+                                      place={placeOf(session.cls)}
+                                      canManage={canManage}
+                                      onEdit={() => openEdit(session.cls)}
+                                    />
+                                  ))}
+                                </MorePanel>
+                              );
+                            }}
+                            breakLabel={(fromMin, toMin) => `No classes ${minToTime(fromMin)} to ${minToTime(toMin)}`}
                           />
-                        );
-                      })()
-                    )}
-                  </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* ── Desktop: the week as a poster grid ─────────────────────
@@ -2675,11 +2494,6 @@ export default function TimetableManager({
                     const todays = todayDow === null ? [] : byDay[todayDow];
                     const liveOrNext = todays.find(({ slot }) => stateByKey.get(slot.id) === "live") ?? todays.find(({ slot }) => stateByKey.get(slot.id) === "next");
                     const count = (n: number) => (n === 0 ? "no sessions" : `${n} session${n === 1 ? "" : "s"}`);
-                    const todayPill = (
-                      <span className="rounded-full border border-[color-mix(in_srgb,var(--hue-info)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[9px] font-bold uppercase leading-4 tracking-wide text-[var(--hue-info-ink)]">
-                        Today
-                      </span>
-                    );
                     // An empty day is a 40 px column: the same pill, a size down and without its
                     // border and letter-spacing, so "TODAY" stays inside 36 px.
                     const todayPillNarrow = (
@@ -2802,17 +2616,24 @@ export default function TimetableManager({
                       const isToday = date.getTime() === todayMidnight.getTime();
                       const sessions = byDay[dayDow];
                       const states = chipStatesFor(sessions, isToday, cancelledToday);
+                      // By mat: one column per mat on the same clock scale (the week's column rule). A day with
+                      // nothing on has no columns to show and keeps the plain axis with its sentence.
+                      const columnIds = layout === "mat" && sessions.length > 0 ? matColumns(sessions.map(({ cls }) => cls.matId ?? null), gridMats) : null;
+                      const columnOf = (cls: ClassRow) => (cls.matId && matNames.has(cls.matId) ? cls.matId : null);
                       return (
                         <div className="rounded-2xl border p-3 pt-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                           <DayGrid
                             key={dayDow}
+                            columns={columnIds?.map((id) => ({ id, name: id === null ? "No mat" : (matNames.get(id) ?? "No mat") }))}
                             items={sessions.map(({ cls, slot }, i) => ({
                               key: slot.id,
                               name: cls.name,
                               startTime: slot.startTime,
                               endTime: slot.endTime,
                               color: cls.color ?? primaryColor,
-                              meta: placeOf(cls),
+                              // Under a pinned mat name the block does not repeat it; under "No mat" the typed place still shows.
+                              meta: columnIds && columnOf(cls) !== null ? null : placeOf(cls),
+                              column: columnOf(cls),
                               state: states[i],
                               duplicate: duplicates.has(slot.id),
                             }))}

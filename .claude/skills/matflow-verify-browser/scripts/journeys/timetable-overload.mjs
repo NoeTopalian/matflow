@@ -4,7 +4,7 @@
 // clash with one duplicate) and a quiet Tuesday through the app's own create API from the signed-in page,
 // then checks the week grid (overlapping sessions side by side in lanes, nothing cut, the duplicate flag, no
 // sideways scroll of the page), keyboard reach in time order, the form's refusal of an identical slot with typed
-// values kept, and the phone agenda at 375 px.
+// values kept, and the phone's day (the same grid for one day) at 375 px.
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, weekDay, gridInvariants, noSidewaysScroll } from "../lib.mjs";
 
@@ -186,7 +186,7 @@ try {
 
   await shot(main, "timetable-overload-desktop");
 
-  await section("phone", "375 x 812: Monday's agenda lists 14 rows in five groups with mat labels, picker reads 14, no sideways scroll, rows ≥ 44 px", async () => {
+  await section("phone", "375 x 812: the phone's Monday is the poster grid: 14 chips, the 18:40 clash side by side on one top edge with its places and the duplicate flag, picker reads 14, nothing cut, no sideways scroll", async () => {
     const mobile = await context(browser, "10.94.4.2", { viewport: { width: 375, height: 812 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
@@ -196,24 +196,24 @@ try {
       const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
       const rows = chips(agenda);
       await expect(rows).toHaveCount(MONDAY);
-      const groups = await agenda.getByRole("group").count();
       const counts = await phone.getByRole("tab").evaluateAll((els) => els.map((e) => e.querySelectorAll("span")[2]?.textContent));
-      const clashTexts = await chips(agenda.getByRole("group").nth(3)).allTextContents();
-      const heights = [];
-      for (let i = 0; i < MONDAY; i++) { const b = await rows.nth(i).boundingBox(); heights.push(b ? Math.round(b.height) : 0); }
+      const clash = agenda.locator("[data-cell-key]").filter({ hasText: /^18:40–/ });
+      const clashTexts = await clash.allTextContents();
+      const clashTops = await clash.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+      const inv = await gridInvariants(phone, { sessions: MONDAY, grid: "phone-day-grid" });
       const noSideScroll = await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
       await shot(phone, "timetable-overload-phone");
-      expect(groups).toBe(5);
       expect(counts).toEqual(["14", "2", "—", "—", "—", "—", "—"]);
-      expect(clashTexts[0]).toContain("18:40–19:30");
+      expect(clashTexts).toHaveLength(3);
+      expect(new Set(clashTops).size).toBe(1);
       expect(clashTexts[0]).toContain("Mat 1");
       expect(clashTexts[0]).toContain("Duplicate?");
       expect(clashTexts[1]).toContain("Duplicate?");
       expect(clashTexts[2]).toContain("Mat 2");
       expect(clashTexts[2]).not.toContain("Duplicate?");
+      expect(inv.problems).toEqual([]);
       expect(noSideScroll).toBe(true);
-      expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
-      return { groups, counts, minRowHeight: Math.min(...heights), noSideScroll };
+      return { counts, narrowestChip: inv.narrowestChip, shortestChip: inv.shortestChip, noSideScroll };
     } catch (e) {
       await shot(phone, "timetable-overload-fail-phone").catch(() => {});
       throw e;

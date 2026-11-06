@@ -223,12 +223,25 @@ function dayByTime(day: number, sessions: Placed[], maxLanes: number, fellBack: 
   };
 }
 
+/**
+ * The mat columns of one day, in the club's order: every mat for a club with
+ * one or two (as its poster has it), only the mats in use that day for a club
+ * with three or more, and "no mat" (`null`) last when a session needs it. A
+ * `matId` the club no longer has counts as no mat. The week, the phone day and
+ * the staff Day view all take their columns from here.
+ */
+export function matColumns(dayMatIds: (string | null)[], mats: GridMat[]): (string | null)[] {
+  const known = new Set(mats.map((m) => m.id));
+  const used = new Set(dayMatIds.map((id) => (id !== null && known.has(id) ? id : null)));
+  const shown: (string | null)[] = (mats.length <= 2 ? mats : mats.filter((m) => used.has(m.id))).map((m) => m.id);
+  if (used.has(null)) shown.push(null);
+  return shown;
+}
+
 function dayByMat(day: number, sessions: Placed[], mats: GridMat[], maxLanes: number): DayLayout {
   const known = new Set(mats.map((m) => m.id));
   const matOf = (s: Placed) => (s.matId !== null && known.has(s.matId) ? s.matId : null);
-  // One or two mats: every mat, every day, as the club's poster has it. Three or more: the mats in use that day.
-  const shown: (string | null)[] = (mats.length <= 2 ? mats : mats.filter((m) => sessions.some((s) => matOf(s) === m.id))).map((m) => m.id);
-  if (sessions.some((s) => matOf(s) === null)) shown.push(null);
+  const shown = matColumns(sessions.map((s) => s.matId), mats);
 
   const layout: DayLayout = {
     day: { day, tracks: 0, lanes: 0, layout: "mat", fellBack: false, columns: [], count: sessions.length },

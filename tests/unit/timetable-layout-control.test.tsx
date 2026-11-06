@@ -105,7 +105,7 @@ describe("the control: Split same-time classes", () => {
   it("is a labelled pair of buttons for an owner and a manager, showing the split in effect", () => {
     for (const role of ["owner", "manager"]) {
       const view = render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} role={role} />);
-      const group = screen.getByRole("group", { name: "Split same-time classes (staff week)" });
+      const group = screen.getByRole("group", { name: "Split same-time classes (whole club)" });
       expect(within(group).getAllByRole("button").map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["By mat", "true"], ["By time", "false"]]);
       expect(screen.getByTestId("timetable-mats")).toBeTruthy();
       view.unmount();
@@ -129,10 +129,11 @@ describe("the control: Split same-time classes", () => {
     expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
   });
 
-  it("is on the Week view only in this release", () => {
+  it("is on the Day view too, now every screen follows the split", () => {
     render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} />);
     fireEvent.click(screen.getByTestId("timetable-view-day"));
-    expect(screen.queryByTestId("timetable-split")).toBeNull();
+    expect(screen.getByTestId("timetable-split")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Split same-time classes (whole club)" })).toBeTruthy();
     expect(screen.getByTestId("timetable-mats")).toBeTruthy();
   });
 
@@ -140,7 +141,7 @@ describe("the control: Split same-time classes", () => {
     const { container } = render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} />);
     fireEvent.click(byTime());
     expect(weekGrid(container)?.getAttribute("data-mats")).toBeNull();
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Saved. The staff week is now split by time.", "success"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Saved for the whole club.", "success"));
     expect(sent(calls)).toEqual([{ url: "/api/timetable/layout", method: "PATCH", body: { layout: "time" } }]);
     expect(refresh).toHaveBeenCalledTimes(1);
     // The control's own toast is the only one: no second "the split changed" line.
@@ -150,7 +151,7 @@ describe("the control: Split same-time classes", () => {
   it("with nothing stored, pressing the choice already in effect still saves it", async () => {
     render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} />);
     fireEvent.click(byMat());
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Saved. The staff week is now split by mat.", "success"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Saved for the whole club.", "success"));
     expect(sent(calls).map((c) => c.body)).toEqual([{ layout: "mat" }]);
   });
 
@@ -176,7 +177,7 @@ describe("the control: Split same-time classes", () => {
     expect(refresh).not.toHaveBeenCalled();
     fail = false;
     fireEvent.click(byTime());
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Saved. The staff week is now split by time.", "success"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Saved for the whole club.", "success"));
     expect(sent(calls)).toHaveLength(2);
   });
 
@@ -223,7 +224,7 @@ describe("when the split changes by itself", () => {
     const view = render(<TimetableManager initialClasses={[first, openMat()]} mats={MATS} {...PROPS} />);
     expect(toast).not.toHaveBeenCalled();
     act(() => view.rerender(<TimetableManager initialClasses={[first, nogi()]} mats={MATS} {...PROPS} />));
-    expect(toast).toHaveBeenCalledWith("The staff week is now split by mat.", "info");
+    expect(toast).toHaveBeenCalledWith("The timetable is now split by mat.", "info");
     expect(toast).toHaveBeenCalledTimes(1);
     act(() => view.rerender(<TimetableManager initialClasses={[first, nogi(), yoga()]} mats={MATS} {...PROPS} />));
     expect(toast).toHaveBeenCalledTimes(1);
@@ -233,7 +234,7 @@ describe("when the split changes by itself", () => {
     const view = render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} />);
     const off = cls("No-Gi", "Mat 2", [[1, "18:40", "19:30"]]);
     act(() => view.rerender(<TimetableManager initialClasses={[gi(), off]} mats={[MATS[0]]} {...PROPS} />));
-    expect(toast).toHaveBeenCalledWith("The staff week is now split by time.", "info");
+    expect(toast).toHaveBeenCalledWith("The timetable is now split by time.", "info");
   });
 
   it("says nothing on first load, whatever the split is", () => {
