@@ -11,9 +11,11 @@ import { parseIdParam } from "@/lib/id-param";
 import { ERASED_EMAIL } from "@/lib/login-email";
 import { decideUndo } from "@/lib/undo-registry";
 import { parseTypesParam, type ActivityResponse, type ActivityRole } from "@/lib/activity-types";
+import { parseActorKind } from "@/lib/activity-url";
 import {
   FEED_ROW_SELECT,
   UNDO_PREFIX,
+  actorKindWhere,
   classWhere,
   loadLookups,
   memberWhere,
@@ -40,6 +42,7 @@ import {
  *   memberId   activity about one member        classId    about one class
  *   paymentId  one payment's trail              tierId     naming one plan
  *   userId     done by one staff member
+ *   by         done by a kind: staff, members, automatic, support (owner only; a manager's is ignored)
  *   day        "YYYY-MM-DD", a club day: rows up to the END of that day
  *   cursor     the last entry's id              take       1–50 (default 50)
  *   embed=1    a timeline inside another page: no undo lookup, no `undo`
@@ -104,6 +107,7 @@ export async function GET(req: Request) {
     tier: parseIdParam(params.get("tierId")),
     staff: parseIdParam(params.get("userId")),
   };
+  const by = parseActorKind(params.get("by"), role);
   const dayAsked = parseDayKey(params.get("day"));
   const cursor = parseIdParam(params.get("cursor"));
   const take = takeOf(params.get("take"));
@@ -169,6 +173,8 @@ export async function GET(req: Request) {
         if (staff) and.push({ userId: staff.id });
         else unknown = true;
       }
+      // Who did it, as a query: paging stays exact because nothing is dropped after the fetch.
+      if (by) and.push(actorKindWhere(by));
       if (dayKey) and.push({ createdAt: { lt: clubDayWindow(dayKey, timeZone).nextStart } });
 
       const clock = { timeZone, todayKey, minDayKey };

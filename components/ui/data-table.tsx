@@ -58,7 +58,8 @@ import { Skeleton } from "./Skeleton";
  *     final row's `<td>`s), so no clipping is needed. A dev-only effect below
  *     warns if a clipping ancestor reappears.
  *
- * Mobile: below `sm:` the table collapses to cards. Pass `renderCard` for a
+ * Mobile: below `sm:` the table collapses to cards (`cardsBelow="lg"` moves
+ * that to below `lg:`). Pass `renderCard` for a
  * designed card; the fallback stacks the first three columns as label/value
  * rows, which is honest but rarely what you want on a real screen.
  */
@@ -92,6 +93,12 @@ export interface DataTableColumn<T> {
    * columns outright. Give the lowest-priority columns a breakpoint instead.
    */
   visibleFrom?: "xl" | "2xl";
+  /**
+   * `"top"` pins this column's cells to the top of the row. Only for a table
+   * whose rows are deliberately several lines tall (the Activity page), so a
+   * time or a button sits beside the first line, not halfway down.
+   */
+  valign?: "top";
 }
 
 /** Static class map (UI-RULES 11: no dynamic class fragments). */
@@ -99,6 +106,16 @@ const VISIBLE_FROM: Record<NonNullable<DataTableColumn<unknown>["visibleFrom"]>,
   xl: "hidden xl:table-cell",
   "2xl": "hidden 2xl:table-cell",
 };
+
+/** Static class maps for `cardsBelow` (UI-RULES 11: no dynamic class fragments). */
+const TABLE_FROM = {
+  sm: "hidden overflow-x-auto sm:block lg:overflow-x-visible",
+  lg: "hidden lg:block lg:overflow-x-visible",
+} as const;
+const CARDS_BELOW = {
+  sm: "space-y-2 sm:hidden",
+  lg: "space-y-2 lg:hidden",
+} as const;
 
 export interface DataTableProps<T> {
   columns: DataTableColumn<T>[];
@@ -125,8 +142,14 @@ export interface DataTableProps<T> {
    * sort would scatter the sections.
    */
   sectionOf?: (row: T) => { key: string; label: string };
-  /** Below `sm:`, render each row through this instead of the table. */
+  /** Below the card breakpoint (`cardsBelow`), render each row through this instead of the table. */
   renderCard?: (row: T) => ReactNode;
+  /**
+   * Where the table gives way to cards. Default `"sm"`: cards on a phone, the
+   * table from 640px. `"lg"`: cards up to 1023px, for a table whose rows carry
+   * long text that a tablet-width column would squeeze into ragged lines.
+   */
+  cardsBelow?: "sm" | "lg";
   /** Accessible name for the table. */
   label?: string;
   skeletonRows?: number;
@@ -258,6 +281,7 @@ export function DataTable<T>({
   isRowCurrent,
   sectionOf,
   renderCard,
+  cardsBelow = "sm",
   label,
   skeletonRows = 5,
   stickyOffset,
@@ -317,7 +341,7 @@ export function DataTable<T>({
   return (
     <div ref={rootRef} className={cn("w-full", className)}>
       {/* ── Desktop / tablet table ── */}
-      <div ref={wrapperRef} className="hidden overflow-x-auto sm:block lg:overflow-x-visible">
+      <div ref={wrapperRef} className={TABLE_FROM[cardsBelow]}>
         {/*
           `border-separate border-spacing-0` rather than `border-collapse`:
           `border-radius` is ignored on cells in the collapsed model, and the
@@ -465,7 +489,8 @@ export function DataTable<T>({
                         <td
                           key={column.key}
                           className={cn(
-                            "border-b border-bd-default px-3 py-1 align-middle text-tx-1 transition-colors",
+                            "border-b border-bd-default px-3 py-1 text-tx-1 transition-colors",
+                            column.valign === "top" ? "align-top" : "align-middle",
                             zebra && "bg-sf-2",
                             // The hover step has to be visible on BOTH stripes —
                             // hovering an --sf-2 row with --sf-2 paints nothing.
@@ -493,7 +518,7 @@ export function DataTable<T>({
       </div>
 
       {/* ── Mobile cards (UI-RULES §9: the staff dashboard must work at 375px) ── */}
-      <div className="space-y-2 sm:hidden" aria-busy={loading || undefined}>
+      <div className={CARDS_BELOW[cardsBelow]} aria-busy={loading || undefined}>
         {loading
           ? skeletonKeys.map((index) => (
               <Card key={`skeleton-card-${index}`} padding="tight">

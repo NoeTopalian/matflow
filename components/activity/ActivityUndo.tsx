@@ -123,7 +123,7 @@ export function useActivityUndo({
           if (!busy) setOne(null);
         }}
         title={one ? `Undo: ${one.plain}?` : "Undo?"}
-        description="This puts the recorded details back as they were before that action. Anything that action created or removed alongside (a booking, rank history, a Stripe change) stays as it is. The undo itself is recorded and can't be undone."
+        description="This puts the recorded details back as they were before that action. Linked records it created or removed alongside (a booking, rank history, a Stripe change, an email) are not changed. The undo itself is recorded and can't be undone."
         confirmLabel="Undo this"
         loading={busy}
         onConfirm={confirmOne}
