@@ -267,10 +267,5 @@ export async function readUploadBytes(tx: Tx, tenantId: string, uploadId: string
   return out.length === upload.expectedBytes ? out : null;
 }
 
-export async function deleteUpload(tx: Tx, tenantId: string, uploadId: string): Promise<number> {
-  // Chunks cascade from the upload; deleted explicitly too so the delete does
-  // not depend on the FK action.
-  await tx.importUploadChunk.deleteMany({ where: { uploadId, tenantId } });
-  const res = await tx.importUpload.deleteMany({ where: { id: uploadId, tenantId } });
-  return res.count;
-}
+// No deleteUpload: a claimed upload's chunks ARE the import file, kept with its
+// ImportJob (product rule, Noe, 6 Nov 2026: nothing is deleted automatically).

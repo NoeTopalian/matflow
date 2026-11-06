@@ -244,12 +244,14 @@ describe("member import commit", () => {
     expect(h.deleted).toEqual([]);
   });
 
-  it("deletes the stored file only when the run completes", async () => {
+  it("keeps the stored file when the run completes (nothing is deleted automatically, 6 Nov 2026)", async () => {
     const { POST } = await import("@/app/api/admin/import/[id]/commit/route");
     const res = await POST(req(), params);
     expect(res.status).toBe(200);
     expect(db.jobs[0].status).toBe("complete");
-    expect(h.deleted).toHaveLength(1);
+    // The mock's delete is a tripwire: a successful import must never call it, and the file still reads back.
+    expect(h.deleted).toEqual([]);
+    expect(h.files.get(db.jobs[0].fileBlobUrl as string)).toBeTruthy();
   });
 });
 

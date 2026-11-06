@@ -13,7 +13,6 @@ import {
   claimUpload,
   completeUpload,
   createUpload,
-  deleteUpload,
   expectedChunkLength,
   putChunk,
   readUploadBytes,
@@ -190,7 +189,7 @@ describe("completeUpload", () => {
   });
 });
 
-describe("claimUpload / readUploadBytes / deleteUpload", () => {
+describe("claimUpload / readUploadBytes", () => {
   it("claims once: a second claim is refused; the bytes read back exactly", async () => {
     const file = fileOf(CHUNK_SIZE + 999);
     const up = await open(file);
@@ -210,11 +209,9 @@ describe("claimUpload / readUploadBytes / deleteUpload", () => {
     const bytes = await readUploadBytes(db.tx, T, up.id);
     expect(bytes && Buffer.compare(bytes, Buffer.from(file))).toBe(0);
     expect(await readUploadBytes(db.tx, "tenant-b", up.id)).toBeNull();
-
-    expect(await deleteUpload(db.tx, "tenant-b", up.id)).toBe(0);
-    expect(await deleteUpload(db.tx, T, up.id)).toBe(1);
-    expect(db.chunks).toHaveLength(0);
-    expect(await readUploadBytes(db.tx, T, up.id)).toBeNull();
+    // Claimed, the upload is the import file and is kept: it still reads back (nothing is deleted automatically).
+    const again = await readUploadBytes(db.tx, T, up.id);
+    expect(again && Buffer.compare(again, Buffer.from(file))).toBe(0);
   });
 
   it("refuses to claim an expired upload", async () => {

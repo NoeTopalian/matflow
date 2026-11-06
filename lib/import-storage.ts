@@ -1,16 +1,16 @@
-import { put, get, del } from "@vercel/blob";
+import { put, get } from "@vercel/blob";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { deleteUpload, readUploadBytes } from "@/lib/import-upload";
+import { readUploadBytes } from "@/lib/import-upload";
 
 /**
  * Where an uploaded import CSV lives between upload, preview and commit.
  *
- * Production and previews: Vercel Blob, private, random-suffixed, deleted after
- * commit. Local rehearsals have no Blob token, and without a fallback the real
+ * Production and previews: Vercel Blob, private, random-suffixed, kept with
+ * its ImportJob. Local rehearsals have no Blob token, and without a fallback the real
  * upload → preview → commit path could never run anywhere but production, so a
  * migration rehearsal had to substitute the upload. When — and only when — the
  * deployment is not production AND TESTING_MODE is on, the file is kept in the
@@ -19,8 +19,8 @@ import { deleteUpload, readUploadBytes } from "@/lib/import-upload";
  * Third scheme, `db-upload://<uploadId>` (3 Oct 2026): a file the browser sent
  * in chunks into private Postgres storage and the server verified by size and
  * sha256 (lib/import-upload.ts). It never touches the filesystem, has no
- * TESTING_MODE dependency and works in production. Reading or deleting it
- * needs the tenant, because it is read through `withTenantContext`.
+ * TESTING_MODE dependency and works in production. Reading it needs the
+ * tenant, because it is read through `withTenantContext`.
  */
 
 const LOCAL_PREFIX = "local-import://";
@@ -56,7 +56,7 @@ export async function putImportFile(tenantId: string, bytes: Uint8Array): Promis
 }
 
 function dbUploadRef(url: string, tenantId: string | undefined): { id: string; tenantId: string } {
-  if (!tenantId) throw new Error("A tenant is required to read or delete an uploaded import file");
+  if (!tenantId) throw new Error("A tenant is required to read an uploaded import file");
   return { id: url.slice(DB_UPLOAD_PREFIX.length), tenantId };
 }
 
@@ -82,16 +82,7 @@ export async function readImportFile(url: string, tenantId?: string): Promise<st
   return new Response(blob.stream).text();
 }
 
-export async function deleteImportFile(url: string, tenantId?: string): Promise<void> {
-  if (url.startsWith(DB_UPLOAD_PREFIX)) {
-    const ref = dbUploadRef(url, tenantId);
-    await withTenantContext(ref.tenantId, (tx) => deleteUpload(tx, ref.tenantId, ref.id));
-    return;
-  }
-  if (url.startsWith(LOCAL_PREFIX)) {
-    const name = path.basename(url.slice(LOCAL_PREFIX.length));
-    await fs.rm(path.join(LOCAL_DIR, name), { force: true });
-    return;
-  }
-  await del(url);
-}
+// No delete. An uploaded import file is kept with its ImportJob, private, for
+// as long as the club uses MatFlow (product rule, Noe, 6 Nov 2026: "nothing
+// should be automatically deleted"). A club's written erasure request removes
+// it with the club (lib/tenant-purge.ts).
