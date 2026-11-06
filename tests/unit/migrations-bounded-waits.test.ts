@@ -16,6 +16,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TENANT_LOCK_BOUND_MS } from "@/lib/prisma-tenant";
+import { CONCURRENT_INDEX_MIGRATIONS, isConcurrentIndexOnly } from "./migration-concurrent-indexes";
 
 const DIR = join(process.cwd(), "prisma", "migrations");
 /** The first migration of the plan-limits release (PR #41); everything from here on is bounded. */
@@ -38,7 +39,15 @@ describe("migrations bound their lock waits and statements", () => {
     expect(recent[0]).toBe("20261017020102_class_membership_tier");
   });
 
-  it.each(recent)("%s sets lock_timeout then statement_timeout, transaction-local, straight after BEGIN", (dir) => {
+  // A CREATE INDEX CONCURRENTLY file cannot hold SET LOCAL (no transaction) and
+  // needs no lock bound: CONCURRENTLY blocks no reads or writes. Its shape is
+  // pinned instead (tests/unit/migration-concurrent-indexes.ts).
+  it.each([...CONCURRENT_INDEX_MIGRATIONS])("%s (concurrent index) is exactly one CREATE INDEX CONCURRENTLY", (dir) => {
+    expect(recent).toContain(dir);
+    expect(isConcurrentIndexOnly(readFileSync(join(DIR, dir, "migration.sql"), "utf8"))).toBe(true);
+  });
+
+  it.each(recent.filter((d) => !CONCURRENT_INDEX_MIGRATIONS.has(d)))("%s sets lock_timeout then statement_timeout, transaction-local, straight after BEGIN", (dir) => {
     const lines = statements(readFileSync(join(DIR, dir, "migration.sql"), "utf8"));
     expect(lines[0]).toBe("BEGIN;");
     const lock = lines[1]?.match(/^SET LOCAL lock_timeout = ('[^']+');$/);

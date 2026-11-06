@@ -942,6 +942,9 @@ model AuditLog {
   // scan. Without a standalone `createdAt` index Postgres has to sort the
   // full heap.
   @@index([createdAt])
+  // One thing's history (activity feed, DSAR export, tenant lifecycle). Built
+  // CONCURRENTLY: migration 20261106140100_audit_log_entity_index.
+  @@index([tenantId, entityType, entityId])
 }
 
 // ─── Signed Waivers (immutable acceptance snapshots) ─────────────────────────
@@ -996,6 +999,9 @@ model RateLimitHit {
   hitAt  DateTime @default(now())
 
   @@index([bucket, hitAt])
+  // The prune (`hitAt < cutoff`) and the lockout's time-based reads
+  // (migration 20261106140000_rate_limit_hit_hit_at_index).
+  @@index([hitAt])
 }
 
 // ─── Owner-recorded Initiatives (input for AI causal report) ─────────────────
