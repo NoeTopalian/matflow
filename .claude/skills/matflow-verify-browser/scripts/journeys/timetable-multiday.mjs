@@ -5,7 +5,7 @@
 // it: keyboard creation, failed saves with one-request retry, same-name
 // classes, the who-can-attend preview, archive/restore and phone width.
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, weekDay, weekGrid } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -15,9 +15,10 @@ const L = ledger("timetable-multiday");
 const errors = [];
 const DAY = { 1: "Mon", 2: "Tue", 3: "Wed" };
 
-const gridDay = (page, day) =>
-  page.locator(".grid-cols-7 > div").filter({ has: page.getByText(day, { exact: true }) });
-const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: `Edit ${name}`, exact: true });
+const gridDay = (page, day) => weekDay(page, day.toLowerCase());
+// A week chip is named "Edit Gi, Monday 18:00 to 19:00" (then its place and, today, its state).
+const weekName = (name) => new RegExp(`^Edit ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, [A-Z][a-z]+day \\d\\d:\\d\\d to `);
+const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: weekName(name) });
 async function expectDays(page, name, want) {
   // A route refresh takes ~6 s to land on this harness (Neon round trips).
   for (const [d, n] of Object.entries(want)) await expect(chips(page, DAY[d], name)).toHaveCount(n, { timeout: 30_000 });
@@ -26,12 +27,15 @@ const activeSlots = async (classId) =>
   q(`select "dayOfWeek", "startTime" from "ClassSchedule" where "classId" = $1 and "isActive" = true order by "dayOfWeek"`, [classId]);
 const isPatch = (id) => (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${id}` && !r.url().includes("dryRun");
 
-async function create(page, name, days) {
+// `start`: a start time other than the form's 18:00. More than three classes at once on a day fold behind
+// "+N more" on the week, so a class this journey needs to SEE as a chip is kept out of the 18:00 crowd.
+async function create(page, name, days, { start } = {}) {
   await page.getByRole("button", { name: "Add class", exact: true }).first().click();
   await page.getByLabel("Class Name", { exact: true }).fill(name);
   for (const [i, d] of days.entries()) {
     await page.getByRole("button", { name: "Add day", exact: true }).click();
     await page.getByLabel("Day of the week").nth(i).selectOption(String(d));
+    if (start) await page.getByLabel("Start time", { exact: true }).nth(i).fill(start);
   }
   const res = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/classes" && r.request().method() === "POST" && !r.url().includes("dryRun"));
   await page.getByRole("button", { name: "Create class", exact: true }).click();
@@ -196,7 +200,7 @@ try {
 
   await section("lists", "Kids paused then resumed in another tab: after each route refresh it is in one list only", async () => {
     const where = async () => ({
-      grid: await main.locator('.grid-cols-7 button[aria-label="Edit Kids"]').count(),
+      grid: await weekGrid(main).getByRole("button", { name: weekName("Kids") }).count(),
       paused: await main.getByTestId(`inactive-class-${kids.id}`).count(),
     });
     const other = await open();
@@ -217,8 +221,9 @@ try {
 
   let pair;
   await section("same-name", "two separately created 'Open mat' classes (Monday, Tuesday) stay distinct, also after reload", async () => {
-    const a = await create(main, "Open mat", [1]);
-    const b = await create(main, "Open mat", [2]);
+    // At 20:00: Monday 18:00 already has three classes, and a fourth at once would fold behind "+N more".
+    const a = await create(main, "Open mat", [1], { start: "20:00" });
+    const b = await create(main, "Open mat", [2], { start: "20:00" });
     expect(a.id).not.toBe(b.id);
     pair = [a, b];
     await expectDays(main, "Open mat", { 1: 1, 2: 1 });
@@ -298,7 +303,7 @@ try {
 
   await shot(main, "timetable-multiday-desktop");
 
-  await section("phone", "390 x 844: the Monday and Tuesday agenda each show Gi once; no sideways scroll", async () => {
+  await section("phone", "390 x 844: the phone's Monday and Tuesday each show Gi once; no sideways scroll", async () => {
     const mobile = await context(browser, "10.94.2.2", { viewport: { width: 390, height: 844 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
@@ -307,7 +312,7 @@ try {
     const sizes = {};
     for (const day of ["Mon", "Tue"]) {
       await phone.getByRole("tab", { name: new RegExp(`^${day}`) }).click();
-      const gi = agenda.getByRole("button", { name: "Edit Gi", exact: true });
+      const gi = agenda.getByRole("button", { name: weekName("Gi") });
       await expect(gi).toHaveCount(1);
       const box = await gi.boundingBox();
       sizes[day] = box ? { w: Math.round(box.width), h: Math.round(box.height) } : null;

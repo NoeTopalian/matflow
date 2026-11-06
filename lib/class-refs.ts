@@ -19,6 +19,8 @@ export type ClassRefs = {
   maxRankId?: string | null;
   coachUserId?: string | null;
   locationId?: string | null;
+  /** The mat the class runs on. Must be one of this club's mats. */
+  matId?: string | null;
   /** T6a: the memberships that include the class. Every id must be this club's. */
   allowedTierIds?: readonly string[] | null;
 };
@@ -28,7 +30,24 @@ export const CLASS_REF_ERRORS = {
   rank: "That belt is not one of this club's belts",
   coach: "That coach is not one of this club's staff",
   tier: "That membership is not one of this club's memberships",
+  mat: "That mat is not one of this club's mats.",
 } as const;
+
+/**
+ * A write refused by the Class → Mat foreign key (Prisma P2003 naming the
+ * `matId` column or its constraint): the mat was removed in the instant
+ * between the club check and the write. Answered as CLASS_REF_ERRORS.mat, not
+ * as a 500.
+ */
+export function isMatForeignKeyError(e: unknown): boolean {
+  const err = e as { code?: unknown; meta?: unknown } | null;
+  if (!err || err.code !== "P2003") return false;
+  try {
+    return JSON.stringify(err.meta ?? {}).includes("matId");
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Returns the refusal message for the first id that is not the caller's, or
@@ -43,6 +62,10 @@ export async function classRefError(
   if (refs.locationId) {
     const loc = await tx.location.findFirst({ where: { id: refs.locationId, tenantId }, select: { id: true } });
     if (!loc) return CLASS_REF_ERRORS.location;
+  }
+  if (refs.matId) {
+    const mat = await tx.mat.findFirst({ where: { id: refs.matId, tenantId }, select: { id: true } });
+    if (!mat) return CLASS_REF_ERRORS.mat;
   }
   for (const rankId of [refs.requiredRankId, refs.maxRankId]) {
     if (!rankId) continue;

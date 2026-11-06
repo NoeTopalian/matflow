@@ -467,7 +467,7 @@ test("5 · today's class time reads the same on the register, the scanner and th
     // Scoped to the desktop week grid: the page also renders a mobile list
     // (hidden at this width) that starts with TODAY's classes, so a page-wide
     // first match on "10:00" lands on a hidden node once today has a 10:00.
-    const grid = page.locator("div.grid.grid-cols-7").first();
+    const grid = page.getByTestId("week-grid");
     await expect(grid, "the week grid is not on the timetable").toBeVisible({ timeout: 60_000 });
     await expect(
       grid.locator("*", { hasText: inst.name }).getByText(sched[0].startTime, { exact: false }).first(),
@@ -492,17 +492,23 @@ test("6 · the timetable does not scroll sideways at 1280", async ({ page }) => 
   // Let the week grid settle after the viewport change.
   await page.waitForTimeout(500);
 
-  // The document never overflows at any width — the week grid sits in an
-  // `overflow-x-auto` container — so measuring the document passes against a
-  // blank page. Measure the container itself: below 1280 its 980 px floor
-  // makes it scroll inside the page; at 1280 (`xl:min-w-0`) it must not.
-  const grid = page.locator("div.overflow-x-auto:has(> div.grid.grid-cols-7)").first();
-  await expect(grid, "the week grid container is not on the page").toBeVisible({ timeout: 30_000 });
-  const overflows = await grid.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
-  expect(
-    overflows,
-    "the week grid scrolls sideways inside the timetable at 1280 — the demo laptop shows a scrollbar",
-  ).toBe(false);
+  // The week is a poster grid in its own scroll box (data-testid
+  // "week-scroller"): a week with many classes at once may be wider than a
+  // 1280 window and then scrolls INSIDE that box, with a line saying so. What
+  // must never scroll sideways is the page — at this width the shell's
+  // scrollport is <main>, so that is measured as well as the document (a
+  // blank page passes the document check alone).
+  const box = page.getByTestId("week-scroller");
+  await expect(box, "the week grid's scroll box is not on the page").toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("week-grid"), "the week grid is not on the page").toBeVisible();
+  const sideways = await page.evaluate(() => {
+    const main = document.querySelector("main");
+    return {
+      main: !!main && main.scrollWidth > main.clientWidth + 1,
+      document: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+  expect(sideways, "the timetable page scrolls sideways at 1280 — only the week's own box may").toEqual({ main: false, document: false });
 });
 
 // ── 7. Print cards ───────────────────────────────────────────────────────────

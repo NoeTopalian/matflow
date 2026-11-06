@@ -53,6 +53,8 @@ async function deleteTenant(tx, tenantId) {
   await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
   await tx.classInstance.deleteMany({ where: { classId: { in: classIds } } });
   await tx.class.deleteMany({ where: { tenantId } });
+  // Mats: the tenant link is RESTRICT, so they go before the tenant (their classes have just gone).
+  await del("mat", { tenantId });
   await tx.membershipTier.deleteMany({ where: { tenantId } });
   await tx.member.deleteMany({ where: { tenantId } });
   await tx.user.deleteMany({ where: { tenantId } });
@@ -66,6 +68,7 @@ async function rowsLeft(tenantId) {
     users: await tx.user.count({ where: { tenantId } }),
     members: await tx.member.count({ where: { tenantId } }),
     classes: await tx.class.count({ where: { tenantId } }),
+    mats: tx.mat ? await tx.mat.count({ where: { tenantId } }) : 0,
     attendance: await tx.attendanceRecord.count({ where: { tenantId } }),
   }));
 }

@@ -309,6 +309,8 @@ export async function buildMemberSchedule(
       coachName: true,
       coachUser: { select: { id: true, name: true } },
       location: true,
+      // The mat the class runs on: the same field /api/member/schedule returns.
+      matId: true,
       maxCapacity: true,
       isKids: true,
       // T6c: the category key, the same field /api/member/schedule returns.
@@ -408,6 +410,7 @@ export async function buildMemberSchedule(
       endTime: sched.endTime,
       coach: resolveCoachName(cls) ?? "TBC",
       location: cls.location ?? "",
+      matId: cls.matId ?? null,
       capacity: cls.maxCapacity,
       isKids: cls.isKids,
       category: cls.category ?? null,

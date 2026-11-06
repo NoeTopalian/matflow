@@ -14,6 +14,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import React from "react";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
+import { weekChipCount, weekDay } from "./helpers/week";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh }) }));
@@ -68,15 +69,9 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function gridDay(container: HTMLElement, label: string) {
-  const grid = container.querySelector(".grid-cols-7") as HTMLElement;
-  return within(within(grid).getByText(label).closest(".rounded-2xl") as HTMLElement);
-}
-// With no active class the week grid is replaced by "No classes yet".
-const chipCount = (container: HTMLElement, day: string, name = "Gi") =>
-  container.querySelector(".grid-cols-7")
-    ? gridDay(container, day).queryAllByRole("button", { name: `Edit ${name}` }).length
-    : 0;
+const gridDay = (container: HTMLElement, label: string) => within(weekDay(container, label));
+// With no active class the week grid is replaced by "No classes yet" (the helper reads that as 0 and throws on anything else).
+const chipCount = (container: HTMLElement, day: string, name = "Gi") => weekChipCount(container, day, name);
 function expectDays(container: HTMLElement, want: Record<string, number>) {
   for (const [day, n] of Object.entries(want)) expect(chipCount(container, day), day).toBe(n);
 }
@@ -158,7 +153,7 @@ describe("what a snapshot must not overwrite", () => {
 
   it("an unsaved edit in the open form is kept when a new snapshot arrives, and is what gets saved", async () => {
     const view = render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
-    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: "Edit Gi" }));
+    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: /^Edit Gi,/ }));
     const tue = screen.getAllByLabelText("Day of the week").findIndex((el) => (el as HTMLSelectElement).value === "2");
     fireEvent.change(screen.getAllByLabelText("Start time")[tue], { target: { value: "19:30" } });
     view.rerender(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
@@ -185,7 +180,7 @@ describe("after a confirmed change the page asks for a fresh snapshot", () => {
 
   it("an edit requests exactly one refresh", async () => {
     const view = render(<TimetableManager {...PROPS} initialClasses={[makeClass("c1", [1, 2])]} initialInactiveClasses={[]} />);
-    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: "Edit Gi" }));
+    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: /^Edit Gi,/ }));
     fireEvent.change(screen.getAllByLabelText("Start time")[1], { target: { value: "19:00" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -273,7 +268,7 @@ describe("Gi on Monday and Tuesday through the form", () => {
     await create([1, 2]);
     expect(saved[0].schedules.map((s) => s.dayOfWeek)).toEqual([1, 2]);
     expectDays(view.container, { Mon: 1, Tue: 1 });
-    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: "Edit Gi" }));
+    fireEvent.click(gridDay(view.container, "Tue").getByRole("button", { name: /^Edit Gi,/ }));
     expect(screen.getAllByLabelText("Day of the week")).toHaveLength(2);
     fireEvent.change(screen.getAllByLabelText("Start time")[1], { target: { value: "19:00" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));

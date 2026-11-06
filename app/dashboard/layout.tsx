@@ -104,7 +104,7 @@ export default async function DashboardLayout({
           (two `aria-modal` dialogs, two focus traps, two scroll locks, two
           mount-effect fetches). Chrome is responsive; content is not. */}
       <div
-        className="flex min-h-screen flex-col md:h-screen md:flex-row md:overflow-hidden"
+        className="dash-shell flex min-h-screen flex-col md:h-screen md:flex-row md:overflow-hidden"
         style={{ background: "var(--sf-bg)" }}
       >
         {/* Desktop sidebar — the component carries its own `hidden md:flex`. */}
@@ -186,7 +186,10 @@ export default async function DashboardLayout({
               desktop takes the §4a.1 page padding.
               UI-RULES §4a.1 — the LAYOUT owns the container. One width for
               every staff page; pages and dashboard components must not
-              re-declare `max-w-* mx-auto` (ratchet-enforced). */}
+              re-declare `max-w-* mx-auto` (ratchet-enforced). The one
+              exception is a page whose root carries
+              `data-page-width="wide"` (today only Timetable): the
+              `.dash-content` rule in app/globals.css lets it reach 100rem. */}
           {/* The TOP padding lives on the inner wrapper, not on <main>.
               <main> is the scrollport, and a scrollport's padding is part of the
               scrolling area: content scrolls THROUGH it, and a `sticky top-0`
@@ -204,7 +207,7 @@ export default async function DashboardLayout({
               Left/right and BOTTOM padding stay on <main>: only the top edge is
               load-bearing for sticky. */}
           <main className="flex-1 overflow-y-auto px-4 pb-28 md:px-6 md:pb-6 xl:px-8 xl:pb-8">
-            <div className="mx-auto w-full max-w-6xl pt-5 md:pt-6 xl:pt-8">{children}</div>
+            <div className="dash-content mx-auto w-full max-w-6xl pt-5 md:pt-6 xl:pt-8">{children}</div>
           </main>
 
           <MobileNav role={session.user.role} primaryColor={session.user.primaryColor} />

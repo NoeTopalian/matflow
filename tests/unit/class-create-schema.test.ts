@@ -52,4 +52,23 @@ describe("classCreateSchema accepts what the timetable form sends", () => {
     expect(r.success).toBe(true);
     expect(r.success && r.data.roster).toEqual([{ memberId: "m1" }]);
   });
+
+  // Mats (5 Nov 2026): in a club with mats the form sends `matId` (the chosen
+  // mat, or null for "No mat") and, on a mat, no `location` at all — the
+  // server writes the mat's name.
+  it("accepts what the form sends for a club with mats: a mat with no place, or no mat with a typed place", () => {
+    const { location: _omit, ...noPlace } = blankOptionalsPayload;
+    const onMat = classCreateSchema.safeParse({ ...noPlace, matId: "cmh2m4t0000001" });
+    expect(onMat.success && onMat.data.matId).toBe("cmh2m4t0000001");
+    const offMat = classCreateSchema.safeParse({ ...blankOptionalsPayload, matId: null, location: "Sports hall" });
+    expect(offMat.success && offMat.data).toMatchObject({ matId: null, location: "Sports hall" });
+    // A club with no mats sends no matId at all, as before.
+    expect(classCreateSchema.safeParse(blankOptionalsPayload).success).toBe(true);
+  });
+
+  it("refuses a matId that is empty, not a string, or longer than an id can be", () => {
+    for (const matId of ["", 7, "x".repeat(65)]) {
+      expect(classCreateSchema.safeParse({ ...blankOptionalsPayload, matId }).success).toBe(false);
+    }
+  });
 });

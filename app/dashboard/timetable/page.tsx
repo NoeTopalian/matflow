@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import { classLifecycle, inactiveClassWhere, liveClassWhere, type ClassLifecycle } from "@/lib/class-live";
 import { legacyArchivedAt } from "@/lib/class-lifecycle";
+import { readMatsForTimetable } from "@/lib/mats-store";
 
 export type ClassRow = {
   id: string;
@@ -13,6 +14,8 @@ export type ClassRow = {
   location: string | null;
   /** ADR-001 D2: the venue; null = every location of the club. */
   locationId: string | null;
+  /** The mat the class runs on; null/absent = no mat. On a mat, `location` is that mat's name. */
+  matId?: string | null;
   duration: number | null;
   maxCapacity: number | null;
   /** A kids class: adults are refused at self/kiosk check-in and asked about on the register. */
@@ -45,6 +48,9 @@ export type ClassRow = {
 export type TierOption = { id: string; name: string; isActive: boolean };
 
 export type CoachUserOption = { id: string; name: string; role: string };
+
+/** One of the club's mats, in the club's order (the order of the columns). */
+export type MatOption = { id: string; name: string };
 
 /**
  * `live`: the classes on the timetable (T6b `liveClassWhere`; RULES §5, the
@@ -88,6 +94,7 @@ async function getClasses(tenantId: string, which: "live" | "inactive" = "live")
     coachUser: c.coachUser ? { id: c.coachUser.id, name: c.coachUser.name } : null,
     location: c.location,
     locationId: c.locationId,
+    matId: c.matId,
     duration: c.duration,
     maxCapacity: c.maxCapacity,
     isKids: c.isKids,
@@ -150,12 +157,15 @@ export default async function TimetablePage() {
   // UI-RULES §7: unguarded. An empty timetable used to be the failure mode as
   // well as the genuine state, so an outage looked like a gym that runs no
   // classes — and invited someone to rebuild a schedule that already exists.
-  const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses] = await Promise.all([
+  const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses, matsAndLayout] = await Promise.all([
     getClasses(session!.user.tenantId),
     getRankSystems(session!.user.tenantId),
     getCoachUsers(session!.user.tenantId),
     getTiers(session!.user.tenantId),
     getClasses(session!.user.tenantId, "inactive"),
+    // Guarded on purpose (lib/mats-store.ts): the one read here that may fail without failing the page.
+    // It runs in its own transaction, so a failed mats statement cannot abort the class read.
+    readMatsForTimetable(session!.user.tenantId),
   ]);
 
   return (
@@ -170,6 +180,11 @@ export default async function TimetablePage() {
       }))}
       coachUsers={coachUsers}
       membershipTiers={membershipTiers}
+      mats={matsAndLayout.mats}
+      storedLayout={matsAndLayout.storedLayout}
+      matsLoadFailed={matsAndLayout.failed}
+      // A MatFlow support session can put a class on a mat, but cannot set up mats or change the split.
+      supportSession={typeof (session!.user as { impersonatedBy?: unknown }).impersonatedBy === "string"}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       currentUserId={session!.user.id}
