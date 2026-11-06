@@ -105,7 +105,7 @@ vi.mock("@/lib/rate-limit", () => ({
   getClientIp: () => "127.0.0.1",
   checkCronAuthAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
 }));
-vi.mock("@/lib/audit-log", () => ({ logAudit: m.logAudit, auditLogRetentionWhere: () => ({ createdAt: { lt: new Date(0) } }) }));
+vi.mock("@/lib/audit-log", () => ({ logAudit: m.logAudit }));
 // Lane D (6 Oct 2026): soft-delete demands a step-up grant. Passed by default
 // so the lifecycle stays the subject; refused in its own test below.
 // Lane C (9 Oct 2026): requireStepUp returns the verified grant (or a

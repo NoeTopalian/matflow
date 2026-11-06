@@ -6,10 +6,11 @@
 //    the caller's transaction), AuditLog.requestId carries the correlation id
 //    (the spent step-up grant's id when given, else the platform request id or
 //    a UUID on durable rows). metadata.actingAs is still written for readers.
-// 2. Audit history is append-only from the application: no route or library
-//    updates or deletes AuditLog rows, except the retention cron, which deletes
-//    by AGE only (auditLogRetentionWhere). DBA reality: anyone holding the
-//    database owner role can still edit history; that is outside the app.
+// 2. Audit history is append-only from the application: no route, library or
+//    scheduled job updates or deletes AuditLog rows. Since 6 Nov 2026 that
+//    includes the retention cron: Activity is kept permanently (product rule,
+//    docs/RULES.md). DBA reality: anyone holding the database owner role can
+//    still edit history; that is outside the app.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -30,7 +31,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 vi.mock("@/lib/impersonation", () => ({ readImpersonationCookie: async () => null }));
 
-import { logAudit, auditLogRetentionWhere } from "@/lib/audit-log";
+import { logAudit } from "@/lib/audit-log";
 
 beforeEach(() => {
   db.created = [];
@@ -89,7 +90,6 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe("audit history is append-only from the application", () => {
   const files = [...walk("app"), ...walk("lib")];
-  const RETENTION = join("app", "api", "cron", "retention", "route.ts");
 
   it("no app/ or lib/ code updates or deletes AuditLog rows through Prisma", () => {
     const offenders: string[] = [];
@@ -109,16 +109,15 @@ describe("audit history is append-only from the application", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the only generic handle on the AuditLog delegate is the retention cron, with the age-only predicate", () => {
+  it("nothing takes a generic handle on the AuditLog delegate — not even the retention cron", () => {
     const users = files.filter((f) => /tx\.auditLog as unknown as/.test(readFileSync(f, "utf8")));
-    expect(users).toEqual([RETENTION]);
-    expect(readFileSync(RETENTION, "utf8")).toMatch(/tx\.auditLog as unknown as BatchDeletable,\s*auditLogRetentionWhere\(now\)/);
+    expect(users).toEqual([]);
+    const cron = readFileSync(join("app", "api", "cron", "retention", "route.ts"), "utf8");
+    expect(cron).not.toMatch(/auditLog/);
   });
 
-  it("the retention predicate deletes by AGE only: every branch is bounded by createdAt", () => {
-    const where = auditLogRetentionWhere(new Date("2026-10-09T00:00:00Z")) as { OR: Array<Record<string, unknown>> };
-    expect(where.OR.length).toBeGreaterThan(0);
-    for (const branch of where.OR) expect(branch.createdAt).toMatchObject({ lt: expect.any(Date) });
-    expect(JSON.stringify(where)).not.toMatch(/"id"|"requestId"|"operatorId"/);
+  it("the age-based retention predicate and its windows are gone", async () => {
+    const mod = (await import("@/lib/audit-log")) as Record<string, unknown>;
+    for (const name of ["auditLogRetentionWhere", "AUDIT_LOG_RETENTION_MS", "AUDIT_EVIDENCE_RETENTION_MS", "AUDIT_EVIDENCE_ACTION_PREFIXES"]) expect(mod, name).not.toHaveProperty(name);
   });
 });

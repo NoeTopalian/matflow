@@ -1,10 +1,12 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
-// Audit P0-4 / P2-2: the daily retention sweep. These tests pin the three
-// things that make it safe to run unattended against production:
+// The daily retention cron. Product rule (Noe, 6 Nov 2026; docs/RULES.md):
+// nothing of a club's is deleted automatically. These tests pin:
 //   1. it is unreachable without CRON_SECRET,
-//   2. every rule deletes on the window the privacy policy publishes,
-//   3. one failing rule cannot take the others down with it.
+//   2. its ONLY deletion is sign-in rate-limit counters, and a live run with
+//      the gate on touches no other table (Activity, email logs, sign-in
+//      records, expired links, Stripe events, imports, clubs),
+//   3. a failing rule surfaces as a 500.
 // The sweep has NO tenant rule (closed clubs are kept, 16 Oct 2026). The
 // explicit erasure path, lib/tenant-purge.ts purgeTenantById, is exercised
 // directly at the bottom of this file with the same mocked client.
@@ -110,11 +112,9 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 
-import { Prisma } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import { GET } from "@/app/api/cron/retention/route";
-import { auditLogRetentionWhere } from "@/lib/audit-log";
 import { purgeTenantById } from "@/lib/tenant-purge";
 
 const SECRET = "test-cron-secret";
@@ -191,41 +191,113 @@ describe("GET /api/cron/retention — auth", () => {
     delete process.env.CRON_SECRET;
     const res = await GET(req("Bearer anything"));
     expect(res.status).toBe(503);
-    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+    expect(prisma.rateLimitHit.findMany).not.toHaveBeenCalled();
   });
 
   it("401s with no Authorization header", async () => {
     const res = await GET(req());
     expect(res.status).toBe(401);
-    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+    expect(prisma.rateLimitHit.findMany).not.toHaveBeenCalled();
   });
 
   it("401s with the wrong bearer token", async () => {
     const res = await GET(req("Bearer wrong-secret"));
     expect(res.status).toBe(401);
-    expect(prisma.emailLog.findMany).not.toHaveBeenCalled();
+    expect(prisma.rateLimitHit.findMany).not.toHaveBeenCalled();
   });
 
-  it("runs with the correct bearer token", async () => {
+  it("runs with the correct bearer token, and its only rule is the rate-limit counters", async () => {
     const res = await GET(req(`Bearer ${SECRET}`));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; results: RuleResult[] };
     expect(body.ok).toBe(true);
-    expect(body.results.map((r) => r.rule)).toEqual([
-      "auditLog",
-      "emailLog",
-      "loginEvent",
-      "magicLinkToken",
-      "passwordResetToken",
-      "rateLimitHit",
-      "stripeEvent",
-      "importUpload",
-      "importJob",
-      "importJobDiagnostics",
-    ]);
-    // Never a club: closed clubs are kept (16 Oct 2026).
-    expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
+    // Product rule (Noe, 6 Nov 2026): nothing of a club's is deleted automatically.
+    expect(body.results.map((r) => r.rule)).toEqual(["rateLimitHit"]);
     expect(prisma.tenant.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Nothing of a club's is ever deleted ─────────────────────────────────────
+// Product rule (Noe, 6 Nov 2026; docs/RULES.md): "nothing should be
+// automatically deleted" and "all data from the entirety of the club should be
+// held". Every model the sweep used to purge is offered rows of every age — a
+// day, a year, two years and ten years old — and the live sweep, with the gate
+// ON, must not delete, update or even count any of them.
+
+const KEPT_MODELS = [
+  "auditLog",
+  "emailLog",
+  "loginEvent",
+  "magicLinkToken",
+  "passwordResetToken",
+  "stripeEvent",
+  "importUpload",
+  "importJob",
+  "tenant",
+] as const;
+
+describe("GET /api/cron/retention — keeps every club record", () => {
+  const AGES_DAYS = [1, 365, 400, 730, 3650];
+
+  function offerRowsOfEveryAge() {
+    const counts: Record<string, ReturnType<typeof vi.fn>> = {};
+    for (const name of KEPT_MODELS) {
+      const model = (prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)[name];
+      model.findMany.mockResolvedValue(AGES_DAYS.map((d) => ({ id: `${name}-${d}d`, tenantId: "t1", createdAt: new Date(NOW.getTime() - d * DAY_MS) })));
+      counts[name] = vi.fn().mockResolvedValue(AGES_DAYS.length);
+      (model as unknown as { count: ReturnType<typeof vi.fn> }).count = counts[name];
+    }
+    return counts;
+  }
+
+  function expectUntouched(counts: Record<string, ReturnType<typeof vi.fn>>) {
+    for (const name of KEPT_MODELS) {
+      const model = (prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn> | undefined>>)[name];
+      expect(model.findMany, `${name}.findMany`).not.toHaveBeenCalled();
+      expect(model.deleteMany, `${name}.deleteMany`).not.toHaveBeenCalled();
+      expect(model.updateMany, `${name}.updateMany`).not.toHaveBeenCalled();
+      expect(model.delete ?? vi.fn(), `${name}.delete`).not.toHaveBeenCalled();
+      expect(counts[name], `${name}.count`).not.toHaveBeenCalled();
+    }
+    // Nor a member, a photo, a waiver, a file, a Stripe subscription or a member cascade.
+    for (const [name, model] of Object.entries(prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn> | undefined>>)) {
+      if (name === "rateLimitHit") continue;
+      expect(model.deleteMany ?? vi.fn(), `${name}.deleteMany`).not.toHaveBeenCalled();
+      expect(model.updateMany ?? vi.fn(), `${name}.updateMany`).not.toHaveBeenCalled();
+      expect(model.delete ?? vi.fn(), `${name}.delete`).not.toHaveBeenCalled();
+    }
+    expect(cascadeMock).not.toHaveBeenCalled();
+    expect(cancelSubMock).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+  }
+
+  it("a live run with RETENTION_CRON_ENABLED=true deletes nothing except rate-limit hits", async () => {
+    expect(process.env.RETENTION_CRON_ENABLED).toBe("true");
+    const counts = offerRowsOfEveryAge();
+    vi.mocked(prisma.rateLimitHit.findMany).mockResolvedValueOnce([{ id: "hit-old" }] as never);
+    vi.mocked(prisma.rateLimitHit.deleteMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as { ok: boolean; dryRun: boolean; results: RuleResult[] };
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, dryRun: false });
+    expect(body.results).toEqual([{ rule: "rateLimitHit", deleted: 1 }]);
+    expect(prisma.rateLimitHit.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["hit-old"] } } });
+    expectUntouched(counts);
+  });
+
+  it("a dry run reports zero for every kept table: none of them is even counted", async () => {
+    const counts = offerRowsOfEveryAge();
+    (prisma.rateLimitHit as unknown as { count: ReturnType<typeof vi.fn> }).count = vi.fn().mockResolvedValue(4);
+
+    const res = await GET(new Request("https://matflow.studio/api/cron/retention?dryRun=1", { headers: { authorization: `Bearer ${SECRET}` } }));
+    const body = (await res.json()) as { ok: boolean; dryRun: boolean; results: Array<RuleResult & { details?: Record<string, unknown> }> };
+    expect(body).toMatchObject({ ok: true, dryRun: true });
+    const reported = Object.fromEntries(body.results.map((r) => [r.rule, (r.details?.wouldDelete as number | undefined) ?? 0]));
+    for (const name of KEPT_MODELS) expect(reported[name] ?? 0, name).toBe(0);
+    expect(reported.rateLimitHit).toBe(4);
+    expect(prisma.rateLimitHit.deleteMany).not.toHaveBeenCalled();
+    expectUntouched(counts);
   });
 });
 
@@ -238,91 +310,25 @@ describe("GET /api/cron/retention?dryRun=1 — counts, never deletes", () => {
     });
   }
 
-  it("still needs the bearer — the counts name tenants", async () => {
+  it("still needs the bearer", async () => {
     expect((await GET(dryReq())).status).toBe(401);
     expect((await GET(dryReq("Bearer wrong"))).status).toBe(401);
   });
 
-  it("reports what every rule would remove and calls no deleteMany, updateMany or cascade", async () => {
-    for (const model of [prisma.auditLog, prisma.emailLog, prisma.loginEvent, prisma.magicLinkToken, prisma.passwordResetToken, prisma.rateLimitHit, prisma.stripeEvent, prisma.importUpload, prisma.importJob]) {
-      (model as unknown as { count: ReturnType<typeof vi.fn> }).count = vi.fn().mockResolvedValue(7);
-    }
-
+  it("counts on the same window the live rule deletes on", async () => {
+    const count = vi.fn().mockResolvedValue(7);
+    (prisma.rateLimitHit as unknown as { count: typeof count }).count = count;
     const res = await GET(dryReq(`Bearer ${SECRET}`));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; dryRun: boolean; results: Array<RuleResult & { details?: Record<string, unknown> }> };
-    expect(body.dryRun).toBe(true);
-    expect(body.ok).toBe(true);
-
-    const byRule = Object.fromEntries(body.results.map((r) => [r.rule, r]));
-    expect(byRule.auditLog).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
-    expect(byRule.stripeEvent).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
-    expect(byRule.importUpload).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
-    expect(byRule.importJob).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
-    expect(byRule.importJobDiagnostics).toMatchObject({ deleted: 0, details: { wouldScrub: 7 } });
-    // A dry run names no club to purge, because no club is ever purged by the sweep.
-    expect(Object.keys(byRule).filter((k) => /tenant|purge/i.test(k))).toEqual([]);
-    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
-
-    // The count is keyed on the same window the real rule deletes on.
-    const auditCount = (prisma.auditLog as unknown as { count: ReturnType<typeof vi.fn> }).count;
-    expect(auditCount).toHaveBeenCalledWith({ where: auditLogRetentionWhere(NOW) });
-
-    for (const model of Object.values(prisma as unknown as Record<string, Record<string, unknown>>)) {
-      const m = model as { deleteMany?: ReturnType<typeof vi.fn>; updateMany?: ReturnType<typeof vi.fn>; delete?: ReturnType<typeof vi.fn> };
-      expect(m.deleteMany ?? vi.fn()).not.toHaveBeenCalled();
-      expect(m.updateMany ?? vi.fn()).not.toHaveBeenCalled();
-      expect(m.delete ?? vi.fn()).not.toHaveBeenCalled();
-    }
-    expect(cascadeMock).not.toHaveBeenCalled();
-    expect(cancelSubMock).not.toHaveBeenCalled();
-    expect(del).not.toHaveBeenCalled();
-  });
-
-  it("without the flag the sweep deletes as before", async () => {
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { dryRun: boolean };
-    expect(body.dryRun).toBe(false);
-    expect(prisma.auditLog.findMany).toHaveBeenCalled();
+    const body = (await res.json()) as { results: Array<RuleResult & { details?: Record<string, unknown> }> };
+    expect(body.results).toEqual([{ rule: "rateLimitHit", deleted: 0, details: { wouldDelete: 7 } }]);
+    expect(count).toHaveBeenCalledWith({ where: { hitAt: { lt: new Date(NOW.getTime() - DAY_MS) } } });
+    expect(prisma.rateLimitHit.deleteMany).not.toHaveBeenCalled();
   });
 });
 
-// ─── Cutoff maths ─────────────────────────────────────────────────────────────
+// ─── The one rule left ────────────────────────────────────────────────────────
 
-describe("GET /api/cron/retention — retention windows", () => {
-  // Operator audit 5 Oct 2026 (Q9-4). This pinned "every AuditLog row older
-  // than 365 days", operator and erasure evidence included. Ordinary rows keep
-  // the published twelve months; platform evidence is kept six years. The
-  // predicate's behaviour on real rows is in
-  // tests/integration/audit-durability-db.test.ts.
-  it("deletes ordinary AuditLog rows after 365 days and platform evidence after six years", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    expect(whereOf(prisma.auditLog)).toEqual(auditLogRetentionWhere(NOW));
-    const where = auditLogRetentionWhere(NOW) as { OR: Array<Record<string, unknown>> };
-    expect(where.OR[0].createdAt).toEqual({ lt: new Date(NOW.getTime() - 365 * DAY_MS) });
-    expect(where.OR[1].createdAt).toEqual({ lt: new Date(NOW.getTime() - 6 * 365 * DAY_MS) });
-    expect(JSON.stringify(where.OR[0].NOT)).toContain('"startsWith":"admin."');
-    expect(JSON.stringify(where.OR[0].NOT)).toContain('"startsWith":"member.dsar_erase"');
-  });
-
-  it("deletes EmailLog rows older than 365 days", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    expect(whereOf(prisma.emailLog)).toEqual({
-      createdAt: { lt: new Date(NOW.getTime() - 365 * DAY_MS) },
-    });
-  });
-
-  it("purges sign-in tokens 24h AFTER expiry, not on expiry", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    const cutoff = new Date(NOW.getTime() - DAY_MS);
-    expect(whereOf(prisma.magicLinkToken)).toEqual({ expiresAt: { lt: cutoff } });
-    expect(whereOf(prisma.passwordResetToken)).toEqual({ expiresAt: { lt: cutoff } });
-    // Grace window: a token that expired an hour ago must NOT match, so an
-    // in-flight verification still resolves to "expired" not "invalid".
-    expect(cutoff.getTime()).toBeLessThan(NOW.getTime());
-    expect(NOW.getTime() - cutoff.getTime()).toBe(DAY_MS);
-  });
-
+describe("GET /api/cron/retention — rate-limit counters", () => {
   it("deletes RateLimitHit rows older than 24 hours, keyed on hitAt", async () => {
     await GET(req(`Bearer ${SECRET}`));
     expect(whereOf(prisma.rateLimitHit)).toEqual({
@@ -330,189 +336,60 @@ describe("GET /api/cron/retention — retention windows", () => {
     });
   });
 
-  it("deletes StripeEvent rows older than 90 days, keyed on processedAt", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    // StripeEvent has no createdAt column — processedAt is its only timestamp.
-    expect(whereOf(prisma.stripeEvent)).toEqual({
-      processedAt: { lt: new Date(NOW.getTime() - 90 * DAY_MS) },
-    });
-  });
-
-  it("deletes only non-complete ImportJobs older than 30 days", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    expect(whereOf(prisma.importJob)).toEqual({
-      status: { notIn: ["complete"] },
-      createdAt: { lt: new Date(NOW.getTime() - 30 * DAY_MS) },
-      // A started attendance import owns bookings and visits; its job row is
-      // what a resume or rollback needs, so it is never purged by age.
-      NOT: { source: "teamup-attendance", status: { in: ["running", "failed"] } },
-    });
-  });
-
-  it("deletes expired chunked uploads that never fed an import (consumed ones go with their job)", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    expect(whereOf(prisma.importUpload)).toEqual({
-      expiresAt: { lt: NOW },
-      status: { not: "consumed" },
-    });
-  });
-
   it("batches deletes by id so a timeout cannot leave poison state", async () => {
-    vi.mocked(prisma.auditLog.findMany)
-      .mockResolvedValueOnce([{ id: "a1" }, { id: "a2" }] as never)
+    vi.mocked(prisma.rateLimitHit.findMany)
+      .mockResolvedValueOnce([{ id: "h1" }, { id: "h2" }] as never)
       .mockResolvedValue([] as never);
-    vi.mocked(prisma.auditLog.deleteMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.rateLimitHit.deleteMany).mockResolvedValue({ count: 2 } as never);
 
     const res = await GET(req(`Bearer ${SECRET}`));
     const body = (await res.json()) as { results: RuleResult[] };
 
-    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
+    expect(prisma.rateLimitHit.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ select: { id: true }, take: 1000 }),
     );
-    expect(prisma.auditLog.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["a1", "a2"] } },
+    expect(prisma.rateLimitHit.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["h1", "h2"] } },
     });
-    expect(body.results.find((r) => r.rule === "auditLog")?.deleted).toBe(2);
+    expect(body.results.find((r) => r.rule === "rateLimitHit")?.deleted).toBe(2);
   });
-});
 
-// ─── Runtime cap ──────────────────────────────────────────────────────────────
-
-describe("GET /api/cron/retention — runtime cap", () => {
-  it("reports a deadline-truncated rule as partial, not as a failure, and skips the rest", async () => {
-    // A full page whose fetch burns past the 240s budget: the rule commits
-    // what it deleted, reports { partial, processed }, and the sweep stops
-    // starting new rules. Every rule is idempotent, so tomorrow's run resumes.
-    const page = Array.from({ length: 1000 }, (_, i) => ({ id: `a${i}` }));
-    vi.mocked(prisma.auditLog.findMany).mockImplementation((async () => {
+  it("reports a deadline-truncated run as partial, not as a failure", async () => {
+    // A full page whose fetch burns past the 240s budget: the rule commits what
+    // it deleted and reports { partial, processed }; tomorrow's run resumes.
+    const page = Array.from({ length: 1000 }, (_, i) => ({ id: `h${i}` }));
+    vi.mocked(prisma.rateLimitHit.findMany).mockImplementation((async () => {
       vi.advanceTimersByTime(241_000);
       return page;
     }) as never);
-    vi.mocked(prisma.auditLog.deleteMany).mockResolvedValue({ count: 1000 } as never);
+    vi.mocked(prisma.rateLimitHit.deleteMany).mockResolvedValue({ count: 1000 } as never);
 
     const res = await GET(req(`Bearer ${SECRET}`));
     const body = (await res.json()) as { ok: boolean; results: RuleResult[] };
 
-    const auditRule = body.results.find((r) => r.rule === "auditLog")!;
-    expect(auditRule).toMatchObject({ deleted: 1000, partial: true, processed: 1000 });
-    expect(auditRule.error).toBeUndefined();
-    // A truncated sweep is still a healthy sweep.
+    const rule = body.results.find((r) => r.rule === "rateLimitHit")!;
+    expect(rule).toMatchObject({ deleted: 1000, partial: true, processed: 1000 });
+    expect(rule.error).toBeUndefined();
     expect(body.ok).toBe(true);
-
-    for (const rule of body.results.filter((r) => r.rule !== "auditLog")) {
-      expect(rule).toMatchObject({ skipped: true });
-    }
-    expect(prisma.emailLog.findMany).not.toHaveBeenCalled();
-    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
   });
-});
 
-// ─── Rule independence ────────────────────────────────────────────────────────
-
-describe("GET /api/cron/retention — rule independence", () => {
-  it("keeps running the remaining rules when one rule throws", async () => {
-    vi.mocked(prisma.emailLog.findMany).mockRejectedValue(new Error("connection reset"));
+  it("a failing rule surfaces as 500 with its error", async () => {
+    vi.mocked(prisma.rateLimitHit.findMany).mockRejectedValue(new Error("connection reset"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await GET(req(`Bearer ${SECRET}`));
     const body = (await res.json()) as { ok: boolean; results: RuleResult[] };
 
     // Hardening 2026-08-16: failed sweeps must surface as 500 so status-code
-    // monitoring (Vercel cron dashboard) can see them — 200 + ok:false is
-    // invisible to uptime checks.
+    // monitoring (Vercel cron dashboard) can see them.
     expect(res.status).toBe(500);
     expect(body.ok).toBe(false);
-    expect(body.results.find((r) => r.rule === "emailLog")?.error).toBe("connection reset");
-
-    // Every other rule still ran and reported a clean result.
-    for (const rule of body.results.filter((r) => r.rule !== "emailLog")) {
-      expect(rule.error).toBeUndefined();
-      expect(rule.deleted).toBe(0);
-    }
-    // Rules after the failure specifically.
-    expect(prisma.magicLinkToken.findMany).toHaveBeenCalled();
-    expect(prisma.rateLimitHit.findMany).toHaveBeenCalled();
-    expect(prisma.importJob.findMany).toHaveBeenCalled();
+    expect(body.results).toEqual([{ rule: "rateLimitHit", error: "connection reset" }]);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
 });
 
-// ─── ImportJob blob handling ──────────────────────────────────────────────────
-
-describe("GET /api/cron/retention — abandoned import CSVs", () => {
-  it("deletes only Vercel Blob URLs and still drops every row", async () => {
-    vi.mocked(prisma.importJob.findMany)
-      .mockResolvedValueOnce([
-        { id: "j1", tenantId: "t1", fileBlobUrl: "https://abc123.blob.vercel-storage.com/tenants/t1/imports/a.csv" },
-        { id: "j2", tenantId: "t1", fileBlobUrl: "https://evil.example.com/imports/b.csv" },
-        { id: "j3", tenantId: "t1", fileBlobUrl: "" },
-        { id: "j4", tenantId: "t1", fileBlobUrl: "https://blob.vercel-storage.com/tenants/t1/imports/d.csv" },
-        // Another club namespace on a row of THIS club: left in place (14 Oct 2026).
-        { id: "j5", tenantId: "t1", fileBlobUrl: "https://abc123.blob.vercel-storage.com/tenants/t2/imports/e.csv" },
-      ] as never)
-      .mockResolvedValue([] as never);
-    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 5 } as never);
-
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { results: RuleResult[] };
-
-    expect(del).toHaveBeenCalledTimes(1);
-    expect(del).toHaveBeenCalledWith([
-      "https://abc123.blob.vercel-storage.com/tenants/t1/imports/a.csv",
-      "https://blob.vercel-storage.com/tenants/t1/imports/d.csv",
-    ]);
-    // The non-blob and empty URLs are skipped, but their rows still go.
-    expect(prisma.importJob.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ["j1", "j2", "j3", "j4", "j5"] } },
-    });
-    expect(body.results.find((r) => r.rule === "importJob")?.deleted).toBe(5);
-  });
-
-  it("deletes a chunked upload (db-upload://) with its abandoned job, scoped to the job's tenant", async () => {
-    vi.mocked(prisma.importJob.findMany)
-      .mockResolvedValueOnce([
-        { id: "j1", tenantId: "t1", fileBlobUrl: "db-upload://up1" },
-        { id: "j2", tenantId: "t2", fileBlobUrl: "https://abc.blob.vercel-storage.com/tenants/t2/imports/b.csv" },
-      ] as never)
-      .mockResolvedValue([] as never);
-    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 2 } as never);
-    vi.mocked(prisma.importUpload.deleteMany).mockResolvedValue({ count: 1 } as never);
-
-    await GET(req(`Bearer ${SECRET}`));
-    expect(prisma.importUpload.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ id: "up1", tenantId: "t1" }] } });
-    expect(del).toHaveBeenCalledWith(["https://abc.blob.vercel-storage.com/tenants/t2/imports/b.csv"]);
-    expect(prisma.importJob.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["j1", "j2"] } } });
-  });
-
-  it("does not call del() when no job holds a blob URL", async () => {
-    vi.mocked(prisma.importJob.findMany)
-      .mockResolvedValueOnce([{ id: "j1", fileBlobUrl: "" }] as never)
-      .mockResolvedValue([] as never);
-    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 1 } as never);
-
-    await GET(req(`Bearer ${SECRET}`));
-    expect(del).not.toHaveBeenCalled();
-  });
-
-  it("survives a blob-storage failure and still deletes the rows", async () => {
-    vi.mocked(prisma.importJob.findMany)
-      .mockResolvedValueOnce([
-        { id: "j1", tenantId: "t1", fileBlobUrl: "https://abc.blob.vercel-storage.com/tenants/t1/imports/a.csv" },
-      ] as never)
-      .mockResolvedValue([] as never);
-    vi.mocked(prisma.importJob.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(del).mockRejectedValue(new Error("blob store down"));
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { ok: boolean; results: RuleResult[] };
-
-    expect(body.ok).toBe(true);
-    expect(body.results.find((r) => r.rule === "importJob")?.deleted).toBe(1);
-    consoleWarn.mockRestore();
-  });
-});
 
 // ─── Explicit club erasure (lib/tenant-purge.ts purgeTenantById) ─────────────
 // Closed clubs are kept (16 Oct 2026): the sweep has no tenant rule, so the
@@ -695,84 +572,5 @@ describe("purgeTenantById — fail-closed on live billing", () => {
       }),
     );
     expect(out).toMatchObject({ kind: "purged" });
-  });
-});
-
-// ─── ImportJob diagnostics scrub (GDPR NEW-1) ────────────────────────────────
-
-describe("GET /api/cron/retention — import diagnostics scrub", () => {
-  /** The `where` the scrub rule's single updateMany ran with. */
-  function scrubArgs() {
-    const fn = prisma.importJob.updateMany as unknown as {
-      mock: { calls: Array<[{ where: Record<string, unknown>; data: Record<string, unknown> }]> };
-    };
-    return fn.mock.calls[0]![0];
-  }
-
-  it("nulls dryRunSummary and errorLog on jobs older than 30 days", async () => {
-    vi.mocked(prisma.importJob.updateMany).mockResolvedValue({ count: 3 } as never);
-
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { results: RuleResult[] };
-
-    expect(prisma.importJob.updateMany).toHaveBeenCalledWith({
-      where: {
-        createdAt: { lt: new Date(NOW.getTime() - 30 * DAY_MS) },
-        OR: [{ dryRunSummary: { not: Prisma.DbNull } }, { errorLog: { not: Prisma.DbNull } }],
-      },
-      // Both columns are Json? — plain null is a Prisma type error and
-      // Prisma.JsonNull would store the JSON value `null`, not SQL NULL.
-      data: { dryRunSummary: Prisma.DbNull, errorLog: Prisma.DbNull },
-    });
-    expect(body.results.find((r) => r.rule === "importJobDiagnostics")?.deleted).toBe(3);
-  });
-
-  it("applies to every status including `complete`, and keeps the row itself", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    const args = scrubArgs();
-
-    // The `complete` exemption on rule f is what made this PII permanent, so
-    // the scrub must not inherit any status filter.
-    expect(args.where).not.toHaveProperty("status");
-    // Only the two diagnostic columns are written — counters and the row stay.
-    expect(Object.keys(args.data).sort()).toEqual(["dryRunSummary", "errorLog"]);
-    expect(prisma.importJob.deleteMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ status: undefined }) }),
-    );
-  });
-
-  it("leaves jobs inside the 30-day window alone", async () => {
-    await GET(req(`Bearer ${SECRET}`));
-    const cutoff = (scrubArgs().where.createdAt as { lt: Date }).lt;
-    // A job imported 29 days ago sits above the cutoff and cannot match.
-    const twentyNineDaysAgo = new Date(NOW.getTime() - 29 * DAY_MS);
-    expect(twentyNineDaysAgo.getTime()).toBeGreaterThan(cutoff.getTime());
-    expect(cutoff).toEqual(new Date(NOW.getTime() - 30 * DAY_MS));
-  });
-});
-
-// ─── LoginEvent (review of lane I, 6 Oct 2026) ────────────────────────────────
-// Sign-in records are now written on every sign-in (lib/login-event.ts), so
-// they need a retention rule: a device not seen for twelve months is purged.
-
-describe("rule loginEvent — devices not seen for twelve months", () => {
-  it("deletes on lastSeenAt older than 365 days", async () => {
-    vi.mocked(prisma.loginEvent.findMany).mockResolvedValueOnce([{ id: "le-1" }, { id: "le-2" }] as never);
-    vi.mocked(prisma.loginEvent.deleteMany).mockResolvedValueOnce({ count: 2 } as never);
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { results: RuleResult[] };
-    expect(whereOf(prisma.loginEvent)).toEqual({ lastSeenAt: { lt: new Date(NOW.getTime() - 365 * DAY_MS) } });
-    expect(prisma.loginEvent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["le-1", "le-2"] } } });
-    expect(body.results.find((r) => r.rule === "loginEvent")?.deleted).toBe(2);
-  });
-
-  it("dry run counts on the same window and deletes nothing", async () => {
-    const count = vi.fn().mockResolvedValue(5);
-    (prisma.loginEvent as unknown as { count: typeof count }).count = count;
-    const res = await GET(new Request("https://matflow.studio/api/cron/retention?dryRun=1", { headers: { authorization: `Bearer ${SECRET}` } }));
-    const body = (await res.json()) as { results: Array<RuleResult & { details?: Record<string, unknown> }> };
-    expect(count).toHaveBeenCalledWith({ where: { lastSeenAt: { lt: new Date(NOW.getTime() - 365 * DAY_MS) } } });
-    expect(body.results.find((r) => r.rule === "loginEvent")).toMatchObject({ deleted: 0, details: { wouldDelete: 5 } });
-    expect(prisma.loginEvent.deleteMany).not.toHaveBeenCalled();
   });
 });

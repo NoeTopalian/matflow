@@ -137,7 +137,8 @@ describe("SF-128: lg-3's retention expectation, proved against the real route", 
     const good = (await answer("?dryRun=1")) as { status: number; body: { results: Array<Record<string, unknown>> } };
     const clone = () => JSON.parse(JSON.stringify(good)) as typeof good;
     const deleted = clone();
-    deleted.body.results[1].deleted = 1;
+    // One rule since 6 Nov 2026 (rate-limit counters): nothing of a club's is deleted automatically.
+    deleted.body.results[0].deleted = 1;
     expect(retentionDryRunVerdict(deleted, false)).toMatch(/deleted/);
     const noCounts = clone();
     for (const r of noCounts.body.results) delete r.details;

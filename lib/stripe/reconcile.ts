@@ -118,12 +118,10 @@ export async function runStripeReconciliation(): Promise<ReconcileResult> {
     console.warn("[stripe-reconcile] per-tenant errors", { errors });
   }
 
-  // Tier 4.17 originally pruned StripeEvent here at 30 days. That prune is gone:
-  // app/api/cron/retention owns StripeEvent's lifecycle on a 90-day window
-  // (STRIPE_EVENT_RETENTION_MS, "Stripe's event replay window is ~30 days; 90 is
-  // a generous idempotency margin"). Two prunes on one table means the shorter
-  // one silently wins and the published retention rule becomes dead code, so
-  // this job only DETECTS drops now — retention deletes.
+  // Tier 4.17 originally pruned StripeEvent here at 30 days. That prune is gone,
+  // and so is the 90-day one that replaced it in app/api/cron/retention: StripeEvent
+  // rows are kept permanently (product rule, Noe, 6 Nov 2026, docs/RULES.md). This
+  // job only DETECTS drops.
   return {
     ok: true,
     tenantsChecked: tenants.length,

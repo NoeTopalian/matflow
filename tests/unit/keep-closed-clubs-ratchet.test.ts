@@ -34,7 +34,8 @@ describe("(a) the retention cron has no tenant purge rule", () => {
 
   it("no rule in the rule list is named after a tenant or a purge", () => {
     const names = [...src.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1]);
-    expect(names.length).toBeGreaterThan(5); // the ordinary rules are still there
+    // Since 6 Nov 2026 nothing of a club's is deleted automatically: the only rule left is the rate-limit counters.
+    expect(names).toEqual(["rateLimitHit"]);
     expect(names.filter((n) => /tenant|purge/i.test(n))).toEqual([]);
   });
 

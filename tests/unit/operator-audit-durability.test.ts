@@ -341,14 +341,13 @@ describe("impersonation start", () => {
 
 describe("retention", () => {
   // Was "GAP (ISSUE Q9-4): the nightly sweep deletes EVERY audit row over 365
-  // days old — operator and erasure evidence included".
-  it("FIXED (was GAP ISSUE Q9-4): the sweep keeps operator, support-session and erasure evidence for six years", async () => {
+  // days old — operator and erasure evidence included". Fixed 9 Oct by keeping
+  // evidence six years; superseded 6 Nov 2026 by keeping every row permanently
+  // (product rule, Noe: "nothing should be automatically deleted").
+  it("FIXED (was GAP ISSUE Q9-4): the sweep deletes no audit row at all — operator, support-session and erasure evidence included", async () => {
     const src = readFileSync(path.join(process.cwd(), "app/api/cron/retention/route.ts"), "utf8");
-    expect(src).not.toMatch(/AUDIT_LOG_RETENTION_MS = 365 \* DAY_MS/);
-    expect(src).toMatch(/tx\.auditLog as unknown as BatchDeletable,\s*auditLogRetentionWhere\(now\)/);
-    const { AUDIT_EVIDENCE_ACTION_PREFIXES, AUDIT_EVIDENCE_RETENTION_MS } = await import("@/lib/audit-log");
-    expect(AUDIT_EVIDENCE_ACTION_PREFIXES).toEqual(["admin.", "member.dsar_erase"]);
-    expect(AUDIT_EVIDENCE_RETENTION_MS).toBe(6 * 365 * 24 * 60 * 60 * 1000);
+    expect(src).not.toMatch(/auditLog/);
+    expect(src).not.toMatch(/AUDIT_LOG_RETENTION_MS|auditLogRetentionWhere/);
     // Row-level behaviour on Postgres: tests/integration/audit-durability-db.test.ts.
   });
 

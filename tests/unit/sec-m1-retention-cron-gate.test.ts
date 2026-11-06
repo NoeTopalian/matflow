@@ -2,8 +2,9 @@
  * RETENTION_CRON_ENABLED, default OFF (security campaign iteration 2, lane M1 v2, 10 Oct 2026; authorised by Noe
  * 10 Oct 22:13 Italy: "Approve implementing and testing RETENTION_CRON_ENABLED, default OFF").
  *
- * The nightly retention sweep is a one-way door (a year of logs, 90 days of Stripe events; never a club — closed clubs
- * are kept, 16 Oct 2026). Until a human has read a dry run and turned the job on, a scheduler call that carries the real
+ * The nightly retention sweep was a one-way door (a year of logs, 90 days of Stripe events; never a club — closed clubs
+ * are kept, 16 Oct 2026). Since 6 Nov 2026 it deletes nothing of a club's, only sign-in rate-limit counters, and the
+ * gate still holds. Until a human has read a dry run and turned the job on, a scheduler call that carries the real
  * bearer must do NOTHING: 503 `{ error: "retention cron disabled" }` before any work — no reconcile, no count, no
  * delete. `?dryRun=1` stays allowed with the gate off (counts only, zero deletes) and the response says so. The gate
  * opens only on the exact string "true". One log line per call, no payload.
@@ -134,19 +135,25 @@ describe("RETENTION_CRON_ENABLED gate (default OFF)", () => {
     expect(writes()).toBe(0);
     expect(reads()).toBeGreaterThan(0);
     expect(body.results.every((r) => r.deleted === 0)).toBe(true);
-    expect(body.results.find((r) => r.rule === "emailLog")?.details).toEqual({ wouldDelete: 7 });
+    expect(body.results.find((r) => r.rule === "rateLimitHit")?.details).toEqual({ wouldDelete: 7 });
     // No club is ever a candidate: closed clubs are kept (16 Oct 2026).
     expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
   });
 
-  it('gate exactly "true" → unchanged behaviour: the sweep deletes, and still no club rule', async () => {
+  it('gate exactly "true" → the sweep prunes rate-limit counters only, and still no club rule', async () => {
     process.env.RETENTION_CRON_ENABLED = "true";
     const res = await GET(req());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { dryRun: boolean; results: Array<{ rule: string; deleted?: number }> };
     expect(body.dryRun).toBe(false);
-    expect(prisma.emailLog.deleteMany).toHaveBeenCalled();
-    expect(body.results.find((r) => r.rule === "emailLog")?.deleted).toBe(1);
+    expect(prisma.rateLimitHit.deleteMany).toHaveBeenCalled();
+    expect(body.results.find((r) => r.rule === "rateLimitHit")?.deleted).toBe(1);
+    // Nothing of a club's is deleted automatically (Noe, 6 Nov 2026).
+    for (const [name, d] of Object.entries(prisma as unknown as Record<string, Delegate>)) {
+      if (name === "rateLimitHit") continue;
+      expect(d.deleteMany, name).not.toHaveBeenCalled();
+      expect(d.updateMany, name).not.toHaveBeenCalled();
+    }
     expect(m.reconcile).toHaveBeenCalledTimes(1);
     expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
   });

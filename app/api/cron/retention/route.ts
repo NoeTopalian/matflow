@@ -2,48 +2,52 @@
  * Vercel cron entry — runs daily at 03:30 UTC.
  * Schedule defined in vercel.json: "30 3 * * *".
  *
- * Closes audit findings P0-4 (published retention policy was fiction — no
- * deleteMany existed anywhere for AuditLog / EmailLog / tokens / ImportJob)
- * and P2-2 (expired auth tokens accumulated forever with email + IP + UA).
+ * PRODUCT RULE (Noe, 6 Nov 2026; docs/RULES.md): "nothing should be
+ * automatically deleted" and "all data from the entirety of the club should be
+ * held". This job therefore deletes NO club data. It used to purge the
+ * Activity log after a year, email logs and sign-in device records after 365
+ * days, expired sign-in and reset links, Stripe webhook records after 90 days,
+ * abandoned imports and their files after 30 days, and closed clubs 30 days
+ * after closing. All of those rules are gone:
  *
- * This sweep never touches a club. Product rule (Noe, 16 Oct 2026): a club
- * that closes is KEPT, with sign-in disabled, so it can reopen; erasure
- * happens only on the club's written request, run by an operator
- * (lib/tenant-purge.ts `purgeTenantById`). The by-age tenant purge that used
- * to be rule g here was removed that day — tests/unit/keep-closed-clubs-
- * ratchet.test.ts keeps it out.
+ *  - Expired sign-in and reset links are kept safely: only an HMAC of each link
+ *    is stored (lib/token-hash.ts), and every use checks `used: false` and
+ *    `expiresAt > now`, so a kept expired link can never sign anyone in.
+ *  - Closed clubs are kept, with sign-in disabled, so they can reopen (Noe,
+ *    16 Oct 2026). Erasure happens only on the club's written request, run by
+ *    an operator through lib/tenant-purge.ts, never on a schedule.
+ *    tests/unit/keep-closed-clubs-ratchet.test.ts keeps the by-age purge out.
  *
- * Design rules, all deliberate:
+ * What is left, in order:
  *
- *  - Every rule is INDEPENDENT. One failing rule must not stop the others,
- *    so each runs in its own try/catch and reports `{ deleted }` or
- *    `{ error }` into the JSON response. Failures are also console.error'd
- *    so they surface in Vercel logs even when the cron reports 200.
+ *  1. The nightly Stripe reconciliation (read-only). It is why the vercel.json
+ *     entry stays.
+ *  2. ONE deletion rule: sign-in rate-limit counters (RateLimitHit) older than
+ *     a day. They are security counters, not club data, and the limiter only
+ *     ever reads the last hour of them.
  *
- *  - Every rule is CHUNKED. Deletes run as `findMany({ select: { id }, take })`
+ * tests/unit/retention-cron.test.ts pins both halves: the rule list is exactly
+ * ["rateLimitHit"], and a live run touches no other model.
+ *
+ * Design rules for the remaining rule, all deliberate:
+ *
+ *  - It is CHUNKED. Deletes run as `findMany({ select: { id }, take })`
  *    followed by `deleteMany({ where: { id: { in: … } } })`, each batch in its
- *    own transaction. A 300s function timeout therefore truncates the sweep
- *    mid-way at a committed batch boundary — never mid-cascade — and the next
- *    night's run picks up exactly where this one stopped. No poison state.
+ *    own transaction, so a 300s function timeout stops at a committed batch
+ *    boundary and the next night's run picks up where this one stopped.
  *
- *  - Runtime is CAPPED. maxDuration is 300s; we stop starting new rules (and
- *    stop starting new batches inside a rule) after 240s. A rule cut short
- *    reports `{ partial: true, processed: n }` and an untouched rule reports
- *    `{ skipped: true }` — neither is a failure. Retention is eventually
- *    consistent by design: what's left tonight runs tomorrow.
+ *  - Runtime is CAPPED. maxDuration is 300s; no new batch starts after 240s. A
+ *    rule cut short reports `{ partial: true, processed: n }`, which is not a
+ *    failure.
  *
- * Retention windows are the ones published at /legal/privacy. Change them
- * together or the policy goes back to being fiction.
+ *  - A failing rule is caught, reported as `{ error }` and console.error'd, and
+ *    the run answers 500 so status-code monitoring sees it.
  */
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
-import { del } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { isTenantBlobUrl } from "@/lib/blob-url";
-import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
-import { auditLogRetentionWhere } from "@/lib/audit-log";
 import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
 
 export const runtime = "nodejs";
@@ -56,51 +60,8 @@ const BATCH = 1000;
 /** Stop starting new work after this, leaving 60s of the 300s budget spare. */
 const DEADLINE_MS = 240_000;
 
-// Published retention windows (app/legal/privacy/page.tsx §6). AuditLog's
-// windows live in lib/audit-log.ts (auditLogRetentionWhere): twelve months for
-// ordinary rows, six years for platform evidence — operator actions, support
-// sessions and erasure records (operator audit 5 Oct 2026, Q9).
-const EMAIL_LOG_RETENTION_MS = 365 * DAY_MS;
-/**
- * Sign-in records (LoginEvent: one row per person per device, approximate IP +
- * browser summary) are written on every sign-in since the E2E flow 9 fix (6 Oct
- * 2026). A device not signed in from for twelve months is dropped (review of
- * lane I). Keyed on lastSeenAt, which only moves at sign-in — an Auth.js
- * session that keeps rolling does not touch it — so someone who stays signed
- * in for a year loses the row and their next sign-in counts as a new device.
- */
-const LOGIN_EVENT_RETENTION_MS = 365 * DAY_MS;
-/**
- * 24h grace AFTER expiry rather than deleting on expiry: a sign-in link being
- * verified at the instant it lapses must still resolve to "this link has
- * expired" rather than "invalid link", and the row is what tells those apart.
- */
-const EXPIRED_TOKEN_GRACE_MS = DAY_MS;
 /** RateLimitHit windows are ≤1h; anything a day old is dead weight. */
 const RATE_LIMIT_HIT_RETENTION_MS = DAY_MS;
-/** Stripe's event replay window is ~30 days; 90 is a generous idempotency margin. */
-const STRIPE_EVENT_RETENTION_MS = 90 * DAY_MS;
-/** Abandoned CSV imports still hold member PII in blob storage. */
-const IMPORT_JOB_RETENTION_MS = 30 * DAY_MS;
-/**
- * ImportJob.dryRunSummary / errorLog keep verbatim CSV row content — up to five
- * MemberDrafts (name, email, phone, dateOfBirth) plus error strings that embed
- * raw addresses. On a `complete` job the row is import history we keep, so the
- * rule below would never touch it and that PII would outlive the member's own
- * Article 17 erasure, forever. These two columns are diagnostics with a
- * days-long useful life, not history: the row's counters carry the history.
- */
-const IMPORT_JOB_DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
-// There is no tenant window: closed clubs are kept (lib/tenant-lifecycle.ts).
-
-/**
- * ImportJob status vocabulary (app/api/admin/import/*): pending | preview |
- * running | complete | failed. `complete` is the only terminal success — its
- * blob is already deleted by the commit route, and the row is import history
- * the owner can still see. Everything else older than the window is an
- * abandoned job whose CSV is still sitting in blob storage.
- */
-const IMPORT_JOB_TERMINAL_STATUSES = ["complete"];
 
 type RuleResult = {
   rule: string;
@@ -108,7 +69,7 @@ type RuleResult = {
   error?: string;
   skipped?: boolean;
   /**
-   * True when the deadline cut the rule short. Not an error: every rule is
+   * True when the deadline cut the rule short. Not an error: the rule is
    * idempotent and resumes from a committed batch boundary on the next run.
    */
   partial?: boolean;
@@ -134,13 +95,12 @@ type PickModel = (tx: Prisma.TransactionClient) => BatchDeletable;
  * RETENTION_CRON_ENABLED — default OFF (security campaign iteration 2, lane M1,
  * 10 Oct 2026; authorised by Noe the same day).
  *
- * The first live run of this sweep is a one-way door, and the scheduler entry
- * in vercel.json would take it the moment a CRON_SECRET is set. So the live
- * sweep runs only when this variable is EXACTLY the string "true"; anything
- * else (unset, "1", "TRUE", " true") answers 503 `retention cron disabled`
- * after the bearer check and BEFORE any work — no reconcile, no count, no
- * delete. `?dryRun=1` is still allowed with the gate off: counts only, zero
- * deletes, and the response says the gate is off.
+ * The live sweep runs only when this variable is EXACTLY the string "true";
+ * anything else (unset, "1", "TRUE", " true") answers 503 `retention cron
+ * disabled` after the bearer check and BEFORE any work — no reconcile, no
+ * count, no delete. `?dryRun=1` is still allowed with the gate off: counts
+ * only, zero deletes, and the response says the gate is off. Since 6 Nov 2026
+ * the only thing the gate guards is the rate-limit counter prune.
  */
 function retentionEnabled(): boolean {
   return process.env.RETENTION_CRON_ENABLED === "true";
@@ -156,7 +116,7 @@ type CallReason = "not_configured" | "throttled" | "unauthorized" | "disabled" |
 
 /**
  * One line per call: the gate, the mode, the status and the reason. Never the
- * payload (counts name what a club holds; reconcile carries Stripe ids).
+ * payload (reconcile carries Stripe ids).
  */
 export async function GET(req: Request) {
   const gate = retentionEnabled() ? "on" : "off";
@@ -212,28 +172,18 @@ async function handle(req: Request, call: { reason: CallReason }) {
   const now = new Date();
   const ago = (ms: number) => new Date(now.getTime() - ms);
 
-  // `?dryRun=1`: count what every rule WOULD remove and delete nothing. The
-  // first-ever production run of this sweep is a one-way door — it purges a
-  // year of logs and 90 days of Stripe events in one pass — so the counts get
-  // read by a human before the scheduler is allowed to run it for real.
-  // Reconcile still runs (it is read-only). The bearer is still required:
-  // counts are per club.
+  // `?dryRun=1`: count what the rule WOULD remove and delete nothing.
+  // Reconcile still runs (it is read-only). The bearer is still required.
   const dryRun = dryRunRequested;
   const sweep = (pick: PickModel, where: object) =>
     dryRun ? countOnly(pick, where) : deleteInBatches(pick, where, elapsed);
 
   // Stripe reconciliation runs here rather than on its own schedule: Vercel's
   // Hobby plan allows 2 cron entries and monthly-reports + this one use both.
+  // It goes FIRST and startedAt is stamped BEFORE it, so the rate-limit prune's
+  // 240s soft cap still bounds the whole function inside maxDuration.
   //
-  // It goes FIRST and startedAt is stamped BEFORE it, deliberately. Reconcile is
-  // read-only, bounded by a 72h lookback, and cannot resume — a truncated run
-  // just misses drops. Retention is chunked and explicitly eventually consistent:
-  // whatever it doesn't reach tonight it picks up tomorrow at a committed batch
-  // boundary. So reconcile gets guaranteed time and retention absorbs the cost,
-  // and because elapsed() counts reconcile's time, retention's own 240s soft cap
-  // still bounds the whole function inside maxDuration.
-  //
-  // Never let a reconcile failure take the retention sweep down with it.
+  // Never let a reconcile failure take the prune down with it.
   let reconcile: ReconcileResult | { error: string };
   try {
     reconcile = await runStripeReconciliation();
@@ -242,47 +192,9 @@ async function handle(req: Request, call: { reason: CallReason }) {
     console.error("[cron/retention] Stripe reconciliation step failed", { error: reconcile.error });
   }
 
+  // The ONLY deletion left (see the header). Do not add a rule here that
+  // removes club data: product rule, docs/RULES.md.
   const rules: Array<{ name: string; run: () => Promise<Omit<RuleResult, "rule">> }> = [
-    {
-      name: "auditLog",
-      run: () =>
-        sweep(
-          (tx) => tx.auditLog as unknown as BatchDeletable,
-          auditLogRetentionWhere(now),
-        ),
-    },
-    {
-      name: "emailLog",
-      run: () =>
-        sweep(
-          (tx) => tx.emailLog as unknown as BatchDeletable,
-          { createdAt: { lt: ago(EMAIL_LOG_RETENTION_MS) } },
-        ),
-    },
-    {
-      name: "loginEvent",
-      run: () =>
-        sweep(
-          (tx) => tx.loginEvent as unknown as BatchDeletable,
-          { lastSeenAt: { lt: ago(LOGIN_EVENT_RETENTION_MS) } },
-        ),
-    },
-    {
-      name: "magicLinkToken",
-      run: () =>
-        sweep(
-          (tx) => tx.magicLinkToken as unknown as BatchDeletable,
-          { expiresAt: { lt: ago(EXPIRED_TOKEN_GRACE_MS) } },
-        ),
-    },
-    {
-      name: "passwordResetToken",
-      run: () =>
-        sweep(
-          (tx) => tx.passwordResetToken as unknown as BatchDeletable,
-          { expiresAt: { lt: ago(EXPIRED_TOKEN_GRACE_MS) } },
-        ),
-    },
     {
       name: "rateLimitHit",
       run: () =>
@@ -291,33 +203,6 @@ async function handle(req: Request, call: { reason: CallReason }) {
           { hitAt: { lt: ago(RATE_LIMIT_HIT_RETENTION_MS) } },
         ),
     },
-    {
-      // StripeEvent carries no createdAt — `processedAt @default(now())` is
-      // the only timestamp on the model (schema:653-658).
-      name: "stripeEvent",
-      run: () =>
-        sweep(
-          (tx) => tx.stripeEvent as unknown as BatchDeletable,
-          { processedAt: { lt: ago(STRIPE_EVENT_RETENTION_MS) } },
-        ),
-    },
-    {
-      // Chunked import uploads (lib/import-upload.ts) live 24h. An expired one
-      // that never fed a job is a stranded copy of a member CSV; chunks cascade.
-      // A consumed upload belongs to its import job and goes with it (rule f).
-      name: "importUpload",
-      run: () =>
-        sweep(
-          (tx) => tx.importUpload as unknown as BatchDeletable,
-          { expiresAt: { lt: now }, status: { not: "consumed" } },
-        ),
-    },
-    { name: "importJob", run: () => purgeAbandonedImportJobs(ago(IMPORT_JOB_RETENTION_MS), elapsed, dryRun) },
-    {
-      name: "importJobDiagnostics",
-      run: () => scrubImportJobDiagnostics(ago(IMPORT_JOB_DIAGNOSTICS_RETENTION_MS), dryRun),
-    },
-    // No tenant rule, deliberately: closed clubs are kept (see the header).
   ];
 
   const results: RuleResult[] = [];
@@ -337,10 +222,7 @@ async function handle(req: Request, call: { reason: CallReason }) {
 
   // Storage-audit hardening (2026-08-16): a failed rule must be visible to
   // status-code monitoring — 200 + ok:false is invisible to every uptime
-  // check. 500 makes Vercel's cron dashboard mark the run failed; per-rule
-  // independence above already guarantees the other rules completed, and the
-  // next nightly run re-evaluates time-relative predicates, so there is no
-  // retry-storm risk in surfacing the failure.
+  // check. 500 makes Vercel's cron dashboard mark the run failed.
   const ok = results.every((r) => !r.error);
   call.reason = dryRun ? "dry_run" : "swept";
   return NextResponse.json(
@@ -367,7 +249,7 @@ async function countOnly(pick: PickModel, where: object): Promise<{ deleted: num
   return { deleted: 0, details: { wouldDelete } };
 }
 
-// ─── Generic chunked delete ──────────────────────────────────────────────────
+// ─── Chunked delete ──────────────────────────────────────────────────────────
 
 /**
  * Delete every row matching `where`, `BATCH` rows at a time, each batch in its
@@ -397,147 +279,3 @@ async function deleteInBatches(
     if (rows.length < BATCH) return { deleted };
   }
 }
-
-// ─── Rule f — abandoned CSV import jobs (rows + their blobs) ─────────────────
-
-async function purgeAbandonedImportJobs(
-  cutoff: Date,
-  elapsed: () => number,
-  dryRun = false,
-): Promise<{ deleted: number; partial?: true; processed?: number; details: Record<string, unknown> }> {
-  const where = {
-    status: { notIn: IMPORT_JOB_TERMINAL_STATUSES },
-    createdAt: { lt: cutoff },
-    // An attendance import that STARTED writing (running, or stopped part-way
-    // as "failed") owns ledger rows, sessions and visits; its job row is what
-    // a resume or a rollback needs. Never "abandoned" by age (3 Oct 2026).
-    NOT: { source: "teamup-attendance", status: { in: ["running", "failed"] } },
-  };
-
-  if (dryRun) {
-    const wouldDelete = await withRlsBypass((tx) => tx.importJob.count({ where }));
-    return { deleted: 0, details: { wouldDelete } };
-  }
-
-  let deleted = 0;
-  let blobsDeleted = 0;
-  for (;;) {
-    if (elapsed() > DEADLINE_MS) {
-      return { deleted, partial: true, processed: deleted, details: { blobsDeleted } };
-    }
-
-    const jobs = await withRlsBypass((tx) =>
-      tx.importJob.findMany({ where, select: { id: true, tenantId: true, fileBlobUrl: true }, take: BATCH }),
-    );
-    if (jobs.length === 0) return { deleted, details: { blobsDeleted } };
-
-    // Best-effort blob cleanup BEFORE the rows go: once the row is gone the
-    // URL is unrecoverable and the CSV (member PII) is orphaned forever.
-    // Guarded by isTenantBlobUrl so legacy/data: values and anything outside
-    // the owning club's namespace never reach del() (14 Oct 2026).
-    const blobUrls = jobs.filter((j) => j.fileBlobUrl && isTenantBlobUrl(j.fileBlobUrl, j.tenantId)).map((j) => j.fileBlobUrl as string);
-    if (blobUrls.length > 0) {
-      blobsDeleted += await deleteBlobsBestEffort(blobUrls);
-    }
-    // Files uploaded in chunks live in Postgres (db-upload://<id>), not Blob.
-    blobsDeleted += await deleteDbUploadsForJobs(jobs);
-
-    const res = await withRlsBypass((tx) =>
-      tx.importJob.deleteMany({ where: { id: { in: jobs.map((j) => j.id) } } }),
-    );
-    deleted += res.count;
-
-    if (jobs.length < BATCH) return { deleted, details: { blobsDeleted } };
-  }
-}
-
-// ─── Rule f2 — scrub PII-bearing import diagnostics (all statuses) ───────────
-
-/**
- * Null `dryRunSummary` and `errorLog` on every ImportJob older than the window,
- * INCLUDING `complete` ones. Rule f above deliberately exempts `complete` jobs
- * because the row is import history the owner can still see — but that
- * exemption made the CSV row content inside these two Json columns permanent,
- * outliving the erasure of the very members it names (GDPR NEW-1). The row and
- * its counters (totalRows/importedRows/…) survive untouched; only the
- * PII-bearing diagnostics go.
- *
- * A single updateMany, not a chunked walk: it touches at most a handful of rows
- * per tenant per month and takes no deadline argument for that reason.
- *
- * Both columns are `Json?` (schema: ImportJob.errorLog / dryRunSummary), so the
- * write is `Prisma.DbNull` — plain `null` on a Json field is a Prisma type
- * error, and `Prisma.JsonNull` would store the JSON value `null` rather than
- * SQL NULL.
- */
-async function scrubImportJobDiagnostics(
-  cutoff: Date,
-  dryRun = false,
-): Promise<{ deleted: number; details: Record<string, unknown> }> {
-  const where = {
-    createdAt: { lt: cutoff },
-    OR: [{ dryRunSummary: { not: Prisma.DbNull } }, { errorLog: { not: Prisma.DbNull } }],
-  };
-  if (dryRun) {
-    const wouldScrub = await withRlsBypass((tx) => tx.importJob.count({ where }));
-    return { deleted: 0, details: { wouldScrub } };
-  }
-  const res = await withRlsBypass((tx) =>
-    tx.importJob.updateMany({
-      where,
-      data: { dryRunSummary: Prisma.DbNull, errorLog: Prisma.DbNull },
-    }),
-  );
-  // A stopped attendance import keeps its job row (a resume or a rollback
-  // needs it; rule f never purges it) but not, after this window, the
-  // uploaded file of member names and emails (acceptance review, 3 Oct 2026).
-  const stoppedAttendance = await withRlsBypass((tx) =>
-    tx.importJob.findMany({
-      where: { source: "teamup-attendance", status: "failed", createdAt: { lt: cutoff }, fileBlobUrl: { startsWith: DB_UPLOAD_PREFIX } },
-      select: { tenantId: true, fileBlobUrl: true },
-    }),
-  );
-  const uploadsDeleted = await deleteDbUploadsForJobs(stoppedAttendance);
-  return { deleted: res.count, details: { scrubbed: res.count, stoppedAttendanceUploadsDeleted: uploadsDeleted } };
-}
-
-/**
- * Delete the chunked uploads (db-upload://<id>) these import jobs point at,
- * each scoped to its own job's tenant. Chunks cascade. Best-effort like the
- * Blob delete: a failure leaves the upload for its own expiry rule.
- */
-async function deleteDbUploadsForJobs(
-  jobs: Array<{ tenantId: string; fileBlobUrl: string | null }>,
-): Promise<number> {
-  const targets = jobs
-    .filter((j) => j.fileBlobUrl?.startsWith(DB_UPLOAD_PREFIX))
-    .map((j) => ({ id: j.fileBlobUrl!.slice(DB_UPLOAD_PREFIX.length), tenantId: j.tenantId }));
-  if (targets.length === 0) return 0;
-  try {
-    const res = await withRlsBypass((tx) => tx.importUpload.deleteMany({ where: { OR: targets } }));
-    return res.count;
-  } catch (e) {
-    console.warn("[cron/retention] import upload delete failed (best-effort)", e);
-    return 0;
-  }
-}
-
-/**
- * del() the given blob URLs, swallowing failures. Blob storage is not the
- * source of truth — a failed delete must never roll back or abort a retention
- * sweep, it just leaves an orphan for the next pass to miss.
- */
-async function deleteBlobsBestEffort(urls: string[]): Promise<number> {
-  if (urls.length === 0) return 0;
-  try {
-    await del(urls);
-    return urls.length;
-  } catch (e) {
-    console.warn("[cron/retention] blob delete failed (best-effort)", e);
-    return 0;
-  }
-}
-
-// Club erasure is NOT a retention rule. It lives in lib/tenant-purge.ts
-// (`purgeTenantById`), runs only on a club's written request by an operator,
-// and is never scheduled.
