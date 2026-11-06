@@ -143,10 +143,9 @@ try {
     const day = main.getByTestId("day-view");
     await expect(day).toBeVisible();
     await expect(main.getByTestId("timetable-view-day")).toHaveAttribute("aria-pressed", "true");
-    await expect(day.getByRole("button", { name: new RegExp(`^Saturday \\d+, ${countOn(STRESS, 5)} sessions$`) })).toHaveAttribute("aria-pressed", "true");
-    const open = day.getByTestId("day-grid-cluster-open");
-    await expect(open).toBeVisible();
-    const blocks = open.locator("[data-day-grid-block]");
+    await expect(day.getByRole("tab", { name: new RegExp(`^Saturday \\d+, ${countOn(STRESS, 5)} sessions$`) })).toHaveAttribute("aria-selected", "true");
+    // The day opens with that clash listed over its grid.
+    const blocks = day.getByTestId("more-panel").getByTestId("more-row");
     await expect(blocks).toHaveCount(FIVE.length);
     const names = await blocks.evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") ?? "").replace(/^Edit /, "").split(",")[0]));
     expect([...names].sort()).toEqual(FIVE.map((s) => s.name).sort());

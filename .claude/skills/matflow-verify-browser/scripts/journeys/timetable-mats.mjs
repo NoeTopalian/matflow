@@ -229,20 +229,20 @@ try {
     // The toolbar is still one row at 1440 with the split control and its "(whole club)" label.
     const row = await main.evaluate(() => {
       const top = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().top);
-      return { arrows: top('button[aria-label="Previous week"]'), split: top('[data-testid="timetable-split-mat"]'), mats: top('[data-testid="timetable-mats"]'), hide: top('[data-testid="timetable-hide-menu"]') };
+      return { arrows: top('button[aria-label="Previous week"]'), split: top('[data-testid="timetable-split-mat"]'), mats: top('[data-testid="timetable-mats"]'), expand: top('[data-testid="timetable-expand"]') };
     });
     L.note("by-mat", "toolbar tops at 1440 (one row when they agree within a few px)", row);
     expect(Math.max(...Object.values(row)) - Math.min(...Object.values(row))).toBeLessThanOrEqual(8);
     await expect(main.getByText("Split same-time classes (whole club)")).toBeVisible();
     await shot(main, "timetable-mats-by-mat-1440");
-    // 1366: the box scrolls sideways, the page does not; with the menu hidden it fits.
+    // 1366: the box scrolls sideways, the page does not; with the timetable expanded it fits.
     await size(main, 1366);
-    await expect(wider(main)).toHaveText("Wider than this window. Scroll sideways, or hide the menu.");
+    await expect(wider(main)).toHaveText("Wider than this window. Scroll sideways, or expand the timetable.");
     fit[1366] = await noSidewaysScroll(main);
     expect(fit[1366].boxScrolls).toBe(true);
     expect(fit[1366].ok).toBe(true);
     await shot(main, "timetable-mats-by-mat-1366");
-    const hide = main.getByTestId("timetable-hide-menu");
+    const hide = main.getByTestId("timetable-expand");
     await hide.click();
     await expect(wider(main)).toHaveText("");
     fit["1366 menu hidden"] = { ...(await noSidewaysScroll(main)), spare: await spare(main) };
@@ -532,11 +532,12 @@ try {
     expect((await gridInvariants(main, { sessions: SESSIONS + 5 })).problems).toEqual([]);
     await shot(main, "timetable-mats-shared-mat");
     await weekDay(main, "sun").getByTestId("week-more").click();
-    const open = main.getByTestId("day-view").getByTestId("day-grid-cluster-open");
-    await expect(open).toBeVisible();
-    const names = await open.locator("[data-day-grid-block]").evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") ?? "").replace(/^Edit /, "").split(",")[0]));
+    // The day opens with that clash listed over its grid.
+    const rows = main.getByTestId("day-view").getByTestId("more-panel").getByTestId("more-row");
+    await expect(rows).toHaveCount(4);
+    const names = await rows.evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") ?? "").replace(/^Edit /, "").split(",")[0]));
     expect([...names].sort()).toEqual(["Share A", "Share B", "Share C", "Share D"]);
-    for (let i = 0; i < 4; i++) await expect(open.locator("[data-day-grid-block]").nth(i)).toBeVisible();
+    for (let i = 0; i < 4; i++) await expect(rows.nth(i)).toBeVisible();
     await main.getByTestId("timetable-view-week").click();
     return out;
   });

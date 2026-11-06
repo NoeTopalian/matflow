@@ -82,7 +82,7 @@ async function memberPage(browser, width, ip, member) {
 }
 
 /**
- * The staff Day view on Monday. A press before the page has hydrated is lost on the slow test link, so "Day" is
+ * The staff Day view (the one-day poster grid, as on a phone) on Monday. A press before the page has hydrated is lost on the slow test link, so "Day" is
  * pressed again until it reports pressed.
  */
 async function openMondayDayView(page) {
@@ -91,7 +91,7 @@ async function openMondayDayView(page) {
     await day.click();
     await expect(day).toHaveAttribute("aria-pressed", "true", { timeout: 2_000 });
   }).toPass({ timeout: 45_000 });
-  await page.getByRole("button", { name: /^Monday 2, / }).click();
+  await page.getByTestId("day-view").getByRole("tab", { name: /^Monday 2, / }).click();
 }
 
 /** Pinned header check: after scrolling `scroller` down, the element at the middle of each mat name is that name. */
@@ -130,49 +130,24 @@ try {
   owner = await ctx.storageState();
   await ctx.clock.setFixedTime(new Date(FROZEN));
 
-  await section("day-view", "1440 px: Monday in the Day view is one column per mat on the clock scale, every block inside its own mat's column; scrolled to the end the mat names are still at the top and on top; Shift+Tab back through Mat 2 never leaves a block under them", async () => {
+  await section("day-view", "1440 px: Monday in the Day view is the one-day poster grid in two mat columns; it starts at the day's first class, every chip is inside its own mat's column with nothing cut or overlapping, and the card stops at a readable width", async () => {
     await main.goto("/dashboard/timetable");
     await openMondayDayView(main);
-    const box = main.getByTestId("day-scroller");
-    await expect(box).toBeVisible();
-    await expect(box).toHaveAttribute("aria-label", "Day timetable");
-    const geometry = await box.evaluate((el) => {
-      const heads = [...el.querySelectorAll("[data-mat-head]")];
-      const cols = [...el.querySelectorAll("[data-day-grid-column]")];
-      const blocks = [...el.querySelectorAll("[data-day-grid-block]")].map((b) => {
-        const col = b.closest("[data-day-grid-column]");
-        const head = heads[cols.indexOf(col)];
-        const r = b.getBoundingClientRect(), h = head?.getBoundingClientRect();
-        return { label: b.getAttribute("aria-label"), inside: !!h && r.left >= h.left - 1 && r.right <= h.right + 1 };
-      });
-      return { heads: heads.map((h) => h.textContent), blocks: blocks.length, outside: blocks.filter((b) => !b.inside).map((b) => b.label) };
-    });
-    expect(geometry.heads).toEqual(["Mat 1", "Mat 2"]);
-    expect(geometry.blocks).toBe(MONDAY_N);
-    expect(geometry.outside).toEqual([]);
-    const pinned = await pinnedAfterScroll(box);
-    expect(pinned.scrolled).toBeGreaterThan(0);
-    expect(pinned.heads.every((h) => h.onTop)).toBe(true);
-    // Keyboard: from Mat 2's last block back to its 18:40 Free Mat Space; each stop clear of the pinned names.
-    const blocks = box.locator('[data-day-grid-column="' + (await box.locator("[data-mat-head]").nth(1).getAttribute("data-mat-head")) + '"] [data-day-grid-block]');
-    await blocks.last().focus();
-    const stops = [];
-    for (let i = 0; i < 12; i++) {
-      const at = await main.evaluate(() => {
-        const a = document.activeElement;
-        const box = document.querySelector('[data-testid="day-scroller"]');
-        const head = box.querySelector("[data-mat-head]").getBoundingClientRect();
-        return { label: a.getAttribute("aria-label") ?? "", top: a.getBoundingClientRect().top, headBottom: head.bottom };
-      });
-      stops.push(at);
-      if (/^Edit Free Mat Space, 18:40/.test(at.label)) break;
-      await main.keyboard.press("Shift+Tab");
-    }
-    expect(stops.at(-1).label).toMatch(/^Edit Free Mat Space, 18:40 to 19:00, Mat 2/);
-    expect(stops.filter((s) => s.top < s.headBottom - 1)).toEqual([]);
+    const day = main.getByTestId("day-view");
+    const grid = day.getByTestId("phone-day-grid");
+    await expect(grid).toHaveAttribute("data-day", "mon");
+    await expect(grid).toHaveAttribute("data-mats", "true");
+    const heads = (await grid.locator("[data-mat-head]").allTextContents()).map((h) => h.trim());
+    expect(heads).toEqual(["Mat 1", "Mat 2"]);
+    const inv = await gridInvariants(main, { sessions: MONDAY_N, grid: "phone-day-grid", within: '[data-testid="day-view"]' });
+    expect(inv.problems).toEqual([]);
+    const ticks = await grid.locator(".pg-tick").allTextContents();
+    expect(ticks[0]).toBe("06:30");
+    const card = await day.getByTestId("phone-day").evaluate((el) => Math.round(el.getBoundingClientRect().width));
+    expect(card).toBeLessThanOrEqual(881);
     await shot(main, "timetable-day-columns-day-view-1440");
     await main.getByTestId("timetable-view-week").click();
-    return { heads: geometry.heads, blocks: geometry.blocks, stops: stops.length, pinned: pinned.heads };
+    return { heads, chips: inv.chips, firstTime: ticks[0], cardWidth: card };
   });
 
   for (const width of [375, 390]) {
@@ -337,7 +312,7 @@ try {
     }
     await main.goto("/dashboard/timetable");
     await openMondayDayView(main);
-    await expect(main.getByTestId("day-scroller")).toHaveCount(0);
+    await expect(main.getByTestId("day-view").getByTestId("phone-day-grid")).not.toHaveAttribute("data-mats", "true");
     await main.getByTestId("timetable-view-week").click();
     return { stored: await storedLayout(), patches: 1 };
   });

@@ -2,11 +2,11 @@
 //
 // More than three classes at once on the staff week: two are on show and the
 // rest sit behind "+N more". Pressing it must show every one of them
-// (acceptance check 3): it opens the Day view on that day with that group
-// already open. Plan: .omc/plans/timetable-side-by-side-plan-2026-11-05.md.
+// (acceptance check 3): it opens the Day view on that day with that clash
+// already listed. Plan: .omc/plans/timetable-side-by-side-plan-2026-11-05.md.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
@@ -85,35 +85,37 @@ describe("'+N more' on the week", () => {
     expect(within(weekDay(container, "mon")).queryByTestId("week-more")).toBeNull();
   });
 
-  it("opens the Day view on that day with the group open and every class on show", () => {
+  const saturday = () => within(screen.getByTestId("day-view")).getByRole("tab", { name: /^Saturday 7, 5 sessions$/ });
+  const panel = () => within(screen.getByTestId("day-view")).queryByTestId("more-panel");
+
+  it("opens the Day view on that day with the clash listed and every class on show", () => {
     const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     fireEvent.click(within(weekDay(container, "sat")).getByTestId("week-more"));
-    const day = screen.getByTestId("day-view");
     expect(screen.getByTestId("timetable-view-day").getAttribute("aria-pressed")).toBe("true");
-    expect(within(day).getByRole("button", { name: /^Saturday 7, 5 sessions$/ }).getAttribute("aria-pressed")).toBe("true");
-    const open = within(day).getByTestId("day-grid-cluster-open");
-    const names = Array.from(open.querySelectorAll("[data-day-grid-block]")).map((b) => b.getAttribute("aria-label")?.replace(/^Edit /, "").split(",")[0]);
+    expect(saturday().getAttribute("aria-selected")).toBe("true");
+    const rows = within(panel()!).getAllByTestId("more-row");
+    const names = rows.map((r) => r.getAttribute("aria-label")?.replace(/^Edit /, "").split(",")[0]);
     expect(names.sort()).toEqual(["Kids BJJ", "Little Champs", "Parents Class", "Teens", "Tots"]);
-    expect(document.activeElement).toBe(open.querySelector("[data-day-grid-block]"));
+    expect(document.activeElement).toBe(rows[0]);
   });
 
-  it("is used once: after collapsing the group, leaving Saturday and coming back does not reopen it or take focus", () => {
+  it("is used once: after closing the list, leaving Saturday and coming back does not reopen it or take focus", async () => {
     const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     fireEvent.click(within(weekDay(container, "sat")).getByTestId("week-more"));
     const day = screen.getByTestId("day-view");
-    fireEvent.click(within(day).getByRole("button", { name: "Collapse" }));
-    expect(within(day).queryByTestId("day-grid-cluster-open")).toBeNull();
-    const friday = within(day).getByRole("button", { name: /^Friday 6\b/ });
+    fireEvent.click(within(panel()!).getByRole("button", { name: "Show fewer" }));
+    await waitFor(() => expect(panel()).toBeNull());
+    const friday = within(day).getByRole("tab", { name: /^Friday 6,/ });
     fireEvent.click(friday);
     friday.focus();
-    fireEvent.click(within(day).getByRole("button", { name: /^Saturday 7, 5 sessions$/ }));
-    expect(within(day).getByTestId("day-grid-cluster").textContent).toContain("5 classes at once");
-    expect(within(day).queryByTestId("day-grid-cluster-open")).toBeNull();
+    fireEvent.click(saturday());
+    expect(within(day).getByTestId("week-more").textContent).toContain("+3 more");
+    expect(panel()).toBeNull();
     expect(document.activeElement).toBe(friday);
     // Week, then Day again: the same.
     fireEvent.click(screen.getByTestId("timetable-view-week"));
     fireEvent.click(screen.getByTestId("timetable-view-day"));
-    expect(within(screen.getByTestId("day-view")).queryByTestId("day-grid-cluster-open")).toBeNull();
+    expect(panel()).toBeNull();
   });
 
   it("is there for a coach too: seeing what is on is not editing", () => {
@@ -121,6 +123,6 @@ describe("'+N more' on the week", () => {
     const more = within(weekDay(container, "sat")).getByTestId("week-more") as HTMLButtonElement;
     expect(more.disabled).toBe(false);
     fireEvent.click(more);
-    expect(within(screen.getByTestId("day-view")).getByTestId("day-grid-cluster-open")).toBeTruthy();
+    expect(within(panel()!).getAllByTestId("more-row")).toHaveLength(5);
   });
 });

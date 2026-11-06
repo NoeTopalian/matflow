@@ -110,13 +110,22 @@ describe("days are groups", () => {
     vi.setSystemTime(new Date(2026, 10, 8, 10, 0)); // Sunday
     const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     const sunday = weekDay(container, "sun");
-    const pill = within(sunday).getByText("Today");
-    expect(within(sunday).queryByText("—")).toBeNull();
-    // A 40 px column: the pill is the narrow one (a size down, no border, no letter-spacing), in the
-    // column's body, not its header. The browser journey measures that it stays inside 36 px.
+    // An empty day is as wide as the others while there is room, and 40 px when the week is squeezed. Both
+    // forms are in the page and the header's own width picks one (a container query; the journey measures it).
+    const pills = within(sunday).getAllByText("Today");
+    expect(pills).toHaveLength(2);
+    // Squeezed: the narrow pill (a size down, no border, no letter-spacing) in the column's body, where the
+    // dash would be. The browser journey measures that it stays inside 36 px.
+    const pill = pills.find((p) => p.closest(".pg-empty"))!;
     expect(pill.className).toContain("text-[8px]");
     expect(pill.className).not.toMatch(/\bborder\b|tracking-wide/);
-    expect(pill.closest(".pg-empty")).not.toBeNull();
+    expect(pill.parentElement!.className).toContain("@[96px]:hidden");
+    // With room: the full pill beside the name in the header, "No classes" under it, and the dash in the body.
+    const wide = sunday.querySelector<HTMLElement>('[data-empty-head="wide"]')!;
+    expect(within(wide).getByText("Today").className).toContain("tracking-wide");
+    expect(within(wide).getByText("No classes")).toBeTruthy();
+    expect(wide.className).toContain("@[96px]:flex");
+    expect(within(sunday).getByText("—").className).toContain("@[96px]:inline");
     // A day with classes keeps the full pill in its header.
     vi.setSystemTime(new Date(2026, 10, 5, 10, 0)); // Thursday
     cleanup();
@@ -286,7 +295,7 @@ describe("where the box opens", () => {
     box().scrollTop = 20; // the reader scrolls to the morning
     box().scrollLeft = 0;
     vi.setSystemTime(new Date(2026, 10, 5, 19, 5)); // 18:40 has ended, 19:00 is live: a different target
-    fireEvent.click(screen.getByTestId("timetable-hide-menu")); // any state change re-renders the page
+    fireEvent.click(screen.getByTestId("timetable-expand")); // any state change re-renders the page
     expect(weekChips(weekDay(document.body, "thu")).map((b) => b.dataset.sessionState)).toContain("ended");
     expect(box().scrollTop).toBe(20);
     expect(box().scrollLeft).toBe(0);
@@ -342,21 +351,21 @@ describe("when the week is wider than its box", () => {
     React.act(() => fire());
   };
 
-  it("says so, and offers to hide the menu where the browser can", () => {
+  it("says so, and offers to expand the timetable where the browser can", () => {
     vi.stubGlobal("CSS", { supports: () => true });
     render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     const box = screen.getByTestId("week-scroller");
     makeWider(box, true);
-    expect(screen.getByTestId("week-wider").textContent).toBe("Wider than this window. Scroll sideways, or hide the menu.");
+    expect(screen.getByTestId("week-wider").textContent).toBe("Wider than this window. Scroll sideways, or expand the timetable.");
     makeWider(box, false);
     expect(screen.getByTestId("week-wider").textContent).toBe("");
   });
 
-  it("drops the offer once the menu is hidden, and where the browser cannot hide it", () => {
+  it("drops the offer once the timetable is expanded, and where the browser cannot expand it", () => {
     vi.stubGlobal("CSS", { supports: () => true });
     const view = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     makeWider(screen.getByTestId("week-scroller"), true);
-    fireEvent.click(screen.getByTestId("timetable-hide-menu"));
+    fireEvent.click(screen.getByTestId("timetable-expand"));
     expect(screen.getByTestId("week-wider").textContent).toBe("Wider than this window. Scroll sideways.");
     view.unmount();
     vi.stubGlobal("CSS", { supports: () => false });
@@ -366,37 +375,39 @@ describe("when the week is wider than its box", () => {
   });
 });
 
-describe("the wide page and Hide menu", () => {
+describe("the wide page and Expand timetable", () => {
   const marker = (container: HTMLElement) => container.querySelector<HTMLElement>("[data-page-width]")!;
 
   it("marks the Timetable as the wide page", () => {
     const { container } = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
     expect(marker(container).dataset.pageWidth).toBe("wide");
-    expect(marker(container).dataset.hideMenu).toBeUndefined();
+    expect(marker(container).dataset.expandTimetable).toBeUndefined();
   });
 
-  it("hides the menu on a press, names the way back, and does not remember it", () => {
+  it("expands on a press (the menu and the width cap give way), names the way back, and does not remember it", () => {
     const view = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
-    const button = screen.getByTestId("timetable-hide-menu");
-    expect(button.textContent).toBe("Hide menu");
+    const button = screen.getByTestId("timetable-expand");
+    expect(button.textContent).toBe("Expand timetable");
+    expect(button.getAttribute("aria-pressed")).toBe("false");
     expect(button.hasAttribute("data-needs-has")).toBe(true);
     fireEvent.click(button);
-    expect(marker(view.container).dataset.hideMenu).toBe("true");
-    expect(button.textContent).toBe("Show menu");
+    expect(marker(view.container).dataset.expandTimetable).toBe("true");
+    expect(button.textContent).toBe("Shrink timetable");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(button);
-    expect(marker(view.container).dataset.hideMenu).toBeUndefined();
-    // A fresh visit starts with the menu showing: nothing was stored.
+    expect(marker(view.container).dataset.expandTimetable).toBeUndefined();
+    // A fresh visit starts with the menu showing and the page at its usual width: nothing was stored.
     fireEvent.click(button);
     view.unmount();
     const again = render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
-    expect(marker(again.container).dataset.hideMenu).toBeUndefined();
+    expect(marker(again.container).dataset.expandTimetable).toBeUndefined();
     expect(Object.keys(localStorage).some((k) => /menu|width/i.test(k))).toBe(false);
   });
 
-  it("cannot leave the menu hidden when there is no button to bring it back", () => {
+  it("cannot stay expanded when there is no button to bring the menu back", () => {
     const { container } = render(<TimetableManager initialClasses={[]} {...PROPS} />);
-    expect(screen.queryByTestId("timetable-hide-menu")).toBeNull();
-    expect(marker(container).dataset.hideMenu).toBeUndefined();
+    expect(screen.queryByTestId("timetable-expand")).toBeNull();
+    expect(marker(container).dataset.expandTimetable).toBeUndefined();
   });
 });
 
@@ -407,5 +418,27 @@ describe("the two new files", () => {
       expect(source, file).not.toMatch(/<button\b/);
       expect(source, file).not.toMatch(/#[0-9a-fA-F]{6}\b/);
     }
+  });
+});
+
+describe("the seven days share the width", () => {
+  it("every day is an equal share, an empty day too; a day never goes under what its lanes need", () => {
+    render(<TimetableManager initialClasses={WEEK} {...PROPS} />);
+    const columns = screen.getByTestId("week-grid").style.gridTemplateColumns;
+    // The gutter, then per day a 6 px gap and its tracks. Monday and Thursday have two lanes (half a share
+    // each, never under 82 px); Saturday has one; Tuesday, Wednesday, Friday and Sunday are empty (a whole
+    // share, giving way to 40 px when the week is squeezed).
+    expect(columns).toBe([
+      "36px",
+      "6px minmax(82px, 0.5fr) minmax(82px, 0.5fr)", // Mon
+      "6px minmax(40px, 1fr)", // Tue
+      "6px minmax(40px, 1fr)", // Wed
+      "6px minmax(82px, 0.5fr) minmax(82px, 0.5fr)", // Thu
+      "6px minmax(40px, 1fr)", // Fri
+      "6px minmax(82px, 1fr)", // Sat
+      "6px minmax(40px, 1fr)", // Sun
+    ].join(" "));
+    // No fixed maximum: the week fills its box, which is what lets "Expand timetable" make it larger.
+    expect(columns).not.toMatch(/, \d+px\)/);
   });
 });

@@ -120,9 +120,13 @@ describe("the control: Split same-time classes", () => {
     expect(screen.queryByTestId("timetable-mats-phone")).toBeNull();
   });
 
-  it("in a MatFlow support session neither the control nor the Mats button is shown", () => {
+  it("in a MatFlow support session the split is read as text with the reason, and nothing can be changed", () => {
     render(<TimetableManager initialClasses={week()} mats={MATS} supportSession {...PROPS} />);
-    expect(screen.queryByTestId("timetable-split")).toBeNull();
+    // Never invisible (Noe, 6 Nov 2026: "I don't see the option to view by mat"): what the club chose is said.
+    expect(screen.getByTestId("timetable-split-text").textContent).toBe("Split by mat");
+    expect(screen.getByTestId("timetable-split-hint").textContent).toBe("Mats and the split are the club's to set: its owner or a manager does it here.");
+    expect(screen.queryByTestId("timetable-split-mat")).toBeNull();
+    expect(screen.queryByTestId("timetable-split-time")).toBeNull();
     expect(screen.queryByTestId("timetable-mats")).toBeNull();
     expect(screen.queryByTestId("timetable-mats-phone")).toBeNull();
     // The week itself still follows the club's mats.
