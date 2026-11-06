@@ -405,7 +405,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
     <div className="space-y-4">
       <PageHeader
         title={memberName ? `Activity for ${memberName}` : "Activity"}
-        description="What's happened in your club, newest first. Select a name, class or payment to open it. Kept for one year."
+        description="What's happened in your club, newest first. Select a name, class or payment to open it."
         action={
           memberName && filters.memberId ? (
             <Link href={`/dashboard/members/${encodeURIComponent(filters.memberId)}`} className={buttonVariants({ variant: "secondary" })}>
@@ -464,7 +464,6 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
         {clock && browserZone() !== clock.timeZone ? <p className="text-xs text-tx-3">Times are shown in club time ({clock.timeZone}).</p> : null}
         {selection.ignored.length || page?.ignoredTypes.length ? <p className="text-xs text-tx-3">This link included activity types that no longer exist.</p> : null}
         {selection.dropped.length || page?.droppedTypes.length ? <p className="text-xs text-tx-3">Some activity types in this link are only visible to the owner.</p> : null}
-        {clock?.clamped && echo?.dayKey ? <p className="text-xs text-tx-3">Activity is kept for one year, so there&apos;s nothing to show before {formatDate(`${echo.dayKey}T12:00:00Z`, "UTC")}.</p> : null}
         {owner ? (
           <p className="text-xs text-tx-3">Undo puts the recorded details back as they were. Linked records (bookings, rank history, Stripe, emails) are not changed; where a change can&apos;t be put back safely the row says why.</p>
         ) : null}
@@ -549,7 +548,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
                 ) : null}
               </div>
             ) : (
-              <p className="text-center text-xs text-tx-3">That&apos;s everything. Activity is kept for one year.</p>
+              <p className="text-center text-xs text-tx-3">That&apos;s everything.</p>
             )
           ) : null}
         </div>

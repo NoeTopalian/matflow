@@ -88,7 +88,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
 
   beforeAll(async () => {
     await withRlsBypass(async (tx) => {
-      await tx.tenant.createMany({ data: [{ id: A, name: `Synthetic activity A ${STAMP}`, slug: `mfv-act-a-${STAMP}`, timezone: "Europe/London" }, { id: B, name: `Synthetic activity B ${STAMP}`, slug: `mfv-act-b-${STAMP}`, timezone: "Europe/London" }] });
+      // Club A opened two years before the rows were written, so its whole history reaches back past a year.
+      await tx.tenant.createMany({ data: [{ id: A, name: `Synthetic activity A ${STAMP}`, slug: `mfv-act-a-${STAMP}`, timezone: "Europe/London", createdAt: new Date(BASE - 730 * 24 * 3_600_000) }, { id: B, name: `Synthetic activity B ${STAMP}`, slug: `mfv-act-b-${STAMP}`, timezone: "Europe/London" }] });
       await tx.operator.create({ data: { id: OPERATOR, email: `mfv-op-${STAMP}@example.test`, name: "Synthetic Operator", passwordHash: "x" } });
       await tx.user.createMany({
         data: [
@@ -178,6 +179,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     named.supportByMeta = add("member.update", { ...byOwner, metadata: { actingAs: OPERATOR, changes: { name: { from: "B", to: "C" } } } });
     // A row of club A whose metadata points at club B's records.
     named.pointsAtB = add("attendance.self_checkin", { ...checkin, metadata: { classInstanceId: sessionB, memberId: m.other, paymentId: paymentB, actorId: m.other } });
+    // Activity is kept permanently (Noe, 6 Nov 2026): a row 400 days old is still in the feed. Club A's oldest row, so it stays last.
+    named.old = add("member.update", { ...byOwner, entityId: m.ada, createdAt: new Date(BASE - 400 * 24 * 3_600_000), metadata: { changes: { phone: { from: "1", to: "2" } } } });
     // Club B's own rows.
     add("member.update", { entityId: m.other, metadata: { changes: { name: { from: "X", to: "Other Club Person" } } } }, B);
     for (let i = 0; i < 120; i++) rows.push({ id: id(`tie${String(i).padStart(3, "0")}`), tenantId: B, action: "attendance.self_checkin", entityType: "AttendanceRecord", entityId: id("recB"), metadata: { memberId: m.other, actorId: m.other }, createdAt: new Date(BASE - 3 * 24 * 3_600_000), userId: null, operatorId: null });
@@ -409,11 +412,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("Activity feed — the database 
     as("owner");
     const before = await get(`?types=all&day=${DAY_BEFORE}`);
     expect(before.filters.dayKey).toBe(DAY_BEFORE);
-    expect(before.entries).toEqual([]);
+    // Nothing from the rows' own day; the feed carries on backwards to the 400-day-old row.
+    expect(before.entries.map((e) => e.id)).toEqual([named.old.id]);
     const onTheDay = await get(`?types=all&day=${ROW_DAY}&take=5`);
     expect(onTheDay.entries).toHaveLength(5);
     expect(onTheDay.entries[0].id).toBe(named.self.id);
     expect(onTheDay.entries.every((e) => e.dayKey === ROW_DAY)).toBe(true);
     expect(onTheDay.nextCursor).toBe(onTheDay.entries[4].id);
+  }, 120_000);
+
+  it("has no age floor: a row 400 days old is returned, and Jump to date accepts that day", async () => {
+    as("owner");
+    const oldDay = new Date(named.old.createdAt).toISOString().slice(0, 10);
+    const everything = await all("?types=all");
+    expect(everything.at(-1)!.id).toBe(named.old.id);
+    expect(everything.at(-1)!.dayKey).toBe(oldDay);
+    const jumped = await get(`?types=all&day=${oldDay}`);
+    expect(jumped.filters.dayKey).toBe(oldDay);
+    expect(jumped.entries.map((e) => e.id)).toEqual([named.old.id]);
+    // The earliest day offered is the club's first day, two years back — not a year ago.
+    expect(jumped.clock.minDayKey <= oldDay).toBe(true);
+    expect(jumped.clock).not.toHaveProperty("clamped");
+    // A manager sees it too (an ordinary member edit, not a support-session row).
+    as("manager");
+    expect((await get(`?types=all&day=${oldDay}`)).entries.map((e) => e.id)).toEqual([named.old.id]);
   }, 120_000);
 });

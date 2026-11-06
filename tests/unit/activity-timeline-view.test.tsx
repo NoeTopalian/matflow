@@ -58,7 +58,7 @@ function body(entries: FeedEntry[], over: Partial<ActivityResponse> = {}): Activ
     entries,
     nextCursor: null,
     enriched: true,
-    clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2025-11-05", clamped: false },
+    clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2024-06-01" },
     filters: { types: { view: "club", keys: [] }, member: null, class: null, payment: null, tier: null, staff: null, dayKey: null },
     ignoredTypes: [],
     droppedTypes: [],
@@ -238,7 +238,7 @@ describe("the address bar is the filter", () => {
     expect((screen.getByRole("button", { name: "Next day" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("Jump to date does nothing until the club's day is known, and keeps a typed date inside the year the log holds", async () => {
+  it("Jump to date does nothing until the club's day is known, and keeps a typed date between the club's first day and today", async () => {
     let release: (answer: { status: number; body: unknown }) => void = () => {};
     respond = () => new Promise((resolve) => (release = resolve));
     renderPage();
@@ -252,10 +252,14 @@ describe("the address bar is the filter", () => {
     });
     await loaded();
     const date = screen.getByLabelText("Jump to date") as HTMLInputElement;
-    expect([date.min, date.max]).toEqual(["2025-11-05", "2026-11-05"]);
-    // Earlier than the log reaches: the first day it holds. Later than today: today, which is no day at all.
+    // Activity is kept permanently: the earliest day is the club's first day (2024-06-01 here), not a year ago.
+    expect([date.min, date.max]).toEqual(["2024-06-01", "2026-11-05"]);
+    // A day more than a year back is kept as typed.
+    fireEvent.change(date, { target: { value: "2025-10-01" } });
+    expect(window.location.search).toBe("?day=2025-10-01");
+    // Earlier than the club began: its first day. Later than today: today, which is no day at all.
     fireEvent.change(date, { target: { value: "2020-01-01" } });
-    expect(window.location.search).toBe("?day=2025-11-05");
+    expect(window.location.search).toBe("?day=2024-06-01");
     expect((screen.getByRole("button", { name: "Previous day" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(date, { target: { value: "2030-01-01" } });
     expect(window.location.search).toBe("");
@@ -275,16 +279,17 @@ describe("the address bar is the filter", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("says what a link left out, and when a date was before the log began", async () => {
+  it("says what a link left out, and never says activity is kept for only a year", async () => {
     window.history.replaceState(null, "", "/dashboard/activity?types=checkin,bogus,staff&day=2020-01-01");
-    respond = () => ({ status: 200, body: body([], { clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2025-11-05", clamped: true }, filters: { types: { view: null, keys: ["checkin"] }, member: null, class: null, payment: null, tier: null, staff: null, dayKey: "2025-11-05" } }) });
+    respond = () => ({ status: 200, body: body([], { clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2024-06-01" }, filters: { types: { view: null, keys: ["checkin"] }, member: null, class: null, payment: null, tier: null, staff: null, dayKey: "2020-01-01" } }) });
     renderPage("manager", "u_manager");
     await loaded();
     // Only what this person may see is asked for; what was left out is said by the page, not learnt from the answer.
     expect(lastQuery().get("types")).toBe("checkin");
     expect(screen.getByText("This link included activity types that no longer exist.")).toBeTruthy();
     expect(screen.getByText("Some activity types in this link are only visible to the owner.")).toBeTruthy();
-    expect(screen.getByText(/nothing to show before 5 Nov 2025/)).toBeTruthy();
+    // Activity is kept permanently (Noe, 6 Nov 2026): no "kept for one year" anywhere, and no clamp note.
+    expect(screen.queryByText(/one year|nothing to show before/)).toBeNull();
   });
 
   it("a class or payment that arrived by link is a chip that can be taken off", async () => {
@@ -467,7 +472,7 @@ describe("what is drawn when there is nothing, or something went wrong", () => {
     // The first new row takes the focus (its first link), so a keyboard carries on from there — the button has gone.
     expect(document.activeElement?.closest("[data-entry-id]")?.getAttribute("data-entry-id")).toBe("a3");
     expect(document.activeElement?.tagName).toBe("A");
-    expect(screen.getByText("That's everything. Activity is kept for one year.")).toBeTruthy();
+    expect(screen.getByText("That's everything.")).toBeTruthy();
     expect(new URL(activityCalls().at(-1)!.url, "http://x").searchParams.get("cursor")).toBe("a2");
   });
 });

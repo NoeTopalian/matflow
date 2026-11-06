@@ -329,7 +329,8 @@ export type ActivityResponse = {
   nextCursor: string | null;
   /** False when names could not be loaded: every entry is its plain label. */
   enriched: boolean;
-  clock: { timeZone: string; todayKey: string; minDayKey: string; clamped: boolean };
+  /** `minDayKey` is the club's first day: activity is kept permanently, so nothing older is hidden. */
+  clock: { timeZone: string; todayKey: string; minDayKey: string };
   filters: {
     types: { view: string | null; keys: string[] };
     /** `name: null` means the id is not a record of this club (removed, or never was). */

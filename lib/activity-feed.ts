@@ -304,7 +304,7 @@ type PaymentInfo = { id: string; memberId: string | null; amountPence: number; c
 /** Names for the ids a page of rows carries. Built once per page by `loadLookups`. */
 export type ActivityLookups = {
   members: Map<string, { name: string; erased: boolean }>;
-  /** A hard-deleted member's name, from their own "deleted" row (kept for the year the log lives). */
+  /** A hard-deleted member's name, from their own "deleted" row (kept permanently, like the rest of the log). */
   deletedMemberNames: Map<string, string>;
   classes: Map<string, { name: string }>;
   sessions: Map<string, { classId: string; className: string; date: Date; startTime: string }>;
@@ -854,7 +854,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return by ? sentence(by, " added ", child) : sentence(child, " was added");
     }
     case "member.delete": {
-      // From PR C the deleted person's name is recorded on this row, and only this row, for the year the log is kept.
+      // From PR C the deleted person's name is recorded on this row, and only this row; the log is kept permanently.
       const name = str(m.name)?.trim() || null;
       return who ? sentence(who, " deleted ", name ?? "a member") : sentence(name ?? "A member", " was deleted");
     }

@@ -275,7 +275,7 @@ try {
     await expect(main.getByTestId("activity-status")).toHaveText(/^\d+ more loaded$/, SLOW);
     expect(await rows(main).count()).toBeGreaterThan(50);
     expect(await main.evaluate(() => document.activeElement?.tagName)).toBe("A");
-    await expect(main.getByText("That's everything. Activity is kept for one year.")).toBeVisible();
+    await expect(main.getByText("That's everything.", { exact: true })).toBeVisible();
     return { rows: await rows(main).count() };
   });
 
