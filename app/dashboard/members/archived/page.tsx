@@ -41,7 +41,8 @@ export default async function ArchivedMembersPage() {
       />
       {total > rows.length && (
         <p className="mb-3 text-[13px] text-tx-3">
-          Showing the {rows.length.toLocaleString("en-GB")} most recent of {total.toLocaleString("en-GB")} archived members. Search for anyone older under Settings → Data requests.
+          Showing the {rows.length.toLocaleString("en-GB")} most recent of {total.toLocaleString("en-GB")} archived members.
+          {session!.user.role === "owner" ? " Search for anyone older under Settings → Data requests." : ""}
         </p>
       )}
       {rows.length === 0 ? (

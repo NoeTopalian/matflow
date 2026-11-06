@@ -131,7 +131,7 @@ export async function archiveMember(
 }
 
 export type RestoreMemberOutcome =
-  | { kind: "ok"; name: string; restoredKidIds: string[]; subscriptionEnding: boolean }
+  | { kind: "ok"; name: string; restoredKidIds: string[]; subscriptionEnding: boolean; parentErased?: boolean }
   | { kind: "not-found" }
   | { kind: "race" }
   /** Already current (a second Restore): nothing to do, not an error. */
@@ -159,13 +159,24 @@ export async function restoreMember(
   // response) finds the member already current and changes nothing.
   if (!member.archivedAt) return { kind: "already-current", name: member.name };
   if (ERASED_EMAIL.test(member.email)) return { kind: "erased" };
+  // Lock order (review, 6 Nov 2026): the same rows the archive route locks —
+  // the member, its children and, for a child, its parent — in ONE statement,
+  // FOR UPDATE, in id order, exactly as DELETE /api/members/[id] does. Two
+  // writers taking overlapping rows in the same order cannot deadlock.
+  const locked = await tx.$queryRaw<{ id: string; name: string; email: string; archivedAt: Date | null }[]>`
+    SELECT "id", "name", "email", "archivedAt" FROM "Member"
+    WHERE "tenantId" = ${where.tenantId}
+      AND ("id" = ${member.id} OR "parentMemberId" = ${member.id} OR "id" = ${member.parentMemberId ?? member.id})
+    ORDER BY "id"
+    FOR UPDATE
+  `;
+  let parentErased = false;
   if (member.parentMemberId) {
-    // FOR SHARE on the guardian, so a concurrent archive of the parent waits
-    // for this restore (or this restore sees the parent archived).
-    const [parent] = await tx.$queryRaw<{ name: string; archivedAt: Date | null }[]>`
-      SELECT "name", "archivedAt" FROM "Member" WHERE "id" = ${member.parentMemberId} AND "tenantId" = ${where.tenantId} FOR SHARE
-    `;
-    if (parent?.archivedAt) return { kind: "parent-archived", parentName: parent.name };
+    const parent = locked.find((r) => r.id === member.parentMemberId);
+    // An ERASED parent is no guardian any more: the child comes back as if it
+    // had none, and staff are told to link it to another parent if needed.
+    if (parent && ERASED_EMAIL.test(parent.email)) parentErased = true;
+    else if (parent?.archivedAt) return { kind: "parent-archived", parentName: parent.name };
   }
   const at = new Date(member.archivedAt.getTime());
   const done = await tx.member.updateMany({
@@ -185,15 +196,37 @@ export async function restoreMember(
       data: { archivedAt: null, archivedById: null },
     });
   }
-  // Billing: did the removal set a card subscription to end? The archive's own
-  // audit row says (stripeSubscriptionsCancelled); restoring does not restart it.
-  const archiveRow = await tx.auditLog.findFirst({
+  // Billing: did the removal set a card subscription to end, for this member
+  // or a child coming back with them? The archive's audit row says: the
+  // parent route records the ids it cancelled (stripeCancelledMemberIds), the
+  // child route its own count. A child archived WITH a parent is found in the
+  // parent's row. Restoring does not restart billing.
+  const comingBack = new Set([member.id, ...kids.map((k) => k.id)]);
+  const ownRow = await tx.auditLog.findFirst({
     where: { tenantId: where.tenantId, entityId: member.id, action: { in: ["member.archive", "member.child.archive"] } },
     orderBy: { createdAt: "desc" },
     select: { metadata: true },
   });
-  const cancelled = Number((archiveRow?.metadata as { stripeSubscriptionsCancelled?: unknown } | null)?.stripeSubscriptionsCancelled ?? 0);
-  return { kind: "ok", name: member.name, restoredKidIds: kids.map((k) => k.id), subscriptionEnding: cancelled > 0 };
+  const viaParent = member.parentMemberId
+    ? await tx.auditLog.findFirst({
+        where: { tenantId: where.tenantId, entityId: member.parentMemberId, action: "member.archive", createdAt: { gte: new Date(at.getTime() - 60_000) } },
+        orderBy: { createdAt: "desc" },
+        select: { metadata: true },
+      })
+    : null;
+  const ending = (row: { metadata: unknown } | null) => {
+    const m = (row?.metadata ?? null) as { stripeCancelledMemberIds?: unknown; stripeSubscriptionsCancelled?: unknown } | null;
+    if (!m) return false;
+    if (Array.isArray(m.stripeCancelledMemberIds)) return m.stripeCancelledMemberIds.some((id) => typeof id === "string" && comingBack.has(id));
+    return Number(m.stripeSubscriptionsCancelled ?? 0) > 0;
+  };
+  return {
+    kind: "ok",
+    name: member.name,
+    restoredKidIds: kids.map((k) => k.id),
+    subscriptionEnding: ending(ownRow) || ending(viaParent),
+    ...(parentErased ? { parentErased: true } : {}),
+  };
 }
 
 export async function deleteMemberCascade(

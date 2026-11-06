@@ -34,6 +34,7 @@ import { parseTeamUp } from "@/lib/importers/teamup";
 import { planRefresh, planRefreshRollback, REFRESH_MEMBER_SELECT } from "@/lib/importers/teamup-refresh";
 import { POST as restorePOST } from "@/app/api/members/[id]/restore/route";
 import { PATCH as memberPATCH } from "@/app/api/members/[id]/route";
+import { POST as cardRevokePOST } from "@/app/api/members/[id]/card/revoke/route";
 import { DELETE as staffDELETE } from "@/app/api/staff/[id]/route";
 import { POST as reactivatePOST } from "@/app/api/staff/[id]/reactivate/route";
 import { GET as subjectsGET } from "@/app/api/admin/dsar/subjects/route";
@@ -376,6 +377,9 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     as(ids.owner, "owner");
     const patch = (await memberPATCH(new Request(`https://test.local/api/members/${pId}`, { method: "PATCH", headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" }, body: JSON.stringify({ phone: "07000 999999" }) }), params(pId))) as unknown as { status: number };
     expect(patch.status).toBe(409);
+    as(ids.owner, "owner");
+    const revoke = (await cardRevokePOST(new Request(`https://test.local/api/members/${pId}/card/revoke`, { method: "POST", headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" }, body: "{}" }), params(pId))) as unknown as { status: number };
+    expect(revoke.status).toBe(409);
     // The parent comes back with the child; a second restore is a no-op answered 200.
     expect((await restore(pId)).status).toBe(200);
     const again = await restore(pId);

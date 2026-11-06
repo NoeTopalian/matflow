@@ -62,7 +62,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (outcome.kind === "race") {
       return NextResponse.json({ error: "This member was changed by someone else. Reload and try again." }, { status: 409 });
     }
-    return NextResponse.json({ success: true, restoredKids: outcome.restoredKidIds.length, subscriptionEnding: outcome.subscriptionEnding });
+    return NextResponse.json({
+      success: true,
+      restoredKids: outcome.restoredKidIds.length,
+      subscriptionEnding: outcome.subscriptionEnding,
+      ...(outcome.parentErased ? { parentErased: true, note: "Their parent's personal data was erased. Link them to another parent if they need one." } : {}),
+    });
   } catch {
     return NextResponse.json({ error: "Couldn't restore this member. Try again." }, { status: 500 });
   }

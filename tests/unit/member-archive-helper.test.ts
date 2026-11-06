@@ -116,8 +116,25 @@ describe("restoreMember", () => {
     (erased as Record<string, unknown>).email = "deleted-e1@deleted.invalid";
     expect(await restoreMember(fakeTx([erased]) as never, { id: "e1", tenantId: "t1" })).toEqual({ kind: "erased" });
     const tx = fakeTx([row("p", { archivedAt: AT }), row("k", { parentMemberId: "p", accountType: "kids", archivedAt: new Date("2026-01-01") })]);
-    tx.$queryRaw.mockResolvedValueOnce([{ name: "Parent P", archivedAt: AT }] as never);
+    tx.$queryRaw.mockResolvedValueOnce([{ id: "k", name: "k", email: "k@example.test", archivedAt: AT }, { id: "p", name: "Parent P", email: "p@example.test", archivedAt: AT }] as never);
     expect(await restoreMember(tx as never, { id: "k", tenantId: "t1" })).toEqual({ kind: "parent-archived", parentName: "Parent P" });
+    // Locked in ONE statement, in id order (the archive route's order).
+    expect(String((tx.$queryRaw.mock.calls as unknown as unknown[][])[0][0])).toMatch(/ORDER BY "id"[\s\S]*FOR UPDATE/);
+  });
+
+  it("a child whose parent was ERASED comes back as if it had none, and says so", async () => {
+    const rows = [row("p", { archivedAt: AT }), row("k", { parentMemberId: "p", accountType: "kids", archivedAt: new Date("2026-01-01") })];
+    const tx = fakeTx(rows);
+    tx.$queryRaw.mockResolvedValueOnce([{ id: "k", name: "k", email: "k@example.test", archivedAt: new Date("2026-01-01") }, { id: "p", name: "Deleted member", email: "deleted-p@deleted.invalid", archivedAt: AT }] as never);
+    expect(await restoreMember(tx as never, { id: "k", tenantId: "t1" })).toMatchObject({ kind: "ok", parentErased: true });
+    expect(rows[1].archivedAt).toBeNull();
+  });
+
+  it("billing: a child archived WITH its parent reads the parent's archive row", async () => {
+    const tx = fakeTx([row("p", { archivedAt: AT }), row("k", { parentMemberId: "p", accountType: "kids", archivedAt: AT })]);
+    tx.$queryRaw.mockResolvedValueOnce([{ id: "k", name: "k", email: "k@example.test", archivedAt: AT }, { id: "p", name: "p", email: "p@example.test", archivedAt: null }] as never);
+    tx.auditLog.findFirst.mockResolvedValueOnce(null as never).mockResolvedValueOnce({ metadata: { stripeCancelledMemberIds: ["k"] } } as never);
+    expect(await restoreMember(tx as never, { id: "k", tenantId: "t1" })).toMatchObject({ kind: "ok", subscriptionEnding: true });
   });
 
   it("restoring a parent never brings back a child erased since", async () => {

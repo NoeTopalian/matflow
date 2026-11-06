@@ -26,6 +26,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { refuseSupportSession } from "@/lib/support-session";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 export const runtime = "nodejs";
 
@@ -112,6 +113,7 @@ export async function PUT(
   const authz = await authoriseTarget(memberId);
   if (!authz.ok) return authz.response;
   const { tenantId, userId, isSelf } = authz;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   let body: unknown;
   try {
@@ -218,6 +220,7 @@ export async function DELETE(
   const authz = await authoriseTarget(memberId);
   if (!authz.ok) return authz.response;
   const { tenantId, userId, isSelf } = authz;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   try {
     const removed = await withTenantContext(tenantId, async (tx) => {

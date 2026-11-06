@@ -69,7 +69,7 @@ export function MemberSearchPicker({
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { members?: Option[] };
         if (controller.signal.aborted) return;
-        setState({ kind: "results", options: (data.members ?? []).slice(0, MAX_RESULTS).map((m) => ({ id: m.id, name: m.name, email: m.email, status: m.status })) });
+        setState({ kind: "results", options: (data.members ?? []).slice(0, MAX_RESULTS).map((m) => ({ id: m.id, name: (m as { archivedAt?: string | null }).archivedAt ? `${m.name} (archived)` : m.name, email: m.email, status: m.status })) });
         setActive(0);
       } catch {
         // A failed search is said to be one — never shown as "no member matches".

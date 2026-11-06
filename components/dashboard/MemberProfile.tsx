@@ -1000,7 +1000,7 @@ export default function MemberProfile({
               - Read-only staff (coach) just see the picture or initials.
               - Picture falls back to deterministic initials seeded by member.id. */}
           <div className="shrink-0">
-            {canEdit ? (
+            {canEdit && !member.archivedAt ? (
               <AvatarUploader
                 memberId={member.id}
                 name={member.name}

@@ -36,7 +36,7 @@ export default function ArchivedMemberBanner({
     setError(null);
     try {
       const res = await fetch(`/api/members/${encodeURIComponent(memberId)}/restore`, { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; restoredKids?: number; subscriptionEnding?: boolean };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; restoredKids?: number; subscriptionEnding?: boolean; note?: string };
       if (!res.ok) {
         setError(data.error ?? "Couldn't restore this member. Try again.");
         return;
@@ -44,7 +44,8 @@ export default function ArchivedMemberBanner({
       const kids = data.restoredKids ?? 0;
       const who = kids > 0 ? `${name} and ${kids} ${kids === 1 ? "child" : "children"} restored` : `${name} restored`;
       // Remove set their card subscription to end; Restore does not restart billing.
-      toast(data.subscriptionEnding ? `${who}. Their card subscription is still set to end, so set billing up again.` : who, "success");
+      const billing = data.subscriptionEnding ? " Their card subscription is still set to end, so set billing up again." : "";
+      toast(`${who}.${billing}${data.note ? ` ${data.note}` : ""}`, "success");
       router.refresh();
     } catch {
       setError("Couldn't reach MatFlow. Check your connection and try again.");

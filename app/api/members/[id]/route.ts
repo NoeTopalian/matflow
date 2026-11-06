@@ -701,6 +701,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // subscription was flagged cancel_at_period_end. That is reversible in
   // Stripe and only touches the member the owner asked to remove.
   let stripeSubscriptionsCancelled = 0;
+  // Whose card subscriptions this removal set to end (the parent, cascade kids), for Restore's billing warning.
+  const stripeCancelledMemberIds: string[] = [];
   try {
     const preflight = await withTenantContext(session.user.tenantId, async (tx) => {
       const target = await tx.member.findFirst({
@@ -765,6 +767,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         );
       }
       stripeSubscriptionsCancelled += 1;
+      stripeCancelledMemberIds.push(leaving.id);
     }
   } catch {
     return NextResponse.json(
@@ -802,6 +805,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
             kidsAffected: o.kidsAffected,
             ...(strategy ? { strategy: strategy.kind, kidIds: o.kidIds } : {}),
             stripeSubscriptionsCancelled,
+            stripeCancelledMemberIds,
           },
           req,
         });

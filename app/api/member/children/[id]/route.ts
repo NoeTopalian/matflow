@@ -263,6 +263,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // Same fail-closed contract as app/api/members/[id]/route.ts, simplified to
   // the single-member case: a kid can never itself be a parent, so there is no
   // cascade fan-out to consider here. If Stripe refuses, we refuse the delete.
+  // Restore's billing warning reads this from the archive row (PR 3 review).
+  let stripeSubscriptionsCancelled = 0;
   try {
     const kid = await withTenantContext(tenantId, async (tx) => {
       const found = await tx.member.findFirst({
@@ -305,6 +307,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           cancelResult.status,
         );
       }
+      stripeSubscriptionsCancelled = 1;
     }
   } catch (e) {
     return apiError(
@@ -333,7 +336,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           action: "member.child.archive",
           entityType: "Member",
           entityId: childId,
-          metadata: { parentMemberId, childName: o.name },
+          metadata: { parentMemberId, childName: o.name, stripeSubscriptionsCancelled },
           req,
         });
       }

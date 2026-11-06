@@ -582,8 +582,13 @@ export function inStatusView(
   f: StatusFilter,
   month: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart"> = defaultClubMonthWindow(),
 ): boolean {
-  // PR 3: an archived member is in the movement drill-throughs only.
-  if (m.archivedAt) return !!MOVEMENT_FILTERS[f] && !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
+  // PR 3: an archived member is listed only where a count includes them: the
+  // movement drill-throughs and the two debt chips (a debt is never hidden).
+  if (m.archivedAt) {
+    if (f === "other-owing") return !!m.otherOwing;
+    if (f === "failed-to-reconcile") return !!m.failedToReconcile;
+    return !!MOVEMENT_FILTERS[f] && !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
+  }
   // Payers overdue (review L2): active and taster accounts that owe, of ANY
   // account type — a guardian who pays is a debt, never dropped — so this
   // view is decided before the guardian and cancelled rules below.

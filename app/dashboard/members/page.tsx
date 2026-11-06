@@ -223,7 +223,9 @@ export default async function MembersPage({ searchParams }: Props) {
   // rows are added for the drill-throughs alone, tagged Archived and linked to
   // the profile, so a count and its list always agree.
   const listedIds = new Set(members.map((m) => m.id));
-  const archivedMoverIds = [...movedBy.keys()].filter((id) => !listedIds.has(id));
+  // The same for the two debt chips: an archived member who still owes is in
+  // their counts (lib/overdue otherOwingCandidateWhere), so they are listed too.
+  const archivedMoverIds = [...new Set([...movedBy.keys(), ...otherOwingIds, ...toReconcileIds])].filter((id) => !listedIds.has(id));
   const archivedMovers: MemberRow[] = archivedMoverIds.length === 0
     ? []
     : (await withTenantContext(session!.user.tenantId, (tx) =>
@@ -243,6 +245,7 @@ export default async function MembersPage({ searchParams }: Props) {
         cancelledAt: m.cancelledAt ? m.cancelledAt.toISOString() : null,
         archivedAt: m.archivedAt ? m.archivedAt.toISOString() : null,
         moved: movedBy.get(m.id),
+        ...(otherOwingIds.has(m.id) ? { otherOwing: true } : toReconcileIds.has(m.id) ? { failedToReconcile: true } : {}),
       }));
   const listed = [...members.map((m) => {
     const flagged = otherOwingIds.has(m.id)
