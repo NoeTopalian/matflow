@@ -20,8 +20,11 @@
  *    `memberId` is the member, whose `memberIds` include them, or whose
  *    `sourceKey` is their source record key (`Member.externalRef`) is removed
  *    from its list; the member's id is removed from id lists.
- * Entries that carry only a name or an address (no id, no key) are left: see
- * the open question in docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md §3.
+ * Entries that carry only a name or an address (no id, no key) are left here,
+ * for an ordinary deletion: see the open question in
+ * docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md §3. An ERASURE removes those too,
+ * from errorLog and dryRunSummary of every job, and takes the member's rows out
+ * of the kept files (lib/importers/import-erasure.ts, 6 Nov 2026).
  *
  * Runs inside the caller's transaction (the member deletion or the DSAR
  * erasure), tenant-scoped, BEFORE the member row's externalRef is nulled.

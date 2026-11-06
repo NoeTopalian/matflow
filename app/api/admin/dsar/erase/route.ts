@@ -40,6 +40,11 @@
  *   - ImportSourceMapping (kind=person) — the owner's decision that a source
  *     person is this member; its sourceKey embeds their source email and name
  *   - Member.externalRef / unverifiedEmail — both hold the source identity
+ *   - Stored import files — every kept file of the club rewritten without the
+ *     rows whose email or source key is the member's (6 Nov 2026: files are
+ *     kept, so the erasure must reach them); ImportJob.errorLog and
+ *     dryRunSummary — every entry naming the member removed, by id, source
+ *     key, email or name (lib/importers/import-erasure.ts)
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
@@ -57,6 +62,7 @@ import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
+import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, type ErasureSubject } from "@/lib/importers/import-erasure";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -388,7 +394,41 @@ export async function POST(req: Request) {
     };
   });
 
+  // Kept import data (6 Nov 2026: nothing is deleted automatically, so import
+  // files and their diagnostics stay). The subject's rows come out of every
+  // stored import file of the club HERE, before the database erasure: a file
+  // store call is a network call and cannot join the transaction below. A file
+  // that names the subject and cannot be rewritten refuses the whole erasure.
+  const importSubject: ErasureSubject = {
+    memberId,
+    sourceKey: originalExternalRef,
+    email: originalEmail && !isSynthesisedEmail(originalEmail) ? originalEmail : null,
+    name: member.name,
+  };
+  let importFiles: { files: number; rows: number };
+  try {
+    importFiles = await eraseSubjectFromImportFiles(tenantId, importSubject);
+  } catch (err) {
+    console.error("[dsar/erase] import files could not be rewritten; nothing else was erased", err);
+    return NextResponse.json(
+      {
+        error:
+          "Erasure stopped: the member's rows could not be removed from a stored import file, so nothing else was erased. " +
+          (stripeCancelOutcome.performed ? "The member's Stripe subscription is already set to stop renewing. " : "") +
+          "Try again.",
+      },
+      { status: 500 },
+    );
+  }
+  // Counted here, written in the transaction below (the fulfilment record goes first).
+  const importDiagnosticsEntries = await withTenantContext(tenantId, (tx) =>
+    eraseSubjectFromImportDiagnostics(tx, tenantId, importSubject, { dryRun: true }),
+  );
+
   const erasedCounts = {
+    importFilesRewritten: importFiles.files,
+    importFileRowsRemoved: importFiles.rows,
+    importDiagnosticsEntriesRemoved: importDiagnosticsEntries,
     memberPhotos: scope.photos.length,
     signedWaiversScrubbed: scope.waivers.length,
     loginEvents: scope.loginEvents,
@@ -495,6 +535,8 @@ export async function POST(req: Request) {
     await tx.importSourceMapping.deleteMany({ where: personMappingWhere });
     // The import records keep no trace of the subject: review list, exceptions, kept lists (25 and 27 Oct 2026).
     await scrubImportConflictsFor(tx, tenantId, memberId, originalExternalRef);
+    // …and the kept diagnostics of every import, attendance included, name-only entries too (6 Nov 2026).
+    await eraseSubjectFromImportDiagnostics(tx, tenantId, importSubject);
 
     await tx.member.update({
       where: { id: memberId },

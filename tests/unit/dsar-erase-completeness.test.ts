@@ -464,6 +464,9 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(body.memberId).toBe(MEMBER_ID);
     expect(body.erasedAt).toEqual(expect.any(String));
     expect(body.erased).toEqual({
+      importFilesRewritten: 0,
+      importFileRowsRemoved: 0,
+      importDiagnosticsEntriesRemoved: 0,
       memberPhotos: 2,
       signedWaiversScrubbed: 3,
       loginEvents: 4,
@@ -477,6 +480,29 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
       importedBookings: 12,
       importSourceMappings: 1,
     });
+  });
+
+  it("clears the subject from kept import diagnostics (errorLog, dryRunSummary), name-only entries included, and counts it in the audit row", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    const job = {
+      id: "job-1",
+      source: "teamup",
+      manifest: null,
+      fileBlobUrl: "",
+      errorLog: [{ row: 2, reason: "Duplicate email alice@example.com" }, { row: 3, reason: "Missing plan" }],
+      dryRunSummary: { drafts: [{ name: "Alice Smith", phone: "07700 900111" }, { name: "Bob Jones" }] },
+    };
+    memberFindFirstMock.mockResolvedValue({ id: MEMBER_ID, status: "active", email: ORIGINAL_EMAIL, name: "Alice Smith", stripeSubscriptionId: "sub_123", externalRef: EXTERNAL_REF });
+    // The file walk asks only for jobs with a stored file; this one has none.
+    vi.mocked(prisma.importJob.findMany).mockImplementation((async (args: { where: { NOT?: unknown } }) => (args.where.NOT ? [] : [job])) as never);
+    const res = await erase();
+    expect(res.status).toBe(200);
+    const update = vi.mocked(prisma.importJob.updateMany).mock.calls.map(([a]) => a as { where: { id: string }; data: Record<string, unknown> }).find((a) => "errorLog" in a.data);
+    expect(update?.where).toMatchObject({ id: "job-1", tenantId: TENANT_ID });
+    expect(update?.data.errorLog).toEqual([{ row: 3, reason: "Missing plan" }]);
+    expect(update?.data.dryRunSummary).toEqual({ drafts: [{ name: "Bob Jones" }] });
+    const fulfilment = logAuditMock.mock.calls.map(([a]) => a as { action: string; metadata: { erasedCounts: Record<string, number> } }).find((a) => a.action === "member.dsar_erase");
+    expect(fulfilment?.metadata.erasedCounts).toMatchObject({ importDiagnosticsEntriesRemoved: 2, importFilesRewritten: 0, importFileRowsRemoved: 0 });
   });
 
   it("records the erase counts in the pre-erase audit row", async () => {

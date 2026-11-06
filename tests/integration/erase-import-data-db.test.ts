@@ -1,0 +1,118 @@
+// A member's erasure reaches the import data MatFlow keeps (6 Nov 2026), on the real database.
+//
+// Import files and their diagnostics are no longer deleted after 30 days, so the erasure
+// (app/api/admin/dsar/erase) must take the subject out of them: the stored file is rewritten
+// without their rows, and every entry naming them leaves ImportJob.errorLog and dryRunSummary,
+// name-only entries included. Another member's rows and entries stay.
+//
+// The file is a real chunked upload (db-upload://, private Postgres storage). Synthetic club only
+// (slug erim-…), created here and removed in afterAll. Runs through the guarded runner on the TEST
+// branch, as the owner role and as matflow_app; skips without a database.
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHash } from "node:crypto";
+
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({ status: init?.status ?? 200, json: async () => body, headers: new Headers(init?.headers) }),
+  },
+}));
+vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
+vi.mock("@/lib/email", () => ({ sendEmail: vi.fn(async () => ({ ok: false, logId: "mail-dark" })) }));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
+}));
+const gate = vi.hoisted(() => ({ current: null as null | { tenantId: string; userId: string } }));
+const sessionOf = () => (gate.current ? { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } : null);
+vi.mock("@/auth", () => ({ auth: vi.fn(async () => sessionOf()), signIn: vi.fn(), signOut: vi.fn(), handlers: {} }));
+vi.mock("@/lib/api-authz", async (importOriginal) => {
+  const ok = async () => {
+    if (!gate.current) throw new Error("no club in scope");
+    return { ok: true, tenantId: gate.current.tenantId, userId: gate.current.userId, session: sessionOf() };
+  };
+  return { ...(await importOriginal<typeof import("@/lib/api-authz")>()), requireApiOwner: vi.fn(ok), requireApiOwnerOrManager: vi.fn(ok), requireApiRole: vi.fn(ok) };
+});
+
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { readImportFile } from "@/lib/import-storage";
+import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+const STAMP = `erim${Date.now().toString(36)}`;
+const ADA = { name: "Erim Ada Obi", email: `${STAMP}-ada@example.test` };
+const BEN = { name: "Erim Ben Ray", email: `${STAMP}-ben@example.test` };
+const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+
+describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", () => {
+  let tenantId = "";
+  let userId = "";
+  let adaId = "";
+  let jobId = "";
+  let fileUrl = "";
+
+  beforeAll(async () => {
+    const csv = Buffer.from(`Customer Name,Customer Email,Phone\n${ADA.name},${ADA.email},07700 900111\n${BEN.name},${BEN.email},07700 900222\n`, "utf8");
+    await withRlsBypass(async (tx) => {
+      const t = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: STAMP, timezone: "Europe/London", onboardingCompleted: true } });
+      const u = await tx.user.create({ data: { tenantId: t.id, email: `${STAMP}-owner@example.test`, name: "Erim Owner", role: "owner", passwordHash: "x" } });
+      const ada = await tx.member.create({ data: { tenantId: t.id, name: ADA.name, email: ADA.email, externalRef: `teamup:${ADA.email}|${ADA.name.toLowerCase()}` } });
+      await tx.member.create({ data: { tenantId: t.id, name: BEN.name, email: BEN.email } });
+      const up = await tx.importUpload.create({
+        data: { tenantId: t.id, createdById: u.id, purpose: "attendance", fileName: "members.csv", expectedBytes: csv.length, expectedSha256: sha(csv), chunkSize: 1024 * 1024, chunkCount: 1, tokenHash: `${STAMP}-token`, status: "consumed", expiresAt: new Date(Date.now() + 86_400_000) },
+      });
+      await tx.importUploadChunk.create({ data: { uploadId: up.id, tenantId: t.id, index: 0, bytes: csv, sha256: sha(csv) } });
+      const job = await tx.importJob.create({
+        data: {
+          tenantId: t.id, createdById: u.id, source: "teamup", fileName: "members.csv", fileBlobUrl: `db-upload://${up.id}`, status: "complete",
+          errorLog: [{ row: 2, reason: `Duplicate email ${ADA.email}` }, { row: 3, reason: "Missing plan" }],
+          dryRunSummary: { drafts: [{ name: ADA.name, phone: "07700 900111" }, { name: BEN.name, phone: "07700 900222" }] },
+        },
+      });
+      tenantId = t.id;
+      userId = u.id;
+      adaId = ada.id;
+      jobId = job.id;
+      fileUrl = job.fileBlobUrl;
+    });
+  });
+
+  afterAll(async () => {
+    // Synthetic fixture only: removed by this test, never by the product.
+    await withRlsBypass(async (tx) => {
+      await tx.auditLog.deleteMany({ where: { tenantId } });
+      await tx.importJob.deleteMany({ where: { tenantId } });
+      await tx.importUploadChunk.deleteMany({ where: { tenantId } });
+      await tx.importUpload.deleteMany({ where: { tenantId } });
+      await tx.memberStatusEvent.deleteMany({ where: { tenantId } });
+      await tx.member.deleteMany({ where: { tenantId } });
+      await tx.user.deleteMany({ where: { tenantId } });
+      await tx.tenant.deleteMany({ where: { id: tenantId } });
+    });
+  });
+
+  it("import, then erase: neither the file nor the diagnostics hold the subject's email or name; the other member's stay", async () => {
+    expect(await readImportFile(fileUrl, tenantId)).toContain(ADA.email);
+
+    gate.current = { tenantId, userId };
+    const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${adaId}`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }))) as unknown as { status: number; json: () => Promise<{ erased?: Record<string, number> }> };
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.erased).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 1 });
+    expect(body.erased?.importDiagnosticsEntriesRemoved).toBeGreaterThanOrEqual(2);
+
+    const file = (await readImportFile(fileUrl, tenantId)) ?? "";
+    expect(file).not.toContain(ADA.email);
+    expect(file).not.toContain(ADA.name);
+    expect(file).toContain(BEN.email);
+    expect(file.startsWith("Customer Name,Customer Email,Phone\n")).toBe(true);
+
+    const job = await withRlsBypass((tx) => tx.importJob.findUnique({ where: { id: jobId }, select: { errorLog: true, dryRunSummary: true } }));
+    const diagnostics = JSON.stringify(job);
+    expect(diagnostics).not.toContain(ADA.email);
+    expect(diagnostics).not.toContain(ADA.name);
+    expect(diagnostics).toContain(BEN.name);
+
+    const evidence = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId, action: "member.dsar_erase", entityId: adaId }, select: { metadata: true } }));
+    expect((evidence?.metadata as { erasedCounts?: Record<string, number> })?.erasedCounts).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 1 });
+  }, 120_000);
+});
