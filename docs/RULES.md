@@ -197,6 +197,10 @@ acts on is worse than an error they can see.
 - The nightly retention job keeps its Stripe reconciliation and prunes only the rate-limit
   counters; `tests/unit/retention-cron.test.ts` and `tests/integration/cron-smoke.test.ts` fail
   if it deletes anything else. Do not add a rule that deletes club data.
+- **The published legal pages do not say this yet.** Noe deferred the wording on 6 Nov 2026:
+  privacy §6 still states twelve-month log deletion and a 30-day closed-gym window, and terms §8
+  a 30-day retention. The proposal and the mismatch are in
+  `docs/legal/PROPOSED-RETENTION-WORDING-2026-11-06.md`.
 - **Outside MatFlow's control:** Neon's point-in-time backups, Resend's dashboard and Vercel's
   runtime logs have their own provider windows. They are not the records; the tables are.
 

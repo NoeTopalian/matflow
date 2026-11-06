@@ -57,7 +57,7 @@ Suspend and un-suspend make no provider calls, so there are none to fail or retr
 
 ## Reopen after closing (related, for completeness)
 
-- **No window.** A closed club is kept and can be reopened at any time (product rule, 16 Oct 2026). The published promise in `app/legal/privacy/page.tsx` §6 is now: "Closed gyms — kept with sign-in disabled so the gym can reopen, and only erased when the gym asks in writing" (wording awaiting Noe's approval in the PR that adds it).
+- **No window.** A closed club is kept and can be reopened at any time (product rule, 16 Oct 2026). **Mismatch, known and deferred:** the published `app/legal/privacy/page.tsx` §6 still says a closed gym is "recoverable for 30 days, after which its records are permanently erased". Noe deferred the new wording on 6 Nov 2026; the proposal is in `docs/legal/PROPOSED-RETENTION-WORDING-2026-11-06.md`.
 - **Refusals.** Reopen is refused with 409 only once an explicit erasure has claimed the club (`deletion-in-progress`) or once the club is gone (`permanently-deleted`). See `lib/tenant-lifecycle.ts`.
 - **Billing is not reversed.** Closing still sets member subscriptions to cancel at period end, and reopening does not undo that, for the same consent reason as above. After reopening a club, the operator runs the review procedure above with the club, using the closing audit row (`admin.tenant.soft_deleted`, which records `stripeCancelled`, `stripeFailed` and `stripeFailedIds`).
 
