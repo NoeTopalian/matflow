@@ -66,7 +66,7 @@ node scripts/loadtest/run.mjs --child-branch --members 5000 --scenarios all
    - the S2 database check (attendance ≤ capacity, nobody twice, and the k6 successes match the rows written);
    - the top 20 `pg_stat_statements` (the extension is created on the child branch if missing, and reset before the scenarios);
    - a scan of the server logs for pool timeouts, `P2028`, `55P03`, `57014` and `revocation check failed`.
-8. **Teardown** (`seed.mjs --teardown`). It deletes only the tenants whose slug carries the run stamp and that the run's state names. It also deletes the rate-limit rows of the run's lane addresses (`198.18.0.0/15`, the benchmarking range). It then proves that 0 rows are left in every table with a `tenantId`. Pass `--keep` to skip it, and it prints the teardown command.
+8. **Teardown** (`seed.mjs --teardown`). It deletes only the tenants whose slug carries the run's random stamp, and refuses outright if a tenant the run's state names no longer has its stamped slug. It also deletes the rate-limit rows of the run's lane addresses (`198.18.0.0/15`, the benchmarking range). It then proves that 0 rows are left in every table with a `tenantId`. Pass `--keep` to skip it, and it prints the teardown command.
 9. **Report:** `docs/readiness/loadtest/<date>-load-<members>m-<stamp>.md`, with p50/p95/p99 per scenario and request kind, errors and 429s, outcomes, invariants, database peaks, top statements and the log scan. Raw k6 summaries, server logs and samples stay outside git in `%LOCALAPPDATA%/matflow-loadtest/<stamp>/`.
 
 Exit codes:

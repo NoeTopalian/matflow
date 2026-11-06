@@ -214,10 +214,9 @@ async function tenantTables(tx) {
 async function rowsLeft(bypass, tenantIds, stamp) {
   return bypass(async (tx) => {
     const left = {};
-    for (const table of await tenantTables(tx)) {
-      const [{ n }] = await tx.$queryRawUnsafe(`select count(*)::int as n from "${table}" where "tenantId" = any($1::text[])`, tenantIds);
-      if (n) left[table] = n;
-    }
+    const tables = await tenantTables(tx);
+    const counts = await tx.$queryRawUnsafe(tables.map((tb) => `select '${tb}' as t, count(*)::int as n from "${tb}" where "tenantId" = any($1::text[])`).join(" union all "), tenantIds);
+    for (const r of counts) if (r.n) left[r.t] = r.n;
     const [{ n: tenants }] = await tx.$queryRawUnsafe(`select count(*)::int as n from "Tenant" where id = any($1::text[]) or slug like $2`, tenantIds, `${slugPrefix(stamp)}%`);
     if (tenants) left.Tenant = tenants;
     const [{ n: addresses }] = await tx.$queryRawUnsafe(`select ((select count(*) from "User" where email like $1) + (select count(*) from "Member" where email like $1))::int as n`, `${slugPrefix(stamp)}%`);
@@ -247,11 +246,18 @@ async function teardown(flags, target) {
       await bypass(async (tx) => {
         // Rows the app wrote during the run in tables the shared deletion does not know: delete what can be
         // deleted, child tables first by retrying after a foreign-key refusal, then the shared deletion.
+        // One round trip finds the tables that hold rows of this tenant; only those are swept.
         const tables = await tenantTables(tx);
-        for (let pass = 0; pass < 4; pass++) for (const table of tables) {
-          await tx.$executeRawUnsafe("savepoint sweep");
-          try { await tx.$executeRawUnsafe(`delete from "${table}" where "tenantId" = $1`, t.id); await tx.$executeRawUnsafe("release savepoint sweep"); }
-          catch { await tx.$executeRawUnsafe("rollback to savepoint sweep"); }
+        const counts = await tx.$queryRawUnsafe(tables.map((tb) => `select '${tb}' as t, count(*)::int as n from "${tb}" where "tenantId" = $1`).join(" union all "), t.id);
+        let pending = counts.filter((r) => r.n > 0).map((r) => r.t);
+        for (let pass = 0; pass < 6 && pending.length; pass++) {
+          const failed = [];
+          for (const table of pending) {
+            await tx.$executeRawUnsafe("savepoint sweep");
+            try { await tx.$executeRawUnsafe(`delete from "${table}" where "tenantId" = $1`, t.id); await tx.$executeRawUnsafe("release savepoint sweep"); }
+            catch { await tx.$executeRawUnsafe("rollback to savepoint sweep"); failed.push(table); }
+          }
+          pending = failed;
         }
         await deleteTenant(tx, t.id);
       }, 600000);
