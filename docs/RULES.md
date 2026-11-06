@@ -155,7 +155,9 @@ acts on is worse than an error they can see.
   own shows its existing label; nothing is guessed.
 - **Erased is not the same as deleted.** A member erased under a data-protection request is
   "Deleted member": no link, and their old values are shown to nobody. A member deleted in the
-  ordinary way keeps the name recorded on their deletion for the year the log is kept.
+  ordinary way keeps the name recorded on their deletion, permanently (§5d).
+- **All of it, with no age limit.** The timeline reaches back to the club's first day. Nothing
+  says or implies that activity is kept for a year.
 - **It opens predictably.** The page opens on the standard view, or on the one view a person has
   deliberately saved as their default on that device. It never silently restores the last
   filters. The address bar is the only copy of the filters, so a link means what it shows.
@@ -164,6 +166,28 @@ acts on is worse than an error they can see.
   faces or initials in rows, a colour per group.
 - A check-in with a warning is still a check-in: it shows as "Check-in with a warning" and is
   also found by the "Check-in" filter.
+
+### 5d. Nothing is deleted automatically (Noe, 6 Nov 2026)
+
+- "Nothing should be automatically deleted." "All data from the entirety of the club should be
+  held." No scheduled job, cron, expiry or clean-up removes a club's records or files: not the
+  Activity log, email delivery logs, sign-in records, expired sign-in and reset links, Stripe
+  webhook records, import jobs, their uploaded files or diagnostics, replaced or unsaved photos,
+  push subscriptions (marked inactive instead), or a closed club (kept, sign-in disabled,
+  reopenable at any time; the 16 Oct 2026 rule).
+- **Deletions a person deliberately makes stay**, because each is recorded in Activity and many
+  can be undone: staff removing a member, a photo, a roster entry or a class; unticking
+  attendance; an import rollback; an erasure request.
+- **The one automatic exception: sign-in rate-limit counters** (`RateLimitHit`, and a bucket
+  cleared after a successful sign-in). They are security counters, not club data, and the
+  lockout depends on clearing them.
+- **Erasure is unchanged.** A data-protection erasure still removes a member's details, and a
+  club is erased only when it asks in writing (an operator runs it; never on a schedule).
+- The nightly retention job keeps its Stripe reconciliation and prunes only the rate-limit
+  counters; `tests/unit/retention-cron.test.ts` and `tests/integration/cron-smoke.test.ts` fail
+  if it deletes anything else. Do not add a rule that deletes club data.
+- **Outside MatFlow's control:** Neon's point-in-time backups, Resend's dashboard and Vercel's
+  runtime logs have their own provider windows. They are not the records; the tables are.
 
 ## 6. Verification
 

@@ -75,7 +75,7 @@ DATABASE_URL="<DIRECT_DATABASE_URL>" npx prisma migrate deploy
 
 A restore rolls the database back to a point where erased members were still present. Every right-to-erasure request fulfilled after that timestamp is undone by the restore, so each one must be re-applied before the restored database serves traffic.
 
-This is possible because `AuditLog` rows carry `tenantId` as a plain string with no foreign key, and the retention cron (`/api/cron/retention`) deliberately preserves them for their full 12 months — the erasure-evidence trail outlives the data it attests to.
+This is possible because `AuditLog` rows carry `tenantId` as a plain string with no foreign key, and they are kept permanently: no job deletes an `AuditLog` row (product rule, 6 Nov 2026, `docs/RULES.md` §5d) — the erasure-evidence trail outlives the data it attests to.
 
 1. Find the erasures to replay (run against the **restored** database, direct URL):
 
@@ -128,7 +128,7 @@ This is possible because `AuditLog` rows carry `tenantId` as a plain string with
   - `BACKUP_S3_REGION` — e.g. `eu-west-2`
 
   Until all five exist, treat Neon PITR as the **only** backup and size the incident response to its window. Verify with `gh run list --workflow=db-backup.yml` before relying on Option B.
-- ✅ Retention sweep — `/api/cron/retention`, daily 03:30 UTC (`vercel.json`). Enforces the published retention windows for logs, tokens, Stripe events and abandoned imports. It never deletes a club: closed clubs are kept (16 Oct 2026). Requires `CRON_SECRET`; returns 503 without it.
+- ✅ Nightly job — `/api/cron/retention`, daily 03:30 UTC (`vercel.json`). Since 6 Nov 2026 it deletes nothing of a club's (`docs/RULES.md` §5d): it runs the Stripe reconciliation and prunes sign-in rate-limit counters only. Logs, links, Stripe events, imports and closed clubs are all kept. Requires `CRON_SECRET`; returns 503 without it, and runs only with `RETENTION_CRON_ENABLED=true`.
 
 ## Rehearsal status (3 Oct 2026)
 
