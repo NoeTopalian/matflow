@@ -155,7 +155,11 @@ export async function rewriteImportFile(url: string, tenantId: string, bytes: Ui
     return;
   }
   if (!isTenantBlobUrl(url, tenantId)) throw new Error("The import file is not in this club's store");
-  const pathname = decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
-  const written = await put(pathname, data, { access: "private", contentType: "text/csv", addRandomSuffix: false, allowOverwrite: true });
+  // The object name is rebuilt from the session's club, never taken whole from the stored URL (SEC-038).
+  const prefix = `tenants/${tenantId}/`;
+  const stored = decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+  if (!stored.startsWith(prefix)) throw new Error("The import file is not in this club's store");
+  const rest = stored.slice(prefix.length);
+  const written = await put(`tenants/${tenantId}/${rest}`, data, { access: "private", contentType: "text/csv", addRandomSuffix: false, allowOverwrite: true });
   if (written.url !== url) throw new Error("The import file was not rewritten at its own address");
 }

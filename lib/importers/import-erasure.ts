@@ -39,6 +39,7 @@
  * Counts only leave this module; never a value from a file.
  */
 import type { Prisma } from "@prisma/client";
+import { csvFieldVerbatim } from "@/lib/csv";
 import { DB_UPLOAD_PREFIX, readImportFileBytes, rewriteImportFile } from "@/lib/import-storage";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
@@ -162,8 +163,7 @@ export function csvRecords(text: string, delimiter = ","): CsvRecord[] {
 }
 
 function serialiseRow(cells: string[], delimiter: string, lineEnd: string): string {
-  const q = (c: string) => (c.includes(delimiter) || /["\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c);
-  return cells.map(q).join(delimiter) + lineEnd;
+  return cells.map((c) => csvFieldVerbatim(c, delimiter)).join(delimiter) + lineEnd;
 }
 
 const NAME_HEADERS = ["customer name", "name", "full name", "member name", "client name", "athlete name"];
