@@ -22,6 +22,10 @@ export const LANE_MIN_PX = 82;
 export const DAY_HEAD_PX = 44;
 export const MAT_HEAD_PX = 34;
 
+/** A row's track: as tall as its text and never under its floor; a sliver row (`fixed`) exactly its floor. */
+const rowTrack = (r: TimetableGrid["rows"][number]) =>
+  r.kind === "used" ? (r.fixed ? `${r.floorPx}px` : `minmax(${r.floorPx}px, auto)`) : r.kind === "break" ? "26px" : "10px";
+
 const DAY_SLUG = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const vars = (v: Record<string, string | number>) => v as CSSProperties;
 
@@ -104,7 +108,7 @@ export function PosterGrid({
   const rows = [
     `${DAY_HEAD_PX}px`,
     hasMats ? `${MAT_HEAD_PX}px` : "0px",
-    ...grid.rows.map((r) => (r.kind === "used" ? `minmax(${r.floorPx}px, auto)` : r.kind === "break" ? "26px" : "10px")),
+    ...grid.rows.map((r) => rowTrack(r)),
   ];
   const firstBusyDay = grid.days.find((d) => d.count > 0);
   const breakFrom = firstBusyDay ? (dayStart.get(firstBusyDay.day) ?? 2) : 2;
@@ -329,7 +333,7 @@ export function PosterDay({
 
   if (!day) return null;
   const hasMats = day.columns.length > 0;
-  const rows = ["0px", hasMats ? "auto" : "0px", ...grid.rows.map((r) => (r.kind === "used" ? `minmax(${r.floorPx}px, auto)` : r.kind === "break" ? "26px" : "10px"))];
+  const rows = ["0px", hasMats ? "auto" : "0px", ...grid.rows.map((r) => rowTrack(r))];
 
   return (
     <div

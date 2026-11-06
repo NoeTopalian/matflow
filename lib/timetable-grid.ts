@@ -99,6 +99,14 @@ export interface GridRow {
   /** used = some session covers it; break = an empty hour or more; gap = a shorter empty stretch. */
   kind: "used" | "gap" | "break";
   floorPx: number;
+  /**
+   * A sliver of ten minutes or less that every session crossing it shares with
+   * a longer row: it is exactly `floorPx` tall and takes no part in fitting
+   * text. Left to size itself it soaks up the height two classes that overlap
+   * by those few minutes each need, and one of them is drawn a third taller
+   * than a class of the same length beside it (Noe, 6 Nov 2026).
+   */
+  fixed?: boolean;
 }
 
 export type GridItem = ({ type: "session" } & GridPlacement) | ({ type: "more" } & GridMore);
@@ -282,6 +290,18 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
     const minutes = toMin - fromMin;
     const used = all.some((s) => s.startMin <= fromMin && s.endMin >= toMin);
     rows.push({ fromMin, toMin, kind: used ? "used" : minutes >= 60 ? "break" : "gap", floorPx: used && minutes > 10 ? Math.round(minutes * 0.6) : 0 });
+  }
+  // Slivers: a used row of ten minutes or less is fixed at its scale height when every session crossing it also
+  // crosses a longer row, which then carries that session's text. A session that lives wholly in slivers (a
+  // ten-minute class) keeps them free to grow to its text.
+  const long = (r: GridRow) => r.kind === "used" && r.toMin - r.fromMin > 10;
+  for (const row of rows) {
+    if (row.kind !== "used" || long(row)) continue;
+    const crossing = all.filter((s) => s.startMin <= row.fromMin && s.endMin >= row.toMin);
+    if (crossing.every((s) => rows.some((r) => long(r) && s.startMin <= r.fromMin && s.endMin >= r.toMin))) {
+      row.fixed = true;
+      row.floorPx = Math.max(2, Math.round((row.toMin - row.fromMin) * 0.6));
+    }
   }
 
   // Gutter labels: every start at least 15 minutes after the last labelled one; each runs to the next label.
