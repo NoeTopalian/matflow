@@ -97,10 +97,14 @@ export type ChangeBullet = { label: string; from: string | null; to: string | nu
 const isText = (part: Part): part is { text: string } => !("subject" in part);
 const SEPARATOR = " · ";
 
-/** "off" → "Off". Addresses and links are left exactly as they are. */
-function sentenceCase(value: string): string {
-  if (!/^[a-z]/.test(value) || value.includes("@") || /^[a-z]+:\/\//.test(value)) return value;
-  return value[0].toUpperCase() + value.slice(1);
+/**
+ * MatFlow's own words for a value — "off" → "Off". Anything else is what the
+ * club or a person wrote ("de Souza", "iPhone", a plan's name) and is shown
+ * exactly as sent, so a rename that only changes case still reads as one.
+ */
+const OWN_WORDS = new Set(["on", "off", "yes", "no", "true", "false", "none", "unlimited", "never", "always"]);
+export function sentenceCase(value: string): string {
+  return OWN_WORDS.has(value) ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
 /** "Fields: Name, Phone" / "Also changed: Email" — the server's words for fields whose values are not shown. */

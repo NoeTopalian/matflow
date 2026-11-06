@@ -233,6 +233,26 @@ describe("how a row is laid out", () => {
     expect(tr.querySelector("td")!.textContent).toBe("19:45Plans and packs (set-up)");
   });
 
+  it("only MatFlow's own words get a capital: what the club wrote is shown exactly, a case-only rename included", async () => {
+    const changes = [
+      { label: "For children", from: "off", to: "on" },
+      { label: "Name", from: "kids", to: "Kids" },
+      { label: "Surname", from: "de Souza", to: "De Souza" },
+      { label: "Device", from: "iPhone", to: "iPad" },
+      { label: "Classes allowed", from: "unlimited", to: "2" },
+    ];
+    respond = () => ({ status: 200, body: body([planRow({ changes, detail: [{ text: joined(changes) }] })]) });
+    renderPage();
+    await loaded();
+    expect([...firstRow().querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "For children: Off → On",
+      "Name: kids → Kids",
+      "Surname: de Souza → De Souza",
+      "Device: iPhone → iPad",
+      "Classes allowed: Unlimited → 2",
+    ]);
+  });
+
   it("a reason and the changes: the reason on its own line, the changes as bullets", async () => {
     respond = () => ({ status: 200, body: body([planRow({ detail: [{ text: "Phone: 0771 → 0772 · Reason: wrong number" }], changes: [{ label: "Phone", from: "0771", to: "0772" }] })]) });
     renderPage();

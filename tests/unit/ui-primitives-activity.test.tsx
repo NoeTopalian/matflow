@@ -203,6 +203,39 @@ describe("Tab bar (extracted from the member profile)", () => {
     expect([...source.matchAll(/<Tab label="([^"]+)"/g)].map((m) => m[1])).toEqual(["Overview", "Attendance", "Payments", "Ranks", "Internal Notes", "Photos"]);
   });
 
+  it("brings a newly selected tab into view on a narrow rail, and leaves the rail alone on a re-render with the same tab", () => {
+    const bar = (selected: string, count?: number) => (
+      <TabList label="Views">
+        {["One", "Two", "Three"].map((name) => (
+          <Tab key={name} label={name} active={name === selected} onClick={() => {}} count={name === "One" ? count : undefined} />
+        ))}
+      </TabList>
+    );
+    const { container, rerender } = render(bar("One"));
+    const rail = container.querySelector<HTMLElement>('[role="tablist"]')!;
+    const tabs = [...rail.querySelectorAll<HTMLElement>('[role="tab"]')];
+    // jsdom has no layout: a 100px rail holding 500px of tabs, the third tab at 300–350px.
+    let scrollLeft = 0;
+    Object.defineProperty(rail, "scrollLeft", { get: () => scrollLeft, set: (v: number) => (scrollLeft = v) });
+    Object.defineProperty(rail, "scrollWidth", { value: 500 });
+    Object.defineProperty(rail, "clientWidth", { value: 100 });
+    rail.getBoundingClientRect = () => ({ left: 0 }) as DOMRect;
+    tabs.forEach((tab, i) => {
+      Object.defineProperty(tab, "offsetWidth", { value: 50 });
+      tab.getBoundingClientRect = () => ({ left: i * 150 - scrollLeft }) as DOMRect;
+    });
+    rerender(bar("Three"));
+    expect(scrollLeft).toBe(250);
+    // The person scrolls the rail back; the page re-renders with the same tab selected: the rail stays put.
+    scrollLeft = 0;
+    rerender(bar("Three", 4));
+    rerender(bar("Three", 5));
+    expect(scrollLeft).toBe(0);
+    // A different selection is brought into view again.
+    rerender(bar("Two"));
+    expect(scrollLeft).toBe(100);
+  });
+
   it("arrow keys, Home and End move to a tab and choose it", () => {
     const chosen: string[] = [];
     const { getAllByRole } = render(

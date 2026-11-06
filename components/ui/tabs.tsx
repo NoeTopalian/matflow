@@ -19,13 +19,19 @@ import { cn } from "@/lib/utils";
  *
  * On a narrow screen the rail scrolls sideways; the selected tab is kept in
  * view (sideways only — the page itself is never scrolled), so a link that
- * opens on the last tab does not hide which tab is shown.
+ * opens on the last tab does not hide which tab is shown. Only when the
+ * selection changes: a re-render with the same tab selected leaves the rail
+ * where the person scrolled it.
  */
 export function TabList({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   const rail = useRef<HTMLDivElement>(null);
+  /** The tab the rail last brought into view. */
+  const shown = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const box = rail.current;
-    const selected = box?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    const selected = box?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ?? null;
+    if (selected === shown.current) return;
+    shown.current = selected;
     if (!box || !selected || box.scrollWidth <= box.clientWidth) return;
     // Measured against the rail itself, whatever the tabs' offset parent is.
     const left = selected.getBoundingClientRect().left - box.getBoundingClientRect().left + box.scrollLeft;

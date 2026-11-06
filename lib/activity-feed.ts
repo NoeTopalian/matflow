@@ -1333,11 +1333,11 @@ export function sourceOf(row: FeedRow, lookups: ActivityLookups, namedInSentence
         ? "Card scan"
         : row.userId
           ? "Staff"
-          : STAFF_ONLY_ACTIONS.has(row.action) || (m.actorType === "user" && !idOf(m.actorId))
+          : STAFF_ONLY_ACTIONS.has(row.action) || (m.actorType === "user" && m.actorId == null)
             ? "Staff (account removed)"
             : row.action.startsWith("stripe.") || row.action.startsWith("member.payment.") || STRIPE_ACTIONS.has(row.action)
             ? "Stripe"
-            : idOf(m.actorId) || m.collectedBy === "self" || MEMBER_APP_ACTIONS.has(row.action)
+            : m.actorId != null || m.collectedBy === "self" || MEMBER_APP_ACTIONS.has(row.action)
               ? "Member app"
               : "Automatic";
   return { label, staff, support };
