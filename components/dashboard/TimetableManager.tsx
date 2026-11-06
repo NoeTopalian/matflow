@@ -2442,9 +2442,10 @@ export default function TimetableManager({
                       );
                     };
                     return (
-                      // On a wide window the card stops at a readable width (about 300 px a column) rather than
-                      // stretching one class across the screen.
-                      <div ref={phoneDay} className="mt-1 rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3" data-testid="phone-day" style={{ maxWidth: Math.max(880, 60 + day.tracks * 300) }}>
+                      // On a wide window the card stops at a readable width (about 300 px a lane) rather than
+                      // stretching one class across the screen. Lanes, not grid tracks: a day with a two-way and a
+                      // three-way clash has six tracks and three lanes.
+                      <div ref={phoneDay} className="mt-1 rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3" data-testid="phone-day" style={{ maxWidth: Math.max(880, 60 + day.lanes * 300) }}>
                         <div className="mb-2 flex items-center gap-2">
                           <h2 className="text-[15px] font-bold leading-5 text-tx-1">{DAYS_FULL[agendaDow]}</h2>
                           {agendaIsToday ? todayPill : null}

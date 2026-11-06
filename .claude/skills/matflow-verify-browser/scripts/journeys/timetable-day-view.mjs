@@ -125,7 +125,8 @@ try {
     const dupes = await all.evaluateAll((els) => els.filter((e) => /possible duplicate/.test(e.getAttribute("aria-label"))).length);
     expect(dupes).toBe(2);
     const card = await dayView(main).getByTestId("phone-day").evaluate((el) => Math.round(el.getBoundingClientRect().width));
-    expect(card).toBeLessThanOrEqual(881);
+    // Three lanes at about 300 px each, never the whole window.
+    expect(card).toBeLessThanOrEqual(961);
     return { labels: labels.length, trio: { champs, kids, teens }, duplicates: dupes, cardWidth: card };
   });
 
@@ -213,7 +214,8 @@ try {
     await expect(main.getByTestId("timetable-split-hint")).toHaveText(/^By mat gives each mat its own column\. Press it to set up your mats: your classes say .+ and 2 more\.$/);
     await main.getByTestId("timetable-split-mat").click();
     const sheet = main.getByRole("dialog");
-    await expect(sheet.getByRole("checkbox")).toHaveCount(4);
+    // The sheet reads the mats and the typed places first: slow on the test link.
+    await expect(sheet.getByRole("checkbox")).toHaveCount(4, { timeout: 45_000 });
     await sheet.getByRole("button", { name: "Add these as mats" }).click();
     await expect(main.getByText("Your timetable is now split by mat. Saved for the whole club.")).toBeVisible({ timeout: 30_000 });
     await expect(main.getByRole("dialog")).toHaveCount(0);

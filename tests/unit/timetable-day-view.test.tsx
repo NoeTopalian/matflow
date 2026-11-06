@@ -159,5 +159,15 @@ describe("staff timetable — the Day view", () => {
     fireEvent.click(screen.getByTestId("timetable-view-day"));
     fireEvent.click(tab(/^Monday/));
     expect(within(dayView()).getByTestId("phone-day").style.maxWidth).toBe("880px");
+    // A day with a two-way clash and a three-way clash: three lanes (960 px), not its six grid tracks.
+    cleanup();
+    const mixed = [
+      cls("A", null, [[1, "10:00", "11:00"]]), cls("B", null, [[1, "10:00", "11:00"]]),
+      cls("C", null, [[1, "12:00", "13:00"]]), cls("D", null, [[1, "12:00", "13:00"]]), cls("E", null, [[1, "12:00", "13:00"]]),
+    ];
+    render(<TimetableManager initialClasses={mixed} {...PROPS} />);
+    fireEvent.click(screen.getByTestId("timetable-view-day"));
+    fireEvent.click(tab(/^Monday/));
+    expect(within(dayView()).getByTestId("phone-day").style.maxWidth).toBe("960px");
   });
 });
