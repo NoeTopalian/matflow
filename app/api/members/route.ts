@@ -27,7 +27,7 @@ import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, isSupportSessi
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 import { TRAINING_MEMBER } from "@/lib/member-population";
 import { requireApiStaff } from "@/lib/api-authz";
-import { isSameIndividual } from "@/lib/member-same-individual";
+import { classifyIdentity } from "@/lib/member-same-individual";
 import { restoreMember } from "@/lib/member-delete";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
@@ -485,13 +485,26 @@ export async function POST(req: Request) {
     // and manager, never a support session) restore through Add member; for
     // anyone else the ordinary uniqueness answer stands.
     const mayRestore = ["owner", "manager"].includes(session.user.role) && !isSupportSession(session);
+    // Security review L1: restored WITHOUT asking only when certain (email,
+    // name AND both dates of birth equal). Email and name with a date of birth
+    // missing on either side is answered 409 { archivedMatch } and staff
+    // decide; their "Restore their record" resends with confirmRestoreId.
+    const rawConfirm = (body as { confirmRestoreId?: unknown } | null)?.confirmRestoreId;
+    const confirmRestoreId = typeof rawConfirm === "string" && rawConfirm.length <= 64 ? rawConfirm : null;
+    const ask: { match: { id: string; name: string; archivedAt: string | null } | null } = { match: null };
     const restoredOutcome = !isKid && hasRealEmail && mayRestore
       ? await withTenantContext(session.user.tenantId, async (tx) => {
           const archived = await tx.member.findFirst({
             where: { tenantId: session.user.tenantId, archivedAt: { not: null }, email: { equals: email.trim(), mode: "insensitive" } },
             select: { id: true, name: true, email: true, phone: true, dateOfBirth: true, archivedAt: true, status: true, membershipTierId: true },
           });
-          if (!archived || !isSameIndividual({ email, name: parsed.data.name, dateOfBirth: dob }, archived)) return null;
+          if (!archived) return null;
+          const match = classifyIdentity({ email, name: parsed.data.name, dateOfBirth: dob }, archived);
+          if (match === "different") return null;
+          if (match === "possible" && confirmRestoreId !== archived.id) {
+            ask.match = { id: archived.id, name: archived.name, archivedAt: archived.archivedAt?.toISOString() ?? null };
+            return null;
+          }
           const r = await restoreMember(tx, { id: archived.id, tenantId: session.user.tenantId });
           if (r.kind !== "ok") return null;
           // The details typed now, on top: a phone number, a date of birth the
@@ -540,6 +553,12 @@ export async function POST(req: Request) {
           return row ? { row, archivedAt: archived.archivedAt, subscriptionEnding: r.subscriptionEnding } : null;
         })
       : null;
+    if (ask.match) {
+      return NextResponse.json(
+        { error: "An archived member has this email address and name. Is this the same person?", archivedMatch: ask.match },
+        { status: 409 },
+      );
+    }
     if (restoredOutcome) {
       return NextResponse.json(
         {

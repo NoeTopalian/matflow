@@ -112,8 +112,10 @@ export async function POST(req: Request) {
     // computes a different hash and finds nothing. Same precedence as
     // forgot-password: a staff user, else a member who can sign in.
     if (!resetToken) {
-      const holderUser = await tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id, deactivatedAt: null }, select: { id: true } });
-      const holderMember = holderUser
+      // PR 3: a deactivated staff account holds the address but resets nothing; no fall-through to a member.
+      const holderRow = await tx.user.findFirst({ where: { email: normEmail, tenantId: tenant.id }, select: { id: true, deactivatedAt: true } });
+      const holderUser = holderRow && !holderRow.deactivatedAt ? holderRow : null;
+      const holderMember = holderRow
         ? null
         : await tx.member.findFirst({
             where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null }, archivedAt: null },
@@ -138,10 +140,14 @@ export async function POST(req: Request) {
     // into server memory — no wire leak today but fragile if response
     // shape ever changes.
     const user = await tx.user.findFirst({
-      // PR 3: a deactivated staff account or an archived member cannot reset its way back in.
-      where: { email: normEmail, tenantId: tenant.id, deactivatedAt: null },
-      select: { id: true, passwordHash: true, mustChangePassword: true, loginEmailProvisionalSince: true },
+      where: { email: normEmail, tenantId: tenant.id },
+      select: { id: true, passwordHash: true, mustChangePassword: true, loginEmailProvisionalSince: true, deactivatedAt: true },
     });
+    // PR 3: a deactivated staff account cannot reset its way back in, and its
+    // address never falls through to a member sharing it (staff precedence).
+    if (user?.deactivatedAt) {
+      return { resetToken, subject: null, history: [] as string[] };
+    }
     // A provisional login email (7 Oct 2026, lib/login-email.ts) never
     // receives a reset code, so a code for it can only predate the marking (or
     // be a guess): refused as an expired code, and burned below so it cannot

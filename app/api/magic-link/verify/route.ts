@@ -100,12 +100,14 @@ export async function GET(req: NextRequest) {
 
   // Resolve user OR member — tenantId MUST match token row (defense in depth)
   const lookups = await withTenantContext(tokenRow.tenantId, async (tx) => {
-    const u = await tx.user.findFirst({
-      // PR 3: a link minted before a deactivation or an archive signs nobody in.
-      where: { tenantId: tokenRow.tenantId, email: tokenRow.email, deactivatedAt: null },
-      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true, loginEmailProvisionalSince: true },
+    // PR 3: a link minted before a deactivation signs nobody in, and never
+    // falls through to a member row sharing the address (staff precedence).
+    const uRow = await tx.user.findFirst({
+      where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
+      select: { id: true, tenantId: true, email: true, name: true, role: true, sessionVersion: true, totpEnabled: true, mustChangePassword: true, notifyOnNewLogin: true, loginEmailProvisionalSince: true, deactivatedAt: true },
     });
-    const m = !u
+    const u = uRow && !uRow.deactivatedAt ? uRow : null;
+    const m = !uRow
       ? await tx.member.findFirst({
           // Sprint 3 K: defence-in-depth — kid sub-accounts (passwordHash null) cannot mint a session
           // even if a token row exists for the synthesised email.

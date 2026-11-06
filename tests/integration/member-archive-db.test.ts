@@ -279,12 +279,12 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     });
     as(ids.owner, "owner");
     await memberDELETE(req(`/api/members/${janeId}?confirm=1`, "DELETE"), params(janeId));
-    const add = async (name: string, dateOfBirth?: string) => {
+    const add = async (name: string, dateOfBirth?: string, extra: Record<string, unknown> = {}, who = "jane") => {
       as(ids.owner, "owner");
       const r = new Request("https://test.local/api/members", {
         method: "POST",
         headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" },
-        body: JSON.stringify({ name, email: `${STAMP}-jane@example.test`, phone: "07000 000111", ...(dateOfBirth ? { dateOfBirth } : {}) }),
+        body: JSON.stringify({ name, email: `${STAMP}-${who}@example.test`, phone: "07000 000111", ...(dateOfBirth ? { dateOfBirth } : {}), ...extra }),
       });
       return (await membersPOST(r)) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
     };
@@ -307,7 +307,14 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     expect((await add("Jane Back", "1991-01-01")).status).toBe(409);
     expect((await rows()).map((r) => r.archivedAt !== null)).toEqual([true]);
 
-    const res = await add("  jane   BACK ");
+    // Email and name match but the form has no date of birth: not certain, so staff are asked (security review L1).
+    const ask = await add("  jane   BACK ");
+    expect(ask.status).toBe(409);
+    expect((await ask.json()).archivedMatch).toMatchObject({ id: janeId, name: "Jane Back" });
+    expect((await rows()).map((r) => r.archivedAt !== null)).toEqual([true]);
+
+    // Email, name AND the same date of birth: certain, so the record is restored without asking.
+    const res = await add("  jane   BACK ", "1990-04-15");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ id: janeId, restored: true });
@@ -318,6 +325,32 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     const audit = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: ids.tenant, action: "member.restore", entityId: janeId } }));
     expect(audit?.userId).toBe(ids.owner);
     expect((audit?.metadata as Record<string, unknown>)?.via).toBe("add_member");
+  }, 120_000);
+
+  it("Add member with a matching email and name but no date of birth asks; confirming restores, and nothing is duplicated", async () => {
+    const kimId = await withRlsBypass(async (tx) => (await tx.member.create({ data: { tenantId: ids.tenant, name: "Kim Back", email: `${STAMP}-kim@example.test`, status: "active" } })).id);
+    as(ids.owner, "owner");
+    await memberDELETE(req(`/api/members/${kimId}?confirm=1`, "DELETE"), params(kimId));
+    const post = async (extra: Record<string, unknown> = {}) => {
+      as(ids.owner, "owner");
+      const r = new Request("https://test.local/api/members", {
+        method: "POST",
+        headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" },
+        body: JSON.stringify({ name: "Kim Back", email: `${STAMP}-kim@example.test`, dateOfBirth: "1985-02-02", ...extra }),
+      });
+      return (await membersPOST(r)) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+    };
+    const first = await post();
+    expect(first.status).toBe(409);
+    expect((await first.json()).archivedMatch).toMatchObject({ id: kimId });
+    // A confirm naming another record restores nothing.
+    expect((await post({ confirmRestoreId: "not-this-one" })).status).toBe(409);
+    const confirmed = await post({ confirmRestoreId: kimId });
+    expect(confirmed.status).toBe(200);
+    const kims = await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: ids.tenant, email: `${STAMP}-kim@example.test` }, select: { id: true, archivedAt: true, dateOfBirth: true } }));
+    expect(kims).toHaveLength(1);
+    expect(kims[0]).toMatchObject({ id: kimId, archivedAt: null });
+    expect(kims[0].dateOfBirth?.toISOString().slice(0, 10)).toBe("1985-02-02");
   }, 120_000);
 
   it("a TeamUp refresh plan read from the database leaves an archived member alone and lists them when TeamUp shows them active", async () => {

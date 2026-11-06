@@ -1452,11 +1452,16 @@ function AddMemberModal({
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
 
-  async function submit(e: React.FormEvent) {
+  // PR 3 / security review L1: an archived member with this email and name
+  // but no date of birth to compare. Staff decide; nothing is restored blind.
+  const [archivedMatch, setArchivedMatch] = useState<{ id: string; name: string; archivedAt: string | null } | null>(null);
+
+  async function submit(e: React.FormEvent, confirmRestoreId?: string) {
     e.preventDefault();
     if (!form.name.trim()) return;
     setLoading(true);
     setFormError(null);
+    setArchivedMatch(null);
     // One request id per distinct Add member: a retry of the same form (after
     // a lost response) reuses it and the server returns the member it already
     // created; any edit to the form starts a new one (verifier lane 7).
@@ -1494,10 +1499,13 @@ function AddMemberModal({
           ...(credit.creditedToMemberId ? { creditedToMemberId: credit.creditedToMemberId } : {}),
           ...(credit.creditedToLabel ? { creditedToLabel: credit.creditedToLabel } : {}),
           requestId,
+          ...(confirmRestoreId ? { confirmRestoreId } : {}),
         }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) {
+      if (res.status === 409 && data?.archivedMatch?.id) {
+        setArchivedMatch(data.archivedMatch);
+      } else if (!res.ok) {
         const failure = describeSaveFailure(res.status, data, "Add Member", { idempotent: true });
         setFormError(failure.message);
         toast(failure.kind === "invalid" ? failure.message : "Member not added", "error");
@@ -1579,6 +1587,30 @@ function AddMemberModal({
             <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
               {formError}
             </p>
+          )}
+          {archivedMatch && (
+            <div role="alert" data-testid="archived-match" className="space-y-2 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2">
+              <p className="text-sm text-tx-1">
+                Is this the same {archivedMatch.name}{archivedMatch.archivedAt ? `, archived on ${formatDate(archivedMatch.archivedAt)}` : ""}?
+              </p>
+              <p className="text-xs text-tx-3">Restoring brings back their record with all its history. A new person needs a different email address.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="compact" loading={loading} onClick={(ev) => void submit(ev as unknown as React.FormEvent, archivedMatch.id)}>
+                  Restore their record
+                </Button>
+                <Button
+                  type="button"
+                  size="compact"
+                  variant="secondary"
+                  onClick={() => {
+                    setArchivedMatch(null);
+                    setFormError("This email belongs to the archived record. Enter a different address for the new person, or leave it blank.");
+                  }}
+                >
+                  Add as a new person
+                </Button>
+              </div>
+            </div>
           )}
           {/* Name */}
           <div>

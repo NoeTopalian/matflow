@@ -181,6 +181,28 @@ describe.skipIf(!HAS_DB)("sign-in credentials are bound to the person they were 
     expect(after.location).toContain("/login");
   }, 120_000);
 
+  // Security review L3: a DEACTIVATED staff account's address must not fall through to a member row that shares it,
+  // at any door (link request, link verify, reset request, reset consume) — staff precedence, as auth.ts.
+  it("PR 3 / L3: a deactivated staff address falls through to no member at the link and reset doors", async () => {
+    const Z = E("shared-deact");
+    const c = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: Z, name: "secA Coach Shared", role: "coach", passwordHash: "synthetic-not-a-hash" } })).id);
+    expect((await requestLink(post("/api/magic-link/request", { email: Z, tenantSlug: ids.slug }))).status).toBe(200);
+    const linkBefore = linkToken(lastMail("magic_link", Z).link);
+    const del = await staffDelete(new Request(`${ORIGIN}/api/staff/${c}`, { method: "DELETE", headers: { origin: ORIGIN, host: "localhost:3847" } }), { params: Promise.resolve({ id: c }) });
+    expect(del.status).toBe(200);
+    // A member row at the same address (the database allows it; the routes never create one).
+    const m = await mkMember(Z, "secA Member Shared", "synthetic-not-a-hash");
+    const sent = () => h.mail.filter((x) => x.to === Z).length;
+    const before = sent();
+    expect((await requestLink(post("/api/magic-link/request", { email: Z, tenantSlug: ids.slug }))).status).toBe(200);
+    await forgotPassword(post("/api/auth/forgot-password", { email: Z, tenantSlug: ids.slug }));
+    expect(sent(), "no link or reset code is sent for a deactivated staff address").toBe(before);
+    const after = await verify(linkBefore);
+    expect(after.cookie, "the old link signs in neither the coach nor the member").toBeNull();
+    const memberRow = await member(m);
+    expect(memberRow?.sessionVersion).toBe(0);
+  }, 120_000);
+
   it("PR 3: a login link minted before a member is archived signs nobody in", async () => {
     const Y = E("member-arch");
     const m = await mkMember(Y, "secA Member Arch", "synthetic-not-a-hash");
