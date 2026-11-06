@@ -15,7 +15,7 @@ Synthetic data only, Neon test branch, isolated worktree without `.env`. No prod
 | `de5c529c` | The database test, and names shown exactly as written. |
 | `cc0f59dc` | Fixes from two independent reviews (below). |
 | `ccba5094` | `scripts/perf/activity-feed-explain.mjs`. |
-| `6a9802c1` | The route is claimed by journey J85; the perf script's synthetic users are pinned in the login-writer inventory; vitest resolves the `server-only` marker to an empty stub. No file under `app/` or `lib/` changes. |
+| `6a9802c1` | The route is claimed by journey J87 (J85 before the mats entry took that id on merging main); the perf script's synthetic users are pinned in the login-writer inventory; vitest resolves the `server-only` marker to an empty stub. No file under `app/` or `lib/` changes. |
 
 Not changed: the schema (no migration, no index), any existing route, any page, permissions elsewhere, the audit log's contents or retention.
 
