@@ -902,7 +902,10 @@ try {
       await phone.evaluate(() => window.scrollTo(0, 0));
       await shot(phone, "activity-default-390");
       // The toolbar: search on its own line, then the day and Filters; tap targets at least 44px tall.
-      for (const control of [phone.getByRole("combobox", { name: "Search members" }), phone.getByTestId("date-button"), phone.getByTestId("filters-button")]) expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44);
+      const tapHeights = {};
+      for (const [name, control] of [["search", phone.getByRole("combobox", { name: "Search members" })], ["day", phone.getByTestId("date-button")], ["filters", phone.getByTestId("filters-button")]]) tapHeights[name] = (await control.boundingBox()).height;
+      // 0.5px for sub-pixel layout: a 44px box can measure 43.99.
+      for (const [name, height] of Object.entries(tapHeights)) expect(height, `${name} is ${height}px tall (all: ${JSON.stringify(tapHeights)})`).toBeGreaterThanOrEqual(43.5);
       await expect(views(phone).getByRole("tab")).toHaveCount(5);
       // Search has the first line to itself; the day and Filters share the second.
       const [search, day, filtersBox] = await Promise.all([phone.getByRole("combobox", { name: "Search members" }), phone.getByTestId("date-button"), phone.getByTestId("filters-button")].map((l) => l.boundingBox()));
