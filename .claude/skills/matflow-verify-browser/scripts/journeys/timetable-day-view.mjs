@@ -7,7 +7,7 @@
 // label the mat beside side-by-side sessions (unit-tested; not driven here — no member sign-in in
 // this harness).
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, gridInvariants } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -170,7 +170,7 @@ try {
 
   await shot(main, "timetable-day-view-desktop");
 
-  await section("phone", "375 x 812: no Week/Day toggle; the agenda is unchanged and shows Monday's sessions in groups; no sideways scroll", async () => {
+  await section("phone", "375 x 812: no Week/Day toggle; the phone's Monday is one day of the poster grid with every session on it; no sideways scroll", async () => {
     const mobile = await context(browser, "10.94.5.2", { viewport: { width: 375, height: 812 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));
@@ -179,13 +179,15 @@ try {
       await expect(phone.getByTestId("timetable-view-day")).toBeHidden();
       await phone.getByRole("tab", { name: /^Mon/ }).click();
       const agenda = phone.locator('[role="tablist"][aria-label="Day of week"] + div');
-      await expect(agenda.getByRole("button", { name: /^Edit / })).toHaveCount(MONDAY);
-      const groups = await agenda.getByRole("group").count();
+      const grid = agenda.getByTestId("phone-day-grid");
+      await expect(grid).toHaveAttribute("data-day", "mon");
+      // Every session is a chip on the grid, or counted behind a "+N more".
+      const inv = await gridInvariants(phone, { sessions: MONDAY, grid: "phone-day-grid" });
       const noSideScroll = await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
       await shot(phone, "timetable-day-view-phone");
-      expect(groups).toBeGreaterThanOrEqual(2);
+      expect(inv.problems).toEqual([]);
       expect(noSideScroll).toBe(true);
-      return { groups, noSideScroll };
+      return { chips: inv.chips, folded: inv.folded, noSideScroll };
     } catch (e) {
       await shot(phone, "timetable-day-view-fail-phone").catch(() => {});
       throw e;

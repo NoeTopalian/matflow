@@ -77,6 +77,7 @@ vi.mock("@/lib/prisma", () => {
     memberPhoto: emptyModel(),
     signedWaiver: emptyModel(),
     class: emptyModel(),
+    mat: emptyModel(),
     classInstance: emptyModel(),
     classSchedule: emptyModel(),
     classSubscription: emptyModel(),

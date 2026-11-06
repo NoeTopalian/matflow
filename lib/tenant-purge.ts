@@ -354,6 +354,8 @@ async function walkTenant(
     ["announcement", (tx) => tx.announcement as unknown as BatchDeletable],
     ["membershipTier", (tx) => tx.membershipTier as unknown as BatchDeletable],
     ["location", (tx) => tx.location as unknown as BatchDeletable],
+    // Mats: the classes that pointed at them went in step 3.
+    ["mat", (tx) => tx.mat as unknown as BatchDeletable],
     ["signedWaiver", (tx) => tx.signedWaiver as unknown as BatchDeletable],
     ["memberClassPack", (tx) => tx.memberClassPack as unknown as BatchDeletable],
     ["classPack", (tx) => tx.classPack as unknown as BatchDeletable],

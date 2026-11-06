@@ -5,7 +5,7 @@
 // in time order; each chip opens its own class; a failed save keeps the form and saves nothing;
 // the retry sends one request; the class card's pill row reads chronologically after a reload.
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, weekDay, weekChips } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -15,13 +15,15 @@ const L = ledger("timetable-sessions");
 const errors = [];
 const DAY = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun" };
 
-const gridDay = (page, day) => page.locator(".grid-cols-7 > div").filter({ has: page.getByText(day, { exact: true }) });
-// On today's column a chip's name carries its state: "Edit Gi (live)". Match the class, whatever the day.
-const chipName = (name) => new RegExp(`^Edit ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\([a-z]+\\))?$`);
+const gridDay = (page, day) => weekDay(page, day.toLowerCase());
+// A week chip is named "Edit Gi, Monday 06:30 to 07:30" (then its place and, today, its state); a phone row is
+// "Edit Gi" (then its state). Match the class, whatever the day; `classOf` cuts either name back to "Edit Gi".
+const chipName = (name) => new RegExp(`^Edit ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, [A-Z][a-z]+day \\d\\d:\\d\\d to `);
+const classOf = (l) => l?.replace(/, [A-Z][a-z]+day \d\d:\d\d to .*$/, "").replace(/ \([a-z]+\)$/, "");
 const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: chipName(name) });
-const allChips = (page, day) => gridDay(page, day).getByRole("button", { name: /^Edit / });
+const allChips = (page, day) => weekChips(gridDay(page, day));
 const times = async (loc) => (await loc.allTextContents()).map((t) => t.match(/\d\d:\d\d/)?.[0]);
-const labels = async (loc) => (await loc.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map((l) => l?.replace(/ \([a-z]+\)$/, ""));
+const labels = async (loc) => (await loc.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")))).map(classOf);
 const slots = async (classId) =>
   q(`select "dayOfWeek", "startTime" from "ClassSchedule" where "classId" = $1 and "isActive" = true order by "dayOfWeek", "startTime"`, [classId]);
 const isPatch = (id) => (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${id}` && !r.url().includes("dryRun");
@@ -104,7 +106,8 @@ try {
     await allChips(main, "Mon").nth(0).focus();
     const seen = [];
     for (let i = 0; i < 3; i++) {
-      seen.push(await main.evaluate(() => ({ label: document.activeElement?.getAttribute("aria-label")?.replace(/ \([a-z]+\)$/, ""), time: document.activeElement?.textContent?.match(/\d\d:\d\d/)?.[0] })));
+      const at = await main.evaluate(() => ({ label: document.activeElement?.getAttribute("aria-label"), time: document.activeElement?.textContent?.match(/\d\d:\d\d/)?.[0] }));
+      seen.push({ label: classOf(at.label), time: at.time });
       if (i < 2) await main.keyboard.press("Tab");
     }
     expect(seen).toEqual([{ label: `Edit ${GI}`, time: "06:30" }, { label: `Edit ${GI}`, time: "12:00" }, { label: `Edit ${GI}`, time: "18:40" }]);
@@ -161,7 +164,7 @@ try {
 
   await shot(main, "timetable-sessions-desktop");
 
-  await section("phone", "375 x 812: Monday's agenda lists four sessions in time order, the day picker counts 4, no sideways scroll, rows are tappable", async () => {
+  await section("phone", "375 x 812: the phone's Monday shows four sessions in time order, the day picker counts 4, no sideways scroll, rows are tappable", async () => {
     const mobile = await context(browser, "10.94.3.2", { viewport: { width: 375, height: 812 }, isMobile: true, storageState: await ctx.storageState() });
     const phone = await mobile.newPage();
     phone.on("pageerror", (e) => errors.push(e.message));

@@ -50,6 +50,10 @@ export const classCreateSchema = z.object({
   location: z.string().max(100).optional().nullable(),
   // ADR-001 D2: the venue (one of the club's locations); null = every location.
   locationId: z.string().min(1).max(64).optional().nullable(),
+  // The mat the class runs on (one of the club's mats); null or omitted = no
+  // mat. When set, the server writes that mat's name as `location` whatever
+  // was sent (the write-through rule, lib/mats.ts).
+  matId: z.string().min(1).max(64).optional().nullable(),
   duration: z.number().int().min(1).max(480),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),

@@ -11,6 +11,7 @@ import { render, screen, within } from "@testing-library/react";
 import React from "react";
 import TimetableManager, { chipStatesFor } from "@/components/dashboard/TimetableManager";
 import type { ClassRow } from "@/app/dashboard/timetable/page";
+import { weekDay } from "./helpers/week";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
@@ -86,12 +87,8 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
-/** The desktop week grid's column for a weekday (0 = Monday … 6 = Sunday). */
-function gridColumn(container: HTMLElement, index: number): HTMLElement {
-  const grid = container.querySelector(".grid-cols-7");
-  if (!grid) throw new Error("week grid not rendered");
-  return grid.children[index] as HTMLElement;
-}
+/** The desktop week grid's day for a weekday (0 = Monday … 6 = Sunday). */
+const gridColumn = (container: HTMLElement, index: number): HTMLElement => weekDay(container, index);
 const chipNames = (col: HTMLElement) => within(col).getAllByRole("button").map((b) => b.getAttribute("aria-label"));
 const chipTimes = (col: HTMLElement) =>
   within(col)
@@ -102,7 +99,12 @@ describe("one chip per session on the week grid", () => {
   it("shows every Monday session of one class, in time order", () => {
     const { container } = render(<TimetableManager initialClasses={[GI]} {...PROPS} />);
     const monday = gridColumn(container, 0);
-    expect(chipNames(monday)).toEqual(["Edit Beginners Course Gi", "Edit Beginners Course Gi", "Edit Beginners Course Gi"]);
+    // The name carries the day, the time and the place, so three sessions of one class are three different names.
+    expect(chipNames(monday)).toEqual([
+      "Edit Beginners Course Gi, Monday 06:30 to 07:20, Mat 1",
+      "Edit Beginners Course Gi, Monday 12:00 to 12:50, Mat 1",
+      "Edit Beginners Course Gi, Monday 18:40 to 19:30, Mat 1",
+    ]);
     expect(chipTimes(monday)).toEqual(["06:30", "12:00", "18:40"]);
     // The other days are untouched: one chip each.
     expect(chipTimes(gridColumn(container, 1))).toEqual(["17:50"]);
@@ -115,7 +117,7 @@ describe("one chip per session on the week grid", () => {
     const { container } = render(<TimetableManager initialClasses={[GI, ADVANCED]} {...PROPS} />);
     const monday = gridColumn(container, 0);
     expect(chipTimes(monday)).toEqual(["06:30", "12:00", "18:40", "19:30"]);
-    expect(chipNames(monday)[3]).toBe("Edit Advanced Gi Comp Class");
+    expect(chipNames(monday)[3]).toBe("Edit Advanced Gi Comp Class, Monday 19:30 to 21:00, Mat 2");
     const tuesday = gridColumn(container, 1);
     expect(chipTimes(tuesday)).toEqual(["17:50", "19:00"]);
   });
