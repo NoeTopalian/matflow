@@ -481,23 +481,44 @@ export async function POST(req: Request) {
   } as const;
 
   try {
-    const restoredOutcome = !isKid && hasRealEmail
+    // Only the roles that may restore (POST /api/members/[id]/restore: owner
+    // and manager, never a support session) restore through Add member; for
+    // anyone else the ordinary uniqueness answer stands.
+    const mayRestore = ["owner", "manager"].includes(session.user.role) && !isSupportSession(session);
+    const restoredOutcome = !isKid && hasRealEmail && mayRestore
       ? await withTenantContext(session.user.tenantId, async (tx) => {
           const archived = await tx.member.findFirst({
             where: { tenantId: session.user.tenantId, archivedAt: { not: null }, email: { equals: email.trim(), mode: "insensitive" } },
-            select: { id: true, name: true, email: true, dateOfBirth: true, archivedAt: true },
+            select: { id: true, name: true, email: true, phone: true, dateOfBirth: true, archivedAt: true, status: true, membershipTierId: true },
           });
           if (!archived || !isSameIndividual({ email, name: parsed.data.name, dateOfBirth: dob }, archived)) return null;
           const r = await restoreMember(tx, { id: archived.id, tenantId: session.user.tenantId });
           if (r.kind !== "ok") return null;
-          const extra: Record<string, unknown> = {};
+          // The details typed now, on top: a phone number, a date of birth the
+          // old record lacked, a plan, and the status the desk chose. The
+          // request id lets a retry after a lost response find this row.
+          const extra: Record<string, unknown> = { ...(requestId ? { createRequestId: requestId } : {}) };
           if (parsed.data.phone?.trim()) extra.phone = parsed.data.phone;
           if (dob && !archived.dateOfBirth) extra.dateOfBirth = dob;
           if (tier) Object.assign(extra, membershipTierWrite(tier));
-          if (Object.keys(extra).length > 0) {
-            await tx.member.updateMany({ where: { id: archived.id, tenantId: session.user.tenantId }, data: extra });
+          const wantStatus = parsed.data.status;
+          if (wantStatus && wantStatus !== archived.status) {
+            extra.status = wantStatus;
+            extra.cancelledAt = wantStatus === "cancelled" ? new Date() : null;
+          }
+          await tx.member.updateMany({ where: { id: archived.id, tenantId: session.user.tenantId }, data: extra });
+          if (wantStatus && wantStatus !== archived.status) {
+            await recordStatusEvent(tx, {
+              tenantId: session.user.tenantId,
+              memberId: archived.id,
+              fromStatus: archived.status,
+              toStatus: wantStatus,
+              reason: "staff_edit",
+              changedById: session.user.id,
+            });
           }
           const row = await tx.member.findFirst({ where: { id: archived.id, tenantId: session.user.tenantId }, select: MEMBER_SELECT });
+          const applied = Object.keys(extra).filter((k) => k !== "createRequestId" && k !== "cancelledAt");
           await logAudit({
             tx,
             tenantId: session.user.tenantId,
@@ -505,10 +526,18 @@ export async function POST(req: Request) {
             action: "member.restore",
             entityType: "Member",
             entityId: archived.id,
-            metadata: { name: archived.name, via: "add_member", restoredKidIds: r.restoredKidIds, appliedFields: Object.keys(extra) },
+            metadata: {
+              name: archived.name,
+              via: "add_member",
+              restoredKidIds: r.restoredKidIds,
+              subscriptionEnding: r.subscriptionEnding,
+              appliedFields: applied,
+              // What the typed details replaced, so the change can be read back.
+              before: { phone: archived.phone, dateOfBirth: archived.dateOfBirth?.toISOString() ?? null, membershipTierId: archived.membershipTierId, status: archived.status },
+            },
             req,
           });
-          return row ? { row, archivedAt: archived.archivedAt } : null;
+          return row ? { row, archivedAt: archived.archivedAt, subscriptionEnding: r.subscriptionEnding } : null;
         })
       : null;
     if (restoredOutcome) {
@@ -517,6 +546,7 @@ export async function POST(req: Request) {
           ...restoredOutcome.row,
           restored: true,
           restoredFromArchivedAt: restoredOutcome.archivedAt?.toISOString() ?? null,
+          subscriptionEnding: restoredOutcome.subscriptionEnding,
           inviteUrl: null,
           inviteEmailSent: false,
           inviteEmailNote: null,
@@ -696,6 +726,20 @@ export async function POST(req: Request) {
       // Two copies of one request racing: the other one landed — return it.
       const raced = await replay();
       if (raced) return raced;
+      // An ARCHIVED member who is not the same individual (another name or date
+      // of birth) still holds the address. The owner and managers, who can
+      // restore, are told where to look; for anyone else it stays opaque.
+      if (hasRealEmail && ["owner", "manager"].includes(session.user.role)) {
+        const heldByArchived = await withTenantContext(session.user.tenantId, (tx) =>
+          tx.member.count({ where: { tenantId: session.user.tenantId, archivedAt: { not: null }, email: { equals: email.trim(), mode: "insensitive" } } }),
+        ).catch(() => 0);
+        if (heldByArchived > 0) {
+          return NextResponse.json(
+            { error: "An archived member has this email address. Find them under Members → archived members and restore them, or use another address.", archived: true },
+            { status: 409 },
+          );
+        }
+      }
       // Opaque: whose address it is (staff or member) is not said.
       return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }

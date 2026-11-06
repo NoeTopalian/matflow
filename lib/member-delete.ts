@@ -63,6 +63,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
+import { ERASED_EMAIL } from "@/lib/login-email";
 
 export type DeleteMemberCascadeOutcome =
   | { kind: "ok"; name: string }
@@ -130,9 +131,13 @@ export async function archiveMember(
 }
 
 export type RestoreMemberOutcome =
-  | { kind: "ok"; name: string; restoredKidIds: string[] }
+  | { kind: "ok"; name: string; restoredKidIds: string[]; subscriptionEnding: boolean }
   | { kind: "not-found" }
-  | { kind: "race" };
+  | { kind: "race" }
+  /** Erased on a formal request: nothing personal is left to bring back. */
+  | { kind: "erased" }
+  /** A child whose guardian is still archived: restore the guardian first (or link the child elsewhere). */
+  | { kind: "parent-archived"; parentName: string };
 
 /**
  * Restore an archived member: clear archivedAt and archivedById. Kids archived
@@ -145,9 +150,14 @@ export async function restoreMember(
 ): Promise<RestoreMemberOutcome> {
   const member = await tx.member.findFirst({
     where: { ...where, archivedAt: { not: null } },
-    select: { id: true, name: true, archivedAt: true },
+    select: {
+      id: true, name: true, email: true, archivedAt: true, stripeSubscriptionId: true,
+      parent: { select: { name: true, archivedAt: true } },
+    },
   });
   if (!member?.archivedAt) return { kind: "not-found" };
+  if (ERASED_EMAIL.test(member.email)) return { kind: "erased" };
+  if (member.parent?.archivedAt) return { kind: "parent-archived", parentName: member.parent.name };
   const at = new Date(member.archivedAt.getTime());
   const done = await tx.member.updateMany({
     where: { ...where, archivedAt: at },
@@ -164,7 +174,8 @@ export async function restoreMember(
       data: { archivedAt: null, archivedById: null },
     });
   }
-  return { kind: "ok", name: member.name, restoredKidIds: kids.map((k) => k.id) };
+  // Remove set any card subscription to end at the period end; restoring does not restart billing.
+  return { kind: "ok", name: member.name, restoredKidIds: kids.map((k) => k.id), subscriptionEnding: !!member.stripeSubscriptionId };
 }
 
 export async function deleteMemberCascade(
@@ -307,7 +318,11 @@ export async function archiveParentMemberWithKidsResolution(
     if (strategy.toParentMemberId === member.id) {
       return { kind: "invalid-reassign", reason: "Cannot reassign kids to the member being removed" };
     }
-    const target = await tx.member.findFirst({
+    // Locked, so the target cannot be archived between this check and the move.
+    const lockedTarget = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "Member" WHERE "id" = ${strategy.toParentMemberId} AND "tenantId" = ${where.tenantId} AND "archivedAt" IS NULL FOR UPDATE
+    `;
+    const target = lockedTarget.length === 0 ? null : await tx.member.findFirst({
       where: { id: strategy.toParentMemberId, tenantId: where.tenantId, archivedAt: null },
       select: { id: true, parentMemberId: true, accountType: true },
     });

@@ -41,7 +41,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           action: "member.restore",
           entityType: "Member",
           entityId: id,
-          metadata: { name: o.name, restoredKidIds: o.restoredKidIds },
+          metadata: { name: o.name, restoredKidIds: o.restoredKidIds, subscriptionEnding: o.subscriptionEnding },
           req,
         });
       }
@@ -50,10 +50,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (outcome.kind === "not-found") {
       return NextResponse.json({ error: "This member is not archived" }, { status: 404 });
     }
+    if (outcome.kind === "erased") {
+      return NextResponse.json({ error: "This member's personal data was erased on request, so there is nothing to restore." }, { status: 409 });
+    }
+    if (outcome.kind === "parent-archived") {
+      return NextResponse.json({ error: `${outcome.parentName}, their parent, is archived. Restore the parent first, or link this child to another parent.` }, { status: 409 });
+    }
     if (outcome.kind === "race") {
       return NextResponse.json({ error: "This member was changed by someone else. Reload and try again." }, { status: 409 });
     }
-    return NextResponse.json({ success: true, restoredKids: outcome.restoredKidIds.length });
+    return NextResponse.json({ success: true, restoredKids: outcome.restoredKidIds.length, subscriptionEnding: outcome.subscriptionEnding });
   } catch {
     return NextResponse.json({ error: "Couldn't restore this member. Try again." }, { status: 500 });
   }

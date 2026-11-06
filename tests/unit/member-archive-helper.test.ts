@@ -98,7 +98,7 @@ describe("restoreMember", () => {
       row("k2", { parentMemberId: "p", accountType: "kids", archivedAt: earlier }),
     ];
     const out = await restoreMember(fakeTx(rows) as never, { id: "p", tenantId: "t1" });
-    expect(out).toEqual({ kind: "ok", name: "p", restoredKidIds: ["k1"] });
+    expect(out).toEqual({ kind: "ok", name: "p", restoredKidIds: ["k1"], subscriptionEnding: false });
     expect(rows.map((r) => r.archivedAt)).toEqual([null, null, earlier]);
     expect(rows[0].archivedById).toBeNull();
   });

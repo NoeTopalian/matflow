@@ -79,11 +79,16 @@ export default function DataRequests({ initialMemberId }: { initialMemberId: str
     (async () => {
       try {
         const res = await fetch(`/api/admin/dsar/subjects?id=${encodeURIComponent(initialMemberId)}`, { cache: "no-store" });
-        if (!res.ok) return;
+        if (cancelled) return;
+        if (!res.ok) {
+          setSearchError(await readError(res, "Couldn't open that member. Search for them below."));
+          return;
+        }
         const rows = (await res.json()) as Subject[];
-        if (!cancelled && rows[0]) void pick(rows[0]);
+        if (rows[0]) void pick(rows[0]);
+        else setSearchError("That member isn't in this club. Search for them below.");
       } catch {
-        // The search below still works; nothing is picked.
+        if (!cancelled) setSearchError("Couldn't reach MatFlow. Search for the member below.");
       }
     })();
     return () => {

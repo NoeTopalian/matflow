@@ -181,6 +181,10 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     const after = await history();
     expect(after).toEqual(before.history);
     expect(after.checkInMethods.reduce((n, m) => n + m.count, 0)).toBe(2);
+    // The current month's headcount leaves Sam out from the moment of removal, so it equals the Active tile.
+    const current = await getReportsData(ids.tenant);
+    expect(current.membership.headcountByMonth.find((m) => m.isCurrentMonth)?.headcount).toBe(await activeCount());
+    expect(current.membership.totals.lostCancelled).toBe(0); // removal is not a cancellation (no churn)
     const everCount = await withTenantContext(ids.tenant, (tx) => tx.member.count({ where: { tenantId: ids.tenant, ...TRAINING_MEMBER_EVER } }));
     expect(everCount).toBeGreaterThanOrEqual(3);
 
@@ -285,6 +289,17 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
       return (await membersPOST(r)) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
     };
     const rows = () => withRlsBypass((tx) => tx.member.findMany({ where: { tenantId: ids.tenant, email: { equals: `${STAMP}-jane@example.test`, mode: "insensitive" } }, select: { id: true, archivedAt: true, phone: true } }));
+
+    // An admin cannot restore (the restore route is owner and manager): Add member answers 409 and nothing changes.
+    const adminId = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: `${STAMP}-admin@example.test`, name: "PR3 admin", role: "admin", passwordHash: "synthetic-not-a-hash" } })).id);
+    mockAuth.mockResolvedValue({ user: { id: adminId, role: "admin", tenantId: ids.tenant, email: "admin@example.test" } } as never);
+    const asAdmin = (await membersPOST(new Request("https://test.local/api/members", {
+      method: "POST",
+      headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" },
+      body: JSON.stringify({ name: "Jane Back", email: `${STAMP}-jane@example.test` }),
+    }))) as unknown as { status: number };
+    expect(asAdmin.status).toBe(409);
+    expect((await rows()).map((r) => r.archivedAt !== null)).toEqual([true]);
 
     // A different name at the same address is a different person: no restore, the uniqueness rule answers.
     expect((await add("John Back")).status).toBe(409);

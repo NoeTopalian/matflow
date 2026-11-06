@@ -247,6 +247,9 @@ export async function loadJoinedInWindows(
   });
 }
 
+/** The replay's state for an archived member (PR 3): out of every population, never a status a row can hold. */
+const ARCHIVED_STATE = "archived";
+
 export async function loadMembershipInput(tx: TxClient, tenantId: string, now: Date): Promise<MembershipInput> {
   if (!tenantId) throw new Error("loadMembershipReport requires a tenantId");
   // Sequential, not Promise.all: one interactive transaction is one connection.
@@ -255,7 +258,7 @@ export async function loadMembershipInput(tx: TxClient, tenantId: string, now: D
   // History counts archived members too (PR 3): archiving never rewrites a past month.
   const members = await tx.member.findMany({
     where: { tenantId, ...TRAINING_MEMBER_EVER },
-    select: { id: true, status: true, joinedAt: true, cancelledAt: true },
+    select: { id: true, status: true, joinedAt: true, cancelledAt: true, archivedAt: true },
   });
   const rows = await tx.memberStatusEvent.findMany({
     where: { tenantId, member: { tenantId, ...TRAINING_MEMBER_EVER } },
@@ -332,8 +335,26 @@ export async function loadMembershipInput(tx: TxClient, tenantId: string, now: D
     if (!boundary || e.occurredAt < boundary) boundary = e.occurredAt;
   }
 
+  // PR 3: an ARCHIVED member leaves the replay at the instant they were
+  // removed, as a correction ("otherOut": not a leaver, not churn — a removed
+  // duplicate is no cancellation), so the headcount from then on matches the
+  // Active members tile. Everything before that instant is untouched, and
+  // nothing recorded after it (say, Stripe ending their subscription) moves
+  // them again. Restore clears archivedAt, and the replay is as if they had
+  // never been removed.
+  const archivedAt = new Map(members.filter((m) => m.archivedAt).map((m) => [m.id, m.archivedAt as Date]));
+  const replayEvents: MovementEvent[] = archivedAt.size === 0
+    ? events
+    : events.filter((e) => {
+        const at = archivedAt.get(e.memberId);
+        return !at || e.occurredAt.getTime() <= at.getTime();
+      });
+  for (const [memberId, at] of archivedAt) {
+    replayEvents.push({ id: `archived:${memberId}`, memberId, toStatus: ARCHIVED_STATE, occurredAt: at, createdAt: at, correction: true });
+  }
+
   return {
-    input: { events, live: members.map((m) => ({ id: m.id, status: m.status })), now, timeZone, boundary },
+    input: { events: replayEvents, live: members.map((m) => ({ id: m.id, status: m.archivedAt ? ARCHIVED_STATE : m.status })), now, timeZone, boundary },
     historySource,
     undatedHistory,
     fromJoinDates,

@@ -57,7 +57,7 @@ import { NextRequest } from "next/server";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
-import { deleteMemberCascade } from "@/lib/member-delete";
+import { deleteMemberCascade, archiveMember } from "@/lib/member-delete";
 import { SESSION_COOKIE_NAME } from "@/lib/auth-cookie";
 import { POST as requestLink } from "@/app/api/magic-link/request/route";
 import { GET as verifyLink } from "@/app/api/magic-link/verify/route";
@@ -165,6 +165,32 @@ describe.skipIf(!HAS_DB)("sign-in credentials are bound to the person they were 
     const own = await verify(linkToken(lastMail("magic_link", X).link));
     expect(own.location).toContain("/dashboard");
     expect(own.cookie).toBeTruthy();
+  }, 120_000);
+
+  // PR 3 (6 Nov 2026): Remove deactivates a staff account and archives a member. A sign-in link minted BEFORE that
+  // must sign nobody in afterwards — the row (and its address) is still there, so binding alone does not refuse it.
+  it("PR 3: a login link minted before a staff account is deactivated signs nobody in", async () => {
+    const X = E("coach-deact");
+    const c = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: X, name: "secA Coach Deact", role: "coach", passwordHash: "synthetic-not-a-hash" } })).id);
+    expect((await requestLink(post("/api/magic-link/request", { email: X, tenantSlug: ids.slug }))).status).toBe(200);
+    const token = linkToken(lastMail("magic_link", X).link);
+    const del = await staffDelete(new Request(`${ORIGIN}/api/staff/${c}`, { method: "DELETE", headers: { origin: ORIGIN, host: "localhost:3847" } }), { params: Promise.resolve({ id: c }) });
+    expect(del.status).toBe(200);
+    const after = await verify(token);
+    expect(after.cookie, "no session for a deactivated account").toBeNull();
+    expect(after.location).toContain("/login");
+  }, 120_000);
+
+  it("PR 3: a login link minted before a member is archived signs nobody in", async () => {
+    const Y = E("member-arch");
+    const m = await mkMember(Y, "secA Member Arch", "synthetic-not-a-hash");
+    expect((await requestLink(post("/api/magic-link/request", { email: Y, tenantSlug: ids.slug }))).status).toBe(200);
+    const token = linkToken(lastMail("magic_link", Y).link);
+    const out = await withRlsBypass((tx) => archiveMember(tx, { id: m, tenantId: ids.tenant }, { userId: ids.owner, at: new Date() }));
+    expect(out.kind).toBe("ok");
+    const after = await verify(token);
+    expect(after.cookie, "no session for an archived member").toBeNull();
+    expect(after.location).toContain("/login");
   }, 120_000);
 
   it("SEC-003 reset code: a member is deleted and a different person gets the address — the old code resets nobody", async () => {

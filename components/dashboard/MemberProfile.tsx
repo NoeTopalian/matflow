@@ -1099,7 +1099,7 @@ export default function MemberProfile({
               primaryColor={primaryColor}
             />
           )}
-          {canEdit && !editing && (
+          {canEdit && !editing && !member.archivedAt && (
             <Button variant="secondary" onClick={() => setEditing(true)}>
               <Edit2 className="size-4" />
               Edit
@@ -1109,6 +1109,8 @@ export default function MemberProfile({
             <Button
               variant="secondary"
               onClick={() => setShowActionsMenu((v) => !v)}
+              // PR 3: an archived profile is read-only; Restore is in the notice above.
+              disabled={!!member.archivedAt}
               className="size-9 px-0"
               aria-label="More actions"
               aria-expanded={showActionsMenu}
