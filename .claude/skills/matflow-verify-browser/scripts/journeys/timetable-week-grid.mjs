@@ -136,18 +136,18 @@ try {
   await section("stays-put", "the box is positioned once: scrolled back to the morning, it stays there when the clock passes 19:00 (another class is now live) and the page re-renders", async () => {
     const scroller = box(main);
     await scroller.evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
-    const hide = main.getByTestId("timetable-hide-menu");
+    const hide = main.getByTestId("timetable-expand");
     await ctx.clock.setFixedTime(new Date("2026-11-05T19:05:00Z"));
     await hide.click(); // any state change re-renders the page on the new time
-    await expect(hide).toHaveText("Show menu");
+    await expect(hide).toHaveText("Shrink timetable");
     const liveNow = weekDay(main, "thu").locator('[data-session-state="live"]');
     await expect(liveNow.first()).toHaveAccessibleName(/Thursday 19:00 to 20:30/);
     const at = await scroller.evaluate((el) => ({ top: el.scrollTop, left: el.scrollLeft }));
     expect(at).toEqual({ top: 0, left: 0 });
-    // Back to 18:45 for the steps that follow, and the menu back on show.
+    // Back to 18:45 for the steps that follow, and the timetable back to its usual size.
     await ctx.clock.setFixedTime(new Date(FROZEN));
     await hide.click();
-    await expect(hide).toHaveText("Hide menu");
+    await expect(hide).toHaveText("Expand timetable");
     await expect(liveNow.first()).toHaveAccessibleName(/Thursday 18:40 to 19:00/);
     expect(await scroller.evaluate((el) => el.scrollTop)).toBe(0);
     return { scrollAfterTheClockMovedOn: at };
@@ -170,7 +170,7 @@ try {
     return { pair: pair.map((s) => chipName(s, 0)), pairTops: [a.y, b.y], pairWidths: [a.width, b.width], alone: chipName(alone[0], 0), aloneWidth: solo.width, dayWidth: head.width };
   });
 
-  await section("fits", "scrollbars on show: at 1440 the week fits and says nothing; at 1366, 1280 and 1024 the box scrolls, says so, and the page does not scroll sideways; Hide menu makes it fit at 1366 and 1280; a reload brings the menu back", async () => {
+  await section("fits", "scrollbars on show: at 1440 the week fits and says nothing; at 1366, 1280 and 1024 the box scrolls, says so, and the page does not scroll sideways; Expand timetable makes it fit at 1366 and 1280; a reload brings the menu back", async () => {
     const out = {};
     await size(main, 1440);
     await expect.poll(async () => (await noSidewaysScroll(main)).boxScrolls).toBe(false);
@@ -181,18 +181,18 @@ try {
     await shot(main, "timetable-week-grid-1440");
     for (const width of [1366, 1280, 1024]) {
       await size(main, width);
-      await expect(wider(main)).toHaveText("Wider than this window. Scroll sideways, or hide the menu.");
+      await expect(wider(main)).toHaveText("Wider than this window. Scroll sideways, or expand the timetable.");
       out[width] = { ...(await noSidewaysScroll(main)), spare: await spare(main) };
       expect(out[width].boxScrolls).toBe(true);
       expect(out[width].ok).toBe(true);
       if (width !== 1024) await shot(main, `timetable-week-grid-${width}`);
     }
-    const hide = main.getByTestId("timetable-hide-menu");
+    const hide = main.getByTestId("timetable-expand");
     for (const width of [1366, 1280]) {
       await size(main, width);
-      await expect(hide).toHaveText("Hide menu");
+      await expect(hide).toHaveText("Expand timetable");
       await hide.click();
-      await expect(hide).toHaveText("Show menu");
+      await expect(hide).toHaveText("Shrink timetable");
       await expect(main.locator(".dash-sidebar")).toBeHidden();
       await expect(wider(main)).toHaveText("");
       out[`${width} menu hidden`] = { ...(await noSidewaysScroll(main)), spare: await spare(main) };
@@ -210,7 +210,7 @@ try {
     await main.reload();
     await expect(weekChips(weekGrid(main))).toHaveCount(SESSIONS, { timeout: 30_000 });
     await expect(main.locator(".dash-sidebar")).toBeVisible();
-    await expect(main.getByTestId("timetable-hide-menu")).toHaveText("Hide menu");
+    await expect(main.getByTestId("timetable-expand")).toHaveText("Expand timetable");
     return out;
   });
 
@@ -255,13 +255,40 @@ try {
     return out;
   });
 
-  await section("wide", "1920 px: a lane is over 110 px and at most 220 px wide; the class cards under the grid are no wider than 1,152 px", async () => {
+  await section("expand", "1440 px: Expand timetable takes the side menu and the width cap away, and the week grows to fill the window with its seven days the same width; Shrink timetable puts it back", async () => {
+    await size(main, 1440);
+    const widths = () => weekGrid(main).evaluate((g) => ({
+      grid: Math.round(g.getBoundingClientRect().width),
+      days: [...g.querySelectorAll("[data-day-head]")].map((h) => Math.round(h.getBoundingClientRect().width)),
+    }));
+    const before = await widths();
+    const expand = main.getByTestId("timetable-expand");
+    await expand.click();
+    await expect(expand).toHaveText("Shrink timetable");
+    await expect(main.locator(".dash-sidebar")).toBeHidden();
+    await expect.poll(async () => (await widths()).grid).toBeGreaterThan(before.grid + 200);
+    const after = await widths();
+    expect(Math.max(...after.days) - Math.min(...after.days)).toBeLessThanOrEqual(2);
+    expect((await gridInvariants(main, { sessions: SESSIONS })).problems).toEqual([]);
+    expect((await noSidewaysScroll(main)).ok).toBe(true);
+    await shot(main, "timetable-week-grid-expanded-1440");
+    await expand.click();
+    await expect(main.locator(".dash-sidebar")).toBeVisible();
+    await expect.poll(async () => (await widths()).grid).toBe(before.grid);
+    return { before, after };
+  });
+
+  await section("wide", "1920 px: the seven days are the same width, an empty Sunday too, and fill the box; a lane is over 100 px; the class cards under the grid are no wider than 1,152 px", async () => {
     await size(main, 1920);
     await expect(wider(main)).toHaveText("");
     const lanes = await weekGrid(main).locator('[data-cell-key]').evaluateAll((cells) => cells.filter((c) => c.closest("[data-day]").querySelectorAll(`[data-cell-key][data-row-start="${c.dataset.rowStart}"]`).length === 2).map((c) => c.getBoundingClientRect().width));
     expect(lanes.length).toBeGreaterThan(10);
-    expect(Math.min(...lanes)).toBeGreaterThan(110);
-    expect(Math.max(...lanes)).toBeLessThanOrEqual(220);
+    expect(Math.min(...lanes)).toBeGreaterThan(100);
+    const days = await weekGrid(main).locator("[data-day-head]").evaluateAll((heads) => heads.map((h) => Math.round(h.getBoundingClientRect().width)));
+    expect(days).toHaveLength(7);
+    expect(Math.max(...days) - Math.min(...days)).toBeLessThanOrEqual(2);
+    const fill = await weekGrid(main).evaluate((g) => Math.round(g.parentElement.clientWidth - g.getBoundingClientRect().width));
+    expect(Math.abs(fill)).toBeLessThanOrEqual(2);
     const cards = await main.locator('main div[class*="max-w-[72rem]"]').first().boundingBox();
     expect(cards.width).toBeLessThanOrEqual(1152);
     const inv = await gridInvariants(main, { sessions: SESSIONS });

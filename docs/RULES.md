@@ -125,16 +125,18 @@ acts on is worse than an error they can see.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and
   never saved. Once an owner or manager presses a choice it is saved for the club and stays
-  until someone changes it. By mat cannot be chosen while no class is on a mat. When an
+  until someone changes it. While no class is on a mat, pressing By mat opens the mats set-up (it is never a dead button), and the club is split by mat as soon as the mats are added. When an
   action changes the split by itself, the product says so.
 - **One split for the whole club.** The staff week, the staff Day view, the staff phone and the
-  members' day all follow it. A phone, and the members' day, show mat columns while the day
-  needs three side-by-side columns or fewer; a busier day is drawn by time, every class names
-  its mat, and the screen says so.
+  members' day all follow it. One day is drawn the same way everywhere (the staff Day view on
+  a desktop is the day a phone shows): it starts at the day's first class and says its gaps
+  in words. A phone, and the members' day, show mat columns while the day needs three
+  side-by-side columns or fewer (six on a desktop); a busier day is drawn by time, every
+  class names its mat, and the screen says so.
 - **Who may change them:** owner and manager. A coach or an admin sees the split and the mat
   names and changes neither. In a MatFlow support session a class can be put on a mat (it is
   a class edit) but mats cannot be set up and the split cannot be changed: those are the
-  club's.
+  club's. The split is still shown there, as text with that reason, never hidden.
 - **Not undone from Activity.** Mats and the split are changed back where they were changed,
   on the Timetable page. Undoing a class edit re-derives the class's place from its mat and
   never copies an old name back.

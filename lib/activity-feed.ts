@@ -1067,6 +1067,38 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return who ? sentence(who, ` ${verb} `, where) : sentence(where, ` was ${verb}`);
     }
 
+    // Mats and the split (RULES §5b). A mat has no page of its own: its name, as the row recorded it, is plain text.
+    case "mat.create": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` added the mat “${name}”`) : null;
+    }
+    case "mat.update": {
+      const from = str(record(m.before)?.name), to = str(record(m.after)?.name);
+      return who && from && to ? sentence(who, ` renamed the mat “${from}” to “${to}”`) : null;
+    }
+    case "mat.delete": {
+      const name = str(m.name);
+      if (!who || !name) return null;
+      const kept = Array.isArray(m.classIds) ? m.classIds.length : 0;
+      return sentence(who, ` removed the mat “${name}”`, kept ? ` — its ${kept === 1 ? "class keeps" : `${kept} classes keep`} the name as their place` : "");
+    }
+    case "mat.reorder":
+      return who ? sentence(who, " reordered the mats") : null;
+    case "mat.adopt": {
+      const made = Array.isArray(m.mats) ? m.mats.map(record).filter((x) => x && x.created === true).map((x) => str(x?.name)).filter((x): x is string => !!x) : [];
+      if (!who) return null;
+      return made.length
+        ? sentence(who, ` made ${made.length === 1 ? "a mat" : `${made.length} mats`} from the places typed on classes: ${made.join(", ")}`)
+        : sentence(who, " put classes on their mats from the places typed on them");
+    }
+    case "timetable.layout.update": {
+      const to = str(record(m.after)?.stored);
+      if (!who) return null;
+      return to === "mat" || to === "time"
+        ? sentence(who, ` set the timetable to split same-time classes by ${to}`)
+        : sentence(who, " set the timetable back to choosing its split by itself");
+    }
+
     case "waiver.sign": {
       const person = r.member(subjectMember);
       return person ? sentence(person, " signed the waiver") : null;
@@ -1328,6 +1360,7 @@ const STAFF_ONLY_ACTIONS = new Set([
   "member.guardian.confirmed", "member.guardian.rejected",
   "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
   "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",
+  "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
   "waiver.sign.supervised", "task.member_note.create", "task.staff_task.create",
 ]);
 

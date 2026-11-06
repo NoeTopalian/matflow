@@ -1562,7 +1562,7 @@ export default function MemberProfile({
             {/* §4a.2: the split is STRUCTURAL, so it fires at `lg:` (1024) —
                 gated at `xl:` it never opened on a 1366px laptop. The flexible
                 track carries minmax(0,…) as the blowout guard. */}
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
                 <Card>
                   <div className="flex items-center justify-between gap-3 mb-5">
                     <div>
