@@ -30,6 +30,8 @@ function literalActions(): string[] {
       // Hyphens too: "waiver.sign-for-child" went unlabelled for want of one.
       for (const m of line.matchAll(/"([a-z_-]+(?:\.[a-z_-]+)+)"/g)) names.add(m[1]);
     }
+    // Events written through lib/activity-events.ts are named as the call's first argument.
+    for (const m of src.matchAll(/logActivityEvent\(\s*"([a-z_-]+(?:\.[a-z_-]+)+)"/g)) names.add(m[1]);
   }
   return [...names].sort();
 }

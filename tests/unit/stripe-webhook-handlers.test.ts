@@ -93,6 +93,8 @@ beforeEach(() => {
   // test doesn't care about the email path. Individual tests override these.
   vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ name: "Gym" } as never);
+  // As Prisma answers a create: the row (the purchase's activity row is written from it).
+  vi.mocked(prisma.memberClassPack.create).mockImplementation((async (args: { data: { creditsRemaining: number } }) => ({ id: "mcp-1", creditsRemaining: args.data.creditsRemaining })) as never);
   logAuditMock.mockClear();
 });
 
@@ -758,6 +760,7 @@ describe("Stripe webhook: checkout.session.completed (shop_order)", () => {
     const mockOrderUpdateMany = vi.mocked(prisma.order.updateMany);
     mockOrderUpdateMany.mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.order.findFirst).mockResolvedValue({
+      id: "ord-1",
       memberId: "mem-1",
       totalPence: 2500,
       currency: "GBP",
@@ -767,6 +770,11 @@ describe("Stripe webhook: checkout.session.completed (shop_order)", () => {
     const { POST } = await import("@/app/api/stripe/webhook/route");
     const res = await POST(makeReq("{}") as never);
     expect(res.status).toBe(200);
+    // The sale is on the club's Activity timeline, written in the same transaction as the flip.
+    const paid = logAuditMock.mock.calls.map(([row]) => row as Record<string, unknown>).filter((row) => row.action === "order.paid");
+    expect(paid).toHaveLength(1);
+    expect(paid[0]).toMatchObject({ tenantId: "tenant-A", userId: null, entityType: "Member", entityId: "mem-1", metadata: { memberId: "mem-1", orderId: "ord-1", orderRef: "ORD-1", amountPence: 2500, currency: "GBP" } });
+    expect(paid[0].tx).toBeTruthy();
 
     expect(mockOrderUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ tenantId: "tenant-A", orderRef: "ORD-1", status: "pending" }),

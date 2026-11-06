@@ -388,8 +388,11 @@ export const IGNORED_ID_KEYS = new Set([
   "holderId",
   "initiativeId",
   "loginEventId",
+  "memberClassPackId",
   "memberRankId",
   "newOwnerId",
+  // A shop order has no page of its own; its reference (orderRef) is what a person reads.
+  "orderId",
   "ownerId",
   "ownerUserId",
   "previousOwnerId",
@@ -775,6 +778,9 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
   const { m } = r;
   const who = r.actor();
   const subjectMember = row.entityType === "Member" ? row.entityId : null;
+  /** "… Adult Unlimited membership" when the row names a plan that still exists (rows written since 5 Nov 2026), else "… membership". */
+  const plan = idOf(m.tierId) && ctx.lookups.tiers.has(idOf(m.tierId)!) ? r.tier(m.tierId) : null;
+  const membership: (Part | string)[] = plan ? [" ", plan, " membership"] : [" membership"];
 
   switch (row.action) {
     case "attendance.self_checkin":
@@ -820,7 +826,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const theirs = r.member(subjectMember, true);
       if (!person) return null;
       const type = typeOf(row);
-      if (type === "cancellation") return who ? sentence(who, " cancelled ", theirs, " membership") : sentence(theirs, " membership was cancelled");
+      if (type === "cancellation") return who ? sentence(who, " cancelled ", theirs, ...membership) : sentence(theirs, ...membership, " was cancelled");
       if (type === "membership_changed") {
         const change = record(record(m.changes)?.membershipTierId);
         const from = r.tier(change?.from);
@@ -881,6 +887,12 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return linking ? sentence(child, " was linked to ", parent) : sentence(child, " was unlinked from ", parent);
     }
 
+    case "member.attribution.update": {
+      const person = r.member(subjectMember);
+      if (!person) return null;
+      return who ? sentence(who, " changed who is credited for ", person) : sentence("Who is credited for ", person, " was changed");
+    }
+
     case "member.rank.promote": {
       const person = r.member(subjectMember);
       const to = r.rank(m.toRankId);
@@ -916,19 +928,19 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
     case "member.hold.start": {
       const theirs = r.member(subjectMember, true);
       if (!theirs) return null;
-      return who ? sentence(who, " put ", theirs, " membership on hold") : sentence(theirs, " membership was put on hold");
+      return who ? sentence(who, " put ", theirs, ...membership, " on hold") : sentence(theirs, ...membership, " was put on hold");
     }
     case "member.hold.end": {
       const theirs = r.member(subjectMember, true);
       if (!theirs) return null;
-      return who ? sentence(who, " resumed ", theirs, " membership") : sentence(theirs, " membership was resumed");
+      return who ? sentence(who, " resumed ", theirs, ...membership) : sentence(theirs, ...membership, " was resumed");
     }
 
     case "member.subscription.cancel": {
       const person = r.member(subjectMember);
       if (!person) return null;
       const ends = dateOf(m.cancelAt);
-      return sentence(person, " asked to cancel their membership", ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null);
+      return sentence(person, " asked to cancel their", ...membership, ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null);
     }
     case "member.subscription.cancel.kid": {
       const child = r.member(subjectMember, true);
@@ -936,17 +948,49 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const parent = r.member(m.parentMemberId);
       const ends = dateOf(m.cancelAt);
       const tail = ends ? ` — ends ${formatDate(ends, ctx.timeZone)}` : null;
-      return parent ? sentence(parent, " asked to cancel ", child, " membership", tail) : sentence("A cancellation was requested for ", child, " membership", tail);
+      return parent ? sentence(parent, " asked to cancel ", child, ...membership, tail) : sentence("A cancellation was requested for ", child, ...membership, tail);
     }
     case "member.subscription.cancelled_by_stripe": {
       const theirs = r.member(subjectMember, true);
-      return theirs ? sentence(theirs, " membership ended") : null;
+      return theirs ? sentence(theirs, ...membership, " ended") : null;
     }
     case "member.subscription.create.kid": {
       const child = r.member(subjectMember);
       if (!child) return null;
       const parent = r.member(m.parentMemberId);
-      return parent ? sentence(parent, " started a membership for ", child, " — awaiting first payment") : sentence("A membership was started for ", child, " — awaiting first payment");
+      const what = plan ?? text("a membership");
+      return parent ? sentence(parent, " started ", what, " for ", child, " — awaiting first payment") : sentence(what, " was started for ", child, " — awaiting first payment");
+    }
+    case "member.subscription.purchased": {
+      const person = r.member(subjectMember);
+      if (!person) return null;
+      const what = plan ?? text("a membership");
+      // Nothing has been paid when this row is written: the payment is its own row when it comes.
+      // A staff member is on the row only when one started it; otherwise the member did, in their app.
+      if (row.userId && who) return sentence(who, " started ", what, " for ", person, " — awaiting first payment");
+      // Started by staff whose account has since been removed: the row lost its user but still says a user wrote it.
+      if (!row.userId && m.actorType === "user" && !idOf(m.actorId)) return sentence("A former staff member started ", what, " for ", person, " — awaiting first payment");
+      return sentence(person, " started ", what, " — awaiting first payment");
+    }
+    case "class_pack.purchased": {
+      const person = r.member(subjectMember ?? m.memberId);
+      if (!person) return null;
+      const pack = idOf(m.classPackId) && ctx.lookups.packs.has(idOf(m.classPackId)!) ? r.pack(m.classPackId) : null;
+      return pack ? sentence(person, " bought the ", pack) : sentence(person, " bought a class pack");
+    }
+    case "order.paid": {
+      const paid = r.amount(m.amountPence, m.currency);
+      if (!paid) return null;
+      const order = str(m.orderRef) ? ` for shop order ${tidy(str(m.orderRef)!, 60)}` : " for a shop order";
+      const person = r.member(m.memberId);
+      return person ? sentence(person, " paid ", paid, order) : sentence(paid, " was paid", order);
+    }
+    case "class.booking.created":
+    case "class.booking.cancelled": {
+      const person = r.member(subjectMember ?? m.memberId);
+      const cls = r.klass(m.classId);
+      if (!person || !cls) return null;
+      return row.action === "class.booking.created" ? sentence(person, " booked ", cls) : sentence(person, " cancelled their booking for ", cls);
     }
     case "member.subscription.migrated": {
       const theirs = r.member(subjectMember, true);
@@ -1210,6 +1254,13 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
     case "member.rank.promote":
       if (m.fromRankId === null && (num(m.stripes) ?? 0) > 0) add(`${m.stripes} ${m.stripes === 1 ? "stripe" : "stripes"}`);
       break;
+    case "class_pack.purchased": {
+      const credits = num(m.credits);
+      if (credits != null) add(`${credits} ${credits === 1 ? "class" : "classes"}`);
+      const paid = r.amount(m.amountPence, m.currency);
+      if (paid) add(paid);
+      break;
+    }
     case "member.hold.start": {
       const until = dateOf(m.holdUntil);
       if (until) add(`Until ${formatDate(until, ctx.timeZone)}`);
@@ -1260,7 +1311,7 @@ function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange
   } else if (sent.length) {
     const lifecycle = classLifecycleOf(m) != null;
     const fields = sent.filter((f) => !(lifecycle && f === "isActive"));
-    if (fields.length) add(`Fields: ${fields.map(fieldLabel).join(", ")}`);
+    if (fields.length) add(`Fields: ${[...new Set(fields.map(fieldLabel))].join(", ")}`);
   }
 
   // Imports say which file, exported when, and what happened to how many.

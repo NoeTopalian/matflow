@@ -50,7 +50,8 @@ export async function POST(req: Request) {
   const member = await withTenantContext(session.user.tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId: session.user.tenantId },
-      select: { id: true, parentMemberId: true, stripeSubscriptionId: true },
+      // The plan they are on now: recorded on the activity row, so "what happened to this plan" finds the cancellation.
+      select: { id: true, parentMemberId: true, stripeSubscriptionId: true, membershipTierId: true },
     }),
   );
   if (!member) return apiError("Member not found", 404);
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
     action: "member.subscription.cancel",
     entityType: "Member",
     entityId: member.id,
-    metadata: { initiator: "self", cancelAt: outcome.cancelAt },
+    metadata: { initiator: "self", cancelAt: outcome.cancelAt, ...(member.membershipTierId ? { tierId: member.membershipTierId } : {}) },
     req,
   });
 

@@ -100,6 +100,14 @@ export const REASON = {
   // T6b: an old pause row would otherwise put an archived class back as
   // "active but archived" and mint sessions for it.
   archivedSince: "This class has been archived since. Restore it from Paused and archived on the Timetable page.",
+  // Activity events (5 Nov 2026): records of something a member did, each with the way to reverse it.
+  membershipStarted: "This started a Stripe subscription. Cancel it from the member's profile so Stripe is told too.",
+  bookingMade: "The member can cancel the booking from their app.",
+  bookingCancelled: "The member can book again from their app.",
+  // A creation has no earlier state. It used to give the general "recorded before snapshots were kept" reason,
+  // which is about something else and read as a fault.
+  created: "This added something new, so there is nothing earlier to put back. If it was a mistake, remove or archive it where it lives.",
+  taskAdded: "This added a task or a note, so there is nothing earlier to put back. It is closed by marking it done.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -675,7 +683,13 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^attendance\.unmark$/, REASON.reMark],
   [/^attendance\.card_scan$/, REASON.batchScan],
   [/^(email\.|payment\.chase|member\.bulk_invite|staff\.invite)/, REASON.email],
+  // A bought pack and a paid shop order are money, reversed by a refund like any other payment.
   [/^(payment|payments|order|billing)\./, REASON.money],
+  [/^class_pack\.purchased$/, REASON.money],
+  [/^class\.booking\.created$/, REASON.bookingMade],
+  [/^class\.booking\.cancelled$/, REASON.bookingCancelled],
+  // Above the general subscription rule: starting one is undone by cancelling it, which the member's page does.
+  [/^member\.subscription\.purchased$/, REASON.membershipStarted],
   [/^member\.payment\./, REASON.money],
   [/^stripe\./, REASON.stripe],
   [/^member\.subscription\./, REASON.stripe],
@@ -688,6 +702,10 @@ const IRREVERSIBLE: [RegExp, string][] = [
   [/^(report\.|drive\.|onboarding\.|class\.instances_generated|member\.invite_link|member\.waiver_link|member\.waiver\.)/, REASON.record],
   // D2: the record of bookings an access change kept; undo the change itself instead.
   [/^class\.bookings\.kept_ineligible$/, REASON.record],
+  // Last, so every more specific reason above wins: a class, member, plan, pack, rank, venue, announcement or task
+  // that was added (".create", ".created", ".create.kid").
+  [/^task\..*\.create$/, REASON.taskAdded],
+  [/\.(create|created)(\.kid)?$/, REASON.created],
 ];
 
 export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecision {

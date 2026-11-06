@@ -17,6 +17,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+// The booking writes a line to the club's Activity timeline in its own transaction; the audit writer is not under test here.
+const activity = vi.hoisted(() => ({ logAudit: vi.fn<(row: Record<string, unknown>) => Promise<void>>(async () => {}) }));
+vi.mock("@/lib/audit-log", () => ({ logAudit: activity.logAudit }));
+
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({

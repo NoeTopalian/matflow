@@ -16,6 +16,7 @@ import { checkinRefusal } from "@/lib/checkin-refusal";
 import { allowanceVerdict, allowanceBookingNotice, nowMinute, slotMinute } from "@/lib/class-allowance";
 import { readAllowanceSnapshot } from "@/lib/class-allowance-count";
 import { usableTimezone } from "@/lib/class-time";
+import { logActivityEvent } from "@/lib/activity-events";
 
 export const runtime = "nodejs";
 
@@ -133,6 +134,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       await tx.classSubscription.create({
         data: { memberId: r.memberId, classId },
       });
+      // On the club's Activity timeline, in the booking's own transaction. Only a booking that was made is
+      // recorded: the "already booked" answer above returns before this.
+      await logActivityEvent("class.booking.created", { memberId: r.memberId, classId }, { tx, tenantId: r.tenantId, userId: r.memberId, req });
       // T7 (owner decision, 20 Oct 2026): a booking consumes nothing and is
       // never refused for the allowance — only confirmed attendance counts,
       // and a booking is not a guarantee of admission. The member is told
@@ -247,14 +251,19 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ classId: str
 
   // Tenant-scoped delete via the class relation; deleteMany returns count
   // so cross-tenant attempts no-op silently rather than 404-leaking.
-  const result = await withTenantContext(r.tenantId, (tx) =>
-    tx.classSubscription.deleteMany({
+  const result = await withTenantContext(r.tenantId, async (tx) => {
+    const removed = await tx.classSubscription.deleteMany({
       where: {
         memberId: r.memberId,
         classId,
         class: { tenantId: r.tenantId },
       },
-    }),
-  );
+    });
+    // Recorded only when a booking was there to give up (a repeat, or another club's class, removes nothing).
+    if (removed.count > 0) {
+      await logActivityEvent("class.booking.cancelled", { memberId: r.memberId, classId }, { tx, tenantId: r.tenantId, userId: r.memberId, req });
+    }
+    return removed;
+  });
   return NextResponse.json({ success: true, removed: result.count });
 }

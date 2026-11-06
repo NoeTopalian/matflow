@@ -57,14 +57,14 @@ vi.mock("stripe", () => {
   // See lib/stripe/subscriptions.ts (verified against a test Connect account
   // 2026-08-18).
   const subscriptionsCreate = vi.fn(async () => ({
-    id: "sub_test_self_456",
+    id: "sub_1TestSelf456",
     latest_invoice: {
       id: "in_test_self_001",
       confirmation_secret: { client_secret: "pi_test_self_secret_789", type: "payment_intent" },
     },
   }));
   const subscriptionsUpdate = vi.fn(async () => ({
-    id: "sub_test_self_456",
+    id: "sub_1TestSelf456",
     cancel_at: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
   }));
   return {
@@ -77,6 +77,7 @@ vi.mock("stripe", () => {
 
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { logAudit } from "@/lib/audit-log";
 import { POST as startSub } from "@/app/api/member/subscriptions/start/route";
 import { POST as cancelSub } from "@/app/api/member/subscriptions/cancel/route";
 
@@ -246,7 +247,7 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
     const res = await startSub(jsonReq("/api/member/subscriptions/start", { priceId: STRIPE_PRICE_ID, requestId: SUB_REQUEST_ID }));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { subscriptionId: string; clientSecret: string };
-    expect(body.subscriptionId).toBe("sub_test_self_456");
+    expect(body.subscriptionId).toBe("sub_1TestSelf456");
     expect(body.clientSecret).toBe("pi_test_self_secret_789");
 
     const fresh = await withRlsBypass((tx) =>
@@ -256,7 +257,21 @@ describe.skipIf(!HAS_DB)("F2 member self-subscribe", () => {
       }),
     );
     expect(fresh?.stripeCustomerId).toBe("cus_test_self_123");
-    expect(fresh?.stripeSubscriptionId).toBe("sub_test_self_456");
+    expect(fresh?.stripeSubscriptionId).toBe("sub_1TestSelf456");
+
+    // "Started a membership" was recorded for the timeline: behind the real Member row lock, after the real look for
+    // an earlier row, in that transaction (the audit writer itself is stubbed in this file, so no row is left behind).
+    const tier = await withRlsBypass((tx) => tx.membershipTier.findFirst({ where: { tenantId: tenantWithBilling, stripePriceId: STRIPE_PRICE_ID }, select: { id: true } }));
+    const started = vi.mocked(logAudit).mock.calls.map(([row]) => row).filter((row) => row.action === "member.subscription.purchased");
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({
+      tenantId: tenantWithBilling,
+      entityType: "Member",
+      entityId: memberId,
+      requestId: "sub-purchased:sub_1TestSelf456",
+      metadata: { memberId, tierId: tier!.id, stripeSubscriptionId: "sub_1TestSelf456" },
+    });
+    expect(started[0].tx).toBeTruthy();
   });
 
   it("cancel returns 200 + cancelAt when called against an active subscription", async () => {

@@ -11,6 +11,10 @@ vi.mock("next/server", () => ({
 
 vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+// The booking writes a line to the club's Activity timeline in its own transaction; the audit writer is not under test here.
+const activity = vi.hoisted(() => ({ logAudit: vi.fn<(row: Record<string, unknown>) => Promise<void>>(async () => {}) }));
+vi.mock("@/lib/audit-log", () => ({ logAudit: activity.logAudit }));
+
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
@@ -121,6 +125,10 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
     expect(mockSubCreate).toHaveBeenCalledWith({
       data: { memberId: "mem-1", classId: "cls-1" },
     });
+    // Recorded for the club's Activity timeline: who booked which class, with the booking's own transaction client.
+    expect(activity.logAudit).toHaveBeenCalledTimes(1);
+    expect(activity.logAudit.mock.calls[0][0]).toMatchObject({ action: "class.booking.created", tenantId: "tenant-A", userId: "mem-1", entityType: "Member", entityId: "mem-1", metadata: { memberId: "mem-1", classId: "cls-1" } });
+    expect(activity.logAudit.mock.calls[0][0].tx).toBe(prisma);
   });
 
   it("returns 404 when class belongs to a different tenant", async () => {
@@ -295,6 +303,9 @@ describe("DELETE /api/member/class-subscriptions/[classId]", () => {
     expect(mockSubDeleteMany).toHaveBeenCalledWith({
       where: { memberId: "mem-1", classId: "cls-1", class: { tenantId: "tenant-A" } },
     });
+    // A booking that was there to give up is recorded as given up.
+    expect(activity.logAudit).toHaveBeenCalledTimes(1);
+    expect(activity.logAudit.mock.calls[0][0]).toMatchObject({ action: "class.booking.cancelled", entityId: "mem-1", metadata: { memberId: "mem-1", classId: "cls-1" } });
   });
 
   it("cross-tenant delete is silent no-op (count: 0)", async () => {

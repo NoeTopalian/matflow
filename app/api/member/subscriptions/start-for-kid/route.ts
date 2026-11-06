@@ -202,7 +202,7 @@ export async function POST(req: Request) {
     action: "member.subscription.create.kid",
     entityType: "Member",
     entityId: kid.id,
-    metadata: { parentMemberId, priceId, paymentMethodType: requestedMethod },
+    metadata: { parentMemberId, priceId, paymentMethodType: requestedMethod, ...(tier ? { tierId: tier.id } : {}) },
     req,
   });
 

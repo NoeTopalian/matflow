@@ -124,6 +124,20 @@ describe("member self-subscribe — the duplicate guard", () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("hands over the payment form even when the activity line cannot be written", async () => {
+    // The transaction this file fakes cannot take a row lock or write an audit row, so recording
+    // "started a membership" fails here every time. The member must still get their client secret.
+    const said = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockMember.mockResolvedValue({ id: MEMBER, email: "a@b.c", name: "Sam", stripeCustomerId: null, parentMemberId: null, stripeSubscriptionId: null });
+
+    const res = await adultPOST(req({ priceId: PRICE, requestId: REQ }));
+
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ clientSecret: "cs_1" });
+    expect(said.mock.calls.some((c) => String(c[0]).includes("member.subscription.purchased was not recorded"))).toBe(true);
+    said.mockRestore();
+  });
+
   it("reads stripeSubscriptionId, so the guard can actually be evaluated", async () => {
     mockMember.mockResolvedValue({
       id: MEMBER, email: "a@b.c", name: "Sam",

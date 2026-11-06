@@ -63,6 +63,8 @@ export const ACTIVITY_TYPES: ActivityType[] = [
   type({ key: "checkin_exception", label: "Check-in with a warning", group: "Attendance", icon: "TriangleAlert", actions: [], ruleActions: ["attendance.mark"], roles: BOTH, defaultOn: true }),
   type({ key: "checkin", label: "Check-in", group: "Attendance", icon: "ClipboardCheck", actions: ["attendance.mark", "attendance.self_checkin", "attendance.kiosk_checkin", "attendance.card_scan"], roles: BOTH, defaultOn: true }),
   type({ key: "checkin_removed", label: "Check-in removed", group: "Attendance", icon: "ClipboardX", actions: ["attendance.override", "attendance.unmark", "attendance.undo"], roles: BOTH, defaultOn: true }),
+  // A standing place in a class, taken or given up by the member in their app.
+  type({ key: "booking", label: "Class booking", group: "Attendance", icon: "CalendarCheck", actions: ["class.booking.created", "class.booking.cancelled"], roles: BOTH, defaultOn: true }),
 
   // ── Members ────────────────────────────────────────────────────────────────
   type({ key: "member_joined", label: "New member", group: "Members", icon: "UserPlus", actions: ["member.create", "member.create.kid"], roles: BOTH, defaultOn: true }),
@@ -105,12 +107,13 @@ export const ACTIVITY_TYPES: ActivityType[] = [
   }),
   // Sign-in help, and the record of who opened a signed waiver: access to a member's account or papers, not a change to them.
   type({ key: "member_access", label: "Member sign-in and access", group: "Members", icon: "KeyRound", actions: ["member.unlock", "member.totp_reset", "member.invite_link.generated", "member.bulk_invite", "member.card_revoked", "waiver.signature.view"], roles: BOTH, defaultOn: false }),
-  // Off by default: the member form sends these fields with every save and the row is written whether or not
-  // they changed, so until the writer records only real changes it would add a line to every profile save.
-  type({ key: "attribution", label: "Conversion credit", group: "Members", icon: "Target", actions: ["member.attribution.update"], roles: BOTH, defaultOn: false }),
+  // Who ran a trial and who is credited with a new member. The row is written only when one of them changed
+  // (it used to be written on every profile save, which is why this type began life switched off).
+  type({ key: "attribution", label: "Conversion credit", group: "Members", icon: "Target", actions: ["member.attribution.update"], roles: BOTH, defaultOn: true }),
 
   // ── Memberships & money ────────────────────────────────────────────────────
-  type({ key: "membership_started", label: "Membership started", group: "Memberships & money", icon: "BadgeCheck", actions: ["member.subscription.create.kid"], roles: BOTH, defaultOn: true }),
+  type({ key: "membership_started", label: "Membership started", group: "Memberships & money", icon: "BadgeCheck", actions: ["member.subscription.create.kid", "member.subscription.purchased"], roles: BOTH, defaultOn: true }),
+  type({ key: "pack_purchased", label: "Class pack bought", group: "Memberships & money", icon: "Ticket", actions: ["class_pack.purchased"], roles: BOTH, defaultOn: true }),
   type({ key: "membership_changed", label: "Membership changed", group: "Memberships & money", icon: "Repeat", actions: ["member.subscription.migrated"], ruleActions: ["member.update"], roles: BOTH, defaultOn: true }),
   type({
     key: "cancellation",
@@ -122,7 +125,7 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     roles: BOTH,
     defaultOn: true,
   }),
-  type({ key: "payment", label: "Payment", group: "Memberships & money", icon: "CreditCard", actions: ["member.payment.succeeded", "payment.manual", "payment.adhoc.charge", "order.mark_paid"], roles: BOTH, defaultOn: true }),
+  type({ key: "payment", label: "Payment", group: "Memberships & money", icon: "CreditCard", actions: ["member.payment.succeeded", "payment.manual", "payment.adhoc.charge", "order.mark_paid", "order.paid"], roles: BOTH, defaultOn: true }),
   type({
     key: "payment_failed",
     label: "Payment failed or disputed",
@@ -367,6 +370,11 @@ export const ACTIVITY_FIELD_LABELS: Record<string, string> = {
   holdUntil: "On hold until",
   notes: "Notes",
   medicalConditions: "Medical details",
+  // Conversion credit: who ran the trial, and who is credited with the sign-up (a staff member, a member, or a typed name).
+  trialRunById: "Trial run by",
+  creditedToUserId: "Credited to",
+  creditedToMemberId: "Credited to",
+  creditedToLabel: "Credited to",
   // Class
   description: "Description",
   instructorId: "Coach",

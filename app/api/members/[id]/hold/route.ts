@@ -49,7 +49,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const found = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, name: true, paymentStatus: true, stripeSubscriptionId: true, status: true },
+      select: { id: true, name: true, paymentStatus: true, stripeSubscriptionId: true, status: true, membershipTierId: true },
     });
     if (!member) return null;
     const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { stripeAccountId: true, stripeConnected: true } });
@@ -105,6 +105,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       priorPaymentStatus: member.paymentStatus,
       stripeSubscriptionId: member.stripeSubscriptionId,
       stripePaused,
+      ...(member.membershipTierId ? { tierId: member.membershipTierId } : {}),
     },
     req,
   });

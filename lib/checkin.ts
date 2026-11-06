@@ -295,6 +295,8 @@ export type PerformCheckinResult =
   | {
       kind: "success";
       record: { id: string; tenantId: string; memberId: string; classInstanceId: string; checkInMethod: string };
+      /** The class the session belongs to: recorded on the check-in's activity row, so the class's History finds it. */
+      classId?: string;
       coverage: { kind: "subscription" | "manual" | "pack" | "uncovered_kiosk"; creditsRemaining?: number };
       /**
        * Set when a staff override put the session PAST `Class.maxCapacity`.
@@ -630,8 +632,12 @@ export function memberChangedSince(pre: GateMemberView, locked: MemberLockRow): 
  * import creating a session, an undo batch) would deadlock with a check-in
  * holding the Class row. The member-deletion cascade still waits (its lock
  * and its DELETE are FOR UPDATE).
+ *
+ * Exported for the one other writer that must not run twice for one member:
+ * the "membership started" activity row (lib/activity-events.ts), which takes
+ * this lock alone, so it adds no new lock order.
  */
-async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
+export async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
   const rows = await tx.$queryRaw<MemberLockRow[]>`
     SELECT "id", "cardVersion", "membershipTierId", "paymentStatus", "stripeSubscriptionId",
            (EXTRACT(EPOCH FROM "nextDueAt") * 1000)::float8 AS "nextDueAtMs",
@@ -1099,6 +1105,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       return {
         kind: "success",
         record: result.record,
+        classId: instance.classId,
         coverage: { kind: "pack", creditsRemaining: result.creditsRemaining },
         ...(result.overCapacity ? { overCapacity: result.overCapacity } : {}),
       };
@@ -1193,6 +1200,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       return {
         kind: "success",
         record,
+        classId: instance.classId,
         coverage: { kind: "pack", creditsRemaining: straight.pack.creditsRemaining },
         ...(overCapacity ? { overCapacity } : {}),
       };
@@ -1201,6 +1209,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
       return {
         kind: "success",
         record,
+        classId: instance.classId,
         coverage: { kind: "uncovered_kiosk" },
         ...(overCapacity ? { overCapacity } : {}),
       };
@@ -1209,6 +1218,7 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
     return {
       kind: "success",
       record,
+      classId: instance.classId,
       coverage: { kind: straight.subscribed ? "subscription" : "manual" },
       ...(overCapacity ? { overCapacity } : {}),
     };
