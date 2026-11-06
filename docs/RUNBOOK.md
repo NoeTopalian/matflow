@@ -175,10 +175,11 @@ When you need to stop bleeding faster than fix-forward will allow:
 - Effect: `Tenant.subscriptionStatus = "suspended"`. `auth.ts:155` rejects all logins immediately. No data is touched. Reversible via DELETE on the same route.
 - Audit: `admin.tenant.suspended` with reason.
 
-### Soft-delete a tenant (and its data goes invisible)
-- `/admin/tenants/[id]` → Danger Zone → "Soft-delete gym" (requires typed gym name + 7-second cooldown)
-- Effect: `Tenant.deletedAt = now`. `auth.ts:154` rejects all logins. Tenant disappears from active lists. Cron hard-deletes after 30 days.
-- Audit: `admin.tenant.soft_deleted`.
+### Close a tenant (kept, reopenable at any time)
+- `/admin/tenants/[id]` → Danger Zone → "Close gym" (requires typed gym name + 7-second cooldown + authenticator code)
+- Effect: `Tenant.deletedAt = now`. `auth.ts:154` rejects all logins. The club leaves the default list and appears under the "Closed" status filter on `/admin/tenants`, badged with its closing date. **Nothing is deleted and nothing is scheduled** (product rule, 16 Oct 2026): the club and its data are kept so it can come back. "Reopen gym" on the same page clears `deletedAt` at any time — there is no window.
+- Permanent erasure happens only on the club's written request, run by an operator with `purgeTenantById` (`lib/tenant-purge.ts`) against a club that is already closed. No cron calls it.
+- Audit: `admin.tenant.soft_deleted` / `admin.tenant.restored` (historical action names; the hub says close/reopen).
 
 ### Force a single owner's password reset
 - `/admin/tenants/[id]` → Danger Zone → "Force password reset"

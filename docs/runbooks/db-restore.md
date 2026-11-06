@@ -128,7 +128,7 @@ This is possible because `AuditLog` rows carry `tenantId` as a plain string with
   - `BACKUP_S3_REGION` — e.g. `eu-west-2`
 
   Until all five exist, treat Neon PITR as the **only** backup and size the incident response to its window. Verify with `gh run list --workflow=db-backup.yml` before relying on Option B.
-- ✅ Retention sweep — `/api/cron/retention`, daily 03:30 UTC (`vercel.json`). Enforces the published retention windows and hard-deletes tenants 30 days after soft-delete. Requires `CRON_SECRET`; returns 503 without it.
+- ✅ Retention sweep — `/api/cron/retention`, daily 03:30 UTC (`vercel.json`). Enforces the published retention windows for logs, tokens, Stripe events and abandoned imports. It never deletes a club: closed clubs are kept (16 Oct 2026). Requires `CRON_SECRET`; returns 503 without it.
 
 ## Rehearsal status (3 Oct 2026)
 
