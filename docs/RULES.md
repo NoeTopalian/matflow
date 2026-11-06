@@ -178,9 +178,12 @@ acts on is worse than an error they can see.
 - **Deletions a person deliberately makes stay**, because each is recorded in Activity and many
   can be undone: staff removing a member, a photo, a roster entry or a class; unticking
   attendance; an import rollback; an erasure request.
-- **The one automatic exception: sign-in rate-limit counters** (`RateLimitHit`, and a bucket
-  cleared after a successful sign-in). They are security counters, not club data, and the
-  lockout depends on clearing them.
+- **Two automatic exceptions, both security records, not club data:** sign-in rate-limit
+  counters (`RateLimitHit`, and a bucket cleared after a successful sign-in), which the lockout
+  depends on clearing; and password history, trimmed to its limit when a password changes
+  (`lib/password-policy.ts`).
+- Removing a class-pack redemption when its attendance is unticked is part of that deliberate
+  action, not an automatic deletion.
 - **Erasure is unchanged.** A data-protection erasure still removes a member's details, and a
   club is erased only when it asks in writing (an operator runs it; never on a schedule).
 - The nightly retention job keeps its Stripe reconciliation and prunes only the rate-limit
