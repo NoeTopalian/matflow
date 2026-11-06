@@ -208,7 +208,7 @@ try {
     }
   });
 
-  await section("by-mat-sets-up", "with no mats yet, By mat says what it will do and names the typed places; pressing it opens the set-up with the four places ticked; adding them splits the club by mat (saved), closes the sheet and says so; Monday then has a column per mat", async () => {
+  await section("by-mat-sets-up", "with no mats yet, By mat says what it will do and names the typed places; pressing it opens the set-up with the four places ticked; adding them splits the club by mat (saved), closes the sheet and says so; Monday then has a column per mat it teaches on", async () => {
     await main.getByTestId("timetable-view-week").click();
     await expect(main.getByTestId("week-scroller")).toBeVisible();
     await expect(main.getByTestId("timetable-split-hint")).toHaveText(/^By mat gives each mat its own column\. Press it to set up your mats: your classes say .+ and 2 more\.$/);
@@ -224,7 +224,8 @@ try {
     const stored = (await q(`select "timetableLayout" v from "Tenant" where id = $1`, [club.tenantId]))[0].v;
     expect(stored).toBe("mat");
     const heads = (await main.locator('[data-testid="week-grid"] [data-day="mon"] [data-mat-head]').allTextContents()).map((h) => h.trim());
-    expect(heads.filter((h) => /^Mat \d$/.test(h)).sort()).toEqual(["Mat 1", "Mat 2", "Mat 3", "Mat 4"]);
+    // Monday teaches on Mats 1 to 3 (Mat 4 only on Saturday) and has one class on no mat.
+    expect(heads).toEqual(["Mat 1", "Mat 2", "Mat 3", "No mat"]);
     await shot(main, "timetable-day-view-by-mat-after-set-up");
     return { stored, mondayColumns: heads };
   });
