@@ -1,6 +1,6 @@
 // Activity timeline: the page, its filters, its failure states, Undo, and who may see what (synthetic data only).
 //   node run-journeys.mjs activity-timeline
-// Owner at 1440 (and 1280 / 1024 / 390 for layout), then the same club as a manager and as a coach.
+// Owner at 1440 (and 1280 / 1024 / 930 / 390 for layout), then the same club as a manager and as a coach.
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, sleep, BASE } from "../lib.mjs";
 import { seedActivity, SLOW, noSideScroll, clubDay, clubTime, id, isFeed, ready, changed, visit, watchNetwork, networkFaults } from "./activity-seed.mjs";
@@ -89,12 +89,35 @@ try {
     new Date(s.now - 2 * 60_000),
   ]);
   const views = (page) => page.getByTestId("activity-views");
-  const view = (page, name) => views(page).getByRole("button", { name, exact: true });
+  const view = (page, name) => views(page).getByRole("tab", { name, exact: true });
+  /** Opens Filters and returns the sheet. */
+  const filtersSheet = async (page) => {
+    await page.getByTestId("filters-button").click();
+    const sheet = page.getByRole("dialog", { name: "Filters" });
+    await expect(sheet).toBeVisible();
+    return sheet;
+  };
+  /** Opens the day sheet and returns it. */
+  const daySheet = async (page) => {
+    await page.getByTestId("date-button").click();
+    const sheet = page.getByRole("dialog", { name: "Jump to date" });
+    await expect(sheet).toBeVisible();
+    return sheet;
+  };
+  const caption = (page) => page.locator("table caption");
 
-  await section("default", "the page opens on Club activity: a Today heading, named sentences with links, club settings left out, in a card like every other table", async () => {
+  await section("default", "the page opens on Club activity: a tab bar, one toolbar, a Today heading, named sentences with links, club settings left out, in a card like every other table", async () => {
     await open(main, "/dashboard/activity");
     await expect(headings(main).first()).toHaveText("Today");
-    await expect(view(main, "Club activity")).toHaveAttribute("aria-pressed", "true");
+    await expect(view(main, "Club activity")).toHaveAttribute("aria-selected", "true");
+    await expect(views(main).getByRole("tab", { selected: true })).toHaveCount(1);
+    // One toolbar: member search, the day, Filters. Nothing else that is a button.
+    const toolbar = main.getByTestId("activity-toolbar");
+    await expect(toolbar.getByRole("combobox", { name: "Search members" })).toBeVisible();
+    await expect(toolbar.getByTestId("date-button")).toHaveText("Today");
+    await expect(toolbar.getByRole("button")).toHaveCount(2);
+    for (const gone of [/copy link/i, /reset filters/i, /show all activity types/i, /can't undo/i]) await expect(main.getByRole("button", { name: gone })).toHaveCount(0);
+    await expect(main.getByText(/Undo puts the recorded details back/)).toHaveCount(0);
     const checkin = row(main, `${s.mel.name} checked in to ${s.sessionLabel}`).first();
     await expect(checkin.getByRole("link", { name: s.mel.name, exact: true })).toHaveAttribute("href", `/dashboard/members/${s.mel.id}`);
     await expect(checkin.getByRole("link", { name: s.sessionLabel, exact: true })).toHaveAttribute("href", `/dashboard/attendance?instance=${s.session}`);
@@ -102,14 +125,16 @@ try {
     // Club settings and staff accounts are not in the default view.
     await expect(typed(main, "Club settings")).toHaveCount(0);
     await expect(typed(main, "Staff accounts")).toHaveCount(0);
-    await expect(main.getByTestId("activity-summary")).toContainText("Club activity");
+    await expect(caption(main)).toHaveText("Activity: Club activity");
     await expect(main.getByTestId("activity-status")).toHaveText("Showing 50 activities");
+    // Three columns: when and what kind, what happened, Undo.
+    await expect(main.locator("thead th")).toHaveText(["When", "What happened", "Undo"]);
     await expect(main).toHaveURL(/\/dashboard\/activity$/);
     // No raw ids, no code words, in anything a person reads.
     const text = await main.locator("table").innerText();
     expect(/\bundefined\b|\bnull\b|[a-z]+\.[a-z_]+\.[a-z_]+|\b[0-9a-f]{32}\b/.test(text)).toBe(false);
     // The table sits on a white card with a border; each day is the header of its own group of rows.
-    const card = await main.locator("table").locator("xpath=ancestor::div[contains(@class,'sm:bg-sf-1')]").first().evaluate((el) => {
+    const card = await main.locator("table").locator("xpath=ancestor::div[contains(@class,'lg:bg-sf-1')]").first().evaluate((el) => {
       const c = getComputedStyle(el);
       return { bg: c.backgroundColor, border: c.borderTopWidth };
     });
@@ -119,15 +144,19 @@ try {
     return { rows: await rows(main).count(), firstHeading: "Today" };
   });
 
-  await section("types-sheet", "Activity types: ticks are staged, Cancel and Escape discard, a group tick takes the whole group, one request on apply; keyboard only", async () => {
-    const trigger = main.getByTestId("types-trigger");
-    await expect(trigger).toContainText("Club activity");
+  await section("types-sheet", "Activity types inside Filters: ticks are staged twice (Done, then Show activity), Cancel and Escape discard, a group tick takes the whole group, one request on apply; keyboard only", async () => {
     let requests = 0;
     const count = (r) => {
       if (isFeed(r)) requests++;
     };
     main.on("request", count);
-    // Keyboard: open with Enter, Escape closes and returns focus to the trigger.
+    // Keyboard: Filters opens with Enter; the types trigger inside it with Enter; Escape closes only the top sheet.
+    await main.getByTestId("filters-button").focus();
+    await main.keyboard.press("Enter");
+    const filters = main.getByRole("dialog", { name: "Filters" });
+    await expect(filters).toBeVisible();
+    const trigger = filters.getByTestId("types-trigger");
+    await expect(trigger).toHaveText("Club activity");
     await trigger.focus();
     await main.keyboard.press("Enter");
     const sheet = main.getByRole("dialog", { name: "Activity types" });
@@ -136,15 +165,15 @@ try {
     await expect(sheet.getByTestId("types-count")).toHaveText(/^(\d+) of \1 selected$/);
     await main.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
+    await expect(filters).toBeVisible();
     await expect(trigger).toBeFocused();
-    await expect(trigger).toContainText("Club activity"); // discarded
+    await expect(trigger).toHaveText("Club activity"); // discarded
     // Cancel discards too.
     await trigger.click();
     await sheet.getByRole("checkbox", { name: "Attendance: all" }).click();
     await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(trigger).toContainText("Club activity");
-    expect(requests).toBe(0);
-    // Untick everything: the button is disabled and says why.
+    await expect(trigger).toHaveText("Club activity");
+    // Untick everything: Done is disabled and says why.
     await trigger.click();
     for (const group of ["Attendance", "Memberships & money", "Members", "Classes", "Communication", "Staff & club"]) {
       const box = sheet.getByRole("checkbox", { name: `${group}: all` });
@@ -152,7 +181,7 @@ try {
       if ((await box.getAttribute("aria-checked")) !== "false") await box.click(); // mixed -> on -> off
       await expect(box).toHaveAttribute("aria-checked", "false");
     }
-    await expect(sheet.getByRole("button", { name: "Show activity", exact: true })).toBeDisabled();
+    await expect(sheet.getByRole("button", { name: "Done", exact: true })).toBeDisabled();
     await expect(sheet.getByText("Choose at least one activity type")).toBeVisible();
     // One group by keyboard: Space on the group's box ticks all of it; one type off makes it mixed.
     const attendance = sheet.getByRole("checkbox", { name: "Attendance: all" });
@@ -163,10 +192,14 @@ try {
     await main.keyboard.press("Space");
     await expect(attendance).toHaveAttribute("aria-checked", "mixed");
     await sheet.getByRole("checkbox", { name: "Check-in removed", exact: true }).click();
-    await changed(main, () => sheet.getByRole("button", { name: "Show activity", exact: true }).click());
+    await sheet.getByRole("button", { name: "Done", exact: true }).click();
     await expect(sheet).toHaveCount(0);
+    await expect(trigger).toHaveText("Attendance");
+    expect(requests).toBe(0);
+    await changed(main, () => filters.getByRole("button", { name: "Show activity", exact: true }).click());
+    await expect(filters).toHaveCount(0);
     await expect(main).toHaveURL(/types=attendance$/);
-    await expect(view(main, "Attendance")).toHaveAttribute("aria-pressed", "true");
+    await expect(view(main, "Attendance")).toHaveAttribute("aria-selected", "true");
     await expect(row(main, "paid £45.00")).toHaveCount(0);
     await expect(row(main, "checked in to").first()).toBeVisible();
     await sleep(600);
@@ -175,10 +208,30 @@ try {
     return { requestsForTheWholeSheet: requests };
   });
 
+  await section("tabs-keyboard", "the view tabs: one Tab stop, arrow keys move and choose, Home and End, the focus ring shows", async () => {
+    await open(main, "/dashboard/activity");
+    await view(main, "Club activity").focus();
+    await changed(main, () => main.keyboard.press("ArrowRight"));
+    await expect(view(main, "Attendance")).toBeFocused();
+    await expect(view(main, "Attendance")).toHaveAttribute("aria-selected", "true");
+    await expect(main).toHaveURL(/types=attendance$/);
+    await changed(main, () => main.keyboard.press("End"));
+    await expect(view(main, "Everything")).toHaveAttribute("aria-selected", "true");
+    await sleep(400);
+    const ring = await view(main, "Everything").evaluate((el) => getComputedStyle(el).outlineStyle);
+    expect(ring).not.toBe("none");
+    // Tab leaves the bar for the toolbar: one stop, not five.
+    await main.keyboard.press("Tab");
+    await expect(main.getByRole("combobox", { name: "Search members" })).toBeFocused();
+    await changed(main, () => view(main, "Club activity").click());
+    await expect(main).toHaveURL(/\/dashboard\/activity$/);
+    return { ok: true };
+  });
+
   await section("member-picker", "Member: found by email with the arrow keys and Enter; named at once; only the id reaches the address; focus follows the pick and the clear", async () => {
     await open(main, "/dashboard/activity");
-    const before = await main.getByTestId("activity-filters").boundingBox();
-    const field = main.getByRole("combobox", { name: "Member" });
+    const before = await main.getByTestId("activity-toolbar").boundingBox();
+    const field = main.getByRole("combobox", { name: "Search members" });
     await field.click();
     await expect(main.getByText("Type at least 2 characters")).toBeVisible();
     // The second member's address, typed in part: the address is how a front desk finds someone.
@@ -201,8 +254,8 @@ try {
     await expect(main.getByRole("heading", { name: `Activity for ${s.other.name}` })).toBeVisible();
     await expect(row(main, `${s.other.name}'s payment of £30.00 failed`)).toHaveCount(1);
     await expect(rows(main).filter({ hasText: s.mel.name })).toHaveCount(0);
-    // The card did not change height when the field became a name.
-    const after = await main.getByTestId("activity-filters").boundingBox();
+    // The toolbar did not change height when the field became a name.
+    const after = await main.getByTestId("activity-toolbar").boundingBox();
     expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(0.5);
     await main.getByRole("link", { name: "Open profile" }).click();
     await expect(main).toHaveURL(new RegExp(`/dashboard/members/${s.other.id}$`), SLOW);
@@ -213,62 +266,102 @@ try {
     await expect(row(main, `${s.other.name}'s payment of £30.00 failed`)).toHaveCount(1);
     await changed(main, () => main.getByRole("button", { name: `Clear member filter: ${s.other.name}` }).click());
     await expect(main).toHaveURL(/\/dashboard\/activity$/);
-    await expect(main.getByRole("combobox", { name: "Member" })).toBeFocused();
+    await expect(main.getByRole("combobox", { name: "Search members" })).toBeFocused();
     return { cardHeight: after.height };
   });
 
-  await section("plan-and-done-by", "Plan shows what happened to that plan; Done by shows one person's work; Reset puts everything back", async () => {
+  await section("plan-and-done-by", "Filters: Plan shows what happened to that plan; Done by, by kind (Staff, Members, Automatic, MatFlow support) and by person, asked of the server; chips; Clear all puts everything back but the tab", async () => {
     await open(main, "/dashboard/activity?types=all");
-    await changed(main, () => main.getByRole("combobox", { name: "Plan" }).selectOption({ label: "Adult Unlimited" }));
+    let sheet = await filtersSheet(main);
+    await sheet.getByRole("combobox", { name: "Plan" }).selectOption({ label: "Adult Unlimited" });
+    await expect(sheet.getByText("Activity that names this plan.")).toBeVisible();
+    // Staged: nothing has moved behind the sheet.
+    await expect(main).toHaveURL(/\?types=all$/);
+    await changed(main, () => sheet.getByRole("button", { name: "Show activity", exact: true }).click());
     await expect(main).toHaveURL(new RegExp(`tierId=${s.tierNew}`));
-    await expect(main.getByText("Activity that names this plan.")).toBeVisible();
     await expect(row(main, `moved ${s.mel.name} from Twice a week (OLD) to Adult Unlimited`)).toHaveCount(1);
     await expect(row(main, "checked in to")).toHaveCount(0);
-    await expect(main.getByTestId("activity-summary")).toContainText("Everything · Adult Unlimited");
-    await changed(main, () => main.getByRole("combobox", { name: "Plan" }).selectOption({ label: "Any plan" }));
-    await changed(main, () => main.getByRole("combobox", { name: "Done by" }).selectOption({ label: "Sam Synthetic · Owner" }));
+    await expect(main.getByRole("button", { name: "Remove filter: Plan: Adult Unlimited" })).toBeVisible();
+    await expect(main.getByTestId("filters-button")).toHaveText("Filters (1)");
+    await changed(main, () => main.getByRole("button", { name: "Remove filter: Plan: Adult Unlimited" }).click());
+    // Done by, by kind. Every row the server sends for a kind says so on its source line.
+    const kinds = {};
+    for (const [kind, label, shows, hides] of [
+      ["members", "Members", `${s.mel.name} checked in to`, `cancelled ${s.other.name}'s membership`],
+      ["staff", "Staff", `cancelled ${s.other.name}'s membership`, "checked in to"],
+      ["automatic", "Automatic", `${s.mel.name} paid £45.00`, "checked in to"],
+    ]) {
+      sheet = await filtersSheet(main);
+      const options = await sheet.getByRole("combobox", { name: "Done by" }).locator("option").allInnerTexts();
+      expect(options).toEqual(["Everyone", "Staff", "Members", "Automatic", "MatFlow support"]);
+      const asked = main.waitForRequest((r) => isFeed(r) && new URL(r.url()).searchParams.get("by") === kind);
+      await sheet.getByRole("combobox", { name: "Done by" }).selectOption({ label });
+      await changed(main, () => sheet.getByRole("button", { name: "Show activity", exact: true }).click());
+      await asked;
+      await expect(main).toHaveURL(new RegExp(`by=${kind}`));
+      await expect(rows(main).filter({ hasText: shows }).first()).toBeVisible();
+      await expect(rows(main).filter({ hasText: hides })).toHaveCount(0);
+      kinds[kind] = await rows(main).count();
+      await expect(main.getByRole("button", { name: `Remove filter: Done by: ${label}` })).toBeVisible();
+    }
+    // One person narrows within Staff.
+    sheet = await filtersSheet(main);
+    await sheet.getByRole("combobox", { name: "Done by" }).selectOption({ label: "Staff" });
+    await sheet.getByRole("combobox", { name: "Staff member" }).selectOption({ label: "Sam Synthetic · Owner" });
+    await changed(main, () => sheet.getByRole("button", { name: "Show activity", exact: true }).click());
     await expect(main).toHaveURL(new RegExp(`userId=${s.owner}`));
     await expect(row(main, `cancelled ${s.other.name}'s membership`)).toHaveCount(1);
-    // Nothing a member or Stripe did.
     await expect(row(main, "checked in to")).toHaveCount(0);
     await expect(row(main, "paid £45.00")).toHaveCount(0);
-    await expect(main.getByTestId("activity-summary")).toContainText("done by Sam Synthetic");
-    // "Show all activity types" is only about types; here they are all shown already, so it is not offered.
-    await expect(main.getByRole("button", { name: "Show all activity types", exact: true })).toHaveCount(0);
-    await changed(main, () => main.getByRole("button", { name: "Reset filters", exact: true }).click());
-    await expect(main).toHaveURL(/\/dashboard\/activity$/);
-    await expect(main.getByRole("button", { name: "Reset filters", exact: true })).toBeDisabled();
-    return { ok: true };
+    await expect(main.getByTestId("filters-button")).toHaveText("Filters (2)");
+    // Clear all: the chips go, the tab stays.
+    await expect(main.getByRole("button", { name: "Clear all", exact: true })).toBeVisible();
+    await changed(main, () => main.getByRole("button", { name: "Clear all", exact: true }).click());
+    await expect(main).toHaveURL(/\/dashboard\/activity\?types=all$/);
+    await expect(main.getByRole("button", { name: "Clear all", exact: true })).toHaveCount(0);
+    await expect(view(main, "Everything")).toHaveAttribute("aria-selected", "true");
+    return { rowsPerKind: kinds };
   });
 
-  await section("jump-to-date", "Jump to date: a day is where the list starts; Previous day steps back; Show older carries on; the card keeps its height", async () => {
+  await section("jump-to-date", "the day button: a sheet with Today, Yesterday, a date and day steps; a day is where the list starts; Show older carries on; the toolbar keeps its height; keyboard only", async () => {
     await open(main, "/dashboard/activity?types=attendance");
     await expect(headings(main).first()).toHaveText("Today");
-    const before = await main.getByTestId("activity-filters").boundingBox();
-    const jump = main.getByTestId("jump-to-date");
-    await changed(main, () => jump.getByRole("button", { name: "Yesterday", exact: true }).click());
+    const before = await main.getByTestId("activity-toolbar").boundingBox();
+    // Keyboard: Enter opens the sheet; Yesterday applies and closes it, and the focus comes back to the button.
+    await main.getByTestId("date-button").focus();
+    await main.keyboard.press("Enter");
+    let sheet = main.getByRole("dialog", { name: "Jump to date" });
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole("button", { name: "Yesterday", exact: true }).focus();
+    await changed(main, () => main.keyboard.press("Enter"));
+    await expect(sheet).toHaveCount(0);
+    await expect(main.getByTestId("date-button")).toBeFocused();
+    await expect(main.getByTestId("date-button")).toHaveText("Yesterday");
     await expect(main).toHaveURL(new RegExp(`day=${yesterday}`));
     await expect(headings(main).first()).toHaveText("Yesterday");
-    await expect(jump.getByRole("button", { name: "Yesterday", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(row(main, `${s.other.name} checked in to`).first()).toBeVisible();
-    await expect(main.getByTestId("activity-summary")).toContainText("up to");
-    const after = await main.getByTestId("activity-filters").boundingBox();
+    const after = await main.getByTestId("activity-toolbar").boundingBox();
     expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(0.5);
-    // One day further back: nothing happened that day, so the list starts at the day the older rows are on.
-    await changed(main, () => jump.getByRole("button", { name: "Previous day" }).click());
+    // One day further back: nothing happened that day, so the list starts at the day the older rows are on. The sheet stays open.
+    sheet = await daySheet(main);
+    await expect(sheet.getByRole("button", { name: "Yesterday", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await changed(main, () => sheet.getByRole("button", { name: "Previous day" }).click());
     const dayBefore = shiftDay(yesterday, -1);
     await expect(main).toHaveURL(new RegExp(`day=${dayBefore}`));
-    await expect(jump.getByLabel("Jump to date")).toHaveValue(dayBefore);
+    await expect(sheet.getByLabel("Jump to date")).toHaveValue(dayBefore);
     const olderDay = clubDay(new Date(s.olderAt), s.timeZone);
     await expect(headings(main).first()).toHaveText(longDate(olderDay));
     // Typing a date works the same way.
-    await changed(main, () => jump.getByLabel("Jump to date").fill(yesterday));
+    await changed(main, () => sheet.getByLabel("Jump to date").fill(yesterday));
     await expect(main).toHaveURL(new RegExp(`day=${yesterday}`));
     await expect(headings(main).first()).toHaveText("Yesterday");
     // Next day from yesterday is today, which is the absence of a day.
-    await changed(main, () => jump.getByRole("button", { name: "Next day" }).click());
+    await changed(main, () => sheet.getByRole("button", { name: "Next day" }).click());
     await expect(main).toHaveURL(/\/dashboard\/activity\?types=attendance$/);
-    await expect(jump.getByRole("button", { name: "Next day" })).toBeDisabled();
+    await expect(sheet.getByRole("button", { name: "Next day" })).toBeDisabled();
+    await sheet.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(main.getByTestId("date-button")).toHaveText("Today");
     // Show older reaches the rest and moves focus to the first new row's link.
     await expect(rows(main)).toHaveCount(50);
     await main.getByRole("button", { name: "Show older", exact: true }).click();
@@ -279,17 +372,16 @@ try {
     return { rows: await rows(main).count() };
   });
 
-  await section("views", "the view chips: Money is payments, failures and cancellations only; Everything adds settings and staff accounts", async () => {
+  await section("views", "the view tabs: Money is payments, failures and cancellations only; Everything adds settings and staff accounts", async () => {
     await open(main, "/dashboard/activity");
     await changed(main, () => view(main, "Money").click());
     await expect(main).toHaveURL(/types=money$/);
     await expect(row(main, `${s.mel.name} paid £45.00`)).toHaveCount(1);
     await expect(row(main, `${s.other.name}'s payment of £30.00 failed`)).toHaveCount(1);
     await expect(row(main, "checked in to")).toHaveCount(0);
-    // "Show all activity types" widens the types and nothing else.
-    await changed(main, () => main.getByRole("button", { name: "Show all activity types", exact: true }).click());
+    await changed(main, () => view(main, "Everything").click());
     await expect(main).toHaveURL(/types=all$/);
-    await expect(view(main, "Everything")).toHaveAttribute("aria-pressed", "true");
+    await expect(view(main, "Everything")).toHaveAttribute("aria-selected", "true");
     await expect(typed(main, "Club settings")).toHaveCount(1);
     await expect(typed(main, "Staff accounts")).toHaveCount(1);
     await changed(main, () => view(main, "Club activity").click());
@@ -301,18 +393,19 @@ try {
     await open(main, "/dashboard/activity?types=all");
     const settings = typed(main, "Club settings");
     await expect(settings).toHaveCount(1);
+    await expect(settings.getByTestId("activity-source")).toHaveText("By Sam Synthetic");
     const link = settings.getByTestId("activity-source").getByRole("link", { name: "Sam Synthetic", exact: true });
     const refetch = main.waitForResponse((r) => isFeed(r) && r.url().includes(`userId=${s.owner}`));
     await link.click();
     await refetch;
     await ready(main);
     await expect(main).toHaveURL(new RegExp(`userId=${s.owner}`));
-    await expect(main.getByRole("combobox", { name: "Done by" })).toHaveValue(s.owner);
+    await expect(main.getByRole("button", { name: "Remove filter: Done by: Sam Synthetic" })).toBeVisible();
     await expect(row(main, "checked in to")).toHaveCount(0);
     return { ok: true };
   });
 
-  await section("undo", "owner: Since here only on Everything with no filter; undoing the phone edit strikes the row through in place and the undo is recorded", async () => {
+  await section("undo", "owner: Since here only on Everything with no filter; a row that can't be undone shows nothing; the explanation is in the confirmation; undoing the phone edit strikes the row through in place and the undo is recorded", async () => {
     // With a member filter the row has Undo alone.
     await open(main, `/dashboard/activity?types=all&memberId=${s.mel.id}`);
     const filtered = row(main, `updated ${s.mel.name}'s details`);
@@ -323,7 +416,7 @@ try {
     await open(main, "/dashboard/activity?types=all");
     const edit = row(main, `updated ${s.mel.name}'s details`);
     await expect(edit).toHaveCount(1);
-    await expect(edit.getByTestId("activity-detail")).toContainText("Phone: 07700 900111 → 07700 900222");
+    await expect(edit.getByTestId("activity-changes").locator("li")).toHaveText(["Phone: 07700 900111 → 07700 900222"]);
     // The button says "Since here", and that is how its spoken name starts.
     await expect(edit.getByRole("button", { name: /^Since here: undo everything Sam Synthetic did since/ })).toHaveText("Since here");
     await edit.getByRole("button", { name: /^Since here/ }).click();
@@ -334,21 +427,15 @@ try {
     await expect(main.getByRole("dialog", { name: /^Undo everything Sam Synthetic did since \d{1,2} \w{3} \d{4}, \d\d:\d\d\?$/ })).toBeVisible();
     await main.keyboard.press("Escape");
     await expect(main.getByRole("dialog")).toHaveCount(0);
-    // A row that cannot be undone says why, one keyboard press away.
+    // A row that cannot be undone shows nothing in the Undo column (its reason moves to the row's details later).
     const cancelled = row(main, `cancelled ${s.other.name}'s membership`);
-    const why = cancelled.getByRole("button", { name: /^Can't undo: / });
-    await expect(why).toHaveText("Can't undo");
-    await why.focus();
-    await main.keyboard.press("Enter");
-    const reason = main.getByRole("dialog", { name: "Why this can't be undone" });
-    await expect(reason).toBeVisible();
-    const reasonText = (await reason.locator("p.text-sm").last().innerText()).trim();
-    expect(reasonText.length).toBeGreaterThan(10);
-    await main.keyboard.press("Escape");
-    // Undo the phone edit.
+    await expect(cancelled.getByRole("button")).toHaveCount(0);
+    await expect(cancelled.locator("td").last()).toHaveText("");
+    // Undo the phone edit: the confirmation says what Undo does.
     await edit.getByRole("button", { name: /^Undo:/ }).click();
     const confirm = main.getByRole("dialog").last();
     await expect(confirm).toContainText(`Undo: Sam Synthetic updated ${s.mel.name}'s details?`);
+    await expect(confirm).toContainText("Linked records it created or removed alongside (a booking, rank history, a Stripe change, an email) are not changed.");
     const undone = main.waitForResponse((r) => r.request().method() === "POST" && /\/api\/audit-log\/[^/]+\/undo$/.test(new URL(r.url()).pathname));
     await confirm.getByRole("button", { name: "Undo this", exact: true }).click();
     expect((await undone).status()).toBe(200);
@@ -363,7 +450,7 @@ try {
     const phoneNow = (await q(`select phone from "Member" where id = $1`, [s.mel.id]))[0].phone;
     expect(phoneNow).toBe("07700 900111");
     await shot(main, "activity-undone-1440");
-    return { phoneRestored: phoneNow === "07700 900111", reason: reasonText };
+    return { phoneRestored: phoneNow === "07700 900111" };
   });
 
   await section("failures", "a failed first load is an error with one retry, never an empty list; a slow answer to an old filter never overwrites the new one; a failed Show older keeps the rows; names that cannot be loaded leave the plain log", async () => {
@@ -399,7 +486,7 @@ try {
     await sleep(6500); // the held-back answer would have arrived by now
     await expect(row(main, `${s.mel.name} paid £45.00`)).toHaveCount(1);
     await expect(row(main, "checked in to")).toHaveCount(0);
-    await expect(view(main, "Money")).toHaveAttribute("aria-pressed", "true");
+    await expect(view(main, "Money")).toHaveAttribute("aria-selected", "true");
     await main.unrouteAll({ behavior: "wait" });
 
     // 3) Show older fails: rows stay, an inline retry appears, and the retry works.
@@ -434,13 +521,15 @@ try {
     return { retryRequests: 1 };
   });
 
-  await section("links", "a filter that matches nothing says so and offers the two ways out; a mangled link is the page without that filter, never an error", async () => {
-    await open(main, "/dashboard/activity?types=refund");
+  await section("links", "a filter that matches nothing says so and offers exactly one way out, which clears everything including the date; a mangled link is the page without that filter, never an error", async () => {
+    await open(main, `/dashboard/activity?types=refund&day=${yesterday}`);
     await expect(emptyTitle(main, "Nothing matches these filters.")).toBeVisible();
     await expect(main.getByTestId("activity-status")).toHaveText("Nothing matches these filters.");
+    const empty = emptyTitle(main, "Nothing matches these filters.").locator("xpath=../..");
+    await expect(empty.getByRole("button")).toHaveText(["Clear filters"]);
     await shot(main, "activity-empty-1440");
-    await changed(main, () => main.getByRole("button", { name: "Show everything", exact: true }).click());
-    await expect(main).toHaveURL(/types=all$/);
+    await changed(main, () => empty.getByRole("button", { name: "Clear filters", exact: true }).click());
+    await expect(main).toHaveURL(/\/dashboard\/activity$/);
     await expect(rows(main).first()).toBeVisible();
     // A type that no longer exists is left out, and the page says so (it never asks the server for it).
     const asked = main.waitForRequest(isFeed);
@@ -455,30 +544,32 @@ try {
     await expect(emptyTitle(main, "Nothing matches these filters.")).toBeVisible();
     // A day that is not a date, an id that is not an id: not filters at all.
     await open(main, "/dashboard/activity?day=abc&memberId=a%20b");
-    await expect(main.getByTestId("activity-summary")).not.toContainText(/Invalid|member|up to/);
+    await expect(caption(main)).toHaveText("Activity: Club activity");
     await expect(headings(main).first()).toHaveText("Today");
-    await changed(main, () => main.getByTestId("jump-to-date").getByRole("button", { name: "Previous day" }).click());
+    await changed(main, async () => (await daySheet(main)).getByRole("button", { name: "Previous day" }).click());
     await expect(main).toHaveURL(new RegExp(`day=${yesterday}`));
     await expect(headings(main).first()).toHaveText("Yesterday");
+    await main.keyboard.press("Escape");
+    // An old copied link — types, a plan, a staff member and a day — opens the same view.
+    await open(main, `/dashboard/activity?types=checkin,payment&tierId=${s.tierNew}&userId=${s.owner}&day=${yesterday}`);
+    await expect(views(main).getByRole("tab", { selected: true })).toHaveCount(0);
+    await expect(main.getByTestId("activity-chips").getByRole("button")).toHaveText(["Types: 2 activity types", "Plan: Adult Unlimited", "Done by: Sam Synthetic", "Clear all"]);
+    await expect(main.getByTestId("date-button")).toHaveText("Yesterday");
     return { ok: true };
   });
 
-  let copied = "";
-  await section("copy-and-default", "Copy link writes the view out; Make this my default is kept on this device for this person and is read before the first request", async () => {
+  // Copy link is gone for now (Noe, 6 Nov); the manager below opens the link an owner would have shared.
+  const copied = `${BASE}/dashboard/activity?types=all`;
+  await section("default-view", "no Copy link; Make this my default (in the Filters footer) is kept on this device for this person and is read before the first request", async () => {
     await open(main, "/dashboard/activity");
-    await main.getByRole("button", { name: "Copy link", exact: true }).click();
-    await expect(main.getByText("Link copied.")).toBeVisible();
-    const plain = await main.evaluate(() => navigator.clipboard.readText());
-    expect(new URL(plain).search).toBe("?types=club");
-    // A view with owner-only types in it, for the manager to open later.
-    await open(main, "/dashboard/activity?types=all");
-    await main.getByRole("button", { name: "Copy link", exact: true }).click();
-    copied = await main.evaluate(() => navigator.clipboard.readText());
-    expect(new URL(copied).search).toBe("?types=all");
+    await expect(main.getByRole("button", { name: /copy link/i })).toHaveCount(0);
     // Save Money as the default.
     await changed(main, () => view(main, "Money").click());
-    await main.getByRole("button", { name: "Make this my default", exact: true }).click();
+    const sheet = await filtersSheet(main);
+    await expect(sheet.getByRole("button", { name: /copy link/i })).toHaveCount(0);
+    await sheet.getByRole("button", { name: "Make this my default", exact: true }).click();
     await expect(main.getByText("Saved. Activity will open like this on this device.")).toBeVisible();
+    await expect(sheet).toHaveCount(0);
     await expect(main).toHaveURL(/\/dashboard\/activity$/);
     let requests = 0;
     const count = (r) => {
@@ -487,23 +578,15 @@ try {
     main.on("request", count);
     await main.reload();
     await ready(main);
-    await expect(view(main, "Money")).toHaveAttribute("aria-pressed", "true");
+    await expect(view(main, "Money")).toHaveAttribute("aria-selected", "true");
     await expect(row(main, `${s.mel.name} paid £45.00`)).toHaveCount(1);
     await sleep(600);
     main.off("request", count);
     expect(requests).toBe(1); // the saved default is read before the first request, not after it
     await expect(main).toHaveURL(/\/dashboard\/activity$/);
-    // With a default saved, a copied link still says what it shows.
-    await main.getByRole("button", { name: "Copy link", exact: true }).click();
-    expect(new URL(await main.evaluate(() => navigator.clipboard.readText())).search).toBe("?types=money");
-    return { copied: new URL(copied).search, firstLoadRequests: requests };
+    return { firstLoadRequests: requests };
   });
 
-  // ── Manager ────────────────────────────────────────────────────────────────
-  const mctx = await context(browser, "10.94.9.3");
-  const mpage = await mctx.newPage();
-  mpage.on("pageerror", (e) => errors.push(e.message));
-  watchNetwork(mpage);
   await section(
     "manager",
     "a manager: the page opens; no Undo; no owner-only rows or types by any link; no values in edits; a plan is not a link; every link opens; the undo routes refuse them by role",
@@ -511,8 +594,9 @@ try {
       await staffSignIn(mpage, club, manager);
       await open(mpage, "/dashboard/activity");
       await expect(mpage.getByRole("link", { name: "Activity", exact: true }).first()).toBeVisible();
-      await expect(view(mpage, "Club activity")).toHaveAttribute("aria-pressed", "true");
+      await expect(view(mpage, "Club activity")).toHaveAttribute("aria-selected", "true");
       await expect(mpage.getByRole("columnheader", { name: "Undo" })).toHaveCount(0);
+      await expect(mpage.locator("thead th")).toHaveText(["When", "What happened"]);
       await expect(mpage.getByRole("button", { name: /Undo|Since here/ })).toHaveCount(0);
       // The owner's copied link (types=all).
       await open(mpage, new URL(copied).pathname + new URL(copied).search);
@@ -528,20 +612,30 @@ try {
       await ready(mpage);
       await expect(mpage.getByText("Some activity types in this link are only visible to the owner.")).toBeVisible();
       await expect(typed(mpage, "Staff accounts")).toHaveCount(0);
-      // The sheet lists none of them.
-      await mpage.getByTestId("types-trigger").click();
+      // Done by offers no MatFlow support, and a link asking for it is not a filter: the request never carries it.
+      const bySupport = mpage.waitForRequest(isFeed);
+      await visit(mpage, "/dashboard/activity?types=all&by=support");
+      expect(new URL((await bySupport).url()).searchParams.get("by")).toBeNull();
+      await ready(mpage);
+      await expect(mpage.getByRole("button", { name: /Done by: MatFlow support/ })).toHaveCount(0);
+      const filters = await filtersSheet(mpage);
+      await expect(filters.getByRole("combobox", { name: "Done by" }).locator("option")).toHaveText(["Everyone", "Staff", "Members", "Automatic"]);
+      // The types sheet, opened from Filters, lists none of them.
+      await filters.getByTestId("types-trigger").click();
       const sheet = mpage.getByRole("dialog", { name: "Activity types" });
       for (const hidden of ["Staff accounts", "Club settings", "Sign-in and security", "MatFlow support", "Data requests", "Undone changes", "Plans and packs (set-up)"]) {
         await expect(sheet.getByRole("checkbox", { name: hidden, exact: true })).toHaveCount(0);
       }
       await expect(sheet.getByRole("checkbox", { name: "Payment", exact: true })).toHaveCount(1);
       await mpage.keyboard.press("Escape");
+      await mpage.keyboard.press("Escape");
+      await expect(mpage.getByRole("dialog")).toHaveCount(0);
       // An edit names the field, not what it held; a plan is a name, not a link.
       await open(mpage, `/dashboard/activity?types=all&memberId=${s.mel.id}`);
       const edit = row(mpage, `updated ${s.mel.name}'s details`);
       await expect(edit).toHaveCount(1);
       const editText = await edit.innerText();
-      expect(editText).toContain("Phone");
+      await expect(edit.getByTestId("activity-changes").locator("li")).toHaveText(["Phone changed"]);
       expect(/07700|→/.test(editText)).toBe(false);
       const moved = row(mpage, `moved ${s.mel.name} from Twice a week (OLD) to Adult Unlimited`);
       await expect(moved).toHaveCount(1);
@@ -594,11 +688,11 @@ try {
     const page = await shared.newPage();
     try {
       await open(page, "/dashboard/activity");
-      await expect(view(page, "Money")).toHaveAttribute("aria-pressed", "true");
+      await expect(view(page, "Money")).toHaveAttribute("aria-selected", "true");
       await shared.clearCookies();
       await staffSignIn(page, club, manager);
       await open(page, "/dashboard/activity");
-      await expect(view(page, "Club activity")).toHaveAttribute("aria-pressed", "true");
+      await expect(view(page, "Club activity")).toHaveAttribute("aria-selected", "true");
       const stored = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("activity.")));
       expect(stored).toHaveLength(1); // the owner's is still there, untouched and unread
     } finally {
@@ -606,24 +700,38 @@ try {
     }
     // The owner drops it.
     await open(main, "/dashboard/activity");
-    await changed(main, () => main.getByRole("button", { name: "Use MatFlow's default", exact: true }).click());
-    await expect(view(main, "Club activity")).toHaveAttribute("aria-pressed", "true");
+    const sheet = await filtersSheet(main);
+    await changed(main, () => sheet.getByRole("button", { name: "Use MatFlow's default", exact: true }).click());
+    await main.keyboard.press("Escape");
+    await expect(view(main, "Club activity")).toHaveAttribute("aria-selected", "true");
     expect(await main.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("activity.")).length)).toBe(0);
     return { ok: true };
   });
 
-  await section("widths", "no sideways scroll at 1440, 1280 and 1024; the four filters are one height; Undo stays inside the table's card", async () => {
+  await section("widths", "the table from 1024 up, cards below it (930): no sideways scroll; the toolbar's three controls are one height; Undo stays inside the table's card", async () => {
     const out = {};
-    for (const width of [1440, 1280, 1024]) {
+    for (const width of [1440, 1280, 1024, 930]) {
       await main.setViewportSize({ width, height: 900 });
       await open(main, "/dashboard/activity?types=all");
       expect(await noSideScroll(main), `sideways scroll at ${width}`).toBe(true);
-      const boxes = await Promise.all([main.getByTestId("types-trigger"), main.getByRole("combobox", { name: "Member" }), main.getByRole("combobox", { name: "Plan" }), main.getByRole("combobox", { name: "Done by" })].map((l) => l.boundingBox()));
+      const toolbar = main.getByTestId("activity-toolbar");
+      const boxes = await Promise.all([toolbar.getByRole("combobox", { name: "Search members" }), toolbar.getByTestId("date-button"), toolbar.getByTestId("filters-button")].map((l) => l.boundingBox()));
       const heights = boxes.map((b) => b.height);
-      expect(Math.max(...heights) - Math.min(...heights), `filter heights at ${width}: ${heights}`).toBeLessThanOrEqual(0.5);
-      const card = await main.locator("table").locator("xpath=ancestor::div[contains(@class,'sm:bg-sf-1')]").first().boundingBox();
-      const undo = await rows(main).getByRole("button", { name: /^Undo:/ }).first().boundingBox();
-      expect(undo.x + undo.width, `Undo's right edge at ${width}`).toBeLessThanOrEqual(card.x + card.width);
+      expect(Math.max(...heights) - Math.min(...heights), `toolbar heights at ${width}: ${heights}`).toBeLessThanOrEqual(0.5);
+      if (width >= 1024) {
+        await expect(main.locator("table")).toBeVisible();
+        await expect(main.getByTestId("activity-card").filter({ visible: true })).toHaveCount(0);
+        const card = await main.locator("table").locator("xpath=ancestor::div[contains(@class,'lg:bg-sf-1')]").first().boundingBox();
+        const undo = await rows(main).getByRole("button", { name: /^Undo:/ }).first().boundingBox();
+        expect(undo.x + undo.width, `Undo's right edge at ${width}`).toBeLessThanOrEqual(card.x + card.width);
+        // The thin columns stay thin: the description has most of the width.
+        const [when, what] = await Promise.all([main.locator("thead th").nth(0).boundingBox(), main.locator("thead th").nth(1).boundingBox()]);
+        expect(what.width, `description column at ${width}`).toBeGreaterThan(when.width * 3);
+      } else {
+        // 640–1023px: cards, not a squeezed table.
+        await expect(main.locator("table")).toBeHidden();
+        expect(await main.getByTestId("activity-card").filter({ visible: true }).count()).toBeGreaterThan(10);
+      }
       await shot(main, `activity-all-${width}`);
       out[width] = heights[0];
     }
@@ -631,7 +739,7 @@ try {
     return out;
   });
 
-  await section("accents", "a white, a yellow and a near-black club accent: the pressed view, a ticked box and the keyboard focus ring all stay visible", async () => {
+  await section("accents", "a white, a yellow and a near-black club accent: the selected tab (by its label as well as its underline), a ticked box and the keyboard focus ring all stay visible", async () => {
     const seen = {};
     const style = (l) =>
       l.evaluate((el) => {
@@ -646,25 +754,27 @@ try {
         const applied = await main.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim());
         expect(applied.toLowerCase(), "the accent under test is the one applied").toBe(accent);
         const pressed = view(main, "Money");
-        await expect(pressed).toHaveAttribute("aria-pressed", "true");
-        const [a, b] = [await style(pressed), await style(view(main, "Attendance"))];
-        // Pressed is told from idle by something that shows on a white card: its edge against the card, or its fill.
-        const edge = await contrast(main, a.border, "rgb(255, 255, 255)");
-        const fill = await contrast(main, a.bg, "rgb(255, 255, 255)");
-        expect(Math.max(edge, fill), `${accent}: the pressed chip's edge ${edge.toFixed(2)} and fill ${fill.toFixed(2)} against the card`).toBeGreaterThanOrEqual(3);
-        expect(a.bg !== b.bg || a.border !== b.border, `${accent}: pressed looks like idle`).toBe(true);
-        expect(await contrast(main, a.color, a.bg), `${accent}: the label on its fill`).toBeGreaterThanOrEqual(4.5);
-        // The keyboard focus ring, on a control sitting on the white card.
-        await main.getByTestId("types-trigger").focus();
+        await expect(pressed).toHaveAttribute("aria-selected", "true");
+        const tabStyle = (l) => l.evaluate((el) => ({ color: getComputedStyle(el).color, underline: getComputedStyle(el).borderBottomColor }));
+        const [a, b] = [await tabStyle(pressed), await tabStyle(view(main, "Attendance"))];
+        // The selected tab is told from the rest by its label even when the accent underline is white on white.
+        const page = await main.evaluate(() => getComputedStyle(document.body).backgroundColor);
+        expect(a.color !== b.color, `${accent}: the selected tab's label looks like the others`).toBe(true);
+        expect(await contrast(main, a.color, page), `${accent}: the selected tab's label`).toBeGreaterThanOrEqual(4.5);
+        const edge = await contrast(main, a.underline, page);
+        const fill = await contrast(main, a.color, b.color);
+        // The keyboard focus ring, on a control on the page.
+        await main.getByTestId("filters-button").focus();
         await main.keyboard.press("Shift+Tab");
         await main.keyboard.press("Tab");
         await sleep(400); // a button eases its outline colour in; measure the ring it settles on
-        const ring = await style(main.getByTestId("types-trigger"));
+        const ring = await style(main.getByTestId("filters-button"));
         expect(ring.outlineWidth).toBe("2px");
         const ringContrast = await contrast(main, ring.outline, "rgb(255, 255, 255)");
         expect(ringContrast, `${accent}: the focus ring ${ring.outline} against the card`).toBeGreaterThanOrEqual(3);
-        // A ticked box in the sheet.
+        // A ticked box in the types sheet, opened from Filters.
         await main.keyboard.press("Enter");
+        await main.getByRole("dialog", { name: "Filters" }).getByTestId("types-trigger").click();
         const sheet = main.getByRole("dialog", { name: "Activity types" });
         const ticked = sheet.getByRole("checkbox", { name: "Payment", exact: true });
         await expect(ticked).toHaveAttribute("aria-checked", "true");
@@ -673,7 +783,9 @@ try {
         await shot(main, `activity-accent-${accent.slice(1)}`);
         await main.keyboard.press("Escape");
         await expect(sheet).toHaveCount(0);
-        seen[accent] = { pressedEdge: Number(edge.toFixed(2)), pressedFill: Number(fill.toFixed(2)), focusRing: Number(ringContrast.toFixed(2)) };
+        await main.keyboard.press("Escape");
+        await expect(main.getByRole("dialog")).toHaveCount(0);
+        seen[accent] = { underlineOnPage: Number(edge.toFixed(2)), selectedVsIdleLabel: Number(fill.toFixed(2)), focusRing: Number(ringContrast.toFixed(2)) };
       }
     } finally {
       await main.evaluate(() => localStorage.removeItem("gym-settings"));
@@ -690,13 +802,13 @@ try {
       await expect(headings(page).first()).toHaveText("Today");
       await expect(page.getByText(`Times are shown in club time (${s.timeZone}).`)).toBeVisible();
       const first = row(page, `${s.mel.name} checked in to ${s.sessionLabel}`).first();
-      const shown = (await first.locator("td").first().innerText()).trim();
+      const shown = (await first.locator("td").first().innerText()).trim().split("\n")[0];
       const expected = clubTime(s.rows.checkin.at, s.timeZone);
       expect(shown).toBe(expected);
       // Yesterday's row sits under Yesterday at the club's time, whatever day it is in Bali.
-      await changed(page, () => page.getByTestId("jump-to-date").getByRole("button", { name: "Yesterday", exact: true }).click());
+      await changed(page, async () => (await daySheet(page)).getByRole("button", { name: "Yesterday", exact: true }).click());
       await expect(headings(page).first()).toHaveText("Yesterday");
-      const y = (await rows(page).first().locator("td").first().innerText()).trim();
+      const y = (await rows(page).first().locator("td").first().innerText()).trim().split("\n")[0];
       expect(y).toBe(clubTime(s.yesterdayAt, s.timeZone));
       return { shown, expected, zone: s.timeZone };
     } finally {
@@ -784,22 +896,26 @@ try {
       expect(covered, `links covered: ${covered.join(", ")}`).toEqual([]);
       await phone.evaluate(() => window.scrollTo(0, 0));
       await shot(phone, "activity-default-390");
-      // The Filters sheet: Done by, applied; Copy link and the default live here on a phone.
+      // The toolbar: search on its own line, then the day and Filters; tap targets at least 44px tall.
+      for (const control of [phone.getByRole("combobox", { name: "Search members" }), phone.getByTestId("date-button"), phone.getByTestId("filters-button")]) expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44);
+      await expect(views(phone).getByRole("tab")).toHaveCount(5);
+      // The Filters sheet: a staff member, applied; no Copy link anywhere.
       await phone.getByTestId("filters-button").tap();
       const sheet = phone.getByRole("dialog", { name: "Filters" });
       await expect(sheet).toBeVisible();
-      await expect(sheet.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
+      await expect(phone.getByRole("button", { name: /copy link/i })).toHaveCount(0);
       await shot(phone, "activity-filters-sheet-390");
-      await sheet.getByRole("combobox", { name: "Done by" }).selectOption({ label: "Sam Synthetic · Owner" });
+      await sheet.getByRole("combobox", { name: "Staff member" }).selectOption({ label: "Sam Synthetic · Owner" });
       await changed(phone, () => sheet.getByRole("button", { name: "Show activity", exact: true }).tap());
       await expect(sheet).toHaveCount(0);
       await expect(phone).toHaveURL(new RegExp(`userId=${s.owner}`));
       await expect(phone.getByTestId("filters-button")).toContainText("Filters (1)");
-      const chip = phone.getByRole("button", { name: "Remove filter: Done by Sam Synthetic" });
+      const chip = phone.getByRole("button", { name: "Remove filter: Done by: Sam Synthetic" });
       await expect(chip).toBeVisible();
       await expect(cards.filter({ hasText: "checked in to" })).toHaveCount(0);
-      // The owner's Undo is on the card, apart from the sentence; a refusal is written out.
-      await expect(cards.filter({ hasText: "Can't undo:" }).first()).toBeVisible();
+      // The owner's Undo is on the card, apart from the sentence; a row that can't be undone says nothing about it.
+      await expect(cards.getByRole("button", { name: /^Undo:/ }).first()).toBeVisible();
+      await expect(cards.filter({ hasText: "Can't undo" })).toHaveCount(0);
       await changed(phone, () => chip.tap());
       await expect(phone).toHaveURL(/\/dashboard\/activity$/);
       // Activity types opens on top of Filters. By keyboard: Tab leaves the first control and reaches a tick box.
@@ -815,16 +931,16 @@ try {
       expect(reached, `Tab reached: ${reached.join(", ")}`).toContain("checkbox");
       expect(await phone.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')?.textContent?.includes("Choose which activity to show"))).toBe(true);
       await shot(phone, "activity-types-sheet-390");
-      // Attendance only, applied from the top sheet; then the Filters sheet beneath is closed.
+      // Attendance only, handed back to Filters with Done; then Show activity applies it and closes Filters.
       await types.getByRole("button", { name: "Club activity", exact: true }).tap();
       for (const group of ["Memberships & money", "Members", "Classes", "Communication", "Staff & club"]) {
         const groupBox = types.getByRole("checkbox", { name: `${group}: all` });
         if ((await groupBox.getAttribute("aria-checked")) !== "false") await groupBox.tap();
         if ((await groupBox.getAttribute("aria-checked")) !== "false") await groupBox.tap();
       }
-      await changed(phone, () => types.getByRole("button", { name: "Show activity", exact: true }).tap());
+      await types.getByRole("button", { name: "Done", exact: true }).tap();
       await expect(types).toHaveCount(0);
-      await sheet.getByRole("button", { name: "Show activity", exact: true }).tap();
+      await changed(phone, () => sheet.getByRole("button", { name: "Show activity", exact: true }).tap());
       await expect(sheet).toHaveCount(0);
       await expect(phone).toHaveURL(/types=attendance$/);
       // Show older on a phone: the first new card (or its first link) takes the focus.

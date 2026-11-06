@@ -59,11 +59,12 @@ try {
     const at = (key) => order.indexOf(s.rows[key].id);
     expect([at("checkin"), at("edit"), at("plan"), at("paid")].every((i) => i >= 0)).toBe(true);
     expect(at("checkin") < at("edit") && at("edit") < at("plan") && at("plan") < at("paid")).toBe(true);
-    // The card is Jump to date and Filters, and nothing else, on a phone.
-    const filters = phone.getByTestId("activity-filters");
-    await expect(filters.getByRole("button", { name: "Copy link", exact: true })).toBeHidden();
-    await expect(filters.getByRole("button", { name: "Reset filters", exact: true })).toBeHidden();
-    expect((await filters.boundingBox()).height).toBeLessThan(200);
+    // Above the list: the view tabs and one toolbar (search, the day, Filters), and nothing else to press.
+    await expect(phone.getByTestId("activity-views").getByRole("tab", { name: "Club activity", exact: true })).toHaveAttribute("aria-selected", "true");
+    const toolbar = phone.getByTestId("activity-toolbar");
+    await expect(toolbar.getByRole("button")).toHaveCount(2);
+    for (const gone of [/copy link/i, /reset filters/i, /show all activity types/i]) await expect(phone.getByRole("button", { name: gone })).toHaveCount(0);
+    expect((await toolbar.boundingBox()).height).toBeLessThan(140);
     expect(await noSideScroll(phone)).toBe(true);
     await shot(phone, "activity-five-q1-today");
     return { taps: 0, first: await cards().first().getByTestId("activity-sentence").innerText() };
@@ -89,9 +90,9 @@ try {
     return { taps: 1 };
   });
 
-  await section("q3-who-changed", "3. Who changed it: Staff changes names the staff member on the plan move, the class and the settings change (1 tap)", async () => {
+  await section("q3-who-changed", "3. Who changed it: Staff changes names the staff member on the plan move, the class and the settings change (1 tap); Done by: Staff in Filters narrows to what staff did", async () => {
     await open("/dashboard/activity");
-    await changed(phone, () => phone.getByTestId("activity-views").getByRole("button", { name: "Staff changes", exact: true }).tap()); // tap 1
+    await changed(phone, () => phone.getByTestId("activity-views").getByRole("tab", { name: "Staff changes", exact: true }).tap()); // tap 1
     await expect(phone).toHaveURL(/types=staff_changes/);
     const moved = card(`moved ${s.mel.name} from Twice a week (OLD) to Adult Unlimited`);
     await expect(moved).toHaveCount(1);
@@ -104,12 +105,21 @@ try {
     await expect(settings).toHaveCount(1);
     await expect(settings).toContainText("Sam Synthetic");
     await shot(phone, "activity-five-q3-staff-changes");
+    // The same question from Filters: Done by, Staff — every row then names a staff member as the one who did it.
+    await open("/dashboard/activity?types=all");
+    await phone.getByTestId("filters-button").tap();
+    const filters = phone.getByRole("dialog", { name: "Filters" });
+    await filters.getByRole("combobox", { name: "Done by" }).selectOption({ label: "Staff" });
+    await changed(phone, () => filters.getByRole("button", { name: "Show activity", exact: true }).tap());
+    await expect(phone).toHaveURL(/by=staff/);
+    await expect(card("checked in to")).toHaveCount(0);
+    await expect(card(`moved ${s.mel.name} from Twice a week (OLD) to Adult Unlimited`)).toHaveCount(1);
     return { taps: 1, settings: await settings.getByTestId("activity-sentence").innerText() };
   });
 
   await section("q4-money", "4. Who paid, failed or cancelled: Money shows the payment, the failed payment and the cancellation, with names and amounts (1 tap)", async () => {
     await open("/dashboard/activity");
-    await changed(phone, () => phone.getByTestId("activity-views").getByRole("button", { name: "Money", exact: true }).tap()); // tap 1
+    await changed(phone, () => phone.getByTestId("activity-views").getByRole("tab", { name: "Money", exact: true }).tap()); // tap 1
     await expect(phone).toHaveURL(/types=money/);
     await expect(card(`${s.mel.name} paid £45.00`)).toHaveCount(1);
     const failed = card(`${s.other.name}'s payment of £30.00 failed`);
