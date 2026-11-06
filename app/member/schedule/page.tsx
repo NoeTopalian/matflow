@@ -553,10 +553,14 @@ function SessionBlock({
       ].join(" ")}
       style={{
         // A booked class is filled with its colour; an ended one that is not booked has a paler tint, its ink unchanged (UI-RULES §8).
+        // Under the tint, and in the edge, a little of the shell's own text colour: a class coloured like the shell
+        // (a black class on the dark shell, a white one on a light shell) still reads as a card, not floating text.
         background: isSub
           ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
-          : `linear-gradient(135deg, ${hex(color, ended ? 0.16 : 0.32)}, ${hex(color, ended ? 0.1 : 0.2)})`,
-        border: `1px solid ${isSub ? hex(color, 0.9) : hex(color, ended ? 0.3 : 0.58)}`,
+          : `linear-gradient(135deg, ${hex(color, ended ? 0.16 : 0.32)}, ${hex(color, ended ? 0.1 : 0.2)}), color-mix(in srgb, var(--member-text) 6%, transparent)`,
+        border: `1px solid ${isSub
+          ? `color-mix(in srgb, ${color} 70%, var(--member-text) 30%)`
+          : `color-mix(in srgb, ${color} ${ended ? 30 : 55}%, var(--member-text) ${ended ? 14 : 22}%)`}`,
         borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : color}` : undefined,
         boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
         color: ink,

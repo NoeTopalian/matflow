@@ -165,31 +165,6 @@ export function minToTime(m: number): string {
   return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-// Active-hours clamp for a day grid: min(start) − 1 h → max(end) + 1 h over
-// the sessions given, kept inside 06:00–23:00 and never narrower than 8 hours.
-// No sessions → 09:00–21:00. Shared by the member day view and the staff Day
-// view so both show the same hours for the same club.
-const CLAMP_START = 6;
-const CLAMP_END = 23;
-const MIN_WINDOW = 8;
-const FALLBACK_START = 9;
-const FALLBACK_END = 21;
-
-export function hourWindow(sessions: { startTime: string; endTime: string }[]): { startHour: number; endHour: number } {
-  if (sessions.length === 0) return { startHour: FALLBACK_START, endHour: FALLBACK_END };
-  const minStart = Math.min(...sessions.map((s) => timeToMin(s.startTime)));
-  const maxEnd = Math.max(...sessions.map((s) => timeToMin(s.endTime)));
-  let start = Math.max(CLAMP_START, Math.floor(minStart / 60) - 1);
-  let end = Math.min(CLAMP_END, Math.ceil(maxEnd / 60) + 1);
-  // Widen to the minimum window without leaving the clamp.
-  while (end - start < MIN_WINDOW) {
-    if (end < CLAMP_END) end++;
-    else if (start > CLAMP_START) start--;
-    else break;
-  }
-  return { startHour: start, endHour: end };
-}
-
 export interface SessionCluster {
   /** Indexes into the input array, in input order. */
   members: number[];

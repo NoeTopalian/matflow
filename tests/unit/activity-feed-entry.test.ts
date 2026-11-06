@@ -272,6 +272,22 @@ describe("ranks, classes and the rest", () => {
     expect(JSON.stringify(out)).not.toContain("Graded!");
   });
 
+  it("mats and the split are told as sentences that name who and which mat", () => {
+    const mat = (action: string, metadata: unknown, entityType = "Mat") => entry(row({ action, entityType, entityId: entityType === "Mat" ? "mat1" : "t1", ...byJack, metadata }));
+    expect(mat("mat.create", { name: "Mat 1" }).plain).toBe("Jack Streeter added the mat “Mat 1”");
+    expect(mat("mat.update", { before: { name: "Mat 2" }, after: { name: "Cage" }, classesRenamed: 4 }).plain).toBe("Jack Streeter renamed the mat “Mat 2” to “Cage”");
+    expect(mat("mat.delete", { name: "Cage", classIds: ["c1", "c2"] }).plain).toBe("Jack Streeter removed the mat “Cage” — its 2 classes keep the name as their place");
+    expect(mat("mat.delete", { name: "Cage", classIds: [] }).plain).toBe("Jack Streeter removed the mat “Cage”");
+    expect(mat("mat.reorder", { before: ["a", "b"], after: ["b", "a"] }, "Tenant").plain).toBe("Jack Streeter reordered the mats");
+    expect(mat("mat.adopt", { mats: [{ id: "a", name: "Mat 1", created: true, classIds: ["c1"] }, { id: "b", name: "Mat 2", created: true, classIds: [] }] }, "Tenant").plain)
+      .toBe("Jack Streeter made 2 mats from the places typed on classes: Mat 1, Mat 2");
+    expect(mat("timetable.layout.update", { before: { stored: null, effective: "mat" }, after: { stored: "time", effective: "time" } }, "Tenant").plain)
+      .toBe("Jack Streeter set the timetable to split same-time classes by time");
+    const e = mat("mat.create", { name: "Mat 1" });
+    expect(e.type).toBe("class_changed");
+    expect(e.source.label).toBe("Staff");
+  });
+
   it("class changes name the class and what was done to it", () => {
     const cls = (action: string, metadata: unknown) => entry(row({ action, entityType: "Class", entityId: "c_nogi", ...byJack, metadata }));
     expect(cls("class.created", { name: "Advanced No-Gi", instancesCreated: 8 }).plain).toBe("Jack Streeter created Advanced No-Gi");

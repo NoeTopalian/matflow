@@ -31,6 +31,19 @@ function Pill({ children, tone = "neutral", upper = true, testId }: { children: 
   );
 }
 
+/**
+ * The class's category. A state pill wraps rather than lose a letter; a category is a single word that a narrow
+ * mat column would break in two ("Fundament / als"), so it ends in an ellipsis instead and carries the whole
+ * word as its title. The class card under the timetable always shows it in full.
+ */
+function CategoryPill({ label }: { label: string }) {
+  return (
+    <span data-testid="class-chip-category" title={label} className={["block w-fit max-w-full truncate rounded-full border px-1 text-[9px] font-bold leading-4 tracking-wide", PILL_TONE.neutral].join(" ")}>
+      {label}
+    </span>
+  );
+}
+
 export function WeekChip({
   name,
   dayName,
@@ -119,11 +132,7 @@ export function WeekChip({
           ) : null}
           {duplicate ? <Pill tone="duplicate">Duplicate?</Pill> : null}
           {kids ? <Pill>Kids</Pill> : null}
-          {category ? (
-            <Pill upper={false} testId="class-chip-category">
-              {category}
-            </Pill>
-          ) : null}
+          {category ? <CategoryPill label={category} /> : null}
         </span>
       ) : null}
     </Button>
