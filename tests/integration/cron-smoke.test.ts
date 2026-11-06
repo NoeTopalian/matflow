@@ -213,9 +213,11 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
       try {
         await withRlsBypass(async (tx) => {
           await tx.tenant.create({ data: { id: T, name: `Synthetic kept club ${stamp}`, slug: `mfv-keep-${stamp}`, createdAt: ago(4000), deletedAt: ago(730) } });
+          // A sign-in record names exactly one user or member (LoginEvent_subject_xor_chk).
+          await tx.user.create({ data: { id: `${T}-owner`, tenantId: T, email: `keep-${stamp}-owner@example.test`, name: "Owner", role: "owner", passwordHash: "x" } });
           await tx.auditLog.createMany({ data: AGES.map((d, i) => ({ id: kept.auditLog[i], tenantId: T, action: "member.update", entityType: "Member", entityId: "x", createdAt: ago(d) })) });
           await tx.emailLog.createMany({ data: AGES.map((d, i) => ({ id: kept.emailLog[i], tenantId: T, templateId: "t", recipient: `keep-${stamp}@example.test`, subject: "s", createdAt: ago(d) })) });
-          await tx.loginEvent.createMany({ data: AGES.map((d, i) => ({ id: kept.loginEvent[i], tenantId: T, deviceHash: `${stamp}-${d}`, firstSeenAt: ago(d), lastSeenAt: ago(d), createdAt: ago(d) })) });
+          await tx.loginEvent.createMany({ data: AGES.map((d, i) => ({ id: kept.loginEvent[i], tenantId: T, userId: `${T}-owner`, deviceHash: `${stamp}-${d}`, firstSeenAt: ago(d), lastSeenAt: ago(d), createdAt: ago(d) })) });
           await tx.magicLinkToken.createMany({ data: AGES.map((d, i) => ({ id: kept.magicLinkToken[i], tenantId: T, email: `keep-${stamp}@example.test`, tokenHash: `${kept.magicLinkToken[i]}-hash`, expiresAt: ago(d) })) });
           await tx.passwordResetToken.createMany({ data: AGES.map((d, i) => ({ id: kept.passwordResetToken[i], tenantId: T, email: `keep-${stamp}@example.test`, tokenHash: `${kept.passwordResetToken[i]}-hash`, expiresAt: ago(d) })) });
           await tx.stripeEvent.createMany({ data: AGES.map((d, i) => ({ id: kept.stripeEvent[i], eventId: `evt_${kept.stripeEvent[i]}`, type: "invoice.paid", processedAt: ago(d) })) });
@@ -267,6 +269,7 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
           await tx.stripeEvent.deleteMany({ where: { id: { in: kept.stripeEvent } } });
           await tx.importUpload.deleteMany({ where: { tenantId: T } });
           await tx.importJob.deleteMany({ where: { tenantId: T } });
+          await tx.user.deleteMany({ where: { tenantId: T } });
           await tx.tenant.deleteMany({ where: { id: T } });
         });
       }
