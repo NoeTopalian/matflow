@@ -92,6 +92,8 @@ import * as classPackRoute from "@/app/api/class-packs/[id]/route";
 import * as refundRoute from "@/app/api/payments/[id]/refund/route";
 import * as markPaidRoute from "@/app/api/orders/[id]/mark-paid/route";
 import * as productRoute from "@/app/api/products/[id]/route";
+import * as matRoute from "@/app/api/mats/[id]/route";
+import * as matOrderRoute from "@/app/api/mats/order/route";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -155,6 +157,8 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
   let prodAId: string;
   let prodBId: string;
   let prodBDeletedId: string;
+  let matAId: string;
+  let matBId: string;
 
   /** Point the mocked auth() at a tenant-A session of the given role. */
   function actAs(role: Role) {
@@ -333,6 +337,10 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
       prodBDeletedId = (await tx.product.create({
         data: { tenantId: tB.id, name: "Prod B deleted (target)", pricePence: 2000, deletedAt: new Date("2026-01-01T00:00:00Z") },
       })).id;
+
+      // Mats (5 Nov 2026): a training area in each club.
+      matAId = (await tx.mat.create({ data: { tenantId: tA.id, name: "Mat A", nameKey: "mat a", sortOrder: 0 } })).id;
+      matBId = (await tx.mat.create({ data: { tenantId: tB.id, name: "Mat B (target)", nameKey: "mat b (target)", sortOrder: 0 } })).id;
     });
 
     // Default auth mock: tenantA owner session.
@@ -373,6 +381,7 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
       await tx.classSubscription.deleteMany({ where: { member: scope } });
       await tx.classRoster.deleteMany({ where: scope });
       await tx.class.deleteMany({ where: scope });
+      await tx.mat.deleteMany({ where: scope });
       await tx.rankSystem.deleteMany({ where: scope });
       await tx.announcement.deleteMany({ where: scope });
       await tx.initiative.deleteMany({ where: scope });
@@ -766,6 +775,79 @@ describe.skipIf(!HAS_DB)("Cross-tenant authorisation matrix", () => {
       const res = await call(classPackRoute.PATCH, "PATCH", `/api/class-packs/${packAId}`, { id: packAId }, { name: "Pack A renamed" });
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("Pack A renamed");
+    });
+  });
+
+  describe("Mat — app/api/mats/[id], app/api/mats/order, a class's matId", () => {
+    const matB = () => withRlsBypass((tx) => tx.mat.findUnique({ where: { id: matBId } }));
+
+    it("owner A and manager A: PATCH of gym B's mat is 404 AND it is unchanged", async () => {
+      const before = await matB();
+      for (const role of ["owner", "manager"] as const) {
+        actAs(role);
+        const res = await call(matRoute.PATCH, "PATCH", `/api/mats/${matBId}`, { id: matBId }, { name: "Hijacked mat" });
+        expect(res.status, role).toBe(404);
+        expect(res.text).not.toContain("Mat B (target)");
+      }
+      expect(await matB()).toEqual(before);
+    });
+
+    it("owner A: DELETE of gym B's mat is 404 AND it still exists", async () => {
+      actAs("owner");
+      expect((await call(matRoute.DELETE, "DELETE", `/api/mats/${matBId}`, { id: matBId })).status).toBe(404);
+      expect((await matB())?.name).toBe("Mat B (target)");
+    });
+
+    it("owner A: a reorder naming gym B's mat is refused AND neither club's order moves", async () => {
+      actAs("owner");
+      const res = await call(matOrderRoute.PUT, "PUT", "/api/mats/order", {}, { ids: [matBId, matAId] });
+      expect(res.status).toBe(409);
+      expect((await matB())?.sortOrder).toBe(0);
+      expect((await withRlsBypass((tx) => tx.mat.findUnique({ where: { id: matAId } })))?.sortOrder).toBe(0);
+    });
+
+    it("coach, admin and member of gym A: 403 on rename, remove and reorder, mat unchanged", async () => {
+      const before = await matB();
+      for (const role of ["coach", "admin", "member"] as const) {
+        actAs(role);
+        expect((await call(matRoute.PATCH, "PATCH", `/api/mats/${matBId}`, { id: matBId }, { name: "Hijacked mat" })).status, role).toBe(403);
+        expect((await call(matRoute.DELETE, "DELETE", `/api/mats/${matBId}`, { id: matBId })).status, role).toBe(403);
+        expect((await call(matOrderRoute.PUT, "PUT", "/api/mats/order", {}, { ids: [matBId] })).status, role).toBe(403);
+      }
+      expect(await matB()).toEqual(before);
+    });
+
+    // Postgres foreign-key checks ignore row security (finding E-2), so the
+    // application check is the only thing between gym A and gym B's mat.
+    it("owner A: putting a gym-A class on gym B's mat is refused on create and on edit, and nothing of gym B is returned", async () => {
+      actAs("owner");
+      const edit = await call(classRoute.PATCH, "PATCH", `/api/classes/${classAId}`, { id: classAId }, { matId: matBId });
+      expect(edit.status).toBe(400);
+      expect(edit.text).not.toContain("Mat B (target)");
+      const after = await withRlsBypass((tx) => tx.class.findUnique({ where: { id: classAId } }));
+      expect(after?.matId).toBeNull();
+      expect(after?.location).not.toBe("Mat B (target)");
+      const create = await call(classCollectionRoute.POST, "POST", "/api/classes", {}, {
+        name: `Class on their mat ${STAMP}`, duration: 60, matId: matBId, schedules: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }],
+      });
+      expect(create.status).toBe(400);
+      expect(create.text).not.toContain("Mat B (target)");
+      expect(await withRlsBypass((tx) => tx.class.count({ where: { name: `Class on their mat ${STAMP}` } }))).toBe(0);
+    });
+
+    it("positive control: owner A can rename their own mat and put their own class on it", async () => {
+      actAs("owner");
+      const res = await call(matRoute.PATCH, "PATCH", `/api/mats/${matAId}`, { id: matAId }, { name: "Mat A renamed" });
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe("Mat A renamed");
+      try {
+        const edit = await call(classRoute.PATCH, "PATCH", `/api/classes/${classAId}`, { id: classAId }, { matId: matAId });
+        expect(edit.status).toBe(200);
+        const after = await withRlsBypass((tx) => tx.class.findUnique({ where: { id: classAId } }));
+        expect(after).toMatchObject({ matId: matAId, location: "Mat A renamed" });
+      } finally {
+        await withRlsBypass((tx) => tx.class.update({ where: { id: classAId }, data: { matId: null, location: null } }));
+      }
     });
   });
 

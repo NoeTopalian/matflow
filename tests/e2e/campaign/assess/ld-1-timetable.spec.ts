@@ -451,7 +451,7 @@ test.describe("today's column says live / next / ended in the same words as the 
       await page.waitForLoadState("networkidle").catch(() => {});
 
       // The desktop week grid (this project is Desktop Chrome, ≥ md:).
-      const chip = (name: string) => page.locator("button:visible", { hasText: name }).first();
+      const chip = (name: string) => page.getByTestId("week-grid").locator("button", { hasText: name }).first();
       await expect(chip(NAME("a2 live"))).toHaveAttribute("data-session-state", "live");
       await expect(chip(NAME("a2 live"))).toContainText("Live");
       await expect(chip(NAME("a2 next"))).toHaveAttribute("data-session-state", "next");

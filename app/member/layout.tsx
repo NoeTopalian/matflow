@@ -263,6 +263,8 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
         background: appBg,
         fontFamily: appFont,
         // CSS vars used by child pages for theme-aware colors
+        // The shell's own colour, opaque: what a pinned band inside a page must paint itself with.
+        ["--member-bg" as string]: appBg,
         ["--member-text" as string]: textMain,
         // The club colour as text, lifted just enough to read on this shell
         // (lf-2, 30 Sep 2026). Fills and borders keep the raw club colour.
@@ -345,9 +347,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
           // strip revealed above it is painted by nothing — so the logo looks
           // like it slides away. `.member-topbar::before` (globals.css) extends
           // this same background upward to fill that strip. Kept as sticky
-          // rather than fixed: fixed would need a spacer element and would
-          // break the --member-header-clearance arithmetic every member page
-          // already relies on.
+          // rather than fixed: fixed would need a spacer element.
           ["--member-topbar-bg" as string]: appBg,
         }}
       >

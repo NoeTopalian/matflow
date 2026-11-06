@@ -1,4 +1,16 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+/** The class blocks of the day on show (the centre pane; the panes either side are inert). */
+const blocks = (page: Page) => page.getByTestId("schedule-pane").getByTestId("schedule-day").locator("[data-cell-key] button");
+
+/** The first day of the week on show that has a class, chosen by its day pill. Fails if no day has one. */
+async function dayWithClasses(page: Page) {
+  for (const day of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]) {
+    await page.getByRole("button", { name: new RegExp(`^${day}\\s*\\d`) }).click();
+    if ((await blocks(page).count()) > 0) return day;
+  }
+  throw new Error("no day of this week has a class on the member schedule");
+}
 
 test.describe("Member Schedule", () => {
   test.beforeEach(async ({ page }) => {
@@ -21,23 +33,15 @@ test.describe("Member Schedule", () => {
     await expect(page.locator("button", { hasText: "Today" }).first()).toBeVisible();
   });
 
-  test("at least one class event is shown", async ({ page }) => {
-    // The schedule should show at least one class block on most days
-    // (demo data covers Mon–Sat)
-    const classBlocks = page.locator(".absolute.rounded-xl");
-    // If today has no classes, navigate to a day that does
-    const count = await classBlocks.count();
-    // At minimum, no JS errors and page rendered
-    await expect(page.locator("body")).not.toContainText("Error");
-    expect(count).toBeGreaterThanOrEqual(0);
+  test("a day of the week shows its classes as blocks on the day grid", async ({ page }) => {
+    await dayWithClasses(page);
+    expect(await blocks(page).count()).toBeGreaterThan(0);
+    await expect(page.locator("body")).not.toContainText("Couldn't load your timetable");
   });
 
   test("tapping a class opens the detail sheet", async ({ page }) => {
-    const firstClass = page.locator(".absolute.rounded-xl").first();
-    const count = await firstClass.count();
-    if (count === 0) test.skip();
-
-    await firstClass.click();
+    await dayWithClasses(page);
+    await blocks(page).first().click();
     // EventSheet should appear
     await expect(page.locator("text=/Time|Coach|Location/i").first()).toBeVisible();
   });

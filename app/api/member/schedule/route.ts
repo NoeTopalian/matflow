@@ -78,6 +78,8 @@ export async function GET(req: Request) {
             coachName: true,
             coachUser: { select: { id: true, name: true } },
             location: true,
+            // The mat the class runs on (null = none); the member's day draws a column per mat.
+            matId: true,
             maxCapacity: true,
             isKids: true,
             // T6c: the category key, shown as a label on the member timetable.
@@ -244,6 +246,7 @@ export async function GET(req: Request) {
           endTime: sched.endTime,
           coach: resolveCoachName(cls) ?? "TBC",
           location: cls.location ?? "",
+          matId: cls.matId ?? null,
           capacity: cls.maxCapacity,
           // Shown as a small "Kids" tag on the member's timetable.
           isKids: cls.isKids,

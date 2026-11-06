@@ -106,7 +106,40 @@ acts on is worse than an error they can see.
   imported without one and listed for the owner.
 - How it works: `docs/readiness/TEAMUP-OPERATIONS-CONTRACT.md` §3.
 
-### 5b. Activity (Noe, 5 Nov 2026)
+### 5b. Mats and the timetable split (Noe, 5 Nov 2026)
+
+- **A mat is one of a club's training areas** ("Mat 1", "Cage", "Upstairs"). The club names
+  its own, up to twelve, each up to 24 characters; two names that differ only in capitals or
+  spacing are the same mat. Mats belong to the club, not to a venue. Their order is the order
+  of the columns.
+- **A class is on a mat or it is not; the mat is the truth.** While a class is on a mat its
+  place, everywhere in the product, is that mat's current name: renaming a mat renames the
+  place of every class on it in the same write (`lib/mats.ts`, the write-through rule). A
+  class on no mat keeps whatever place was typed.
+- **Removing a mat never removes a class.** Its classes stay on the timetable with no mat and
+  keep the mat's name as their typed place, so adding the mat again puts them back in one
+  press. Two classes on one mat at the same time are shown side by side and are neither
+  flagged nor blocked: that is the club's own set-up.
+- **Mats are set up from what the club already typed.** The places typed on classes are offered
+  as mats; nothing is turned into a mat without a press, and no migration writes one.
+- **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
+  two or more mats have a class on them, otherwise by time; that is worked out each time and
+  never saved. Once an owner or manager presses a choice it is saved for the club and stays
+  until someone changes it. By mat cannot be chosen while no class is on a mat. When an
+  action changes the split by itself, the product says so.
+- **One split for the whole club.** The staff week, the staff Day view, the staff phone and the
+  members' day all follow it. A phone, and the members' day, show mat columns while the day
+  needs three side-by-side columns or fewer; a busier day is drawn by time, every class names
+  its mat, and the screen says so.
+- **Who may change them:** owner and manager. A coach or an admin sees the split and the mat
+  names and changes neither. In a MatFlow support session a class can be put on a mat (it is
+  a class edit) but mats cannot be set up and the split cannot be changed: those are the
+  club's.
+- **Not undone from Activity.** Mats and the split are changed back where they were changed,
+  on the Timetable page. Undoing a class edit re-derives the class's place from its mat and
+  never copies an old name back.
+
+### 5c. Activity (Noe, 5 Nov 2026)
 
 - **One timeline, shown everywhere.** The club's history is read through one component and one
   route: the Activity page (the whole club), a member's History, and later a class's and a

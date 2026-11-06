@@ -12,7 +12,7 @@ Synthetic data only, Neon test branch, isolated worktree without `.env`. No prod
 | `03cbeebf` | `components/activity/`: the timeline (page and embedded variants), the sentence, the Activity types sheet, the member search, Jump to date, Undo, and the hook that loads pages; `lib/activity-url.ts` (the filters as they live in the address bar). |
 | `ff2b114f` | `/dashboard/activity` renders the timeline for the owner and managers; the member page's "Details history" becomes "History" (owner and manager); Activity appears in a manager's menu; `GET /api/members` authorises through `requireApiStaff()`; the old `ActivityLog.tsx` is deleted. |
 | `1e437f6a` | Pressed chips, the pressed day and a ticked box keep a dark edge, so they survive a white club accent. |
-| `9fe7a437` | `docs/RULES.md` §5b: the Activity rules as Noe decided them. |
+| `9fe7a437` | `docs/RULES.md` §5c (§5b before the mats rules took that number on merging main): the Activity rules as Noe decided them. |
 | `3bb1b2e6` | Design-review fixes in shared primitives: Tab belongs to the top overlay when two are open; the staff shell's focus ring is the accent moved far enough to be seen (`--focus-ring`); the 44px rule applies to the `Input` primitive only; each `DataTable` section is its own row group. |
 | `b08528cc` | Review fixes in the timeline (list under "Review findings"). |
 | `fa246f40` | The line after a sentence does not repeat what the sentence said; stored words ("past_due") are shown as words ("Past due"). |

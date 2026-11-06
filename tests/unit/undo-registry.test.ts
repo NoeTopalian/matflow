@@ -42,6 +42,7 @@ const fake = {
   tenant: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   user: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   class: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+  mat: { findFirst: vi.fn() },
   membershipTier: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   classRoster: { deleteMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   memberRank: { findFirst: vi.fn(), update: vi.fn(), delete: vi.fn() },
@@ -556,5 +557,77 @@ describe("applyUndo — a restored status records its event (T8a)", () => {
       .rejects.toBeInstanceOf(UndoStale);
     expect(fake.member.update).not.toHaveBeenCalled();
     expect(fake.memberStatusEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+// Mats (5 Nov 2026). A class on a mat always shows that mat's CURRENT name as
+// its place, so undoing a class edit re-derives the place from the mat and
+// never copies a recorded name back (lib/mats.ts, the write-through rule).
+describe("mats — undoing a class edit never puts a stale place back", () => {
+  const edit = (before: Record<string, unknown>, after: Record<string, unknown>) => row("class.updated", { before, after }, { entityType: "Class", entityId: "c1" });
+  const restored = () => fake.class.update.mock.calls[0][0].data as Record<string, unknown>;
+
+  it("the six mats and split actions are changed back on the Timetable page, not undone", () => {
+    for (const action of ["mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update"]) {
+      expect(decideUndo(row(action, { name: "Mat 1" }, { entityType: "Mat" }), false)).toEqual({ ok: false, reason: "Change it back from the Timetable page." });
+    }
+  });
+
+  it("back onto a mat that is still there: the class takes the mat's name as it is today", async () => {
+    // The edit moved the class from Mat 1 to Mat 2. Mat 1 has since been renamed "Main mat".
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: "m2", location: "Mat 2" });
+    fake.mat.findFirst.mockResolvedValue({ name: "Main mat" });
+    await applyUndo(tx, edit({ matId: "m1", location: "Mat 1" }, { matId: "m2", location: "Mat 2" }));
+    expect(fake.mat.findFirst).toHaveBeenCalledWith({ where: { id: "m1", tenantId: "t1" }, select: { name: true } });
+    expect(restored()).toEqual({ matId: "m1", location: "Main mat" });
+  });
+
+  it("the mat it is on now having been renamed is not 'changed since'", async () => {
+    // The edit moved it to Mat 2, which is now called "Cage"; the class's place followed.
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: "m2", location: "Cage" });
+    fake.mat.findFirst.mockResolvedValue({ name: "Mat 1" });
+    await applyUndo(tx, edit({ matId: "m1", location: "Mat 1" }, { matId: "m2", location: "Mat 2" }));
+    expect(restored()).toEqual({ matId: "m1", location: "Mat 1" });
+  });
+
+  it("back onto a mat that has been removed, or is another club's, is refused with its sentence", async () => {
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: null, location: "Sports hall" });
+    fake.mat.findFirst.mockResolvedValue(null);
+    const undo = applyUndo(tx, edit({ matId: "m1", location: "Mat 1" }, { matId: null, location: "Sports hall" }));
+    await expect(undo).rejects.toBeInstanceOf(UndoStale);
+    await expect(undo).rejects.toThrow("That mat no longer exists.");
+    expect(fake.class.update).not.toHaveBeenCalled();
+  });
+
+  it("back off a mat: the typed place that was recorded returns with it", async () => {
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: "m1", location: "Main mat" }); // Mat 1 renamed since
+    await applyUndo(tx, edit({ matId: null, location: "Sports hall" }, { matId: "m1", location: "Mat 1" }));
+    expect(fake.mat.findFirst).not.toHaveBeenCalled();
+    expect(restored()).toEqual({ matId: null, location: "Sports hall" });
+  });
+
+  it("an edit of the place and other fields, on a class now on a mat: the others come back and the mat's name stays", async () => {
+    // Recorded before the class was put on a mat: the name and the typed place changed.
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: "m1", location: "Mat 1", name: "Gi Fundamentals" });
+    await applyUndo(tx, edit({ name: "Gi", location: "Old hall" }, { name: "Gi Fundamentals", location: "New hall" }));
+    expect(restored()).toEqual({ name: "Gi" });
+  });
+
+  it("an edit of the place alone, on a class now on a mat, is refused: an undo that restores nothing must not report success", async () => {
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: "m1", location: "Mat 1" });
+    const undo = applyUndo(tx, edit({ location: "Old hall" }, { location: "New hall" }));
+    await expect(undo).rejects.toBeInstanceOf(UndoStale);
+    await expect(undo).rejects.toThrow("This class is on a mat now. Change its mat from the Timetable page.");
+    expect(fake.class.update).not.toHaveBeenCalled();
+  });
+
+  it("a class on no mat is undone exactly as before mats existed, stale check included", async () => {
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: null, location: "New hall" });
+    await applyUndo(tx, edit({ location: "Old hall" }, { location: "New hall" }));
+    expect(restored()).toEqual({ location: "Old hall" });
+    fake.class.update.mockClear();
+    fake.class.findFirst.mockResolvedValue({ id: "c1", matId: null, location: "Somewhere else" });
+    await expect(applyUndo(tx, edit({ location: "Old hall" }, { location: "New hall" }))).rejects.toBeInstanceOf(UndoStale);
+    expect(fake.class.update).not.toHaveBeenCalled();
   });
 });
