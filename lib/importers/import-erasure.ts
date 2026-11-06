@@ -280,7 +280,7 @@ function otherIdentifier(s: string, w: Who): boolean {
 /** Fields that hold a PERSON's name in import diagnostics (not className, membershipName, fileName…). */
 const PERSON_NAME_FIELDS = new Set(["name", "personName", "sourceName", "customerName", "childName"]);
 
-type Verdict ={ kind: "remove" } | { kind: "blank"; fields: string[] } | { kind: "keep" };
+type Verdict = { kind: "remove" } | { kind: "blank"; fields: string[] } | { kind: "keep" };
 
 function verdict(entry: Record<string, unknown>, w: Who): Verdict {
   if (entry.memberId === w.memberId) return { kind: "remove" };
