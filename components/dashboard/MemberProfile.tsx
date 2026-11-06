@@ -36,6 +36,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Sheet } from "@/components/ui/sheet";
+import { Tab, TabList } from "@/components/ui/tabs";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
@@ -267,32 +268,6 @@ const STATUS_OPTIONS: { value: string; label: string; color: string; bg: string 
   { value: "taster",    label: "Taster",    color: "#60a5fa", bg: "rgba(96,165,250,0.12)"  },
   { value: "cancelled", label: "Cancelled", color: "#f87171", bg: "rgba(248,113,113,0.12)" },
 ];
-
-/**
- * Tab rail button. The active state used to be `border-b-2 border-white`,
- * which paints white-on-white and therefore nothing at all on the light staff
- * shell (UI-RULES §4a.5). It is now the tenant accent underline — the one
- * place colour is allowed to appear (§1.5.3) — set through the runtime CSS
- * variable so it stays correct under any tenant palette (§2a).
- */
-function Tab({ label, active, onClick, count }: { label: string; active: boolean; onClick: () => void; count?: number }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
-        active
-          ? "text-tx-1"
-          : "border-transparent text-tx-3 hover:border-bd-hover hover:text-tx-2"
-      }`}
-      style={active ? { borderColor: "var(--color-primary)" } : undefined}
-    >
-      {label}{count !== undefined ? ` (${count})` : ""}
-    </button>
-  );
-}
 
 function InfoRow({ icon: Icon, label, value, muted }: { icon: React.ElementType; label: string; value: string; muted?: boolean }) {
   return (
@@ -1393,18 +1368,14 @@ export default function MemberProfile({
         all six tabs fit — tabs must never depend on a hidden scrollbar at
         desktop widths.
       */}
-      <div
-        className="sticky top-0 z-20 mb-5 flex overflow-x-auto border-b border-bd-default bg-[var(--sf-bg)] scrollbar-hide lg:overflow-x-visible"
-        role="tablist"
-        aria-label="Member sections"
-      >
+      <TabList label="Member sections" className="sticky top-0 z-20 mb-5 bg-[var(--sf-bg)]">
         <Tab label="Overview" active={tab === "overview"} onClick={() => setTab("overview")} />
         <Tab label="Attendance" active={tab === "attendance"} onClick={() => setTab("attendance")} count={member.attendanceTotal ?? member.attendances.length} />
         <Tab label="Payments" active={tab === "payments"} onClick={() => setTab("payments")} count={paymentsLoading || paymentsError ? undefined : payments.length} />
         <Tab label="Ranks" active={tab === "ranks"} onClick={() => setTab("ranks")} count={member.ranks.length} />
         <Tab label="Internal Notes" active={tab === "notes"} onClick={() => setTab("notes")} />
         <Tab label="Photos" active={tab === "photos"} onClick={() => setTab("photos")} />
-      </div>
+      </TabList>
 
       {/* ── Overview ── */}
       {/*

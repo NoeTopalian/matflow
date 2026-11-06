@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// The three shared pieces the Activity timeline needs from components/ui:
-// section headers in DataTable (the day headings), the Checkbox's third state
-// (a group that is partly ticked), and the Input field. Each is additive — the
-// last block proves existing tables and checkboxes render as before.
+// The shared pieces the Activity timeline needs from components/ui: section
+// headers in DataTable (the day headings), where its cards give way to the
+// table, the Checkbox's third state (a group that is partly ticked), the Input
+// field and the tab bar. Each is additive — existing tables, checkboxes and the
+// member profile's tabs render as before.
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import React, { createRef } from "react";
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Tab, TabList } from "@/components/ui/tabs";
 
 type Row = { id: string; name: string; day: string };
 const columns: DataTableColumn<Row>[] = [
@@ -139,5 +141,88 @@ describe("a field and a field-like button share a height on a touch screen", () 
     const { container } = render(<Input aria-label="Name" />);
     expect(container.querySelector("input")!.getAttribute("data-slot")).toBe("input");
     expect(readFileSync(join("docs", "UI-RULES.md"), "utf8")).toContain("`ui-field`");
+  });
+});
+
+describe("DataTable cardsBelow", () => {
+  it("defaults to cards below sm: — every other table is unchanged", () => {
+    const { container } = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} />);
+    expect(container.querySelector("table")!.parentElement!.className).toBe("hidden overflow-x-auto sm:block lg:overflow-x-visible");
+    expect(container.querySelector(".sm\\:hidden")!.className).toBe("space-y-2 sm:hidden");
+  });
+
+  it('"lg" keeps the cards up to 1023px and shows the table from lg: up', () => {
+    const { container } = render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} cardsBelow="lg" />);
+    expect(container.querySelector("table")!.parentElement!.className).toBe("hidden lg:block lg:overflow-x-visible");
+    expect(container.querySelector(".lg\\:hidden")!.children).toHaveLength(4);
+    expect(container.querySelector(".sm\\:hidden")).toBeNull();
+  });
+
+  it('valign "top" pins only that column\'s cells to the top', () => {
+    const cols: DataTableColumn<Row>[] = [{ ...columns[0], valign: "top" }, columns[1]];
+    const { container } = render(<DataTable columns={cols} rows={rows.slice(0, 1)} rowKey={(r) => r.id} />);
+    const [a, b] = [...container.querySelectorAll("tbody td")];
+    expect(a.className).toContain("align-top");
+    expect(b.className).toContain("align-middle");
+  });
+});
+
+describe("Tab bar (extracted from the member profile)", () => {
+  // The classes the member profile's own Tab and rail had before the extraction (origin/main 9c3b938c).
+  const RAIL = "sticky top-0 z-20 mb-5 flex overflow-x-auto border-b border-bd-default bg-[var(--sf-bg)] scrollbar-hide lg:overflow-x-visible";
+  const ACTIVE = "shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors text-tx-1";
+  const IDLE = "shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors border-transparent text-tx-3 hover:border-bd-hover hover:text-tx-2";
+  const words = (c: string) => c.split(/\s+/).filter(Boolean).sort();
+
+  it("draws the member profile's rail and tabs with exactly the classes they had", () => {
+    const { container } = render(
+      <TabList label="Member sections" className="sticky top-0 z-20 mb-5 bg-[var(--sf-bg)]">
+        <Tab label="Overview" active onClick={() => {}} />
+        <Tab label="Attendance" active={false} onClick={() => {}} count={12} />
+      </TabList>,
+    );
+    const rail = container.querySelector('[role="tablist"]')!;
+    expect(rail.getAttribute("aria-label")).toBe("Member sections");
+    expect(words(rail.className)).toEqual(words(RAIL));
+    const [overview, attendance] = [...rail.querySelectorAll('[role="tab"]')] as HTMLButtonElement[];
+    expect(words(overview.className)).toEqual(words(ACTIVE));
+    expect(overview.getAttribute("aria-selected")).toBe("true");
+    expect(overview.style.borderColor).toBe("var(--color-primary)");
+    expect(words(attendance.className)).toEqual(words(IDLE));
+    expect(attendance.getAttribute("aria-selected")).toBe("false");
+    expect(attendance.textContent).toBe("Attendance (12)");
+    // No tabIndex given: every tab stays in the Tab order, as before.
+    expect(overview.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("the member profile uses the shared bar, with its six tabs, and no Tab of its own", () => {
+    const source = readFileSync(join("components", "dashboard", "MemberProfile.tsx"), "utf8");
+    expect(source).toContain('import { Tab, TabList } from "@/components/ui/tabs";');
+    expect(source).not.toMatch(/function Tab\(/);
+    expect(source).toContain('<TabList label="Member sections" className="sticky top-0 z-20 mb-5 bg-[var(--sf-bg)]">');
+    expect([...source.matchAll(/<Tab label="([^"]+)"/g)].map((m) => m[1])).toEqual(["Overview", "Attendance", "Payments", "Ranks", "Internal Notes", "Photos"]);
+  });
+
+  it("arrow keys, Home and End move to a tab and choose it", () => {
+    const chosen: string[] = [];
+    const { getAllByRole } = render(
+      <TabList label="Views">
+        {["One", "Two", "Three"].map((name) => (
+          <Tab key={name} label={name} active={name === "One"} onClick={() => chosen.push(name)} />
+        ))}
+      </TabList>,
+    );
+    const tabs = getAllByRole("tab");
+    tabs[0].focus();
+    fireEvent.keyDown(tabs[0], { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(tabs[2]);
+    fireEvent.keyDown(tabs[2], { key: "Home" });
+    expect(document.activeElement).toBe(tabs[0]);
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabs[1]);
+    // Other keys are left alone.
+    fireEvent.keyDown(tabs[1], { key: "a" });
+    expect(document.activeElement).toBe(tabs[1]);
+    expect(chosen).toEqual(["Three", "One", "Two"]);
   });
 });
