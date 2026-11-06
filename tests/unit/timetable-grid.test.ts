@@ -48,13 +48,13 @@ describe("rows are the real times", () => {
     expect(session(g, "b").lanes).toBe(1);
   });
 
-  it("floors a short track at 0 and a longer one at 0.6 px a minute", () => {
+  it("floors a longer track at 0.6 px a minute; a sliver its class shares with a longer track is fixed at that scale", () => {
     const g = byTime([s("a", 1, "16:45", "17:45"), s("b", 2, "16:50", "17:35")]);
     // tracks: 16:45–16:50 (5 min), 16:50–17:35 (45 min), 17:35–17:45 (10 min)
-    expect(g.rows.map((r) => [r.kind, r.floorPx])).toEqual([
-      ["used", 0],
-      ["used", 27],
-      ["used", 0],
+    expect(g.rows.map((r) => [r.kind, r.floorPx, r.fixed === true])).toEqual([
+      ["used", 3, true],
+      ["used", 27, false],
+      ["used", 6, true],
     ]);
     const fifty = byTime([s("x", 1, "12:00", "12:50")]);
     expect(fifty.rows[0].floorPx).toBe(30);
@@ -368,5 +368,26 @@ describe("columns by mat", () => {
     const g = byMat([s("a", 1, "18:40", "19:30", "", "m2"), s("none", 1, "18:40", "19:30")], TWO);
     expect(session(g, "a").matId).toBe("m2");
     expect(session(g, "none").matId).toBeNull();
+  });
+});
+
+describe("sliver rows", () => {
+  const s = (key: string, day: number, startTime: string, endTime: string) => ({ key, day, startTime, endTime, matId: null, tie: "" });
+  const rowsOf = (sessions: ReturnType<typeof s>[]) =>
+    buildTimetableGrid(sessions, { days: [1, 6], layout: "time", mats: [] }).rows.map((r) => [r.fromMin, r.toMin, r.fixed === true, r.floorPx]);
+
+  it("two classes that overlap by ten minutes: the shared ten minutes are a fixed 6 px, so neither class is drawn taller than its text", () => {
+    // Saturday 11:20-12:10 and Monday 12:00-12:50 (Noe's screenshot): rows 11:20-12:00, 12:00-12:10, 12:10-12:50.
+    expect(rowsOf([s("sat", 6, "11:20", "12:10"), s("mon", 1, "12:00", "12:50")])).toEqual([
+      [680, 720, false, 24],
+      [720, 730, true, 6],
+      [730, 770, false, 24],
+    ]);
+  });
+
+  it("a ten-minute class keeps its row free to grow to its text", () => {
+    expect(rowsOf([s("short", 1, "12:00", "12:10")])).toEqual([[720, 730, false, 0]]);
+    // And a sliver shared by a long class and that short one stays free too: the short class has no other row.
+    expect(rowsOf([s("short", 1, "12:00", "12:10"), s("long", 6, "11:20", "12:50")]).map((r) => r[2])).toEqual([false, false, false]);
   });
 });

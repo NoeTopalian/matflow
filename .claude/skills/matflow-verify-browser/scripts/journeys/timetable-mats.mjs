@@ -122,7 +122,7 @@ try {
   await chips(main);
   await settled(main);
 
-  await section("by-hand", `a mat added by hand changes nothing on the timetable: still by time, "By mat" cannot be pressed and says why, and the sheet offers the ${ON[1]} classes that already say its name; the mat is then removed`, async () => {
+  await section("by-hand", `a mat added by hand changes nothing on the timetable: still by time, "By mat" says what it will do and opens the mats set-up without saving anything, and the sheet offers the ${ON[1]} classes that already say its name; the mat is then removed`, async () => {
     let sheet = await openMats(main);
     await expect(sheet.getByRole("heading", { name: "Places typed on your classes" })).toBeVisible();
     await sheet.getByRole("button", { name: "Add a mat myself" }).click();
@@ -134,10 +134,13 @@ try {
     await chips(main);
     await expect(weekGrid(main)).not.toHaveAttribute("data-mats", "true");
     const byMat = main.getByTestId("timetable-split-mat");
-    await expect(byMat).toHaveAttribute("aria-disabled", "true");
-    await expect(main.getByTestId("timetable-split-hint")).toHaveText("Put a class on a mat first: open a class and choose its mat.");
+    // Never a dead button: it says what it will do, and pressing it opens the set-up. Nothing is saved by the press.
+    await expect(byMat).not.toHaveAttribute("aria-disabled", "true");
+    await expect(main.getByTestId("timetable-split-hint")).toHaveText("By mat gives each mat its own column. Press it to put your classes on their mats.");
     await expect(byMat).toHaveAttribute("aria-describedby", "timetable-split-hint");
-    await byMat.click({ force: true });
+    await byMat.click();
+    await expect(main.getByRole("dialog").getByLabel("Mat 1 name")).toHaveValue("Mat 1");
+    await closeMats(main);
     await expect(main.getByTestId("timetable-split-time")).toHaveAttribute("aria-pressed", "true");
     expect(await classesOnMats()).toBe(0);
     expect(await storedLayout()).toBeNull();
@@ -150,7 +153,7 @@ try {
     await expect(sheet.getByRole("heading", { name: "Places typed on your classes" })).toBeVisible();
     await closeMats(main);
     expect(await matRows()).toEqual([]);
-    return { offered: ON[1], hint: "Put a class on a mat first: open a class and choose its mat." };
+    return { offered: ON[1], hint: "By mat gives each mat its own column. Press it to put your classes on their mats." };
   });
 
   await section("first-run", `"Add these as mats": a forced failure keeps both boxes ticked and says so; one retry sends one request; then ${ON[1] + ON[2]} classes are on two mats, the sheet says the week is now split by mat, and it is, without anyone pressing the choice`, async () => {
@@ -229,20 +232,20 @@ try {
     // The toolbar is still one row at 1440 with the split control and its "(whole club)" label.
     const row = await main.evaluate(() => {
       const top = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().top);
-      return { arrows: top('button[aria-label="Previous week"]'), split: top('[data-testid="timetable-split-mat"]'), mats: top('[data-testid="timetable-mats"]'), hide: top('[data-testid="timetable-hide-menu"]') };
+      return { arrows: top('button[aria-label="Previous week"]'), split: top('[data-testid="timetable-split-mat"]'), mats: top('[data-testid="timetable-mats"]'), expand: top('[data-testid="timetable-expand"]') };
     });
     L.note("by-mat", "toolbar tops at 1440 (one row when they agree within a few px)", row);
     expect(Math.max(...Object.values(row)) - Math.min(...Object.values(row))).toBeLessThanOrEqual(8);
     await expect(main.getByText("Split same-time classes (whole club)")).toBeVisible();
     await shot(main, "timetable-mats-by-mat-1440");
-    // 1366: the box scrolls sideways, the page does not; with the menu hidden it fits.
+    // 1366: the box scrolls sideways, the page does not; with the timetable expanded it fits.
     await size(main, 1366);
-    await expect(wider(main)).toHaveText("Wider than this window. Scroll sideways, or hide the menu.");
+    await expect(wider(main)).toHaveText("Wider than this window. Scroll sideways, or expand the timetable.");
     fit[1366] = await noSidewaysScroll(main);
     expect(fit[1366].boxScrolls).toBe(true);
     expect(fit[1366].ok).toBe(true);
     await shot(main, "timetable-mats-by-mat-1366");
-    const hide = main.getByTestId("timetable-hide-menu");
+    const hide = main.getByTestId("timetable-expand");
     await hide.click();
     await expect(wider(main)).toHaveText("");
     fit["1366 menu hidden"] = { ...(await noSidewaysScroll(main)), spare: await spare(main) };
@@ -532,11 +535,12 @@ try {
     expect((await gridInvariants(main, { sessions: SESSIONS + 5 })).problems).toEqual([]);
     await shot(main, "timetable-mats-shared-mat");
     await weekDay(main, "sun").getByTestId("week-more").click();
-    const open = main.getByTestId("day-view").getByTestId("day-grid-cluster-open");
-    await expect(open).toBeVisible();
-    const names = await open.locator("[data-day-grid-block]").evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") ?? "").replace(/^Edit /, "").split(",")[0]));
+    // The day opens with that clash listed over its grid.
+    const rows = main.getByTestId("day-view").getByTestId("more-panel").getByTestId("more-row");
+    await expect(rows).toHaveCount(4);
+    const names = await rows.evaluateAll((els) => els.map((e) => (e.getAttribute("aria-label") ?? "").replace(/^Edit /, "").split(",")[0]));
     expect([...names].sort()).toEqual(["Share A", "Share B", "Share C", "Share D"]);
-    for (let i = 0; i < 4; i++) await expect(open.locator("[data-day-grid-block]").nth(i)).toBeVisible();
+    for (let i = 0; i < 4; i++) await expect(rows.nth(i)).toBeVisible();
     await main.getByTestId("timetable-view-week").click();
     return out;
   });

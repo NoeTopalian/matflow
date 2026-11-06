@@ -717,17 +717,19 @@ option {
   transition: background-color 9999s ease-in-out 0s;
 }
 
-/* ── Staff shell: the one wide page, and hiding the side menu ────────────────
+/* ── Staff shell: the one wide page, and expanding the timetable ─────────────
    UI-RULES §4 / §4a.1. Every staff page is `max-w-6xl`. A page whose root
    carries `data-page-width="wide"` (today only Timetable) may reach 100rem,
-   because a week of two-mat days needs the room. `data-hide-menu="true"` is
-   the Timetable's "Hide menu" button: it gives the week the side menu's
-   240px on a laptop and is never remembered between visits.
+   because a week of two-mat days needs the room. `data-expand-timetable="true"`
+   is the Timetable's "Expand timetable" button: the side menu goes and the
+   page's width cap with it, so the timetable takes the whole window. It is
+   never remembered between visits.
 
    UNLAYERED on purpose: inside `@layer base` these would lose to the
    `max-w-6xl` and `md:flex` utilities they have to beat. */
 .dash-content:has([data-page-width="wide"]) { max-width: 100rem; }
-.dash-shell:has([data-hide-menu="true"]) .dash-sidebar { display: none; }
+.dash-shell:has([data-expand-timetable="true"]) .dash-sidebar { display: none; }
+.dash-content:has([data-expand-timetable="true"]) { max-width: none; }
 @supports not selector(:has(*)) {
   [data-needs-has] { display: none; }
 }

@@ -16,17 +16,16 @@ import { Switch } from "@/components/ui/switch";
 import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
 import { parseIdParam } from "@/lib/id-param";
-import { duplicateSessionKeys, hourWindow, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
-import { DayGrid } from "@/components/schedule/DayGrid";
+import { duplicateSessionKeys, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
 import { PosterDay, PosterGrid } from "@/components/schedule/PosterGrid";
 import { MorePanel } from "@/components/schedule/MorePanel";
 import { MoreChip, MoreRow, WeekChip } from "@/components/schedule/WeekChip";
-import { buildTimetableGrid, matColumns } from "@/lib/timetable-grid";
+import { buildTimetableGrid } from "@/lib/timetable-grid";
 import type { ClassRow, CoachUserOption, MatOption, TierOption } from "@/app/dashboard/timetable/page";
 import { MatsSheet } from "@/components/dashboard/MatsSheet";
 import { effectiveLayout, matsInUse, type TimetableLayout } from "@/lib/timetable-layout";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
+import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryTag } from "@/lib/class-category";
 import type { RestrictionPreview } from "@/lib/booking-eligibility";
 import { RestrictionPreviewBody, previewHasRefusals } from "@/components/dashboard/RestrictionPreview";
 
@@ -140,9 +139,6 @@ const CLASS_COLORS = [
 
 // UI-RULES §2: the inline hex()/alpha-maths copy that lived here is gone —
 // lib/color.ts is the single source (imported above).
-
-/** Value of the timetable category filter that selects uncategorised classes. */
-const UNCATEGORISED = "__uncategorised";
 
 /** A refused save: the server's sentence, plus its machine reason when it gives one. */
 class ApiRefusal extends Error {
@@ -1571,28 +1567,37 @@ export default function TimetableManager({
   const [saveError, setSaveError] = useState<SaveError | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
-  // Desktop: the week grid, or one day on a time axis (lanes show what clashes).
+  // Desktop: the week grid, or one day (the same one-day poster grid a phone always shows).
   const [desktopView, setDesktopView] = useState<"week" | "day">("week");
-  const [dayDow, setDayDow] = useState(() => new Date().getDay());
-  // "+N more" on the week opens the Day view with that group open: the key of
-  // one of the folded sessions (components/schedule/DayGrid `openCluster`).
-  const [openCluster, setOpenCluster] = useState<string | null>(null);
-  // "Hide menu": the side menu's 240px goes to the week on a laptop. Plain
-  // state — never stored, so nobody on a shared desk computer arrives without
-  // navigation — and it only counts while its button is on screen.
-  const [hideMenu, setHideMenu] = useState(false);
-  // Without :has() the shell cannot hide the menu, and the button is not shown
+  // "Expand timetable": the side menu and the page's width cap give way, so the
+  // timetable takes the whole window. Plain state — never stored, so nobody on
+  // a shared desk computer arrives without navigation — and it only counts
+  // while its button is on screen.
+  const [expanded, setExpanded] = useState(false);
+  // Without :has() the shell cannot make room, and the button is not shown
   // (app/globals.css `[data-needs-has]`).
-  const [canHideMenu, setCanHideMenu] = useState(true);
+  const [canExpand, setCanExpand] = useState(true);
   useEffect(() => {
-    setCanHideMenu(typeof CSS !== "undefined" && typeof CSS.supports === "function" ? CSS.supports("selector(:has(*))") : false);
+    setCanExpand(typeof CSS !== "undefined" && typeof CSS.supports === "function" ? CSS.supports("selector(:has(*))") : false);
   }, []);
   // Whether the week is wider than its scroll box (PosterGrid measures it).
   const [weekWider, setWeekWider] = useState(false);
-  // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
-  // on the day the owner almost always wants, rather than on Sunday.
+  // Which day the one-day view is showing: a phone's only view, and the
+  // desktop's Day view. Defaults to today, the day the owner almost always wants.
   const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
-  // The phone day's open "+N more" panel. Keyed by day as well as by the
+  // A desktop has room for more side-by-side columns in one day than a phone
+  // before the day falls back to time. Known only in the browser, so the first
+  // render is the phone's (three); a wider window is noticed on mount.
+  const [roomyDay, setRoomyDay] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const wide = window.matchMedia("(min-width: 1024px)");
+    const read = () => setRoomyDay(wide.matches);
+    read();
+    wide.addEventListener("change", read);
+    return () => wide.removeEventListener("change", read);
+  }, []);
+  // The day's open "+N more" panel. Keyed by day as well as by the
   // button, so it is closed again when another day is chosen.
   const [phoneMore, setPhoneMore] = useState<{ day: number; id: string } | null>(null);
   const phoneDay = useRef<HTMLDivElement>(null);
@@ -1634,9 +1639,32 @@ export default function TimetableManager({
     showToast(`The timetable is now split by ${layout === "mat" ? "mat" : "time"}.`, "info");
   }, [layout, matsLoadFailed, showToast]);
 
+  // "By mat" pressed before any class is on a mat: the Mats sheet opens to set them up, and the press is
+  // remembered so the club is split by mat as soon as it can be. Forgotten when the sheet is closed.
+  const [wantByMat, setWantByMat] = useState(false);
+  async function splitByMatAfterSetup() {
+    try {
+      const res = await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: "mat" }) });
+      // 409: still no class on a mat (a mat was added but nothing put on it yet). The sheet stays open.
+      if (!res.ok) return;
+      quietSplit.current = true;
+      setChoice((c) => ({ ...c, stored: "mat" }));
+      setWantByMat(false);
+      setMatsOpen(false);
+      showToast("Your timetable is now split by mat. Saved for the whole club.", "success");
+      router.refresh();
+    } catch {
+      // The mats are saved; only the split is not. The control is still there to press.
+    }
+  }
+
   async function chooseLayout(next: TimetableLayout) {
     if (savingLayout) return;
-    if (next === "mat" && inUse === 0) return; // aria-disabled: its sentence says what to do first
+    if (next === "mat" && inUse === 0) {
+      setWantByMat(true);
+      setMatsOpen(true);
+      return;
+    }
     if (choice.stored === next) return; // already saved: nothing to send
     const before = choice.stored;
     const changes = effectiveLayout(next, inUse) !== layout;
@@ -1695,10 +1723,6 @@ export default function TimetableManager({
   // ADR-001 D2: venue filter. Shown only when the club has more than one
   // venue; a class with no venue belongs to every venue and stays visible.
   const [venueFilter, setVenueFilter] = useState("");
-  // T6c: category filter. "" = every category; UNCATEGORISED = no category.
-  // Offered only once at least one class has a category.
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const showCategoryFilter = classes.some((c) => classCategoryLabel(c.category) !== null);
   const [venueList, setVenueList] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
   useEffect(() => {
     let alive = true;
@@ -1741,14 +1765,7 @@ export default function TimetableManager({
       ? classes.filter((c) => c.coachUserId === currentUserId)
       : classes
   )
-    .filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter)
-    .filter((c) =>
-      !categoryFilter || !showCategoryFilter
-        ? true
-        : categoryFilter === UNCATEGORISED
-          ? classCategoryLabel(c.category) === null
-          : c.category === categoryFilter,
-    );
+    .filter((c) => !venueFilter || c.locationId === null || c.locationId === venueFilter);
 
   // Group by day — one entry per session, in start-time order — driven by
   // `visibleClasses` so the weekly grid filters too
@@ -1778,13 +1795,13 @@ export default function TimetableManager({
   };
   const gridMats = mats.map((m) => ({ id: m.id }));
   const weekGrid = buildTimetableGrid(byDay.flat().map(gridSession), { days: [1, 2, 3, 4, 5, 6, 0], layout, mats: gridMats });
-  // The phone's day: the same grid for one day. A phone shows mat columns
-  // while the day needs three lanes or fewer; a busier day is laid out by time
-  // and says so (`fellBack`).
-  const phoneGrid = buildTimetableGrid(byDay[agendaDow].map(gridSession), { days: [agendaDow], layout, mats: gridMats, maxTracks: 3 });
-  // The Day view's hours: the club's earliest and latest session ± 1 h over
-  // the whole week, the same clamp the member day view uses.
-  const dayHours = hourWindow(visibleClasses.flatMap((c) => c.schedules));
+  // One day: the same grid for one day, on a phone and in the desktop's Day
+  // view. It shows mat columns while the day needs no more side-by-side columns
+  // than the screen has room for (three on a phone, six on a desktop); a busier
+  // day is laid out by time and says so (`fellBack`).
+  const dayMaxTracks = roomyDay ? 6 : 3;
+  const oneDayGrid = (dow: number) => buildTimetableGrid(byDay[dow].map(gridSession), { days: [dow], layout, mats: gridMats, maxTracks: dayMaxTracks });
+  const phoneGrid = oneDayGrid(agendaDow);
   // Same name, day, start and place twice: almost certainly entered twice.
   const duplicates = duplicateSessionKeys(
     visibleClasses.flatMap((cls) => cls.schedules.map((slot) => ({ key: slot.id, name: cls.name, dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, place: placeOf(cls), venue: cls.locationId }))),
@@ -2101,7 +2118,7 @@ export default function TimetableManager({
           menu" button hides the side menu (app/globals.css .dash-content /
           .dash-shell). The menu can only be hidden while the button that
           brings it back is on screen. */}
-      <span hidden data-page-width="wide" data-hide-menu={hideMenu && classes.length > 0 ? "true" : undefined} />
+      <span hidden data-page-width="wide" data-expand-timetable={expanded && classes.length > 0 ? "true" : undefined} />
 
       {/* §4: one PageHeader treatment. The description keeps its exact wording
           so the "N of M classes (mine)" count stays the single readout of the
@@ -2200,26 +2217,6 @@ export default function TimetableManager({
         </div>
       )}
 
-      {showCategoryFilter && (
-        <div className="mb-4 flex items-center gap-2 flex-wrap">
-          <label className="flex items-center gap-2 text-xs font-medium" style={{ color: "var(--tx-3)" }}>
-            Category
-            <Select aria-label="Filter by category" className="w-[200px]" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} data-testid="timetable-category-filter">
-              <option value="">Every category</option>
-              {CLASS_CATEGORIES.map((key) => (
-                <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
-              ))}
-              <option value={UNCATEGORISED}>Uncategorised</option>
-            </Select>
-          </label>
-          {categoryFilter && (
-            <span className="text-xs" style={{ color: "var(--tx-4)" }} data-testid="timetable-category-count">
-              Showing {visibleClasses.length} of {classes.length} classes
-            </span>
-          )}
-        </div>
-      )}
-
       {/* UI-RULES §7: the mats could not be read, so the timetable says what it is showing instead. */}
       {matsLoadFailed && (
         <p className="mb-3 flex flex-wrap items-center gap-2 text-sm text-tx-1" role="alert" data-testid="timetable-mats-load-failed">
@@ -2246,17 +2243,34 @@ export default function TimetableManager({
             const todayMidnight = new Date();
             todayMidnight.setHours(0, 0, 0, 0);
             // Every screen follows the split (the week, the Day view, the phone, the members' day), so its control is on all three here.
-            const showSplit = !supportSession && !matsLoadFailed;
+            // In a MatFlow support session the split is read, never changed: it is the club's (RULES §5b).
+            const showSplit = !matsLoadFailed;
+            const canChooseSplit = canManage && !supportSession;
             const todayPill = (
               <span className="rounded-full border border-[color-mix(in_srgb,var(--hue-info)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[9px] font-bold uppercase leading-4 tracking-wide text-[var(--hue-info-ink)]">
                 Today
               </span>
             );
-            const splitHint = !showSplit || !canManage || inUse > 0
+            // What "By mat" will do while no class is on a mat yet, with the places the club has already typed.
+            // One name per place whatever its capitals and spacing; the first spelling met is the one shown.
+            const spellings = new Map<string, string>();
+            for (const c of classes) {
+              const place = c.matId ? "" : (c.location ?? "").trim().replace(/\s+/g, " ");
+              if (place && !spellings.has(place.toLowerCase())) spellings.set(place.toLowerCase(), place);
+            }
+            const typed = [...spellings.values()];
+            const typedList = typed.length === 0 ? "" : typed.length <= 3 ? typed.join(typed.length === 2 ? " and " : ", ") : `${typed.slice(0, 2).join(", ")} and ${typed.length - 2} more`;
+            const splitHint = !showSplit
               ? null
-              : mats.length === 0
-                ? "Add your mats first."
-                : "Put a class on a mat first: open a class and choose its mat.";
+              : supportSession
+                ? "Mats and the split are the club's to set: its owner or a manager does it here."
+                : !canManage || inUse > 0
+                  ? null
+                  : mats.length === 0
+                    ? typedList
+                      ? `By mat gives each mat its own column. Press it to set up your mats: your classes say ${typedList}.`
+                      : "By mat gives each mat its own column. Press it to add your mats."
+                    : "By mat gives each mat its own column. Press it to put your classes on their mats.";
             return (
               <>
                 {/* Week navigation. One wrapping row: when it wraps, the right-hand group moves down as a unit. */}
@@ -2286,8 +2300,8 @@ export default function TimetableManager({
                   </div>
                   {/* On a phone this group is the toolbar's second row: the split control across the width, Mats beside it. */}
                   <div className="flex w-full flex-wrap items-end justify-end gap-2 md:w-auto md:items-center">
-                    {(weekOffset !== 0 || (desktopView === "day" && dayDow !== new Date().getDay())) && (
-                      <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setDayDow(new Date().getDay()); }}>
+                    {(weekOffset !== 0 || (desktopView === "day" && agendaDow !== new Date().getDay())) && (
+                      <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setAgendaDow(new Date().getDay()); }}>
                         Today
                       </Button>
                     )}
@@ -2313,24 +2327,24 @@ export default function TimetableManager({
                         time. Owner and manager choose (saved for the club); a coach reads it. */}
                     {showSplit && (
                       <div className="flex min-w-0 flex-1 flex-col gap-1 md:flex-none md:flex-row md:items-center md:gap-2" data-testid="timetable-split">
-                        {canManage ? (
+                        {canChooseSplit ? (
                           <>
                             <span id="timetable-split-label" className="text-xs font-medium text-tx-2 md:whitespace-nowrap">Split same-time classes (whole club)</span>
                             <div className="flex items-center gap-1 rounded-lg bg-sf-2 p-0.5 [&>*]:flex-1 md:[&>*]:flex-none" role="group" aria-labelledby="timetable-split-label">
                               {(["mat", "time"] as const).map((v) => {
-                                const unavailable = v === "mat" && inUse === 0;
+                                // Never a dead button: with no class on a mat yet, "By mat" opens the mats set-up (its sentence says so).
+                                const setsUp = v === "mat" && inUse === 0;
                                 return (
                                   <Button
                                     key={v}
                                     variant="ghost"
                                     size="compact"
                                     aria-pressed={layout === v}
-                                    // Still focusable, so its sentence can be read: aria-disabled, not disabled.
-                                    aria-disabled={unavailable || undefined}
-                                    aria-describedby={unavailable ? "timetable-split-hint" : undefined}
+                                    aria-describedby={setsUp ? "timetable-split-hint" : undefined}
+                                    aria-haspopup={setsUp ? "dialog" : undefined}
                                     onClick={() => void chooseLayout(v)}
                                     data-testid={`timetable-split-${v}`}
-                                    className={[layout === v ? "border border-bd-active bg-sf-1 text-tx-1 shadow-sm" : "text-tx-2", unavailable ? "cursor-not-allowed opacity-60" : ""].join(" ")}
+                                    className={layout === v ? "border border-bd-active bg-sf-1 text-tx-1 shadow-sm" : "text-tx-2"}
                                   >
                                     {v === "mat" ? "By mat" : "By time"}
                                   </Button>
@@ -2353,25 +2367,28 @@ export default function TimetableManager({
                         </Button>
                       </>
                     )}
-                    <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-hide-menu" onClick={() => setHideMenu((v) => !v)}>
-                      {hideMenu ? "Show menu" : "Hide menu"}
+                    <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-expand" aria-pressed={expanded} onClick={() => setExpanded((v) => !v)}>
+                      {expanded ? "Shrink timetable" : "Expand timetable"}
                     </Button>
                   </div>
                 </div>
-                {/* Why "By mat" cannot be pressed yet, on its own line under the control. */}
+                {/* What "By mat" does while no class is on a mat yet, on its own line under the control. */}
                 {splitHint && (
                   <p id="timetable-split-hint" className="-mt-1 mb-3 text-xs text-tx-2 md:text-right" data-testid="timetable-split-hint">
                     {splitHint}
                   </p>
                 )}
 
-                {/* ── Phone: one day at a time, as the poster grid ───────────
-                    Day tabs, then the day as one card: the same row lines and
-                    columns as the week (lib/timetable-grid), so two classes at
-                    the same time sit side by side and a 20-minute class never
-                    sits over the one after it. Columns share the width: no
-                    sideways scroll. Same chips, same edit gating. */}
-                <div className="md:hidden">
+                {/* ── One day, as the poster grid ────────────────────────────
+                    A phone's only view, and the desktop's Day view (Noe, 6 Nov
+                    2026: the clock-scale Day view did not show when the day
+                    starts; this does). Day tabs, then the day as one card: the
+                    same row lines and columns as the week (lib/timetable-grid),
+                    so each row starts at a real start time, two classes at the
+                    same time sit side by side and a 20-minute class never sits
+                    over the one after it. Columns share the width: no sideways
+                    scroll. Same chips, same edit gating. */}
+                <div className={desktopView === "day" ? "" : "md:hidden"} data-testid={desktopView === "day" ? "day-view" : undefined}>
                   <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-2" role="tablist" aria-label="Day of week">
                     {weekDates.map((date, rawIdx) => {
                       const dow = rawIdx === 6 ? 0 : rawIdx + 1;
@@ -2386,8 +2403,10 @@ export default function TimetableManager({
                           variant="ghost"
                           role="tab"
                           aria-selected={selected}
+                          aria-label={`${DAYS_FULL[dow]} ${date.getDate()}${isToday ? ", today" : ""}, ${count === 0 ? "no sessions" : `${count} session${count === 1 ? "" : "s"}`}`}
                           data-today={isToday || undefined}
-                          onClick={() => setAgendaDow(dow)}
+                          // Choosing a day closes an open "+N more" list: it never follows to another day or comes back with this one.
+                          onClick={() => { setAgendaDow(dow); setPhoneMore(null); }}
                           className={[
                             "h-auto shrink-0 flex-col gap-0 rounded-xl border px-3 py-2 text-center font-normal",
                             selected ? "border-bd-active bg-sf-2 hover:bg-sf-2" : "border-bd-default bg-sf-1",
@@ -2423,7 +2442,10 @@ export default function TimetableManager({
                       );
                     };
                     return (
-                      <div ref={phoneDay} className="mt-1 rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3" data-testid="phone-day">
+                      // On a wide window the card stops at a readable width (about 300 px a lane) rather than
+                      // stretching one class across the screen. Lanes, not grid tracks: a day with a two-way and a
+                      // three-way clash has six tracks and three lanes.
+                      <div ref={phoneDay} className="mt-1 rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-3" data-testid="phone-day" style={{ maxWidth: Math.max(880, 60 + day.lanes * 300) }}>
                         <div className="mb-2 flex items-center gap-2">
                           <h2 className="text-[15px] font-bold leading-5 text-tx-1">{DAYS_FULL[agendaDow]}</h2>
                           {agendaIsToday ? todayPill : null}
@@ -2526,7 +2548,7 @@ export default function TimetableManager({
                 {desktopView === "week" ? (
                 <div className="hidden md:block">
                   <p className="mb-1 h-4 text-xs leading-4 text-tx-2" role="status" data-testid="week-wider">
-                    {weekWider ? (hideMenu || !canHideMenu ? "Wider than this window. Scroll sideways." : "Wider than this window. Scroll sideways, or hide the menu.") : ""}
+                    {weekWider ? (expanded || !canExpand ? "Wider than this window. Scroll sideways." : "Wider than this window. Scroll sideways, or expand the timetable.") : ""}
                   </p>
                   {(() => {
                     const todayIdx = weekDates.findIndex((d) => d.getTime() === todayMidnight.getTime());
@@ -2541,8 +2563,9 @@ export default function TimetableManager({
                     const todays = todayDow === null ? [] : byDay[todayDow];
                     const liveOrNext = todays.find(({ slot }) => stateByKey.get(slot.id) === "live") ?? todays.find(({ slot }) => stateByKey.get(slot.id) === "next");
                     const count = (n: number) => (n === 0 ? "no sessions" : `${n} session${n === 1 ? "" : "s"}`);
-                    // An empty day is a 40 px column: the same pill, a size down and without its
-                    // border and letter-spacing, so "TODAY" stays inside 36 px.
+                    // An empty day is as wide as the others while there is room, and 40 px when a full week of
+                    // mat columns squeezes it. Squeezed: the same pill, a size down and without its border and
+                    // letter-spacing, so "TODAY" stays inside 36 px. The header asks its own width which to show.
                     const todayPillNarrow = (
                       <span className="rounded-full bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[8px] font-bold uppercase leading-[14px] text-[var(--hue-info-ink)]">
                         Today
@@ -2562,9 +2585,18 @@ export default function TimetableManager({
                           const isToday = day.day === todayDow;
                           if (day.count === 0) {
                             return (
-                              <span className="flex flex-col items-center text-[13px] font-semibold leading-[15px] text-tx-1">
-                                <span>{DAYS[day.day]}</span>
-                                <span>{dateOf(day.day).getDate()}</span>
+                              <span className="@container block w-full">
+                                <span className="flex flex-col items-center text-[13px] font-semibold leading-[15px] text-tx-1 @[96px]:hidden" data-empty-head="narrow">
+                                  <span>{DAYS[day.day]}</span>
+                                  <span>{dateOf(day.day).getDate()}</span>
+                                </span>
+                                <span className="hidden flex-col items-center gap-px @[96px]:flex" data-empty-head="wide">
+                                  <span className="flex items-center gap-1 whitespace-nowrap text-[13px] font-semibold leading-4 text-tx-1">
+                                    {DAYS[day.day]} {dateOf(day.day).getDate()}
+                                    {isToday ? todayPill : null}
+                                  </span>
+                                  <span className="whitespace-nowrap text-[11px] leading-[14px] text-tx-2">No classes</span>
+                                </span>
                               </span>
                             );
                           }
@@ -2581,7 +2613,16 @@ export default function TimetableManager({
                           );
                         }}
                         emptyDay={(day) => (
-                          <span className="flex justify-center pt-1.5 text-xs text-tx-2">{day.day === todayDow ? todayPillNarrow : <span aria-hidden="true">—</span>}</span>
+                          <span className="@container block w-full">
+                            <span className="flex justify-center pt-1.5 text-xs text-tx-2">
+                              {day.day === todayDow ? (
+                                <>
+                                  <span className="@[96px]:hidden">{todayPillNarrow}</span>
+                                  <span aria-hidden="true" className="hidden @[96px]:inline">—</span>
+                                </>
+                              ) : <span aria-hidden="true">—</span>}
+                            </span>
+                          </span>
                         )}
                         renderSession={(item) => {
                           const session = sessionByKey.get(item.key);
@@ -2613,8 +2654,10 @@ export default function TimetableManager({
                             label={`${item.keys.length} more sessions, ${DAYS_FULL[item.day]} ${minToTime(item.startMin)} to ${minToTime(item.endMin)}. Open the day.`}
                             hint="Open the day"
                             onOpen={() => {
-                              setDayDow(item.day);
-                              setOpenCluster(item.keys[0]);
+                              // The day opens with this clash listed, where the day folds it too.
+                              const folded = oneDayGrid(item.day).items.find((i) => i.type === "more" && i.clusterKeys.includes(item.keys[0]));
+                              setAgendaDow(item.day);
+                              setPhoneMore(folded && folded.type === "more" ? { day: item.day, id: folded.id } : null);
                               setDesktopView("day");
                             }}
                           />
@@ -2627,82 +2670,7 @@ export default function TimetableManager({
                     );
                   })()}
                 </div>
-                ) : (
-                  /* ── Desktop: one day on a time axis ───────────────────────
-                     Sessions sit where they run; overlapping ones share the width
-                     in lanes, so a clash is visible. Same hours, same lane maths as
-                     the member day view (lib/schedule-state). */
-                  <div className="hidden md:block" data-testid="day-view">
-                    <div className="flex gap-1.5 mb-3 rounded-xl p-1" role="group" aria-label="Day" style={{ background: "var(--sf-2)" }}>
-                      {weekDates.map((date, rawIdx) => {
-                        const dow = rawIdx === 6 ? 0 : rawIdx + 1;
-                        const isToday = date.getTime() === todayMidnight.getTime();
-                        const n = byDay[dow].length;
-                        const selected = dayDow === dow;
-                        return (
-                          <Button
-                            key={rawIdx}
-                            aria-pressed={selected}
-                            aria-label={`${DAYS_FULL[dow]} ${date.getDate()}${isToday ? ", today" : ""}, ${n === 0 ? "no sessions" : `${n} session${n === 1 ? "" : "s"}`}`}
-                            variant="ghost"
-                            size="compact"
-                            onClick={() => setDayDow(dow)}
-                            className={["h-auto flex-col gap-0 px-3 py-1.5", selected ? "border" : ""].join(" ")}
-                            style={selected ? { background: "var(--sf-1)", borderColor: "var(--bd-active)", boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08))" } : undefined}
-                          >
-                            <span className={["text-[10px] font-semibold uppercase tracking-wider", isToday ? "underline underline-offset-2" : ""].join(" ")} style={{ color: "var(--tx-1)" }}>
-                              {DAYS[dow]} {date.getDate()}
-                            </span>
-                            <span className="text-[10px] tabular-nums" style={{ color: "var(--tx-3)" }}>{n === 0 ? "—" : n}</span>
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    {(() => {
-                      const date = weekDates[dayDow === 0 ? 6 : dayDow - 1];
-                      const isToday = date.getTime() === todayMidnight.getTime();
-                      const sessions = byDay[dayDow];
-                      const states = chipStatesFor(sessions, isToday, cancelledToday);
-                      // By mat: one column per mat on the same clock scale (the week's column rule). A day with
-                      // nothing on has no columns to show and keeps the plain axis with its sentence.
-                      const columnIds = layout === "mat" && sessions.length > 0 ? matColumns(sessions.map(({ cls }) => cls.matId ?? null), gridMats) : null;
-                      const columnOf = (cls: ClassRow) => (cls.matId && matNames.has(cls.matId) ? cls.matId : null);
-                      return (
-                        <div className="rounded-2xl border p-3 pt-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-                          <DayGrid
-                            key={dayDow}
-                            columns={columnIds?.map((id) => ({ id, name: id === null ? "No mat" : (matNames.get(id) ?? "No mat") }))}
-                            items={sessions.map(({ cls, slot }, i) => ({
-                              key: slot.id,
-                              name: cls.name,
-                              startTime: slot.startTime,
-                              endTime: slot.endTime,
-                              color: cls.color ?? primaryColor,
-                              // Under a pinned mat name the block does not repeat it; under "No mat" the typed place still shows.
-                              meta: columnIds && columnOf(cls) !== null ? null : placeOf(cls),
-                              column: columnOf(cls),
-                              state: states[i],
-                              duplicate: duplicates.has(slot.id),
-                            }))}
-                            startHour={dayHours.startHour}
-                            endHour={dayHours.endHour}
-                            hourHeight={56}
-                            isToday={isToday}
-                            action={canManage ? "Edit" : undefined}
-                            onActivate={canManage ? (key) => {
-                              const s = sessions.find((x) => x.slot.id === key);
-                              if (s) openEdit(s.cls);
-                            } : undefined}
-                            emptyText="No sessions on this day"
-                            openCluster={openCluster}
-                            // One-shot: coming back to this day later must not reopen the group or take focus.
-                            onOpenClusterHandled={() => setOpenCluster(null)}
-                          />
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
+                ) : null}
               </>
             );
           })()}
@@ -2810,11 +2778,13 @@ export default function TimetableManager({
       {canChangeMats && (
         <MatsSheet
           open={matsOpen}
-          onClose={() => setMatsOpen(false)}
+          onClose={() => { setMatsOpen(false); setWantByMat(false); }}
           onChanged={(opts) => {
             // The sheet has already said what the split is now: the page need not say it again.
             if (opts?.quiet) quietSplit.current = true;
             router.refresh();
+            // Opened by pressing "By mat": now that mats are set up, split by mat as asked.
+            if (wantByMat) void splitByMatAfterSetup();
           }}
         />
       )}
