@@ -5,6 +5,11 @@
 // without their rows, and every entry naming them leaves ImportJob.errorLog and dryRunSummary,
 // name-only entries included. Another member's rows and entries stay.
 //
+// Since Activity is kept permanently, the erasure also redacts the personal values in the subject's own
+// audit rows (M1): a staff edit's before/after phone and name are gone, the field names and actor columns stay.
+// A member whose address changed after the import is still found in the file through the digest the edit
+// recorded (L2), with no source key to help.
+//
 // The file is a real chunked upload (db-upload://, private Postgres storage). Synthetic club only
 // (slug erim-…), created here and removed in afterAll. Runs through the guarded runner on the TEST
 // branch, as the owner role and as matflow_app; skips without a database.
@@ -36,17 +41,20 @@ vi.mock("@/lib/api-authz", async (importOriginal) => {
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { readImportFile } from "@/lib/import-storage";
 import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
+import { PATCH as patchMember } from "@/app/api/members/[id]/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `erim${Date.now().toString(36)}`;
 const ADA = { name: "Erim Ada Obi", email: `${STAMP}-ada@example.test` };
 const BEN = { name: "Erim Ben Ray", email: `${STAMP}-ben@example.test` };
+const CARA = { name: "Erim Cara Lee", email: `${STAMP}-cara@example.test`, phone: "07700 900333", newName: "Erim Cara Lee-Hart", newEmail: `${STAMP}-cara.new@example.test`, newPhone: "07700 900444" };
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
 describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", () => {
   let tenantId = "";
   let userId = "";
   let adaId = "";
+  let caraId = "";
   let jobId = "";
   let fileUrl = "";
 
@@ -57,6 +65,9 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
       const u = await tx.user.create({ data: { tenantId: t.id, email: `${STAMP}-owner@example.test`, name: "Erim Owner", role: "owner", passwordHash: "x" } });
       const ada = await tx.member.create({ data: { tenantId: t.id, name: ADA.name, email: ADA.email, externalRef: `teamup:${ADA.email}|${ADA.name.toLowerCase()}` } });
       await tx.member.create({ data: { tenantId: t.id, name: BEN.name, email: BEN.email } });
+      // No source key: only the digest of the old address can tie her to her import row once it changes.
+      const cara = await tx.member.create({ data: { tenantId: t.id, name: CARA.name, email: CARA.email, phone: CARA.phone } });
+      caraId = cara.id;
       const up = await tx.importUpload.create({
         data: { tenantId: t.id, createdById: u.id, purpose: "attendance", fileName: "members.csv", expectedBytes: csv.length, expectedSha256: sha(csv), chunkSize: 1024 * 1024, chunkCount: 1, tokenHash: `${STAMP}-token`, status: "consumed", expiresAt: new Date(Date.now() + 86_400_000) },
       });
@@ -114,5 +125,41 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
 
     const evidence = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId, action: "member.dsar_erase", entityId: adaId }, select: { metadata: true } }));
     expect((evidence?.metadata as { erasedCounts?: Record<string, number> })?.erasedCounts).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 1 });
+  }, 120_000);
+
+  it("a staff edit, then erase: no Activity row about the member holds the old or new phone, name or address; field names and actors stay; the import row is found by the old address", async () => {
+    gate.current = { tenantId, userId };
+    const headers = { origin: "https://test.local", host: "test.local", "content-type": "application/json" };
+    const edit = (await patchMember(
+      new Request(`https://test.local/api/members/${caraId}`, { method: "PATCH", headers, body: JSON.stringify({ name: CARA.newName, phone: CARA.newPhone, email: CARA.newEmail }) }),
+      { params: Promise.resolve({ id: caraId }) },
+    )) as unknown as { status: number };
+    expect(edit.status).toBe(200);
+    const aboutCara = { tenantId, OR: [{ entityId: caraId }, { metadata: { path: ["memberId"], equals: caraId } }] };
+    const before = await withRlsBypass((tx) => tx.auditLog.findMany({ where: aboutCara }));
+    expect(JSON.stringify(before)).toContain("07700"); // the edit recorded the phone, so the redaction has something to remove
+
+    const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${caraId}`, { method: "POST", headers }))) as unknown as { status: number; json: () => Promise<{ erased?: Record<string, number> }> };
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.erased?.auditRowsRedacted).toBeGreaterThanOrEqual(1);
+    expect(body.erased).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 1 });
+
+    const rows = await withRlsBypass((tx) => tx.auditLog.findMany({ where: aboutCara }));
+    const all = JSON.stringify(rows);
+    for (const personal of [CARA.phone, CARA.newPhone, CARA.name, CARA.newName, CARA.email, CARA.newEmail]) expect(all, personal).not.toContain(personal);
+
+    const update = rows.find((r) => r.action === "member.update");
+    expect(update?.userId).toBe(userId); // actor column untouched
+    expect(update?.entityId).toBe(caraId);
+    const changes = (update?.metadata as { changes?: Record<string, { from: unknown; to: unknown }> }).changes ?? {};
+    expect(changes.phone).toEqual({ from: null, to: null });
+    expect(changes.name).toEqual({ from: null, to: null });
+    expect((update?.metadata as { redactedForErasure?: boolean }).redactedForErasure).toBe(true);
+
+    const file = (await readImportFile(fileUrl, tenantId)) ?? "";
+    expect(file).not.toContain(CARA.email);
+    expect(file).not.toContain(CARA.name);
+    expect(file).toContain(BEN.email);
   }, 120_000);
 });

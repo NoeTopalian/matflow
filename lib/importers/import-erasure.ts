@@ -66,6 +66,8 @@ export type ErasureSubject = {
    * report whose digest is one of these was the subject's own when it was written there, so it counts as theirs.
    */
   pastAddressDigests?: string[];
+  /** Names a staff edit replaced (member.update changes.name.from): an import made under an old name is theirs too. */
+  pastNames?: string[];
   addressDigest?: (address: string) => string;
 };
 
@@ -113,7 +115,7 @@ function who(subject: ErasureSubject): Who {
   const keys = new Set<string>();
   const ownAddresses = new Set([subject.email, subject.unverifiedEmailShared ? null : subject.unverifiedEmail].filter(nonEmpty).map(norm));
   const rowAddresses = new Set([...ownAddresses, ...[subject.unverifiedEmail].filter(nonEmpty).map(norm)]);
-  const names = new Set([subject.name].filter(nonEmpty).map(norm).filter((n) => n !== "deleted member"));
+  const names = new Set([subject.name, ...(subject.pastNames ?? [])].filter(nonEmpty).map(norm).filter((n) => n !== "deleted member"));
   if (nonEmpty(subject.sourceKey)) {
     const key = norm(subject.sourceKey);
     keys.add(key);

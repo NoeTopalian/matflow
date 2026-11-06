@@ -403,37 +403,51 @@ export async function POST(req: Request) {
   type SubjectRow = { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null };
   // An unverified address is the subject's own only when no other member of the club holds it: the second adult at
   // a TeamUp address keeps the FIRST adult's login there (lib/importers/teamup.ts), and erasing them must not blank it.
-  // Earlier login addresses: a member.update row records the keyed digest of the address it replaced, so an import
-  // made under an old address is still recognised (L2, 6 Nov 2026). Digests only; no address is read back.
-  const pastAddressDigests = async (id: string): Promise<string[]> => {
+  // Earlier login addresses and names: a member.update row records the keyed digest of the address it replaced and
+  // the name a staff edit replaced, so an import made under an old address or name is still recognised (L2, 6 Nov
+  // 2026). Read here, before the transaction below redacts those rows. Digests only; no address is read back.
+  const pastIdentity = async (id: string): Promise<{ digests: string[]; names: string[] }> => {
     const rows = await withTenantContext(tenantId, (tx) =>
       tx.auditLog.findMany({
-        where: { tenantId, entityId: id, action: "member.update", metadata: { path: ["oldEmailSha256"], not: Prisma.AnyNull } },
+        where: {
+          tenantId,
+          entityId: id,
+          action: "member.update",
+          OR: [{ metadata: { path: ["oldEmailSha256"], not: Prisma.AnyNull } }, { metadata: { path: ["changes", "name"], not: Prisma.AnyNull } }],
+        },
         select: { metadata: true },
       }),
     );
-    return rows.map((r) => (r.metadata as { oldEmailSha256?: unknown } | null)?.oldEmailSha256).filter((d): d is string => typeof d === "string");
+    const metas = rows.map((r) => r.metadata as { oldEmailSha256?: unknown; changes?: { name?: { from?: unknown } } } | null);
+    return {
+      digests: metas.map((m) => m?.oldEmailSha256).filter((d): d is string => typeof d === "string"),
+      names: metas.map((m) => m?.changes?.name?.from).filter((n): n is string => typeof n === "string"),
+    };
   };
-  const toSubject = async (m: SubjectRow): Promise<ErasureSubject> => ({
-    memberId: m.id,
-    sourceKey: m.externalRef,
-    email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
-    pastAddressDigests: await pastAddressDigests(m.id),
-    addressDigest: (a: string) => emailDigest(a),
-    unverifiedEmail: m.unverifiedEmail,
-    unverifiedEmailShared: m.unverifiedEmail
-      ? (await withTenantContext(tenantId, (tx) =>
-          tx.member.count({
-            where: {
-              tenantId,
-              id: { not: m.id },
-              OR: [{ email: { equals: m.unverifiedEmail!, mode: "insensitive" } }, { unverifiedEmail: { equals: m.unverifiedEmail!, mode: "insensitive" } }],
-            },
-          }),
-        )) > 0
-      : false,
-    name: m.name,
-  });
+  const toSubject = async (m: SubjectRow): Promise<ErasureSubject> => {
+    const past = await pastIdentity(m.id);
+    return {
+      memberId: m.id,
+      sourceKey: m.externalRef,
+      email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
+      pastAddressDigests: past.digests,
+      pastNames: past.names,
+      addressDigest: (a: string) => emailDigest(a),
+      unverifiedEmail: m.unverifiedEmail,
+      unverifiedEmailShared: m.unverifiedEmail
+        ? (await withTenantContext(tenantId, (tx) =>
+            tx.member.count({
+              where: {
+                tenantId,
+                id: { not: m.id },
+                OR: [{ email: { equals: m.unverifiedEmail!, mode: "insensitive" } }, { unverifiedEmail: { equals: m.unverifiedEmail!, mode: "insensitive" } }],
+              },
+            }),
+          )) > 0
+        : false,
+      name: m.name,
+    };
+  };
   // The member, and the children this erasure deletes with them (strategy "cascade").
   const childRows: SubjectRow[] =
     activeChildren > 0 && childStrategyParam === "cascade"

@@ -83,6 +83,12 @@ describe("removeSubjectRows — a row is the subject's only by name AND address"
     expect(scrubSubjectFromDiagnostics([{ row: 2, reason: "Duplicate email ada.old@example.test" }], moved).value).toEqual([]);
   });
 
+  it("a name changed since the import is matched through the recorded earlier name, with the old address", () => {
+    const digest = (a: string) => `d:${a.trim().toLowerCase()}`;
+    const renamed: ErasureSubject = { memberId: "m_ada", sourceKey: null, email: "ada.new@example.test", name: "Ada Obi-Hart", pastNames: ["Ada Obi"], pastAddressDigests: [digest("ada.old@example.test")], addressDigest: digest };
+    expect(removeSubjectRows("Name,Email\nAda Obi,ada.old@example.test\nBen Ray,ben@example.test\n", renamed)).toMatchObject({ removed: 1, text: "Name,Email\nBen Ray,ben@example.test\n" });
+  });
+
   it("reports a row with the subject's name at another address instead of skipping it silently", () => {
     expect(removeSubjectRows(csv, ADA).nameOnly).toBe(1); // "Ada Obi,other-ada@example.test"
   });
