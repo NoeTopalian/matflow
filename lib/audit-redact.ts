@@ -6,8 +6,9 @@
  * phone, date of birth and emergency contacts (app/api/members/[id]/route.ts), and a restore stores
  * `before`. Inside the erase transaction this module rewrites the METADATA of the subject's rows only:
  *
- *  - scope: this club (`tenantId`) AND the subject's rows (`entityId` = the member, or `metadata.memberId` =
- *    the member);
+ *  - scope: this club (`tenantId`) AND the subject's rows (`entityId` = the member, `metadata.memberId` =
+ *    the member, or `metadata.childId` = the member: a parent's upload of a child's photo is logged against
+ *    the photo, with the child's name);
  *  - `changes`: every field keeps its key; `from` and `to` become null;
  *  - `before` / `after`: every key kept, every value null;
  *  - `name`, `childName`, `memberName`, `email`, `phone`: null;
@@ -65,7 +66,7 @@ export function redactAuditMetadata(metadata: unknown): Record<string, unknown> 
  */
 export async function redactSubjectFromAuditLog(tx: Tx, tenantId: string, memberId: string, opts: { dryRun?: boolean } = {}): Promise<number> {
   const rows = await tx.auditLog.findMany({
-    where: { tenantId, OR: [{ entityId: memberId }, { metadata: { path: ["memberId"], equals: memberId } }] },
+    where: { tenantId, OR: [{ entityId: memberId }, { metadata: { path: ["memberId"], equals: memberId } }, { metadata: { path: ["childId"], equals: memberId } }] },
     select: { id: true, metadata: true },
   });
   let redacted = 0;

@@ -49,7 +49,7 @@ describe("redactSubjectFromAuditLog", () => {
     expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true })).toBe(1);
     expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
     expect(tx.auditLog.findMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", OR: [{ entityId: "m1" }, { metadata: { path: ["memberId"], equals: "m1" } }] },
+      where: { tenantId: "t1", OR: [{ entityId: "m1" }, { metadata: { path: ["memberId"], equals: "m1" } }, { metadata: { path: ["childId"], equals: "m1" } }] },
       select: { id: true, metadata: true },
     });
     expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1")).toBe(1);
