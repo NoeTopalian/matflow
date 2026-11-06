@@ -149,6 +149,8 @@ vi.mock("@/lib/prisma", () => ({
     importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
     // The erasure walks every stored upload too (lib/importers/import-erasure.ts, 6 Nov 2026).
     importUpload: { findMany: vi.fn(async () => []) },
+    // Earlier-address digests are read, and the member's own Activity rows redacted (6 Nov 2026).
+    auditLog: { findMany: vi.fn(async () => []), updateMany: vi.fn(async () => ({ count: 0 })) },
     memberStatusEvent: { create: statusEventCreateMock, findFirst: statusEventFindFirstMock },
   },
 }));
@@ -470,6 +472,8 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
       importFileRowsRemoved: 0,
       importFileCellsBlanked: 0,
       importDiagnosticsEntriesRemoved: 0,
+      importNameOnlyRowsLeft: 0,
+      auditRowsRedacted: 0,
       memberPhotos: 2,
       signedWaiversScrubbed: 3,
       loginEvents: 4,

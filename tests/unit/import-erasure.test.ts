@@ -64,13 +64,27 @@ describe("removeSubjectRows — a row is the subject's only by name AND address"
 
   it("erasing the child removes the child's row only; the parent's row and address stay", () => {
     const r = removeSubjectRows(csv, KID);
-    expect(r).toMatchObject({ removed: 1, blanked: 0 });
+    expect(r).toMatchObject({ removed: 1, blanked: 0, nameOnly: 0 });
     expect(r.text).toContain("Ada Obi,ada@example.test,07700 900111,Tom Obi,Adult");
     expect(r.text).not.toContain("Zara Obi");
   });
 
   it("an address changed since the import is still matched through the source key", () => {
     expect(removeSubjectRows(csv, { ...ADA, email: "ada.new@example.test" }).removed).toBe(1);
+  });
+
+  it("an address changed since the import, with no source key, is matched through the recorded digest of the old address", () => {
+    const digest = (a: string) => `d:${a.trim().toLowerCase()}`;
+    const moved: ErasureSubject = { memberId: "m_ada", sourceKey: null, email: "ada.new@example.test", name: "Ada Obi", pastAddressDigests: [digest("ada.old@example.test")], addressDigest: digest };
+    const file = "Name,Email,Payer\nAda Obi,ada.old@example.test,\nBen Ray,ben@example.test,ADA.OLD@example.test\n";
+    const r = removeSubjectRows(file, moved);
+    expect(r).toMatchObject({ removed: 1, blanked: 1 });
+    expect(r.text).toBe("Name,Email,Payer\nBen Ray,ben@example.test,\n");
+    expect(scrubSubjectFromDiagnostics([{ row: 2, reason: "Duplicate email ada.old@example.test" }], moved).value).toEqual([]);
+  });
+
+  it("reports a row with the subject's name at another address instead of skipping it silently", () => {
+    expect(removeSubjectRows(csv, ADA).nameOnly).toBe(1); // "Ada Obi,other-ada@example.test"
   });
 
   it("a guardian draft (teamup-payer key, synthesised login) has its payer address blanked in the child's row", () => {
@@ -89,7 +103,7 @@ describe("removeSubjectRows — a row is the subject's only by name AND address"
 
   it("never touches the header, and returns the text unchanged when nothing names the subject", () => {
     const text = "Name,Email\nBen Ray,ben@example.test\n";
-    expect(removeSubjectRows(text, ADA)).toEqual({ text, removed: 0, blanked: 0 });
+    expect(removeSubjectRows(text, ADA)).toEqual({ text, removed: 0, blanked: 0, nameOnly: 0 });
   });
 
   it("splits records at line breaks outside quotes only", () => {
@@ -156,7 +170,7 @@ describe("scrubSubjectFromDiagnostics", () => {
     // The second adult at a TeamUp address keeps the first adult's login as their unverified address.
     const second: ErasureSubject = { memberId: "m_tom", sourceKey: "teamup:ada@example.test|tom obi", email: null, unverifiedEmail: "ada@example.test", unverifiedEmailShared: true, name: "Tom Obi" };
     const file = "Customer Name,Customer Email\r\nAda Obi,ada@example.test\r\nTom Obi,ada@example.test\r\n";
-    expect(removeSubjectRows(file, second)).toEqual({ text: "Customer Name,Customer Email\r\nAda Obi,ada@example.test\r\n", removed: 1, blanked: 0 });
+    expect(removeSubjectRows(file, second)).toEqual({ text: "Customer Name,Customer Email\r\nAda Obi,ada@example.test\r\n", removed: 1, blanked: 0, nameOnly: 0 });
     expect(scrubSubjectFromDiagnostics([{ name: "Ada Obi", email: "ada@example.test" }], second).scrubbed).toBe(0);
   });
 
@@ -206,7 +220,7 @@ describe("eraseSubjectFromImportFiles", () => {
     vi.mocked(storage.rewriteImportFile).mockImplementationOnce(async () => {}).mockRejectedValueOnce(new Error("store down"));
     const progress = { files: 0, rows: 0, cells: 0 };
     await expect(eraseSubjectFromImportFiles("t1", ADA, progress)).rejects.toThrow("store down");
-    expect(progress).toEqual({ files: 1, rows: 1, cells: 0 });
+    expect(progress).toMatchObject({ files: 1, rows: 1, cells: 0 });
   });
 
   it("a rewrite failure is thrown, so the erasure refuses rather than reporting success", async () => {

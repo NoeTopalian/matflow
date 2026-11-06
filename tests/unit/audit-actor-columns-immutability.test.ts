@@ -91,13 +91,29 @@ function walk(dir: string, out: string[] = []): string[] {
 describe("audit history is append-only from the application", () => {
   const files = [...walk("app"), ...walk("lib")];
 
-  it("no app/ or lib/ code updates or deletes AuditLog rows through Prisma", () => {
+  // The ONE documented exception (6 Nov 2026): a member's erasure redacts the personal values in the METADATA of
+  // that member's own rows (lib/audit-redact.ts) — Activity is kept permanently, so an Article 17 erasure must reach
+  // it. Metadata only: never an actor, correlation or entity column, never a delete.
+  const REDACT = join("lib", "audit-redact.ts");
+
+  it("no app/ or lib/ code updates or deletes AuditLog rows through Prisma (one documented exception: erasure redaction)", () => {
     const offenders: string[] = [];
     for (const f of files) {
+      if (f === REDACT) continue;
       const src = readFileSync(f, "utf8");
       if (/\bauditLog\s*\.\s*(update|updateMany|upsert|delete|deleteMany)\s*\(/.test(src)) offenders.push(f);
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("the erasure redaction writes metadata only, to this club's rows only, and never deletes", () => {
+    const src = readFileSync(REDACT, "utf8");
+    const writes = [...src.matchAll(/\bauditLog\s*\.\s*(update|updateMany|upsert|delete|deleteMany)\s*\(([\s\S]*?)\);/g)];
+    expect(writes.map((w) => w[1])).toEqual(["updateMany"]);
+    expect(writes[0][2]).toMatch(/where: \{ id: row\.id, tenantId \}, data: \{ metadata: next as Prisma\.InputJsonValue \}/);
+    // The only caller is the erasure.
+    const callers = files.filter((f) => f !== REDACT && /redactSubjectFromAuditLog\(/.test(readFileSync(f, "utf8")));
+    expect(callers).toEqual([join("app", "api", "admin", "dsar", "erase", "route.ts")]);
   });
 
   it("no raw SQL in app/ or lib/ updates or deletes AuditLog", () => {

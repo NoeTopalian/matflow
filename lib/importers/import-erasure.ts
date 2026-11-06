@@ -35,6 +35,11 @@
  *    adult at a TeamUp address keeps the first adult's login there — only
  *    helps find the subject's rows and is never blanked.
  *  - A chunked upload still arriving (open and not yet expired) is skipped.
+ *  - An address the subject used BEFORE a change of login address is theirs too: it is recognised by the keyed
+ *    digest (`oldEmailSha256`) their `member.update` rows recorded, so an import made under the old address is
+ *    still reached.
+ *  - A row with the subject's name in its name column but an address that is not theirs is left as it is (it
+ *    may be another person of that name) and COUNTED (`nameOnly`), so the erasure tells the owner.
  *
  * Counts only leave this module; never a value from a file.
  */
@@ -55,7 +60,40 @@ export type ErasureSubject = {
   unverifiedEmailShared?: boolean;
   /** The name before the erasure. */
   name: string | null;
+  /**
+   * Keyed digests of the subject's EARLIER login addresses (the `oldEmailSha256` a `member.update` row records
+   * when the address changes; lib/login-email emailDigest), with the digest function. An address in a file or a
+   * report whose digest is one of these was the subject's own when it was written there, so it counts as theirs.
+   */
+  pastAddressDigests?: string[];
+  addressDigest?: (address: string) => string;
 };
+
+const EMAIL_TOKEN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+
+/** Adds to the subject's addresses every address in `texts` whose digest is one of their earlier addresses. */
+function widenWithPastAddresses(w: Who, subject: ErasureSubject, texts: Iterable<string>): void {
+  const digests = subject.pastAddressDigests;
+  const digest = subject.addressDigest;
+  if (!digests || digests.length === 0 || !digest) return;
+  const wanted = new Set(digests);
+  for (const t of texts) {
+    for (const m of t.toLowerCase().matchAll(EMAIL_TOKEN)) {
+      const a = m[0];
+      if (!w.ownAddresses.has(a) && wanted.has(digest(a))) {
+        w.ownAddresses.add(a);
+        w.rowAddresses.add(a);
+      }
+    }
+  }
+}
+
+function allStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const v of value) allStrings(v, out);
+  else if (value && typeof value === "object") for (const v of Object.values(value)) allStrings(v, out);
+  return out;
+}
 
 const norm = (s: string) => s.replace(/^﻿/, "").trim().toLowerCase();
 const nonEmpty = (v: string | null | undefined): v is string => !!v && v.trim() !== "";
@@ -176,13 +214,16 @@ const EMAIL_HEADERS = ["customer email", "email", "email address", "e-mail"];
  * name blanked in other people's rows. The first non-empty record (the header)
  * is never touched.
  */
-export function removeSubjectRows(text: string, subject: ErasureSubject): { text: string; removed: number; blanked: number } {
+export function removeSubjectRows(text: string, subject: ErasureSubject): { text: string; removed: number; blanked: number; nameOnly: number } {
   const w = who(subject);
-  if (w.rowAddresses.size === 0 && w.names.size === 0) return { text, removed: 0, blanked: 0 };
+  const none = { text, removed: 0, blanked: 0, nameOnly: 0 };
+  if (w.rowAddresses.size === 0 && w.names.size === 0 && !subject.pastAddressDigests?.length) return none;
   const delimiter = csvDelimiter(text);
   const records = csvRecords(text, delimiter);
   const h = records.findIndex((r) => r.cells.some((c) => c.trim() !== ""));
-  if (h < 0) return { text, removed: 0, blanked: 0 };
+  if (h < 0) return none;
+  // An address the subject used to log in with, before a change (L2): theirs too.
+  widenWithPastAddresses(w, subject, records.slice(h + 1).flatMap((r) => r.cells));
   const header = records[h].cells.map(norm);
   const col = (names: string[]) => header.findIndex((c) => names.includes(c));
   const nameCol = col(NAME_HEADERS);
@@ -209,6 +250,7 @@ export function removeSubjectRows(text: string, subject: ErasureSubject): { text
 
   let removed = 0;
   let blanked = 0;
+  let nameOnly = 0;
   let out = "";
   let at = 0;
   records.forEach((r, i) => {
@@ -219,6 +261,10 @@ export function removeSubjectRows(text: string, subject: ErasureSubject): { text
       removed += 1;
       return;
     }
+    // The subject's name in the row's name column at an address that is not theirs: left as it is (it may be
+    // another person of that name), and COUNTED, so the owner is told rather than it being skipped silently.
+    const name = rowName(r.cells);
+    if (name !== null && w.names.has(name)) nameOnly += 1;
     let changed = 0;
     const cells = r.cells.map((c, j) => {
       const v = norm(c);
@@ -233,8 +279,8 @@ export function removeSubjectRows(text: string, subject: ErasureSubject): { text
     at = r.end;
     blanked += changed;
   });
-  if (removed === 0 && blanked === 0) return { text, removed: 0, blanked: 0 };
-  return { text: out + text.slice(at), removed, blanked };
+  if (removed === 0 && blanked === 0) return { ...none, nameOnly };
+  return { text: out + text.slice(at), removed, blanked, nameOnly };
 }
 
 // ─── Diagnostics (errorLog, dryRunSummary) ───────────────────────────────────
@@ -336,7 +382,9 @@ function scrub(value: unknown, w: Who, inArray: boolean): { value: unknown; n: n
 
 /** Pure: one stored diagnostics value with the subject's entries removed and their address blanked elsewhere. */
 export function scrubSubjectFromDiagnostics(value: unknown, subject: ErasureSubject): { value: unknown; scrubbed: number } {
-  const r = scrub(value, who(subject), false);
+  const w = who(subject);
+  widenWithPastAddresses(w, subject, allStrings(value));
+  const r = scrub(value, w, false);
   return { value: r.value, scrubbed: r.n };
 }
 
@@ -380,8 +428,8 @@ export async function eraseSubjectFromImportFiles(
   tenantId: string,
   subject: ErasureSubject,
   /** Added to as each file is rewritten, so a caller knows what already changed when a later file throws. */
-  progress: { files: number; rows: number; cells: number } = { files: 0, rows: 0, cells: 0 },
-): Promise<{ files: number; rows: number; cells: number }> {
+  progress: { files: number; rows: number; cells: number; nameOnly?: number } = { files: 0, rows: 0, cells: 0 },
+): Promise<{ files: number; rows: number; cells: number; nameOnly: number }> {
   const [jobs, uploads] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.importJob.findMany({ where: { tenantId, NOT: { fileBlobUrl: "" } }, select: { fileBlobUrl: true } }),
@@ -395,11 +443,14 @@ export async function eraseSubjectFromImportFiles(
   let files = 0;
   let rows = 0;
   let cells = 0;
+  let nameOnly = 0;
   for (const url of urls) {
     const bytes = await readImportFileBytes(url, tenantId);
     if (bytes === null) continue;
     const decoded = decodeImportBytes(bytes);
     const r = removeSubjectRows(decoded.text, subject);
+    nameOnly += r.nameOnly;
+    progress.nameOnly = (progress.nameOnly ?? 0) + r.nameOnly;
     if (r.removed === 0 && r.blanked === 0) continue;
     await rewriteImportFile(url, tenantId, encodeImportText({ text: r.text, encoding: decoded.encoding }));
     files += 1;
@@ -409,5 +460,5 @@ export async function eraseSubjectFromImportFiles(
     progress.rows += r.removed;
     progress.cells += r.blanked;
   }
-  return { files, rows, cells };
+  return { files, rows, cells, nameOnly };
 }

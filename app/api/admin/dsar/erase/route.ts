@@ -63,6 +63,7 @@ import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
 import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { redactSubjectFromAuditLog } from "@/lib/audit-redact";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -402,10 +403,23 @@ export async function POST(req: Request) {
   type SubjectRow = { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null };
   // An unverified address is the subject's own only when no other member of the club holds it: the second adult at
   // a TeamUp address keeps the FIRST adult's login there (lib/importers/teamup.ts), and erasing them must not blank it.
+  // Earlier login addresses: a member.update row records the keyed digest of the address it replaced, so an import
+  // made under an old address is still recognised (L2, 6 Nov 2026). Digests only; no address is read back.
+  const pastAddressDigests = async (id: string): Promise<string[]> => {
+    const rows = await withTenantContext(tenantId, (tx) =>
+      tx.auditLog.findMany({
+        where: { tenantId, entityId: id, action: "member.update", metadata: { path: ["oldEmailSha256"], not: Prisma.AnyNull } },
+        select: { metadata: true },
+      }),
+    );
+    return rows.map((r) => (r.metadata as { oldEmailSha256?: unknown } | null)?.oldEmailSha256).filter((d): d is string => typeof d === "string");
+  };
   const toSubject = async (m: SubjectRow): Promise<ErasureSubject> => ({
     memberId: m.id,
     sourceKey: m.externalRef,
     email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
+    pastAddressDigests: await pastAddressDigests(m.id),
+    addressDigest: (a: string) => emailDigest(a),
     unverifiedEmail: m.unverifiedEmail,
     unverifiedEmailShared: m.unverifiedEmail
       ? (await withTenantContext(tenantId, (tx) =>
@@ -437,7 +451,7 @@ export async function POST(req: Request) {
   // The file rewrites cannot roll back with the transaction below, so they are
   // recorded on their own, durably, whether the walk finishes or stops part-way:
   // if the erasure then refuses, the record says files already lost the rows.
-  const importFiles = { files: 0, rows: 0, cells: 0 };
+  const importFiles: { files: number; rows: number; cells: number; nameOnly?: number } = { files: 0, rows: 0, cells: 0, nameOnly: 0 };
   const recordFileRewrites = async () => {
     if (importFiles.files === 0) return;
     await logAudit({
@@ -470,8 +484,10 @@ export async function POST(req: Request) {
   await recordFileRewrites();
   // Counted here, written in the transaction below (the fulfilment record goes first).
   let importDiagnosticsEntries = 0;
+  let auditRowsRedacted = 0;
   for (const subject of importSubjects) {
     importDiagnosticsEntries += await withTenantContext(tenantId, (tx) => eraseSubjectFromImportDiagnostics(tx, tenantId, subject, { dryRun: true }));
+    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true }));
   }
   const filesNote = importFiles.files > 0 ? `The member's rows were already removed from ${importFiles.files} stored import file(s). ` : "";
 
@@ -480,6 +496,10 @@ export async function POST(req: Request) {
     importFileRowsRemoved: importFiles.rows,
     importFileCellsBlanked: importFiles.cells,
     importDiagnosticsEntriesRemoved: importDiagnosticsEntries,
+    // Rows in stored import files with this member's name at an address that is not theirs: left as they are and
+    // reported to the owner (they may be another person of the same name).
+    importNameOnlyRowsLeft: importFiles.nameOnly ?? 0,
+    auditRowsRedacted,
     memberPhotos: scope.photos.length,
     signedWaiversScrubbed: scope.waivers.length,
     loginEvents: scope.loginEvents,
@@ -588,6 +608,9 @@ export async function POST(req: Request) {
     await scrubImportConflictsFor(tx, tenantId, memberId, originalExternalRef);
     // …and the kept diagnostics of every import, attendance included, name-only entries too (6 Nov 2026).
     for (const subject of importSubjects) await eraseSubjectFromImportDiagnostics(tx, tenantId, subject);
+    // …and the personal values recorded on their own Activity rows, kept permanently since 6 Nov 2026: metadata
+    // only, the actor columns untouched (lib/audit-redact.ts, the one documented write to an existing row).
+    for (const subject of importSubjects) await redactSubjectFromAuditLog(tx, tenantId, subject.memberId);
 
     await tx.member.update({
       where: { id: memberId },
@@ -779,6 +802,15 @@ export async function POST(req: Request) {
     memberId,
     erasedAt: new Date().toISOString(),
     erased: erasedCounts,
+    // Told, never skipped silently (L2): rows that carry this member's name at an address that is not theirs.
+    ...(erasedCounts.importNameOnlyRowsLeft > 0
+      ? {
+          notes: [
+            `${erasedCounts.importNameOnlyRowsLeft} row(s) in stored import files carry this member's name at an address that is not theirs. ` +
+              "They were left as they are, as they may be another person with the same name. Check them before relying on the erasure.",
+          ],
+        }
+      : {}),
     children: {
       affected: activeChildren,
       strategy: activeChildren > 0 ? childStrategyParam : null,
