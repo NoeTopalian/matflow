@@ -26,6 +26,33 @@ export function loadClientSentry(): Promise<SentryModule | null> {
   return loading;
 }
 
+/** At most this many errors are held while the SDK loads; a crash loop must not grow memory. */
+export const EARLY_ERROR_LIMIT = 20;
+
+/**
+ * Start the SDK load and hold any uncaught error or unhandled rejection that
+ * happens before it is initialised, then hand them to Sentry once it is. After
+ * that, Sentry's own global handlers take over and these listeners are gone.
+ * Without a DSN it adds no listeners and loads nothing.
+ */
+export function startClientSentry(): void {
+  if (!process.env.NEXT_PUBLIC_SENTRY_DSN || typeof window === "undefined") return;
+  const early: unknown[] = [];
+  const hold = (err: unknown) => {
+    if (early.length < EARLY_ERROR_LIMIT) early.push(err);
+  };
+  const onError = (e: ErrorEvent) => hold(e.error ?? new Error(e.message));
+  const onRejection = (e: PromiseRejectionEvent) => hold(e.reason);
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onRejection);
+  void loadClientSentry().then((Sentry) => {
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onRejection);
+    if (!Sentry) return;
+    for (const err of early.splice(0)) Sentry.captureException(err);
+  });
+}
+
 /**
  * Report an error caught by a boundary. `reference` is the code the person sees
  * (lib/error-reference.ts), set as the `error_reference` tag so it can be

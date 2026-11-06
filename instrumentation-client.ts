@@ -9,13 +9,15 @@
 // 2026). It now hands the load to lib/sentry-client.ts:
 //  - NEXT_PUBLIC_SENTRY_DSN unset at build: nothing is loaded at all;
 //  - set: the SDK loads and initialises straight after start-up, in its own
-//    chunk, and error boundaries wait for that same load before reporting.
+//    chunk; an uncaught error or unhandled rejection in the meantime is held
+//    and reported once it is ready, and error boundaries wait for that same
+//    load before reporting.
 // Setting that variable in Vercel is the step that turns capture on, and it is
 // Noe's to do. Deliberately still not `withSentryConfig` (source maps and
 // tunnelling can come later without touching this file).
 //
-// zod's `jitless` setting moved to lib/zod-client.ts, imported only by the
-// client pages that build schemas (/login, /apply).
-import { loadClientSentry } from "@/lib/sentry-client";
+// zod's `jitless` setting moved to lib/zod-client.ts, imported by the modules
+// that build schemas in the browser.
+import { startClientSentry } from "@/lib/sentry-client";
 
-void loadClientSentry();
+startClientSentry();
