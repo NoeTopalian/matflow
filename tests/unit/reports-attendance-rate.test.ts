@@ -17,6 +17,9 @@
  * (null, never NaN) for each mode.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
+
+// S3: the aggregate statements, answered through the faked Prisma delegates (see the support file).
+vi.mock("@/lib/aggregate-counts", () => import("./support/aggregate-counts-via-prisma"));
 import { readFileSync } from "node:fs";
 import path from "node:path";
 

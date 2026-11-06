@@ -19,8 +19,17 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/dashboard",
 }));
 
+vi.mock("@/lib/aggregate-counts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/aggregate-counts")>();
+  return {
+    ...actual,
+    readAtRiskGateProbes: async (tx: { __probes: (t: string, w: unknown) => unknown }, tenantId: string, w: unknown) => tx.__probes(tenantId, w),
+  };
+});
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { AtRiskGateProbes, AtRiskGateWindows } from "@/lib/aggregate-counts";
 import {
   AT_RISK_LIST_TAKE,
   AT_RISK_SUPPRESSED_DETAIL,
@@ -74,26 +83,40 @@ type Member = { id: string; name: string; tenantId: string; status: string; acco
  * a hard-coded answer.
  */
 function fakeTx(rows: Row[], members: Member[] = []) {
-  const gateCalls: unknown[] = [];
+  const gateCalls: { tenantId: string; windows: AtRiskGateWindows }[] = [];
   const memberCalls: unknown[] = [];
-  const gate: AtRiskGateClient = {
-    attendanceRecord: {
-      async findFirst(args) {
-        gateCalls.push(args);
-        const { where, orderBy } = args;
-        const hits = rows
-          .filter(
-            (r) =>
-              r.tenantId === where.tenantId &&
-              r.checkInMethod !== where.checkInMethod.not &&
-              (where.importJobId === null ? r.importJobId === null : true) &&
-              (where.checkInTime.lt === undefined || r.checkInTime < where.checkInTime.lt) &&
-              (where.checkInTime.gte === undefined || r.checkInTime >= where.checkInTime.gte),
-          )
-          .sort((a, b) => a.checkInTime.getTime() - b.checkInTime.getTime());
-        if (orderBy?.checkInTime === "desc") hits.reverse();
-        return hits[0] ? { checkInTime: hits[0].checkInTime } : null;
-      },
+  // The gate is one raw statement (lib/aggregate-counts readAtRiskGateProbes, mocked above to call `__probes`). This
+  // answers its probes from the fixture rows the way the SQL does: MatFlow rows only (MATFLOW_CHECKIN_WHERE), min or
+  // max over each window, and only the probes the rule needs. tests/integration/s3-aggregate-parity-db.test.ts holds
+  // the SQL equal to the findFirst probes it replaced, on a real database.
+  const matflowTimes = (tenantId: string, from?: Date, to?: Date) =>
+    rows
+      .filter(
+        (r) =>
+          r.tenantId === tenantId &&
+          r.checkInMethod !== "import" &&
+          r.importJobId === null &&
+          (from === undefined || r.checkInTime >= from) &&
+          (to === undefined || r.checkInTime < to),
+      )
+      .map((r) => r.checkInTime.getTime());
+  const min = (t: number[]) => (t.length ? new Date(Math.min(...t)) : null);
+  const max = (t: number[]) => (t.length ? new Date(Math.max(...t)) : null);
+  const gate: AtRiskGateClient & { __probes(tenantId: string, w: AtRiskGateWindows): AtRiskGateProbes } = {
+    $queryRaw: (() => {
+      throw new Error("the gate's SQL is not run in a unit test");
+    }) as never,
+    __probes(tenantId, w) {
+      gateCalls.push({ tenantId, windows: w });
+      const before = max(matflowTimes(tenantId, w.weekBefore, w.since));
+      const first = min(matflowTimes(tenantId, w.since));
+      return {
+        before,
+        first,
+        earlier: !before && !first ? max(matflowTimes(tenantId, undefined, w.weekBefore)) : null,
+        firstHalf: before ? min(matflowTimes(tenantId, w.since, w.mid)) : null,
+        secondHalf: before ? min(matflowTimes(tenantId, w.mid)) : null,
+      };
     },
   };
   const matches = (where: AtRiskWhere) => {
@@ -153,11 +176,17 @@ describe("At-Risk gate: no MatFlow check-ins", () => {
     const { tx, gateCalls } = fakeTx(importedHistory(3));
     expect(await readAtRiskGate(tx, "t1", NOW)).toEqual({ open: false, reason: "none" });
     expect(await atRiskSuppressed(tx, "t1", NOW)).toBe(true);
-    // Tenant-scoped and uses the shared import marker on every probe.
-    for (const c of gateCalls as { where: Record<string, unknown> }[]) {
-      expect(c.where).toMatchObject({ tenantId: "t1", ...MATFLOW_CHECKIN_WHERE });
-    }
+    // Tenant-scoped: the gate asks for this club only.
+    expect(gateCalls.length).toBeGreaterThan(0);
+    for (const c of gateCalls) expect(c.tenantId).toBe("t1");
     expect(MATFLOW_CHECKIN_WHERE).toEqual({ checkInMethod: { not: "import" }, importJobId: null });
+    // Every probe of the one statement filters the club and carries the shared import marker (MATFLOW_CHECKIN_WHERE
+    // in SQL): before, first, earlier and the two halves.
+    const sql = readFileSync(path.join(process.cwd(), "lib/aggregate-counts.ts"), "utf8");
+    const gateSql = sql.slice(sql.indexOf("export async function readAtRiskGateProbes"), sql.indexOf("export function atRiskProbesFromRow"));
+    const probes = gateSql.match(/FROM "AttendanceRecord"\s+WHERE "tenantId" = \$\{tenantId\} AND "checkInMethod" <> 'import' AND "importJobId" IS NULL/g);
+    expect(probes).toHaveLength(5);
+    expect(gateSql.match(/FROM "AttendanceRecord"/g)).toHaveLength(5);
   });
 
   it("stays closed for a club with no attendance at all", async () => {
@@ -387,10 +416,11 @@ describe("dashboard page wiring", () => {
 
   it("reads At-Risk exactly once, in the club's zone, and hands the same value to getStats and getActionItems", () => {
     expect(src.match(/readAtRisk\(/g)).toHaveLength(1);
-    expect(src).toMatch(/const atRisk = await readAtRisk\(tx, session!\.user\.tenantId, new Date\(\), club\?\.timezone\);/);
+    expect(src).toMatch(/const tenantId = session!\.user\.tenantId;/);
+    expect(src).toMatch(/const atRisk = await readAtRisk\(tx, tenantId, now, club\?\.timezone\);/);
     // The viewer's role stays for the role-aware payments count (#39, round-3 review L5).
-    expect(src).toMatch(/getStats\(tx, session!\.user\.tenantId, session!\.user\.role, atRisk\)/);
-    expect(src).toMatch(/getActionItems\(tx, session!\.user\.tenantId, atRisk\)/);
+    expect(src).toMatch(/getStats\(tx, tenantId, session!\.user\.role, atRisk, counts, now\)/);
+    expect(src).toMatch(/getActionItems\(tx, tenantId, atRisk\)/);
   });
 
   it("takes the tile and the list from that value, with no second at-risk query", () => {

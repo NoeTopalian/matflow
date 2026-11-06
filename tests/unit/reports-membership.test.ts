@@ -15,6 +15,9 @@
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
+// S3: the aggregate statements, answered through the faked Prisma delegates (see the support file).
+vi.mock("@/lib/aggregate-counts", () => import("./support/aggregate-counts-via-prisma"));
+
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");

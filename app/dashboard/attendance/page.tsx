@@ -3,6 +3,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import AttendanceView from "@/components/dashboard/AttendanceView";
 import { parseIdParam } from "@/lib/id-param";
 import { sessionLabel } from "@/lib/session-label";
+import { readAttendanceSummaryCounts } from "@/lib/aggregate-counts";
 
 /** The most check-ins one session's view will list. */
 const SESSION_ATTENDANCE_LIMIT = 1000;
@@ -100,18 +101,12 @@ async function fetchSummary(
   // row in JS just to count it. The previous shape fetched up to ~50k rows/
   // month for a busy gym to compute three integers. Now: aggregate at the
   // DB and only fetch the small top-class probe.
+  // S3 (6 Nov 2026): the two totals and the distinct members are one
+  // statement; the distinct count used to be a groupBy that returned every
+  // member of the month only to take its length.
   const inner = await (async () => {
-    const [totalThisMonth, totalThisWeek, uniqueMembersGroups, topClassBucket] = await Promise.all([
-      tx.attendanceRecord.count({
-        where: { tenantId, checkInTime: { gte: startOfMonth } },
-      }),
-      tx.attendanceRecord.count({
-        where: { tenantId, checkInTime: { gte: startOfWeek } },
-      }),
-      tx.attendanceRecord.groupBy({
-        by: ["memberId"],
-        where: { tenantId, checkInTime: { gte: startOfMonth } },
-      }),
+    const [{ totalThisMonth, totalThisWeek, uniqueMembersThisMonth }, topClassBucket] = await Promise.all([
+      readAttendanceSummaryCounts(tx, tenantId, { monthStart: startOfMonth, weekStart: startOfWeek }),
       tx.attendanceRecord.groupBy({
         by: ["classInstanceId"],
         where: { tenantId, checkInTime: { gte: startOfMonth } },
@@ -133,7 +128,7 @@ async function fetchSummary(
     return {
       totalThisMonth,
       totalThisWeek,
-      uniqueMembersThisMonth: uniqueMembersGroups.length,
+      uniqueMembersThisMonth,
       topClass,
     };
   })();

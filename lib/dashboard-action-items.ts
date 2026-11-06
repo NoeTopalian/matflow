@@ -6,8 +6,10 @@
  * queries live in app/dashboard/page.tsx and feed this builder.
  */
 
+import type { Prisma } from "@prisma/client";
 import { TRAINING_MEMBER } from "@/lib/member-population";
 import { DEFAULT_TIMEZONE, usableTimezone } from "@/lib/class-time";
+import { readAtRiskGateProbes, type AtRiskGateProbes, type AtRiskGateWindows } from "@/lib/aggregate-counts";
 
 export type ActionItemKind = "money" | "retention" | "admin" | "moment";
 
@@ -133,7 +135,8 @@ export const MATFLOW_CHECKIN_WHERE = {
  * The rule asks for one MatFlow check-in per week, not a density; a club with
  * a single check-in in each of three weeks opens it.
  *
- * Cost: three indexed probes on AttendanceRecord(tenantId, checkInTime).
+ * Cost: one statement (lib/aggregate-counts readAtRiskGateProbes) of up to
+ * four indexed probes on AttendanceRecord(tenantId, checkInTime).
  * Probe 1 walks back from the window start and stops at the first MatFlow
  * row, which is immediate for a club on MatFlow; for a club with none it
  * walks the tenant's imported history, as the earlier gate did. A partial
@@ -147,53 +150,45 @@ export type AtRiskGate =
   | { open: false; reason: "warming_up"; startsAt: Date }
   | { open: false; reason: "paused" };
 
-type CheckInTimeFilter = { lt?: Date; gte?: Date };
+/** The slice of a Prisma (transaction) client the at-risk gate reads: one raw statement (lib/aggregate-counts.ts). */
+export type AtRiskGateClient = Pick<Prisma.TransactionClient, "$queryRaw">;
 
-/** The slice of a Prisma (transaction) client the at-risk gate reads. */
-export type AtRiskGateClient = {
-  attendanceRecord: {
-    findFirst(args: {
-      where: { tenantId: string; checkInMethod: { not: "import" }; importJobId: null; checkInTime: CheckInTimeFilter };
-      orderBy?: { checkInTime: "asc" | "desc" };
-      select: { checkInTime: true };
-    }): PromiseLike<{ checkInTime: Date } | null>;
-  };
-};
-
-export async function readAtRiskGate(tx: AtRiskGateClient, tenantId: string, now: Date): Promise<AtRiskGate> {
+/**
+ * The gate's edges. `weekBefore`: the week BEFORE the window, not any time before it (review 25 Oct): one stray
+ * check-in months ago (a kiosk test, a demo) must not count as MatFlow having been the register when the window
+ * started. `mid`: where the window's two 7-day halves meet.
+ */
+export function atRiskGateWindows(now: Date): AtRiskGateWindows {
   const since = atRiskWindowStart(now);
-  const probe = (checkInTime: CheckInTimeFilter, order: "asc" | "desc") =>
-    tx.attendanceRecord.findFirst({
-      where: { tenantId, ...MATFLOW_CHECKIN_WHERE, checkInTime },
-      orderBy: { checkInTime: order },
-      select: { checkInTime: true },
-    });
-
-  // The week BEFORE the window, not any time before it (review 25 Oct): one
-  // stray check-in months ago (a kiosk test, a demo) must not count as
-  // MatFlow having been the register when the window started.
   const weekBefore = new Date(since);
   weekBefore.setDate(since.getDate() - Math.floor(AT_RISK_DAYS / 2));
-  const before = await probe({ gte: weekBefore, lt: since }, "desc");
-  if (!before) {
-    const first = await probe({ gte: since }, "asc");
-    if (!first) {
+  const mid = new Date(since);
+  mid.setDate(since.getDate() + Math.floor(AT_RISK_DAYS / 2));
+  return { weekBefore, since, mid };
+}
+
+/** The rule above, over the probes (pure). */
+export function atRiskGateFromProbes(p: AtRiskGateProbes): AtRiskGate {
+  if (!p.before) {
+    if (!p.first) {
       // Check-ins once, none for three weeks: the register stopped, not "none yet".
-      const earlier = await probe({ lt: weekBefore }, "desc");
-      return earlier ? { open: false, reason: "paused" } : { open: false, reason: "none" };
+      return p.earlier ? { open: false, reason: "paused" } : { open: false, reason: "none" };
     }
-    const startsAt = new Date(first.checkInTime);
+    const startsAt = new Date(p.first);
     startsAt.setDate(startsAt.getDate() + AT_RISK_DAYS);
     return { open: false, reason: "warming_up", startsAt };
   }
-  const mid = new Date(since);
-  mid.setDate(since.getDate() + Math.floor(AT_RISK_DAYS / 2));
-  const [firstHalf, secondHalf] = await Promise.all([
-    probe({ gte: since, lt: mid }, "asc"),
-    probe({ gte: mid }, "asc"),
-  ]);
-  if (!firstHalf || !secondHalf) return { open: false, reason: "paused" };
+  if (!p.firstHalf || !p.secondHalf) return { open: false, reason: "paused" };
   return { open: true };
+}
+
+/**
+ * Reads the gate in ONE statement (S3, 6 Nov 2026; was two to four findFirst probes). The probes are the same MatFlow
+ * check-in rows (MATFLOW_CHECKIN_WHERE) over the same edges; tests/integration/s3-aggregate-parity-db.test.ts holds
+ * them equal to the findFirst probes they replaced.
+ */
+export async function readAtRiskGate(tx: AtRiskGateClient, tenantId: string, now: Date): Promise<AtRiskGate> {
+  return atRiskGateFromProbes(await readAtRiskGateProbes(tx, tenantId, atRiskGateWindows(now)));
 }
 
 /** Back-compatible boolean: true whenever the gate is closed, for any reason. */

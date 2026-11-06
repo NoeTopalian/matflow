@@ -23,6 +23,9 @@
 // Active members 1, Current members 3 — the member counts are what they were.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+// S3: the aggregate statements, answered through the faked Prisma delegates (see the support file).
+vi.mock("@/lib/aggregate-counts", () => import("./support/aggregate-counts-via-prisma"));
 import { render, screen, cleanup, within } from "@testing-library/react";
 import React from "react";
 import { fakeTx, matchRows } from "./support/prisma-where-eval";

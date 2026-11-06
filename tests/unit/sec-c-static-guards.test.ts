@@ -54,11 +54,13 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "app/api/payments/[id]/refund/route.ts", // W6: MemberClassPack row lock (SELECT … FOR UPDATE) before the refund apportionment reads it; the payment intent id and tenantId are bind parameters
       "app/api/staff/[id]/route.ts", // lane D3: locked read of the user row inside the deletion transaction; ids are bind parameters
       "app/api/stripe/webhook/route.ts", // W6: MemberClassPack row lock (SELECT … FOR UPDATE) before the charge.refunded apportionment reads it; the payment intent id and tenantId are bind parameters
+      "lib/aggregate-counts.ts", // S3: one-statement page counts (dashboard tiles, chart bars, attendance summary, At-Risk gate probes); tenantId, dates, class id and account types are bind parameters
       "lib/attendance-import.ts", // release-digest read (lane D third pass): only tenantId is interpolated, as a bind parameter
       "lib/auth-lockout.ts", // lane A4 (R6-N1): failure-slot reservation, C3's advisory lock + conditional insert; buckets, ids, caps, window, exempt flag and lock namespace are bind parameters
       "lib/checkin.ts",
       "lib/class-allowance-count.ts", // T7: statement C, the allowance read after the Member lock; tenantId, memberId, session id and the date range are bind parameters
       "lib/login-email.ts",
+      "lib/mats-store.ts", // S3: SAVEPOINT / RELEASE / ROLLBACK TO around the timetable's guarded mats read; no values at all
       "lib/mats.ts", // per-club mats advisory lock (pg_advisory_xact_lock) opening every mats write; the namespace and tenantId are bind parameters
       "lib/member-delete.ts", // T7: Member row lock (SELECT … FOR UPDATE) opening the deletion cascade; id and tenantId are bind parameters
       "lib/migration-lock.ts", // 69d87070: pg_try_advisory_xact_lock_shared on Prisma Migrate's key; the key is a module constant bound as a parameter

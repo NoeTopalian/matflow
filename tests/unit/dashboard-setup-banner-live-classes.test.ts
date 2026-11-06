@@ -6,6 +6,9 @@
 
 import { describe, it, expect, vi } from "vitest";
 
+// S3: the aggregate statements, answered through the faked Prisma delegates (see the support file).
+vi.mock("@/lib/aggregate-counts", () => import("./support/aggregate-counts-via-prisma"));
+
 const h = vi.hoisted(() => ({ classCount: vi.fn(async () => 0) }));
 
 /** Every delegate answers "nothing here", except the few reads the banner needs. */

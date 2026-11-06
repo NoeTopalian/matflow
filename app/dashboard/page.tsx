@@ -17,28 +17,24 @@ import DashboardStats from "@/components/dashboard/DashboardStats";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
-import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
+import { CAN_TRAIN_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
+import { readDashboardCounts, type DashboardCounts } from "@/lib/aggregate-counts";
+
+type SetupTenant = { stripeConnected: boolean; onboardingCompleted: boolean; contactEmail: string | null; billingContactEmail: string | null };
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
  * skipped wizard steps. Returns the list of remaining items with deep links.
- * Empty array = banner hidden.
+ * Empty array = banner hidden. The counts come from readDashboardCounts:
+ * every membership tier, every member row, and the classes ON THE TIMETABLE
+ * (T6b liveClassWhere: a club whose classes are all paused, archived or
+ * imported history has nothing scheduled, so the banner says "Schedule a
+ * class").
  */
-async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promise<{ label: string; href: string }[]> {
+function getSetupGaps(tenant: SetupTenant | null, counts: DashboardCounts, role: string): { label: string; href: string }[] {
   if (role !== "owner") return [];
-  const [tenant, tierCount, classCount, memberCount] = await Promise.all([
-    tx.tenant.findUnique({
-      where: { id: tenantId },
-      select: { stripeConnected: true, onboardingCompleted: true, contactEmail: true, billingContactEmail: true },
-    }),
-    tx.membershipTier.count({ where: { tenantId } }),
-    // T6b: classes ON THE TIMETABLE. A club whose classes are all paused,
-    // archived or imported history has nothing scheduled, so the banner says
-    // "Schedule a class".
-    tx.class.count({ where: liveClassWhere(tenantId) }),
-    tx.member.count({ where: { tenantId } }),
-  ]);
+  const { tierCount, liveClassCount: classCount, memberCount } = counts;
 
   // Don't show the banner until the wizard has been completed at least once
   // — otherwise we'd be nudging a user who is mid-onboarding.
@@ -103,60 +99,37 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
   }));
 }
 
-async function getStats(tx: TxClient, tenantId: string, role: string, atRisk: AtRiskRead) {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  startOfWeek.setHours(0, 0, 0, 0);
+/** The month and week the tiles count from, in the server's zone (as they always have been). */
+function statsWindows(now: Date): { monthStart: Date; weekStart: Date } {
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  weekStart.setHours(0, 0, 0, 0);
+  return { monthStart, weekStart };
+}
 
-  const [
-    totalActive,
-    newThisMonth,
-    attendanceThisWeek,
-    attendanceThisMonth,
-    waiverMissing,
-    missingPhone,
-    paymentsDue,
-  ] = await Promise.all([
-    // Training members only: parent/guardian accounts are account holders,
-    // not members (lib/member-population.ts, 2 Oct 2026).
-    tx.member.count({ where: { tenantId, ...ACTIVE_MEMBER } }),
-    tx.member.count({ where: { tenantId, joinedAt: { gte: startOfMonth }, ...TRAINING_MEMBER } }),
-    tx.attendanceRecord.count({
-      where: { tenantId, checkInTime: { gte: startOfWeek } },
-    }),
-    tx.attendanceRecord.count({
-      where: { tenantId, checkInTime: { gte: startOfMonth } },
-    }),
-    // A guardian/parent account never signs a training waiver and is not a
-    // member to chase for a phone; both counts are training members only
-    // (acceptance S1 follow-up, 2 Oct 2026: a real import's guardian drafts
-    // were counted as missing waivers).
-    tx.member.count({
-      where: { tenantId, ...CAN_TRAIN_MEMBER, waiverAccepted: false },
-    }),
-    tx.member.count({
-      where: {
-        tenantId,
-        ...CAN_TRAIN_MEMBER,
-        OR: [{ phone: null }, { phone: "" }],
-      },
-    }),
-    // Owner/manager: everyone Payments → Outstanding lists, overdue plus "No
-    // payment yet" (lib/overdue.ts) — the same clause feeds the action list
-    // below. Other roles: payers overdue only, the count of the Members chip
-    // their tile links to (round-3 review L5; lib/payments-due.ts).
-    tx.member.count({ where: paymentsDueWhere(tenantId, role, now) }),
-  ]);
+async function getStats(tx: TxClient, tenantId: string, role: string, atRisk: AtRiskRead, counts: DashboardCounts, now: Date) {
+  // The member and attendance tiles are readDashboardCounts (one statement):
+  // training members only, since parent/guardian accounts are account holders,
+  // not members (lib/member-population.ts, 2 Oct 2026) — ACTIVE_MEMBER for the
+  // headline, TRAINING_MEMBER for "new this month". A guardian/parent account
+  // never signs a training waiver and is not a member to chase for a phone;
+  // both counts are CAN_TRAIN_MEMBER (acceptance S1 follow-up, 2 Oct 2026: a
+  // real import's guardian drafts were counted as missing waivers).
+  //
+  // Owner/manager: everyone Payments → Outstanding lists, overdue plus "No
+  // payment yet" (lib/overdue.ts) — the same clause feeds the action list
+  // below. Other roles: payers overdue only, the count of the Members chip
+  // their tile links to (round-3 review L5; lib/payments-due.ts).
+  const paymentsDue = await tx.member.count({ where: paymentsDueWhere(tenantId, role, now) });
 
   return {
-    totalActive,
-    newThisMonth,
-    attendanceThisWeek,
-    attendanceThisMonth,
-    waiverMissing,
-    missingPhone,
+    totalActive: counts.totalActive,
+    newThisMonth: counts.newThisMonth,
+    attendanceThisWeek: counts.attendanceThisWeek,
+    attendanceThisMonth: counts.attendanceThisMonth,
+    waiverMissing: counts.waiverMissing,
+    missingPhone: counts.missingPhone,
     paymentsDue,
     // Read once by readAtRisk (lib/dashboard-action-items): 0 and suppressed
     // while the gate is closed, the same value the named list gets; the copy
@@ -275,14 +248,22 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
     session!.user.tenantId,
     async (tx) => {
-      const club = await tx.tenant.findUnique({ where: { id: session!.user.tenantId }, select: { timezone: true } });
-      const atRisk = await readAtRisk(tx, session!.user.tenantId, new Date(), club?.timezone);
+      const tenantId = session!.user.tenantId;
+      const now = new Date();
+      // The club's zone and the setup banner's fields in one read.
+      const club = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { timezone: true, stripeConnected: true, onboardingCompleted: true, contactEmail: true, billingContactEmail: true },
+      });
+      const atRisk = await readAtRisk(tx, tenantId, now, club?.timezone);
+      // S3: the tiles' and the banner's counts in one statement (were nine).
+      const counts = await readDashboardCounts(tx, tenantId, statsWindows(now));
       return Promise.all([
-        getWeekClasses(tx, session!.user.tenantId),
-        getStats(tx, session!.user.tenantId, session!.user.role, atRisk),
-        getSetupGaps(tx, session!.user.tenantId, session!.user.role),
-        getUserTasks(tx, session!.user.tenantId, session!.user.id),
-        getActionItems(tx, session!.user.tenantId, atRisk),
+        getWeekClasses(tx, tenantId),
+        getStats(tx, tenantId, session!.user.role, atRisk, counts, now),
+        getSetupGaps(club, counts, session!.user.role),
+        getUserTasks(tx, tenantId, session!.user.id),
+        getActionItems(tx, tenantId, atRisk),
       ]);
     },
   );

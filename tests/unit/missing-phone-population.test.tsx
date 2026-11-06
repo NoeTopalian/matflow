@@ -32,10 +32,13 @@ afterEach(() => cleanup());
 
 describe("Missing phone counts people who can train, on the dashboard and on Members", () => {
   it("an inactive member without a phone is 0 on both; an active one is 1 on both", () => {
-    // The dashboard's where (app/dashboard/page.tsx), as written there.
+    // The dashboard's count. S3 (6 Nov 2026): one SQL statement (lib/aggregate-counts readDashboardCounts), held equal
+    // on a real database to this Prisma where by tests/integration/s3-aggregate-parity-db.test.ts; the where is the
+    // unit tests' stand-in (tests/unit/support/aggregate-counts-via-prisma.ts), as written there.
     const dashboard = (rows: Record<string, unknown>[]) =>
       matchRows(rows, { tenantId: "club", ...CAN_TRAIN_MEMBER, OR: [{ phone: null }, { phone: "" }] }).length;
-    expect(readFileSync("app/dashboard/page.tsx", "utf8")).toMatch(/\.\.\.CAN_TRAIN_MEMBER,\s*OR: \[\{ phone: null \}, \{ phone: "" \}\]/);
+    expect(readFileSync("tests/unit/support/aggregate-counts-via-prisma.ts", "utf8")).toMatch(/\.\.\.CAN_TRAIN_MEMBER,\s*OR: \[\{ phone: null \}, \{ phone: "" \}\]/);
+    expect(readFileSync("lib/aggregate-counts.ts", "utf8")).toContain(`"status" IN ('active', 'taster') AND ("phone" IS NULL OR "phone" = '')`);
     const server = (rows: Record<string, unknown>[]) => matchRows(rows, memberListCountWheres("club", NOW, MONTH).missingPhone).length;
     const browser = (rows: MemberRow[]) => countMemberRows(rows, NOW, MONTH).missingPhone;
 
