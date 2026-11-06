@@ -37,6 +37,7 @@ import {
   type SubjectKind,
 } from "@/lib/activity-types";
 import { UNDO_PREFIX, auditEntryLabel, classLifecycleOf, isUndoAction } from "@/lib/audit-labels";
+import type { ActorKind } from "@/lib/activity-url";
 import { clubDayKey } from "@/lib/club-month";
 import { formatDate } from "@/lib/date";
 import { parseIdParam } from "@/lib/id-param";
@@ -1340,6 +1341,72 @@ export function sourceOf(row: FeedRow, lookups: ActivityLookups, namedInSentence
               ? "Member app"
               : "Automatic";
   return { label, staff, support };
+}
+
+// ── Who did it, as a filter ("Done by" in Filters) ───────────────────────────
+
+/** The row's source line, in the filter's words. One decision: `sourceOf` above. */
+const KIND_OF_SOURCE: Record<string, ActorKind> = {
+  "MatFlow support": "support",
+  Kiosk: "members",
+  "Card scan": "staff",
+  Staff: "staff",
+  "Staff (account removed)": "staff",
+  Stripe: "automatic",
+  "Member app": "members",
+  Automatic: "automatic",
+};
+
+/**
+ * Who did a row: what the "Done by" filter calls it. Read off the same decision as the row's source line, except
+ * that any support-session marker at all counts as MatFlow support (fails closed, as `visibleWhere` does).
+ */
+export function actorKindOf(row: FeedRow): ActorKind {
+  if (row.operatorId != null || metaOf(row).actingAs != null) return "support";
+  return KIND_OF_SOURCE[sourceOf(row, emptyLookups()).label] ?? "automatic";
+}
+
+/** A metadata value that is there and is not JSON null. The complement of `absent`, which is true or false, never NULL. */
+const present = (path: string[]): Where => ({ NOT: { OR: absent(path) } });
+const equalsAt = (path: string[], value: string): Where => ({ metadata: { path, equals: value } });
+/** The value at `path` is `value`. False, not NULL, when the path is absent — so it is safe inside an OR or a NOT. */
+const metaIs = (path: string[], value: string): Where => ({ AND: [present(path), equalsAt(path, value)] });
+/** Every row whose value at `path` is not `value` — absent, null or different. */
+const metaIsNot = (path: string[], value: string): Where => ({ OR: [...absent(path), { AND: [present(path), { NOT: equalsAt(path, value) }] }] });
+
+const BY_SUPPORT: Where = { OR: [{ operatorId: { not: null } }, { NOT: NO_SUPPORT_SESSION }] };
+const NOT_BY_SUPPORT: Where = { AND: [{ operatorId: null }, NO_SUPPORT_SESSION] };
+const IS_KIOSK: Where = { action: { in: [...KIOSK_ACTIONS] } };
+const NOT_KIOSK: Where = { action: { notIn: [...KIOSK_ACTIONS] } };
+/** `sourceOf`'s "Staff (account removed)" test, and its exact complement. */
+const STAFF_ONLY: Where = { OR: [{ action: { in: [...STAFF_ONLY_ACTIONS] } }, { AND: [metaIs(["actorType"], "user"), { OR: absent(["actorId"]) }] }] };
+const NOT_STAFF_ONLY: Where = { AND: [{ action: { notIn: [...STAFF_ONLY_ACTIONS] } }, { OR: [metaIsNot(["actorType"], "user"), present(["actorId"])] }] };
+const STRIPE: Where = { OR: [{ action: { startsWith: "stripe." } }, { action: { startsWith: "member.payment." } }, { action: { in: [...STRIPE_ACTIONS] } }] };
+const NOT_STRIPE: Where = { AND: [{ NOT: { action: { startsWith: "stripe." } } }, { NOT: { action: { startsWith: "member.payment." } } }, { action: { notIn: [...STRIPE_ACTIONS] } }] };
+const MEMBER_APP: Where = { OR: [present(["actorId"]), metaIs(["collectedBy"], "self"), { action: { in: [...MEMBER_APP_ACTIONS] } }] };
+const NOT_MEMBER_APP: Where = { AND: [{ OR: absent(["actorId"]) }, metaIsNot(["collectedBy"], "self"), { action: { notIn: [...MEMBER_APP_ACTIONS] } }] };
+/** Past every test that names a person on staff: what is left is Stripe, the member app, or automatic. */
+const NO_STAFF: Where = { AND: [NOT_BY_SUPPORT, NOT_KIOSK, { action: { not: "attendance.card_scan" } }, { userId: null }, NOT_STAFF_ONLY] };
+
+/**
+ * The rows of one kind, as a query — `sourceOf`'s chain of tests, each step
+ * ANDed with the complement of the steps before it, so every row is in
+ * exactly one kind and the page's paging stays exact (no filtering after the
+ * fetch). Every complement is written out to be NULL-safe (see `absent`).
+ * MatFlow support is the owner's alone; a manager's rows never include it
+ * (`visibleWhere`).
+ */
+export function actorKindWhere(kind: ActorKind): Where {
+  switch (kind) {
+    case "support":
+      return BY_SUPPORT;
+    case "staff":
+      return { AND: [NOT_BY_SUPPORT, NOT_KIOSK, { OR: [{ action: "attendance.card_scan" }, { userId: { not: null } }, STAFF_ONLY] }] };
+    case "members":
+      return { OR: [{ AND: [NOT_BY_SUPPORT, IS_KIOSK] }, { AND: [NO_STAFF, NOT_STRIPE, MEMBER_APP] }] };
+    case "automatic":
+      return { AND: [NO_STAFF, { OR: [STRIPE, NOT_MEMBER_APP] }] };
+  }
 }
 
 function undoOf(row: FeedRow, decision: UndoDecision | undefined, lookups: ActivityLookups): FeedUndo | undefined {
