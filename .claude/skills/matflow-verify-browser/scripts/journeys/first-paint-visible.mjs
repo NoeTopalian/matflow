@@ -1,7 +1,8 @@
 // Speed quick wins (S1, 6 Nov 2026): the server-rendered first view is visible before React loads, the staff shell is
 // not remounted on navigation, the session is not refetched on load or tab return, secondary sidebar links are not
-// prefetched, and the service worker answers navigations with navigation preload and keeps one static cache.
-// Desktop and phone width. Needs `fixture.mjs create` and `server.mjs start` (run-journeys.mjs does both).
+// prefetched, and the service worker answers navigations with navigation preload, keeps one static cache and serves
+// its offline page. The CSS page fade never drops below 0.6, replays per page and not on the shell, and is off under
+// reduced motion. Keyboard pass through the sidebar. Desktop and phone width. Needs `fixture.mjs create` and `server.mjs start` (run-journeys.mjs does both).
 //   node journeys/first-paint-visible.mjs
 import { chromium, state, ledger, shot, context, ownerSignIn, memberLogin, memberSignIn } from "../lib.mjs";
 
@@ -56,6 +57,16 @@ try {
       const v = await visibility(".dash-content")(p);
       L.check("before-hydration", `V2 ${label}: ${path} with JavaScript off shows the page content, opacity 1`, visible(v) && !/\/login/.test(p.url()), { ...v, at: new URL(p.url()).pathname });
       L.check("before-hydration", `V3 ${label}: ${path} server HTML has no hidden page-transition wrapper`, !html.includes("data-page-transition"), { length: html.length });
+      // The CSS page fade runs without JavaScript, never below 0.6, and ends at 1.
+      const fade = await p.evaluate(async () => {
+        const page = document.querySelector(".dash-content > *");
+        if (!page) return { found: false };
+        const s = getComputedStyle(page);
+        const now = Number(s.opacity);
+        await Promise.all(page.getAnimations().map((a) => a.finished.catch(() => {})));
+        return { found: true, animation: s.animationName, now, settled: Number(getComputedStyle(page).opacity) };
+      });
+      L.check("fade", `F1 ${label}: ${path} page fades in by CSS alone, readable throughout (≥ 0.6) and settles at 1`, fade.found && fade.animation === "page-fade" && fade.now >= 0.6 && fade.settled === 1, fade);
       if (label === "phone") {
         const m = await p.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
         L.check("mobile", `M1 ${path} at 390 px with JavaScript off has no horizontal page scroll`, m.scroll <= m.width + 1, m);
@@ -114,16 +125,53 @@ try {
   const after = await page.evaluate(() => {
     let o = 1;
     for (let n = document.querySelector(".dash-content"); n && n.nodeType === 1; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
-    return { kept: document.querySelector("aside")?.dataset.s1Mark === "kept", opacity: o };
+    const pageRoot = document.querySelector(".dash-content > *");
+    const aside = document.querySelector("aside");
+    return {
+      kept: aside?.dataset.s1Mark === "kept",
+      opacity: o,
+      pageAnimation: pageRoot ? getComputedStyle(pageRoot).animationName : null,
+      pageOpacity: pageRoot ? Number(getComputedStyle(pageRoot).opacity) : null,
+      shellAnimation: aside ? getComputedStyle(aside).animationName : null,
+    };
   });
   L.check("navigation", "N1 moving Dashboard → Members keeps the sidebar (no full remount)", after.kept, after);
-  L.check("navigation", "N2 the new page is fully visible straight after the move", after.opacity === 1, after);
-  // Secondary links still work when clicked (prefetch off only).
-  await page.locator("aside").getByRole("link", { name: "Reports", exact: true }).click();
+  L.check("navigation", "N2 the new page is visible straight after the move (wrapper at 1, page never below 0.6)", after.opacity === 1 && after.pageOpacity >= 0.6, after);
+  L.check("fade", "F2 the fade replays on the new page and not on the persistent shell", after.pageAnimation === "page-fade" && after.shellAnimation === "none", after);
+
+  // Keyboard through the sidebar: Tab from Dashboard reaches the links in order with a visible focus indicator,
+  // and Enter on a secondary link (prefetch off) opens it.
+  await page.locator("aside").getByRole("link", { name: "Dashboard", exact: true }).focus();
+  const tabbed = [];
+  let reached = false;
+  for (let i = 0; i < 30; i++) {
+    const f = await page.evaluate(() => {
+      const e = document.activeElement;
+      const st = getComputedStyle(e);
+      return { inSidebar: !!e.closest("aside"), text: (e.textContent || "").trim(), ring: !st.outlineStyle.startsWith("none") || st.boxShadow !== "none" };
+    });
+    if (f.inSidebar) tabbed.push(f);
+    if (f.text === "Reports") { reached = true; break; }
+    await page.keyboard.press("Tab");
+  }
+  L.check("keyboard", "K1 Tab moves through the sidebar links from Dashboard to Reports", reached && tabbed.length >= 3, tabbed.map((t) => t.text));
+  L.check("keyboard", "K2 every sidebar link reached shows a visible focus indicator", tabbed.length > 0 && tabbed.every((t) => t.ring), tabbed.filter((t) => !t.ring).map((t) => t.text));
+  await page.keyboard.press("Enter");
   await page.waitForURL(/\/dashboard\/reports/);
   const rep = await visibility(".dash-content")(page);
-  L.check("navigation", "N3 a secondary link (Reports) still opens its page when clicked", visible(rep), rep);
+  L.check("navigation", "N3 Enter on a secondary link (Reports, prefetch off) opens its page", visible(rep), rep);
   await shot(page, "first-paint-desktop-reports");
+
+  // Reduced motion: no fade (JavaScript off, so this is the server render on its own).
+  const calm = await context(browser, "10.93.0.9", { reducedMotion: "reduce", javaScriptEnabled: false, storageState: signedIn });
+  const cp = await calm.newPage();
+  await cp.goto("/dashboard");
+  const calmFade = await cp.evaluate(() => {
+    const el = document.querySelector(".dash-content > *");
+    return el ? { animation: getComputedStyle(el).animationName, opacity: Number(getComputedStyle(el).opacity) } : null;
+  });
+  L.check("fade", "F3 prefers-reduced-motion: no fade, the page is at 1 from the first paint", !!calmFade && calmFade.animation === "none" && calmFade.opacity === 1, calmFade);
+  await calm.close();
 
   // ── Service worker (its own context: journeys block service workers by default). ───────────────────────────
   const swctx = await context(browser, "10.93.0.8", { serviceWorkers: "allow", storageState: signedIn });
@@ -147,6 +195,15 @@ try {
   L.note("service-worker", "W3 navigation preload header seen on the reload", preloadHeader);
   const keys = await sp.evaluate(() => caches.keys());
   L.check("service-worker", "W4 only the current static cache exists", keys.every((k) => k === "matflow-static-v2"), keys);
+  // Offline: the service worker answers the navigation with its offline page (the preload fails, then the network).
+  await swctx.setOffline(true);
+  await sp.reload({ waitUntil: "load" }).catch(() => {});
+  const offlineText = (await sp.textContent("body").catch(() => "")) ?? "";
+  L.check("service-worker", "W5 offline: a reload shows the offline page", offlineText.includes("You're offline"), offlineText.slice(0, 120));
+  await swctx.setOffline(false);
+  await sp.reload({ waitUntil: "load" });
+  const back = await visibility(".dash-content")(sp);
+  L.check("service-worker", "W6 back online: the next reload renders the page again", visible(back), back);
   await swctx.close();
 
   L.check("journey", "J2 no uncaught page errors", errors.length === 0, errors);

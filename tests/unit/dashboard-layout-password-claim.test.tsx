@@ -61,4 +61,25 @@ describe("dashboard layout temporary-password backstop", () => {
     expect(h.userFindFirst).not.toHaveBeenCalled();
     expect(h.userFindUnique).not.toHaveBeenCalled();
   });
+
+  // Behaviour change, stated in PR #76: support (an operator's impersonation
+  // session) on a club whose owner still holds a temporary password. auth.ts
+  // clears the claim on the support token on purpose — support cannot choose
+  // the owner's password, so the gate only kept it from SEEING the dashboard —
+  // and proxy.ts already let it through. The layout used to re-read the
+  // owner's row and send support to /set-password anyway; it now follows the
+  // claim, so support sees the dashboard.
+  it("a support session on a temporary-password owner sees the dashboard (the owner's row is not consulted)", async () => {
+    h.userFindFirst.mockResolvedValue({ mustChangePassword: true });
+    h.userFindUnique.mockResolvedValue({ mustChangePassword: true });
+    h.user = { ...BASE, role: "owner", impersonatedBy: "op_support_1", supportScope: "view", mustChangePassword: false };
+    await expect(DashboardLayout({ children: <p>page body</p> })).resolves.toBeTruthy();
+    expect(h.userFindFirst).not.toHaveBeenCalled();
+    expect(h.userFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("the owner themself, signed in with that temporary password, is still sent to /set-password", async () => {
+    h.user = { ...BASE, role: "owner", mustChangePassword: true };
+    await expect(DashboardLayout({ children: <p>page body</p> })).rejects.toThrow("REDIRECT:/set-password");
+  });
 });

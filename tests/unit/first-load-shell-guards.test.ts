@@ -71,6 +71,11 @@ function clientGraph(): Set<string> {
   return (graph = seen);
 }
 
+/** A value import of zod or any zod subpath (zod/v4, zod/mini, …); `import type` is erased and allowed. */
+const importsZod = (src: string) =>
+  /^\s*(?:import|export)\s+(?!type\b)[^;]*?from\s*["']zod(?:\/[^"']*)?["']/m.test(src) ||
+  /^\s*import\s*["']zod(?:\/[^"']*)?["']/m.test(src);
+
 const staticImport = (src: string, mod: string) =>
   new RegExp(`^\\s*import\\s[^;]*?from\\s*["']${mod.replace(/[/.]/g, "\\$&")}["']`, "m").test(src) ||
   new RegExp(`^\\s*import\\s*["']${mod.replace(/[/.]/g, "\\$&")}["']`, "m").test(src);
@@ -85,19 +90,58 @@ describe("2a: no route wrapper hides the server-rendered page", () => {
   });
 });
 
+describe("2a: the page swap is a CSS fade that never hides the page", () => {
+  const css = read("app/globals.css").replace(/\r\n/g, "\n");
+  const keyframes = css.match(/@keyframes page-fade\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+
+  it("starts visible: the first frame is at least 0.5 opaque, and it ends at 1", () => {
+    const from = Number(keyframes.match(/from\s*\{\s*opacity:\s*([\d.]+)/)?.[1]);
+    const to = Number(keyframes.match(/to\s*\{\s*opacity:\s*([\d.]+)/)?.[1]);
+    expect(from).toBeGreaterThanOrEqual(0.5);
+    expect(to).toBe(1);
+  });
+
+  it("animates opacity only, with the motion tokens, and holds nothing after it ends", () => {
+    expect(keyframes).not.toMatch(/transform|visibility|display/);
+    const rule = css.match(/\n\.page-fade > \* \{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).toMatch(/animation:\s*page-fade var\(--dur-[a-z]+\) var\(--ease-[a-z-]+\);/);
+    // No fill-mode: once it ends nothing keeps an opacity (or a stacking context) on the page.
+    expect(rule).not.toMatch(/\b(both|forwards|backwards)\b/);
+  });
+
+  it("is off under prefers-reduced-motion", () => {
+    const reduced = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
+    expect(reduced).toMatch(/\.page-fade > \*[^{]*\{\s*animation:\s*none;/);
+  });
+
+  it("sits on the content wrappers only, so it replays per page and never on the persistent shell", () => {
+    expect(read("app/dashboard/layout.tsx")).toMatch(/className="dash-content page-fade /);
+    expect(read("app/member/layout.tsx")).toMatch(/className="page-fade /);
+    expect(SOURCES.filter((p) => /\bpage-fade\b/.test(read(p))).map((p) => p.replace(/\\/g, "/")).sort()).toEqual(["app/dashboard/layout.tsx", "app/member/layout.tsx"]);
+  });
+});
+
 describe("2d: what every page loads", () => {
   it("instrumentation-client.ts imports neither the Sentry SDK nor zod statically", () => {
     const src = read("instrumentation-client.ts");
     expect(staticImport(src, "@sentry/nextjs")).toBe(false);
     expect(staticImport(src, "./sentry.client.config")).toBe(false);
-    expect(staticImport(src, "zod")).toBe(false);
+    expect(importsZod(src)).toBe(false);
   });
   it("nothing bundled for the browser imports zod directly (lib/zod-client sets jitless first)", () => {
-    const offenders = [...clientGraph()].filter((p) => p !== "lib/zod-client.ts" && staticImport(read(p), "zod"));
+    const offenders = [...clientGraph()].filter((p) => p !== "lib/zod-client.ts" && importsZod(read(p)));
     expect(offenders).toEqual([]);
   });
   it("nothing bundled for the browser imports the Sentry SDK statically", () => {
     expect([...clientGraph()].filter((p) => staticImport(read(p), "@sentry/nextjs"))).toEqual([]);
+  });
+  it("the zod check covers subpaths and ignores type-only imports", () => {
+    expect(importsZod('import { z } from "zod";')).toBe(true);
+    expect(importsZod('import { z } from "zod/v4";')).toBe(true);
+    expect(importsZod('import * as z from "zod/mini";')).toBe(true);
+    expect(importsZod('export { z } from "zod";')).toBe(true);
+    expect(importsZod('import type { ZodType } from "zod";')).toBe(false);
+    expect(importsZod('import { z } from "@/lib/zod-client";')).toBe(false);
   });
   it("the graph walk sees the modules it must (sanity)", () => {
     const g = clientGraph();
