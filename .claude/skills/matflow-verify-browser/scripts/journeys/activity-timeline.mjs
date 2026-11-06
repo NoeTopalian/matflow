@@ -587,6 +587,11 @@ try {
     return { firstLoadRequests: requests };
   });
 
+  // ── Manager ────────────────────────────────────────────────────────────────
+  const mctx = await context(browser, "10.94.9.3");
+  const mpage = await mctx.newPage();
+  mpage.on("pageerror", (e) => errors.push(e.message));
+  watchNetwork(mpage);
   await section(
     "manager",
     "a manager: the page opens; no Undo; no owner-only rows or types by any link; no values in edits; a plan is not a link; every link opens; the undo routes refuse them by role",
