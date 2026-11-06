@@ -399,37 +399,63 @@ export async function POST(req: Request) {
   // stored import file of the club HERE, before the database erasure: a file
   // store call is a network call and cannot join the transaction below. A file
   // that names the subject and cannot be rewritten refuses the whole erasure.
-  const toSubject = (m: { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null }): ErasureSubject => ({
+  type SubjectRow = { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null };
+  // An unverified address is the subject's own only when no other member of the club holds it: the second adult at
+  // a TeamUp address keeps the FIRST adult's login there (lib/importers/teamup.ts), and erasing them must not blank it.
+  const toSubject = async (m: SubjectRow): Promise<ErasureSubject> => ({
     memberId: m.id,
     sourceKey: m.externalRef,
     email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
     unverifiedEmail: m.unverifiedEmail,
+    unverifiedEmailShared: m.unverifiedEmail
+      ? (await withTenantContext(tenantId, (tx) =>
+          tx.member.count({
+            where: {
+              tenantId,
+              id: { not: m.id },
+              OR: [{ email: { equals: m.unverifiedEmail!, mode: "insensitive" } }, { unverifiedEmail: { equals: m.unverifiedEmail!, mode: "insensitive" } }],
+            },
+          }),
+        )) > 0
+      : false,
     name: m.name,
   });
   // The member, and the children this erasure deletes with them (strategy "cascade").
-  const importSubjects: ErasureSubject[] = [
-    toSubject({ id: memberId, name: member.name, email: originalEmail, externalRef: originalExternalRef, unverifiedEmail: member.unverifiedEmail }),
-    ...(activeChildren > 0 && childStrategyParam === "cascade"
-      ? (
-          await withTenantContext(tenantId, (tx) =>
-            tx.member.findMany({
-              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
-              select: { id: true, name: true, email: true, externalRef: true, unverifiedEmail: true },
-            }),
-          )
-        ).map(toSubject)
-      : []),
-  ];
+  const childRows: SubjectRow[] =
+    activeChildren > 0 && childStrategyParam === "cascade"
+      ? await withTenantContext(tenantId, (tx) =>
+          tx.member.findMany({
+            where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+            select: { id: true, name: true, email: true, externalRef: true, unverifiedEmail: true },
+          }),
+        )
+      : [];
+  const importSubjects: ErasureSubject[] = [];
+  for (const m of [{ id: memberId, name: member.name, email: originalEmail, externalRef: originalExternalRef, unverifiedEmail: member.unverifiedEmail }, ...childRows]) {
+    importSubjects.push(await toSubject(m));
+  }
+  // The file rewrites cannot roll back with the transaction below, so they are
+  // recorded on their own, durably, whether the walk finishes or stops part-way:
+  // if the erasure then refuses, the record says files already lost the rows.
   const importFiles = { files: 0, rows: 0, cells: 0 };
+  const recordFileRewrites = async () => {
+    if (importFiles.files === 0) return;
+    await logAudit({
+      tenantId,
+      userId: ownerUserId,
+      action: "member.dsar_erase.import_files",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: { importFilesRewritten: importFiles.files, importFileRowsRemoved: importFiles.rows, importFileCellsBlanked: importFiles.cells, subjects: importSubjects.length },
+      durable: true,
+      req,
+    });
+  };
   try {
-    for (const subject of importSubjects) {
-      const r = await eraseSubjectFromImportFiles(tenantId, subject);
-      importFiles.files += r.files;
-      importFiles.rows += r.rows;
-      importFiles.cells += r.cells;
-    }
+    for (const subject of importSubjects) await eraseSubjectFromImportFiles(tenantId, subject, importFiles);
   } catch (err) {
     console.error("[dsar/erase] import files could not be rewritten; nothing else was erased", err);
+    await recordFileRewrites();
     return NextResponse.json(
       {
         error:
@@ -441,21 +467,7 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-  // The file rewrites cannot roll back with the transaction below, so they are
-  // recorded on their own now: if the erasure then refuses, the record says
-  // which files already lost the member's rows. Counts only.
-  if (importFiles.files > 0) {
-    await logAudit({
-      tenantId,
-      userId: ownerUserId,
-      action: "member.dsar_erase.import_files",
-      entityType: "Member",
-      entityId: memberId,
-      metadata: { importFilesRewritten: importFiles.files, importFileRowsRemoved: importFiles.rows, importFileCellsBlanked: importFiles.cells, subjects: importSubjects.length },
-      durable: true,
-      req,
-    });
-  }
+  await recordFileRewrites();
   // Counted here, written in the transaction below (the fulfilment record goes first).
   let importDiagnosticsEntries = 0;
   for (const subject of importSubjects) {

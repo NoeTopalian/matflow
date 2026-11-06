@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   files: new Map<string, Uint8Array>(),
   jobs: [] as Array<{ tenantId: string; fileBlobUrl: string }>,
-  uploads: [] as Array<{ tenantId: string; id: string }>,
+  uploads: [] as Array<{ tenantId: string; id: string; status?: string; expiresAt?: Date }>,
   rewritten: [] as Array<{ url: string; text: string }>,
 }));
 
@@ -22,7 +22,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) =>
     fn({
       importJob: { findMany: async ({ where }: { where: { tenantId: string } }) => h.jobs.filter((j) => j.tenantId === where.tenantId && j.fileBlobUrl !== "") },
-      importUpload: { findMany: async ({ where }: { where: { tenantId: string } }) => h.uploads.filter((u) => u.tenantId === where.tenantId) },
+      importUpload: { findMany: async ({ where }: { where: { tenantId: string } }) => h.uploads.filter((u) => u.tenantId === where.tenantId).map((u) => ({ status: "complete", expiresAt: new Date(0), ...u })) },
     }),
 }));
 
@@ -129,6 +129,27 @@ describe("scrubSubjectFromDiagnostics", () => {
     expect(scrubSubjectFromDiagnostics(entries, ADA)).toEqual({ value: entries, scrubbed: 0 });
   });
 
+  it("a child's entry holding the parent's address has the address blanked, not the entry removed", () => {
+    const exceptions = [{ kind: "guardian_suggested", childName: "Zara Obi", detail: "ada@example.test" }];
+    expect(scrubSubjectFromDiagnostics(exceptions, ADA).value).toEqual([{ kind: "guardian_suggested", childName: "Zara Obi", detail: "" }]);
+  });
+
+  it("matches the '<name> (…' form a guardian suggestion writes", () => {
+    expect(scrubSubjectFromDiagnostics(["Ada Obi (shared email)", "Ada Obinna (shared email)"], ADA).value).toEqual(["Ada Obinna (shared email)"]);
+  });
+
+  it("a shared unverified address (another member's login) finds the subject's rows but is never blanked", () => {
+    // The second adult at a TeamUp address keeps the first adult's login as their unverified address.
+    const second: ErasureSubject = { memberId: "m_tom", sourceKey: "teamup:ada@example.test|tom obi", email: null, unverifiedEmail: "ada@example.test", unverifiedEmailShared: true, name: "Tom Obi" };
+    const file = "Customer Name,Customer Email\r\nAda Obi,ada@example.test\r\nTom Obi,ada@example.test\r\n";
+    expect(removeSubjectRows(file, second)).toEqual({ text: "Customer Name,Customer Email\r\nAda Obi,ada@example.test\r\n", removed: 1, blanked: 0 });
+    expect(scrubSubjectFromDiagnostics([{ name: "Ada Obi", email: "ada@example.test" }], second).scrubbed).toBe(0);
+  });
+
+  it("with no recognised name column, a same-named cell in another person's row is not blanked", () => {
+    expect(removeSubjectRows("Who,Contact\nAda Obi,ben@example.test\n", ADA)).toMatchObject({ removed: 0, blanked: 0 });
+  });
+
   it("matches the 'of <name>' form", () => {
     expect(scrubSubjectFromDiagnostics(["Parent/guardian of Zara Obi", "Parent/guardian of Zara Obinna"], KID).value).toEqual(["Parent/guardian of Zara Obinna"]);
   });
@@ -152,6 +173,26 @@ describe("eraseSubjectFromImportFiles", () => {
     expect(out).toMatchObject({ files: 3, rows: 3 });
     expect(h.rewritten.map((r) => r.url).sort()).toEqual(["db-upload://stray", "db-upload://up1", "https://abc.blob.vercel-storage.com/tenants/t1/imports/a.csv"]);
     for (const r of h.rewritten) expect(r.text.toLowerCase()).not.toMatch(/(^|,)ada@example\.test/m);
+  });
+
+  it("skips an upload still arriving in chunks; an abandoned (expired) one is rewritten", async () => {
+    h.uploads = [
+      { tenantId: "t1", id: "arriving", status: "open", expiresAt: new Date(Date.now() + 3_600_000) },
+      { tenantId: "t1", id: "abandoned", status: "open", expiresAt: new Date(Date.now() - 3_600_000) },
+    ];
+    for (const id of ["arriving", "abandoned"]) h.files.set(`db-upload://${id}`, Buffer.from("Name,Email\nAda Obi,ada@example.test\n", "utf8"));
+    expect(await eraseSubjectFromImportFiles("t1", ADA)).toMatchObject({ files: 1, rows: 1 });
+    expect(h.rewritten.map((r) => r.url)).toEqual(["db-upload://abandoned"]);
+  });
+
+  it("reports progress as it goes, so the files already rewritten are known when a later one fails", async () => {
+    h.uploads = [{ tenantId: "t1", id: "a" }, { tenantId: "t1", id: "b" }];
+    for (const id of ["a", "b"]) h.files.set(`db-upload://${id}`, Buffer.from("Name,Email\nAda Obi,ada@example.test\n", "utf8"));
+    const storage = await import("@/lib/import-storage");
+    vi.mocked(storage.rewriteImportFile).mockImplementationOnce(async () => {}).mockRejectedValueOnce(new Error("store down"));
+    const progress = { files: 0, rows: 0, cells: 0 };
+    await expect(eraseSubjectFromImportFiles("t1", ADA, progress)).rejects.toThrow("store down");
+    expect(progress).toEqual({ files: 1, rows: 1, cells: 0 });
   });
 
   it("a rewrite failure is thrown, so the erasure refuses rather than reporting success", async () => {

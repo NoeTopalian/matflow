@@ -24,7 +24,17 @@
  *  - Diagnostics: an entry that is the subject's (their id, their key, or
  *    their name or address with no other person's identifier in it) is
  *    removed; in another person's entry, a field holding the subject's address
- *    is blanked. Names are matched whole, as `<name>: …` and as `… of <name>`.
+ *    is blanked. Names are matched whole, as `<name>: …`, `<name> (…` and
+ *    `… of <name>`. An entry is another person's when it carries their
+ *    address, key, member id, or a name field that is not the subject's.
+ *    Residual, accepted: an entry for a DIFFERENT person of the same name
+ *    that carries no address, key or id of its own cannot be told apart from
+ *    the subject's, and is removed with theirs.
+ *  - An unverified address is the subject's own only when no other member of
+ *    the club holds it (`unverifiedEmailShared`); a shared one — the second
+ *    adult at a TeamUp address keeps the first adult's login there — only
+ *    helps find the subject's rows and is never blanked.
+ *  - A chunked upload still arriving (open and not yet expired) is skipped.
  *
  * Counts only leave this module; never a value from a file.
  */
@@ -40,6 +50,8 @@ export type ErasureSubject = {
   email: string | null;
   /** Member.unverifiedEmail before the erasure. */
   unverifiedEmail?: string | null;
+  /** True when another member of the club holds `unverifiedEmail` as their email or unverified address. */
+  unverifiedEmailShared?: boolean;
   /** The name before the erasure. */
   name: string | null;
 };
@@ -60,8 +72,8 @@ type Who = {
 
 function who(subject: ErasureSubject): Who {
   const keys = new Set<string>();
-  const ownAddresses = new Set([subject.email, subject.unverifiedEmail].filter(nonEmpty).map(norm));
-  const rowAddresses = new Set(ownAddresses);
+  const ownAddresses = new Set([subject.email, subject.unverifiedEmailShared ? null : subject.unverifiedEmail].filter(nonEmpty).map(norm));
+  const rowAddresses = new Set([...ownAddresses, ...[subject.unverifiedEmail].filter(nonEmpty).map(norm)]);
   const names = new Set([subject.name].filter(nonEmpty).map(norm).filter((n) => n !== "deleted member"));
   if (nonEmpty(subject.sourceKey)) {
     const key = norm(subject.sourceKey);
@@ -210,7 +222,8 @@ export function removeSubjectRows(text: string, subject: ErasureSubject): { text
     let changed = 0;
     const cells = r.cells.map((c, j) => {
       const v = norm(c);
-      if (v && (w.ownAddresses.has(v) || (!nameCols.has(j) && w.names.has(v)))) { changed += 1; return ""; }
+      // A name is blanked only outside a recognised name column; with no name column there is no telling.
+      if (v && (w.ownAddresses.has(v) || (nameCols.size > 0 && !nameCols.has(j) && w.names.has(v)))) { changed += 1; return ""; }
       return c;
     });
     if (changed === 0) return;
@@ -243,11 +256,11 @@ function hasOwnAddress(s: string, w: Who): boolean {
   return false;
 }
 
-/** The string is the subject's name, `<name>: …`, or `… of <name>`. */
+/** The string is the subject's name, `<name>: …`, `<name> (…`, or `… of <name>`. */
 function hasOwnName(s: string, w: Who): boolean {
   const v = norm(s);
   for (const n of w.names) {
-    if (v === n || v.startsWith(`${n}:`)) return true;
+    if (v === n || v.startsWith(`${n}:`) || v.startsWith(`${n} (`)) return true;
     if (new RegExp(`\\bof ${escapeRe(n)}($|[^a-z])`).test(v)) return true;
   }
   return false;
@@ -270,7 +283,11 @@ function verdict(entry: Record<string, unknown>, w: Who): Verdict {
   if (entry.memberId === w.memberId) return { kind: "remove" };
   if (Array.isArray(entry.memberIds) && entry.memberIds.includes(w.memberId)) return { kind: "remove" };
   const strings = Object.entries(entry).filter((e): e is [string, string] => typeof e[1] === "string");
-  const otherPerson = (typeof entry.memberId === "string" && entry.memberId !== "") || strings.some(([, v]) => otherIdentifier(v, w));
+  const otherPerson =
+    (typeof entry.memberId === "string" && entry.memberId !== "") ||
+    strings.some(([, v]) => otherIdentifier(v, w)) ||
+    // A name field naming someone else (a child's entry that carries the parent's address).
+    strings.some(([k, v]) => /name$/i.test(k) && v.trim() !== "" && !hasOwnName(v, w));
   if (!otherPerson && strings.some(([, v]) => w.keys.has(norm(v)))) return { kind: "remove" };
   const addressFields = strings.filter(([, v]) => w.ownAddresses.has(norm(v)) || hasOwnAddress(v, w)).map(([k]) => k);
   const nameHit = strings.some(([, v]) => hasOwnName(v, w));
@@ -353,15 +370,22 @@ export async function eraseSubjectFromImportDiagnostics(tx: DiagTx, tenantId: st
  * report success while the rows survive. Each file is rewritten in place
  * (same address), so a failure leaves the old content, never a lost file.
  */
-export async function eraseSubjectFromImportFiles(tenantId: string, subject: ErasureSubject): Promise<{ files: number; rows: number; cells: number }> {
+export async function eraseSubjectFromImportFiles(
+  tenantId: string,
+  subject: ErasureSubject,
+  /** Added to as each file is rewritten, so a caller knows what already changed when a later file throws. */
+  progress: { files: number; rows: number; cells: number } = { files: 0, rows: 0, cells: 0 },
+): Promise<{ files: number; rows: number; cells: number }> {
   const [jobs, uploads] = await withTenantContext(tenantId, (tx) =>
     Promise.all([
       tx.importJob.findMany({ where: { tenantId, NOT: { fileBlobUrl: "" } }, select: { fileBlobUrl: true } }),
-      tx.importUpload.findMany({ where: { tenantId }, select: { id: true } }),
+      tx.importUpload.findMany({ where: { tenantId }, select: { id: true, status: true, expiresAt: true } }),
     ]),
   );
   const urls = new Set(jobs.map((j) => j.fileBlobUrl));
-  for (const u of uploads) urls.add(`${DB_UPLOAD_PREFIX}${u.id}`);
+  const now = new Date();
+  // An upload still arriving in chunks (open, not yet expired) is not rewritten under the browser's feet.
+  for (const u of uploads) if (!(u.status === "open" && u.expiresAt > now)) urls.add(`${DB_UPLOAD_PREFIX}${u.id}`);
   let files = 0;
   let rows = 0;
   let cells = 0;
@@ -375,6 +399,9 @@ export async function eraseSubjectFromImportFiles(tenantId: string, subject: Era
     files += 1;
     rows += r.removed;
     cells += r.blanked;
+    progress.files += 1;
+    progress.rows += r.removed;
+    progress.cells += r.blanked;
   }
   return { files, rows, cells };
 }
