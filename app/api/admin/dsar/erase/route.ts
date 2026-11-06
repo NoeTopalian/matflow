@@ -409,12 +409,8 @@ export async function POST(req: Request) {
   const pastIdentity = async (id: string): Promise<{ digests: string[]; names: string[] }> => {
     const rows = await withTenantContext(tenantId, (tx) =>
       tx.auditLog.findMany({
-        where: {
-          tenantId,
-          entityId: id,
-          action: "member.update",
-          OR: [{ metadata: { path: ["oldEmailSha256"], not: Prisma.AnyNull } }, { metadata: { path: ["changes", "name"], not: Prisma.AnyNull } }],
-        },
+        // Every edit row of this member (a handful), filtered below in code: no JSON-path filter to depend on.
+        where: { tenantId, entityId: id, action: "member.update" },
         select: { metadata: true },
       }),
     );
