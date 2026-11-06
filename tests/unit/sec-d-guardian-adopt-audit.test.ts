@@ -11,17 +11,32 @@ vi.mock("next/server", () => ({
   NextResponse: { json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body, headers: new Headers() }) },
 }));
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
-const { logAuditMock, memberFindFirst, memberUpdate, memberUpdateMany } = vi.hoisted(() => ({
+const { logAuditMock, memberFindFirst, memberUpdate, memberUpdateMany, archiveGuardLookup } = vi.hoisted(() => ({
   logAuditMock: vi.fn(async () => {}),
   memberFindFirst: vi.fn(),
+  archiveGuardLookup: vi.fn(async (_args?: unknown) => ({ archivedAt: null as Date | null })),
   memberUpdate: vi.fn().mockResolvedValue({}),
   memberUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: vi.fn(async () => ({ ok: true, tenantId: "t1", userId: "u-owner", role: "owner" })) }));
+/**
+ * PR 3: the route first asks lib/archived-member-guard whether the member is
+ * archived — a findFirst selecting only archivedAt. That lookup is answered
+ * here (a current member unless a case says otherwise), so the route's own
+ * queued lookups below stay in order. The guard itself runs for real.
+ */
+const isArchiveGuardLookup = (args: { select?: Record<string, unknown> } | undefined) =>
+  !!args?.select && Object.keys(args.select).length === 1 && args.select.archivedAt === true;
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn(addLoginClaimSql({ member: { findFirst: memberFindFirst, update: memberUpdate, updateMany: memberUpdateMany } }))),
+    Promise.resolve(fn(addLoginClaimSql({
+      member: {
+        findFirst: (args?: { select?: Record<string, unknown> }) => (isArchiveGuardLookup(args) ? archiveGuardLookup(args) : memberFindFirst(args)),
+        update: memberUpdate,
+        updateMany: memberUpdateMany,
+      },
+    }))),
 }));
 
 import { emailDigest } from "@/lib/login-email";

@@ -385,6 +385,9 @@ export const IGNORED_ID_KEYS = new Set([
   // PR 3: the kids archived or restored with a parent; the sentence names the parent only.
   "kidIds",
   "restoredKidIds",
+  // PR 3: whose card subscriptions a removal set to end — read by Restore's
+  // billing warning, never shown; the sentence names the member removed.
+  "stripeCancelledMemberIds",
   "bookingsKeptIneligibleClassIds",
   "classIds",
   "folderId",
