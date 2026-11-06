@@ -38,6 +38,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!parsed.success) return apiError("Invalid data", 400);
 
   const { childMemberId } = parsed.data;
+  { const archivedChild = await refuseArchivedMember(tenantId, childMemberId); if (archivedChild) return archivedChild; } // PR 3: an archived child is read-only too
 
   try {
     // A `kids` account may never be left without a guardian: the database CHECK

@@ -31,6 +31,8 @@ describe("refuseArchivedMember (PR 3: an archived record is read-only on the ser
     ]) {
       expect(readFileSync(f, "utf8"), f).toContain("refuseArchivedMember(");
     }
+    // unlink-child also refuses an archived CHILD, once the body names it.
+    expect(readFileSync("app/api/members/[id]/unlink-child/route.ts", "utf8")).toMatch(/refuseArchivedMember\(tenantId, childMemberId\)/);
     // Recording a payment against an archived member's debt stays allowed.
     expect(readFileSync("app/api/payments/manual/route.ts", "utf8")).not.toContain("refuseArchivedMember(");
   });

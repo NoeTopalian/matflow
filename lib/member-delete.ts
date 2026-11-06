@@ -173,8 +173,9 @@ export async function restoreMember(
   let parentErased = false;
   if (member.parentMemberId) {
     const parent = locked.find((r) => r.id === member.parentMemberId);
-    // An ERASED parent is no guardian any more: the child comes back as if it
-    // had none, and staff are told to link it to another parent if needed.
+    // An ERASED parent does not block the restore: the child comes back still
+    // linked to the scrubbed parent row (the link is not changed here), and
+    // staff are told to re-link it to another parent if it needs one.
     if (parent && ERASED_EMAIL.test(parent.email)) parentErased = true;
     else if (parent?.archivedAt) return { kind: "parent-archived", parentName: parent.name };
   }

@@ -35,6 +35,8 @@ import { planRefresh, planRefreshRollback, REFRESH_MEMBER_SELECT } from "@/lib/i
 import { POST as restorePOST } from "@/app/api/members/[id]/restore/route";
 import { PATCH as memberPATCH } from "@/app/api/members/[id]/route";
 import { POST as cardRevokePOST } from "@/app/api/members/[id]/card/revoke/route";
+import { DELETE as unlinkChildDELETE } from "@/app/api/members/[id]/unlink-child/route";
+import { archiveMember } from "@/lib/member-delete";
 import { DELETE as staffDELETE } from "@/app/api/staff/[id]/route";
 import { POST as reactivatePOST } from "@/app/api/staff/[id]/reactivate/route";
 import { GET as subjectsGET } from "@/app/api/admin/dsar/subjects/route";
@@ -380,6 +382,17 @@ describe.skipIf(!HAS_DB)(`PR 3 member archive and data requests on TEST${SKIP_NO
     as(ids.owner, "owner");
     const revoke = (await cardRevokePOST(new Request(`https://test.local/api/members/${pId}/card/revoke`, { method: "POST", headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" }, body: "{}" }), params(pId))) as unknown as { status: number };
     expect(revoke.status).toBe(409);
+    // unlink-child refuses an archived CHILD under a current parent too.
+    const [up, uk] = await withRlsBypass(async (tx) => {
+      const p2 = (await tx.member.create({ data: { tenantId: ids.tenant, name: "Unlink Parent", email: `${STAMP}-unp@example.test`, accountType: "parent" } })).id;
+      const k2 = (await tx.member.create({ data: { tenantId: ids.tenant, name: "Unlink Kid", email: `${STAMP}-unk@no-login.matflow.local`, accountType: "junior", parentMemberId: p2, guardianConfirmedAt: new Date() } })).id;
+      return [p2, k2];
+    });
+    await withRlsBypass((tx) => archiveMember(tx, { id: uk, tenantId: ids.tenant }, { userId: ids.owner, at: new Date() }));
+    as(ids.owner, "owner");
+    const unlink = (await unlinkChildDELETE(new Request(`https://test.local/api/members/${up}/unlink-child`, { method: "DELETE", headers: { origin: "https://test.local", host: "test.local", "content-type": "application/json" }, body: JSON.stringify({ childMemberId: uk }) }), params(up))) as unknown as { status: number };
+    expect(unlink.status).toBe(409);
+    expect((await withRlsBypass((tx) => tx.member.findUnique({ where: { id: uk }, select: { parentMemberId: true } })))?.parentMemberId).toBe(up);
     // The parent comes back with the child; a second restore is a no-op answered 200.
     expect((await restore(pId)).status).toBe(200);
     const again = await restore(pId);
