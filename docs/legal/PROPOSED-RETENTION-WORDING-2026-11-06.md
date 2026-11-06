@@ -1,7 +1,9 @@
-# Retention wording — Published with #72, approved by Noe 6 Nov 14:08
+# Retention wording — Published with #72, approved by Noe 6 Nov, revised lines approved the same evening
 
 Noe, 6 Nov 2026, 11:51: "remove for now but make note" (deferred). Noe, 6 Nov 2026, 14:08: "Yes, publish it with
-#72." The wording below is in `app/legal/privacy/page.tsx` (§6) and `app/legal/terms/page.tsx` (§8) in PR #72
+#72." The same evening he approved two revised lines, the signed-waiver line and the erasure line ("Publish both"),
+after the 6 Nov re-review found "everywhere we hold them" too strong while name-only import rows are kept and the
+waiver line read as a deletion at six years. The wording below is in `app/legal/privacy/page.tsx` (§6) and `app/legal/terms/page.tsx` (§8) in PR #72
 ("Keep every club record: no automatic deletion, Activity shows all history"), live once that PR is merged and
 deployed. The "Before" column records the text it replaces.
 
@@ -30,7 +32,8 @@ with no end date also needs a stated purpose; the proposal below states one.
 | Email delivery logs — twelve months, deleted by the same daily job | (merged into the line above) |
 | Expired sign-in links and password-reset links — purged daily, within 24 hours of expiry | Expired sign-in links and password-reset links — kept, and unusable once expired |
 | Closed gyms — a gym marked for deletion is recoverable for 30 days, after which its records are permanently erased | Closed gyms — kept with sign-in disabled so the gym can reopen. When the gym asks in writing, we erase the gym, its members' records and every file it stored; a record that the erasure happened and the gym's audit log are kept as evidence |
-| (none) | Erasure requests — when a gym asks us to erase a member, we remove that member's details everywhere we hold them, including kept import files and photos. True as of #72: the erasure also rewrites kept import files (rows found by the member's current and earlier addresses and names) and redacts the personal values recorded on the member's own Activity rows (`lib/audit-redact.ts`) |
+| Signed waivers — six years after the member leaves (UK limitation period) | Signed waivers — kept for as long as the gym uses MatFlow, and at least six years after the member leaves (UK limitation period), unless the gym asks us to erase that member |
+| (none) | Erasure requests — when a gym asks us to erase a member, we remove that member's details wherever we can identify them, including the Activity history, kept import files and photos. As of #72 the erasure rewrites kept import files (rows found by the member's current and earlier addresses and names; a row with only their name at another address is left, as it may be someone else, and reported to the owner) and redacts the personal values on the member's own Activity rows, including kiosk waiver rows keyed by their address (`lib/audit-redact.ts`) |
 
 ## Terms §8 (published)
 

@@ -1,6 +1,7 @@
 // The published retention wording matches the code (Noe, 6 Nov 2026 14:08: "Yes, publish it with #72").
 // Nothing of a club's is deleted automatically (docs/RULES.md §5d), so the legal pages must not promise a
 // scheduled deletion, and they must say what is kept and what an erasure removes.
+// Revised waiver and erasure lines approved by Noe the same evening ("Publish both").
 // Wording and what it replaced: docs/legal/PROPOSED-RETENTION-WORDING-2026-11-06.md.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -23,7 +24,9 @@ describe("legal retention wording", () => {
     expect(privacy).toContain("Nothing is deleted automatically.");
     expect(privacy).toContain("Expired sign-in links and password-reset links — kept, and unusable once expired");
     expect(privacy).toContain("Closed gyms — kept with sign-in disabled so the gym can reopen. When the gym asks in writing, we erase the gym");
-    expect(privacy).toContain("we remove that member's details everywhere we hold them, including kept import files and photos");
+    expect(privacy).toContain("Signed waivers — kept for as long as the gym uses MatFlow, and at least six years after the member leaves (UK limitation period), unless the gym asks us to erase that member");
+    expect(privacy).toContain("Erasure requests — when a gym asks us to erase a member, we remove that member's details wherever we can identify them, including the Activity history, kept import files and photos");
+    expect(privacy).not.toContain("everywhere we hold them");
   });
 
   it("terms §8 keeps the gym's data until it asks in writing", () => {

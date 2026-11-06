@@ -72,7 +72,10 @@ export default function PrivacyPage() {
         <h2 className="text-lg font-semibold text-white mb-2">6. Retention</h2>
         <ul className="list-disc pl-6 space-y-1">
           <li>Active member data — for as long as the gym remains a customer</li>
-          <li>Signed waivers — six years after the member leaves (UK limitation period)</li>
+          <li>
+            Signed waivers — kept for as long as the gym uses MatFlow, and at least six years after the member leaves
+            (UK limitation period), unless the gym asks us to erase that member
+          </li>
           <li>
             Audit logs (the gym&apos;s Activity history), email delivery logs, sign-in records and import files — kept
             for as long as the gym uses MatFlow, for the gym&apos;s own records and to resolve disputes. Nothing is
@@ -85,8 +88,8 @@ export default function PrivacyPage() {
             gym&apos;s audit log are kept as evidence
           </li>
           <li>
-            Erasure requests — when a gym asks us to erase a member, we remove that member&apos;s details everywhere we
-            hold them, including kept import files and photos
+            Erasure requests — when a gym asks us to erase a member, we remove that member&apos;s details wherever we
+            can identify them, including the Activity history, kept import files and photos
           </li>
           <li>
             Backups — our database provider keeps continuous point-in-time backups. The window depends on our current

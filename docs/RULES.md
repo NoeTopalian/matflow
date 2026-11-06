@@ -202,7 +202,8 @@ acts on is worse than an error they can see.
   counters; `tests/unit/retention-cron.test.ts` and `tests/integration/cron-smoke.test.ts` fail
   if it deletes anything else. Do not add a rule that deletes club data.
 - **The legal pages say this.** Privacy §6 and terms §8 state it (published with PR #72,
-  approved by Noe 6 Nov 2026 14:08; the wording and what it replaced are in
+  approved by Noe 6 Nov 2026 14:08, revised waiver and erasure lines approved the same evening; the
+  wording and what it replaced are in
   `docs/legal/PROPOSED-RETENTION-WORDING-2026-11-06.md`). Change the code and the pages together.
 - **Outside MatFlow's control:** Neon's point-in-time backups, Resend's dashboard and Vercel's
   runtime logs have their own provider windows. They are not the records; the tables are.
