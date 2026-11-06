@@ -108,12 +108,11 @@ describe("rank award — foreign blob URLs", () => {
     expect(m.photoCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("a stored foreign URL is never passed to del() when photos are replaced", async () => {
+  it("no stored URL, foreign or own, is passed to del() when photos are replaced (files are kept, 6 Nov 2026)", async () => {
     m.oldPhotos = [{ id: "p1", url: FOREIGN }, { id: "p2", url: OWN }, { id: "p3", url: "data:image/png;base64,AAAA" }];
     const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN }), params);
     expect(res.status).toBe(200);
-    expect(m.del).toHaveBeenCalledTimes(1);
-    expect(m.del).toHaveBeenCalledWith([OWN]);
+    expect(m.del).not.toHaveBeenCalled();
   });
 
   it("data: URLs keep working without any blob checks", async () => {

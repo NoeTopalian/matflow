@@ -446,6 +446,9 @@ model PushSubscription {
   auth      String
   userAgent String?
   createdAt DateTime @default(now())
+  /// Set when the push service reports the subscription gone (410). The row is
+  /// kept, never deleted (product rule, 6 Nov 2026), and is skipped when sending.
+  disabledAt DateTime?
 
   @@index([tenantId])
   @@index([memberId])
