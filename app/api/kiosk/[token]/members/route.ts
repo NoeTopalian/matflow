@@ -37,12 +37,7 @@ export async function GET(
 
   const ip = getClientIp(req);
   const tokenHash = hashToken(token);
-  // 300 a minute per tablet, up from 60 (speed quick win 2i, 6 Nov 2026): the
-  // type-ahead asks two to four times per person (200 ms debounce), so the
-  // name search has to keep pace with 150 check-ins a minute or the queue
-  // stalls on the search instead of the check-in. Results stay capped at
-  // MAX_RESULTS and need the kiosk token.
-  const rl = await checkRateLimit(`kiosk:lookup:${tokenHash.slice(0, 12)}:${ip}`, 300, 60_000);
+  const rl = await checkRateLimit(`kiosk:lookup:${tokenHash.slice(0, 12)}:${ip}`, 60, 60_000);
   if (!rl.allowed) {
     return NextResponse.json({ error: "Rate limited" }, { status: 429 });
   }

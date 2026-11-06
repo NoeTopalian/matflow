@@ -9,7 +9,6 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONCURRENT_INDEX_MIGRATIONS, isConcurrentIndexOnly } from "./migration-concurrent-indexes";
 
 const DIR = join(process.cwd(), "prisma", "migrations");
 // The first migration not yet on production when this rule began.
@@ -18,8 +17,6 @@ const FROM = "20260923220000";
 const recent = readdirSync(DIR)
   .filter((d) => /^\d{14}_/.test(d) && d.slice(0, 14) >= FROM)
   .sort();
-// One-statement CREATE INDEX CONCURRENTLY files: atomic by being one statement.
-const wrapped = recent.filter((d) => !CONCURRENT_INDEX_MIGRATIONS.has(d));
 
 function statements(sql: string): string[] {
   return sql
@@ -33,12 +30,7 @@ describe("migrations are all-or-nothing", () => {
     expect(recent.length).toBeGreaterThanOrEqual(6);
   });
 
-  it.each([...CONCURRENT_INDEX_MIGRATIONS])("%s (concurrent index) exists and is exactly one CREATE INDEX CONCURRENTLY", (dir) => {
-    expect(recent).toContain(dir);
-    expect(isConcurrentIndexOnly(readFileSync(join(DIR, dir, "migration.sql"), "utf8"))).toBe(true);
-  });
-
-  it.each(wrapped)("%s opens with BEGIN and closes with COMMIT", (dir) => {
+  it.each(recent)("%s opens with BEGIN and closes with COMMIT", (dir) => {
     const lines = statements(readFileSync(join(DIR, dir, "migration.sql"), "utf8"));
     expect(lines[0]?.toUpperCase()).toBe("BEGIN;");
     expect(lines[lines.length - 1]?.toUpperCase()).toBe("COMMIT;");

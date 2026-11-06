@@ -7,14 +7,14 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '15s';
 
 -- Speed quick win 2h (6 Nov 2026). lib/rate-limit.ts prunes the store with
--- `DELETE … WHERE "hitAt" < now() - 1 hour`, and lib/auth-lockout.ts counts and
--- clears by time too; the only index was ("bucket", "hitAt"), which a range on
--- "hitAt" alone cannot use, so every prune scanned the whole table.
+-- `DELETE … WHERE "hitAt" < now() - 1 hour` and no bucket. The only index was
+-- ("bucket", "hitAt"), which a range on "hitAt" alone cannot use, so every
+-- prune scanned the whole table. Every other read names its bucket and is
+-- already served by that index.
 --
--- A plain build, not CONCURRENTLY: the table is pruned to about an hour of
--- hits, so the build takes milliseconds, and it keeps this file inside the
--- repository's atomic, bounded-wait wrapper. If it cannot get its lock within
--- 5 s the deploy fails with nothing applied and is retried.
+-- The table is pruned to about an hour of hits, so the build takes
+-- milliseconds. If it cannot get its lock within 5 s the deploy fails with
+-- nothing applied and is retried.
 CREATE INDEX "RateLimitHit_hitAt_idx" ON "RateLimitHit"("hitAt");
 
 COMMIT;
