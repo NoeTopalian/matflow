@@ -40,6 +40,16 @@ describe("parseEraseArgs", () => {
     expect(src).toMatch(/purgeTenantById\(tenantId, new Date\(\), \(\) => false, \{ writtenRequest: reason \}\)/);
   });
 
+  it("the inner script repeats every guard itself, so running it directly skips nothing", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "scripts/erase-closed-club-run.ts"), "utf8");
+    const guards = src.indexOf("parseEraseArgs(argv()");
+    expect(guards).toBeGreaterThan(-1);
+    expect(src).toMatch(/resolveDbTarget\(process\.env\.DATABASE_URL/);
+    expect(src).toMatch(/if \(!process\.env\.BLOB_READ_WRITE_TOKEN\)/);
+    // Nothing connects before the guards: the database modules are imported after them.
+    expect(src.indexOf('await import("../lib/prisma-tenant")')).toBeGreaterThan(guards);
+  });
+
   it("nothing automatic calls it: no route, cron, workflow or package script names it", () => {
     const hits: string[] = [];
     const walk = (dir: string) => {

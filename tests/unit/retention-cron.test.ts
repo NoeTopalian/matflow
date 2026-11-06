@@ -468,6 +468,30 @@ describe("purgeTenantById — explicit erasure of one closed club", () => {
     }
   });
 
+  it("an erasure on a written request without the store's token is refused before anything changes", async () => {
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "");
+    try {
+      await expect(purgeTenantById("t1", NOW, () => false, { writtenRequest: "Email from the owner, 1 Nov 2026" })).rejects.toThrow(/BLOB_READ_WRITE_TOKEN/);
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+      expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+      expect(prisma.tenant.deleteMany).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("a listed file outside the club's store address is never deleted, and stops the erasure", async () => {
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token-not-real");
+    try {
+      vi.mocked(list).mockResolvedValueOnce({ blobs: [{ url: "https://s.blob.vercel-storage.com/tenants/t1/a.png" }, { url: "https://s.blob.vercel-storage.com/tenants/t2/b.png" }], hasMore: false } as never);
+      await expect(purgeTenantById("t1", NOW, () => false)).rejects.toThrow(/not under this club's store address/);
+      expect(del).not.toHaveBeenCalledWith(expect.arrayContaining(["https://s.blob.vercel-storage.com/tenants/t2/b.png"]));
+      expect(prisma.tenant.deleteMany).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("a store listing failure throws before the tenant row goes, so the claim stands for a retry", async () => {
     vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token-not-real");
     try {

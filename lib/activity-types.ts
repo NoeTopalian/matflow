@@ -171,7 +171,7 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     defaultOn: true,
   }),
   type({ key: "undo", label: "Undone changes", group: "Staff & club", icon: "RotateCcw", actions: [], prefixes: ["undo."], roles: OWNER, defaultOn: true }),
-  type({ key: "data_request", label: "Data requests", group: "Staff & club", icon: "ShieldCheck", actions: ["member.dsar_export", "member.dsar_erase", "member.dsar_erase.requested"], roles: OWNER, defaultOn: false }),
+  type({ key: "data_request", label: "Data requests", group: "Staff & club", icon: "ShieldCheck", actions: ["member.dsar_export", "member.dsar_erase", "member.dsar_erase.requested", "member.dsar_erase.import_files"], roles: OWNER, defaultOn: false }),
   type({ key: "staff", label: "Staff accounts", group: "Staff & club", icon: "Users", actions: labelled("staff."), roles: OWNER, defaultOn: false }),
   type({ key: "sign_in", label: "Sign-in and security", group: "Staff & club", icon: "Lock", actions: labelled("auth.", "user."), roles: OWNER, defaultOn: false }),
   type({

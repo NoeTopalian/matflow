@@ -1,16 +1,36 @@
 /**
- * The work behind scripts/erase-closed-club.mjs — run only through that runner, which checks the arguments, the
- * context (by hand, never automatic) and the database target first. See it for usage and exit codes.
+ * The work behind scripts/erase-closed-club.mjs (see it for usage and exit codes). It runs every guard again itself —
+ * the arguments, by hand only (no CI, Vercel or non-interactive shell), the database target and the file store's
+ * token — so running this file directly skips nothing.
  */
+import { parseEraseArgs, TargetRefused } from "./erase-closed-club.mjs";
+import { resolveDbTarget } from "./readiness/db-target.mjs";
+
+/** The runner hands its arguments over as JSON (ERASE_ARGS); run directly, this file reads its own. */
+function argv(): string[] {
+  const fromRunner = process.env.ERASE_ARGS;
+  if (fromRunner) {
+    const parsed: unknown = JSON.parse(fromRunner);
+    if (Array.isArray(parsed) && parsed.every((a) => typeof a === "string")) return parsed;
+    throw new TargetRefused("REFUSED: unreadable arguments");
+  }
+  return process.argv.slice(2);
+}
+
 async function run(): Promise<number> {
-  const tenantId = process.env.ERASE_TENANT_ID ?? "";
-  const reason = process.env.ERASE_REASON ?? "";
-  const confirm = process.env.ERASE_CONFIRM === "1";
-  if (!tenantId || !reason) {
-    console.error("REFUSED: run this through scripts/erase-closed-club.mjs");
+  let args: { tenantId: string; reason: string; expectHost: string; confirm: boolean };
+  try {
+    args = parseEraseArgs(argv(), { env: process.env, interactive: !!process.stdin.isTTY && !!process.stdout.isTTY });
+    resolveDbTarget(process.env.DATABASE_URL ?? "", { expectHost: args.expectHost, allowProduction: true });
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      throw new TargetRefused("REFUSED: BLOB_READ_WRITE_TOKEN is not set — the club's files must be erased with it");
+    }
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
     return 2;
   }
-  // Imported only after the runner's guard, so nothing connects before it passes.
+  const { tenantId, reason, confirm } = args;
+  // Imported only after the guards, so nothing connects before they pass.
   const { withRlsBypass } = await import("../lib/prisma-tenant");
   const { purgeTenantById } = await import("../lib/tenant-purge");
   const { isTenantRowBusyError } = await import("../lib/tenant-lifecycle");

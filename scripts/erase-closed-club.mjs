@@ -4,8 +4,11 @@
 // The only way a club's data is permanently erased is this runner, run BY HAND by Noe or an operator after the
 // club has asked in writing. Never by an agent, a cron, CI or any other automation (it refuses those below).
 //
-//   DATABASE_URL=<target> node scripts/erase-closed-club.mjs <tenantId> \
+//   DATABASE_URL=<target> BLOB_READ_WRITE_TOKEN=<that deployment's store token> \
+//     node scripts/erase-closed-club.mjs <tenantId> \
 //     --reason "<the written request: who asked, when, how>" --expect-host <ep-…> --confirm
+//
+//   BLOB_READ_WRITE_TOKEN is REQUIRED: the club's files are erased with it (refused without it).
 //
 //   <tenantId>     the club's id (the hub's club page shows it).
 //   --reason       REQUIRED, 10–500 characters. Recorded on the erasure-evidence audit row (admin.tenant.hard_deleted).
@@ -72,10 +75,12 @@ function main() {
     process.exit(2);
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
+  // The arguments travel as JSON in the environment (a Windows shell would split the reason at its spaces); the
+  // inner script runs every guard above again on them, so it cannot be used to skip one.
   const r = spawnSync("npx", ["tsx", path.join(here, "erase-closed-club-run.ts")], {
     stdio: "inherit",
     shell: process.platform === "win32",
-    env: { ...process.env, ERASE_TENANT_ID: args.tenantId, ERASE_REASON: args.reason, ERASE_CONFIRM: args.confirm ? "1" : "" },
+    env: { ...process.env, ERASE_ARGS: JSON.stringify(process.argv.slice(2)) },
   });
   process.exit(r.status ?? 1);
 }

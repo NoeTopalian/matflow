@@ -184,8 +184,8 @@ When you need to stop bleeding faster than fix-forward will allow:
 Permanent and irreversible. Only after the club has asked **in writing** for its data to be erased. No cron, CI job or route does this; the runner refuses CI, Vercel and non-interactive shells.
 1. Keep the written request (email or letter) with the date. Confirm the club is **closed** in the hub (Closed clubs). If it is open, close it first.
 2. Check billing: every member subscription must be cancellable (the runner cancels them first and stops, leaving the club intact and reopenable, if Stripe refuses one).
-3. Dry check, from a checkout with Node 24 and the target database URL in your own shell (never printed, never committed):
-   `DATABASE_URL=<target> node scripts/erase-closed-club.mjs <tenantId> --reason "<who asked, when, how>" --expect-host ep-bold-wave`
+3. Dry check, from a checkout with Node 24, with the target database URL **and that deployment's `BLOB_READ_WRITE_TOKEN`** in your own shell (never printed, never committed; the runner refuses without the token, because the club's files are erased with it):
+   `DATABASE_URL=<target> BLOB_READ_WRITE_TOKEN=<token> node scripts/erase-closed-club.mjs <tenantId> --reason "<who asked, when, how>" --expect-host ep-bold-wave`
    It shows the club (id, slug, closing date, member count) and changes nothing.
 4. Erase: the same command with `--confirm`. It cancels live subscriptions, claims the club (reopen is refused from here on), deletes its rows, **every file under its `tenants/<id>/` store prefix**, then the club row, with the evidence row `admin.tenant.hard_deleted` (members deleted, files deleted, the written request) in the same transaction. AuditLog rows are kept.
 5. Read the printed outcome:

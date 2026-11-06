@@ -1,4 +1,4 @@
-import { put, get, del } from "@vercel/blob";
+import { put, get } from "@vercel/blob";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -89,42 +89,73 @@ export async function readImportFile(url: string, tenantId?: string): Promise<st
 // it with the club (lib/tenant-purge.ts).
 
 /**
- * Replace a stored import file's content. Used ONLY by a member's erasure
- * (lib/importers/import-erasure.ts), to take that member's rows out of a kept
- * file. Returns the file's address: a Blob file is written anew (Blob files
- * cannot be edited) and the old one deleted, so the caller repoints the job;
- * the other two schemes are rewritten in place.
+ * A stored import file's raw bytes, or null when it is gone. Used by a member's
+ * erasure (lib/importers/import-erasure.ts), which must see the file exactly as
+ * stored (its encoding, a BOM). A chunked upload is read whatever its state —
+ * attached to a job or never used.
  */
-export async function rewriteImportFile(url: string, tenantId: string, text: string): Promise<string> {
-  const bytes = Buffer.from(text, "utf8");
+export async function readImportFileBytes(url: string, tenantId: string): Promise<Uint8Array | null> {
+  if (url.startsWith(DB_UPLOAD_PREFIX)) {
+    const ref = dbUploadRef(url, tenantId);
+    const chunks = await withTenantContext(ref.tenantId, (tx) =>
+      tx.importUploadChunk.findMany({ where: { uploadId: ref.id, tenantId: ref.tenantId }, orderBy: { index: "asc" }, select: { bytes: true } }),
+      { timeout: 45_000, maxWait: 10_000 },
+    );
+    return chunks.length === 0 ? null : Buffer.concat(chunks.map((c) => c.bytes));
+  }
+  if (url.startsWith(LOCAL_PREFIX)) {
+    if (!localAllowed()) throw new Error("Local import storage is not available here");
+    const name = path.basename(url.slice(LOCAL_PREFIX.length));
+    try {
+      return await fs.readFile(path.join(LOCAL_DIR, name));
+    } catch {
+      return null;
+    }
+  }
+  if (!isTenantBlobUrl(url, tenantId)) return null;
+  const blob = await get(url, { access: "private" });
+  if (!blob) return null;
+  if (blob.statusCode !== 200) throw new Error(`Failed to fetch file (${blob.statusCode})`);
+  return new Uint8Array(await new Response(blob.stream).arrayBuffer());
+}
+
+/**
+ * Replace a stored import file's content IN PLACE (same address). Used ONLY by
+ * a member's erasure (lib/importers/import-erasure.ts), to take that member's
+ * rows out of a kept file. A Blob file is overwritten at its own pathname, so
+ * no job is repointed and a failure leaves the old content — never a job
+ * pointing at a deleted file.
+ */
+export async function rewriteImportFile(url: string, tenantId: string, bytes: Uint8Array): Promise<void> {
+  const data = Buffer.from(bytes);
   if (url.startsWith(DB_UPLOAD_PREFIX)) {
     const ref = dbUploadRef(url, tenantId);
     await withTenantContext(ref.tenantId, async (tx) => {
       const upload = await tx.importUpload.findFirst({ where: { id: ref.id, tenantId: ref.tenantId }, select: { id: true, chunkSize: true } });
       if (!upload) throw new Error("The uploaded import file was not found");
-      const count = Math.max(1, Math.ceil(bytes.length / upload.chunkSize));
+      const count = Math.max(1, Math.ceil(data.length / upload.chunkSize));
       await tx.importUploadChunk.deleteMany({ where: { uploadId: upload.id, tenantId: ref.tenantId } });
       await tx.importUploadChunk.createMany({
         data: Array.from({ length: count }, (_, index) => {
-          const part = bytes.subarray(index * upload.chunkSize, (index + 1) * upload.chunkSize);
+          const part = data.subarray(index * upload.chunkSize, (index + 1) * upload.chunkSize);
           return { uploadId: upload.id, tenantId: ref.tenantId, index, bytes: part, sha256: sha256(part) };
         }),
       });
       await tx.importUpload.updateMany({
         where: { id: upload.id, tenantId: ref.tenantId },
-        data: { expectedBytes: bytes.length, expectedSha256: sha256(bytes), chunkCount: count },
+        data: { expectedBytes: data.length, expectedSha256: sha256(data), chunkCount: count },
       });
     }, { timeout: 45_000, maxWait: 10_000 });
-    return url;
+    return;
   }
   if (url.startsWith(LOCAL_PREFIX)) {
     if (!localAllowed()) throw new Error("Local import storage is not available here");
     const name = path.basename(url.slice(LOCAL_PREFIX.length));
-    await fs.writeFile(path.join(LOCAL_DIR, name), bytes);
-    return url;
+    await fs.writeFile(path.join(LOCAL_DIR, name), data);
+    return;
   }
   if (!isTenantBlobUrl(url, tenantId)) throw new Error("The import file is not in this club's store");
-  const next = await putImportFile(tenantId, bytes);
-  await del(url);
-  return next;
+  const pathname = decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+  const written = await put(pathname, data, { access: "private", contentType: "text/csv", addRandomSuffix: false, allowOverwrite: true });
+  if (written.url !== url) throw new Error("The import file was not rewritten at its own address");
 }

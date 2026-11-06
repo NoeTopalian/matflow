@@ -147,6 +147,8 @@ vi.mock("@/lib/prisma", () => ({
     importSourceMapping: { count: mappingCountMock, deleteMany: mappingDeleteManyMock },
     // Import review lists are scrubbed of the subject (lib/importers/import-conflicts-scrub, 25 Oct 2026).
     importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
+    // The erasure walks every stored upload too (lib/importers/import-erasure.ts, 6 Nov 2026).
+    importUpload: { findMany: vi.fn(async () => []) },
     memberStatusEvent: { create: statusEventCreateMock, findFirst: statusEventFindFirstMock },
   },
 }));
@@ -466,6 +468,7 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(body.erased).toEqual({
       importFilesRewritten: 0,
       importFileRowsRemoved: 0,
+      importFileCellsBlanked: 0,
       importDiagnosticsEntriesRemoved: 0,
       memberPhotos: 2,
       signedWaiversScrubbed: 3,

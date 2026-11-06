@@ -359,6 +359,12 @@ export async function purgeTenantById(
   outOfTime: () => boolean,
   opts: { writtenRequest?: string } = {},
 ): Promise<PurgeOneOutcome> {
+  // An erasure on a written request must reach the club's files too. Without the
+  // store's token it could not, and would delete the club row leaving every file
+  // behind with nothing pointing at it — refused before anything changes.
+  if (opts.writtenRequest && !process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error("Refused before any change: BLOB_READ_WRITE_TOKEN is not set, so the club's files could not be erased with it");
+  }
   const billing = await cancelTenantSubscriptions(tenantId);
   if (billing.kind === "not-due") return { kind: "skipped", reason: billing.reason };
   if (billing.kind === "blocked") {
@@ -435,11 +441,12 @@ export async function purgeTenantById(
  * refuses a claimed club forever — so a file deleted here can never belong to
  * a club that is later brought back. Do not move a blob deletion before
  * `claimTenantPurge`, and do not add a way to clear `purgeStartedAt`.
- */
-/**
- * Delete every file under `tenants/<tenantId>/` in the Blob store, page by page.
- * Runs after the claim (see the invariant above) and throws on any failure.
- * Returns null when no store is configured here (local runs and tests have no token).
+ *
+ * `deleteTenantStore` deletes every file under `tenants/<tenantId>/`, page by
+ * page, and throws on any failure — including a listed file whose address is
+ * not this club's, which is never deleted and never silently skipped. It
+ * returns null only when no store is configured here (local runs and tests);
+ * an erasure run on a written request refuses that case up front.
  */
 async function deleteTenantStore(tenantId: string): Promise<number | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
@@ -447,7 +454,9 @@ async function deleteTenantStore(tenantId: string): Promise<number | null> {
   let cursor: string | undefined;
   do {
     const page = await list({ prefix: `tenants/${tenantId}/`, cursor, limit: 1000 });
-    const urls = page.blobs.map((b) => b.url).filter((u) => isTenantBlobUrl(u, tenantId));
+    const urls = page.blobs.map((b) => b.url);
+    const foreign = urls.filter((u) => !isTenantBlobUrl(u, tenantId));
+    if (foreign.length > 0) throw new Error(`tenant ${tenantId}: ${foreign.length} listed file(s) are not under this club's store address; nothing more deleted`);
     if (urls.length > 0) {
       await del(urls);
       deleted += urls.length;

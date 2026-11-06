@@ -117,7 +117,7 @@ export async function POST(req: Request) {
   const member = await withTenantContext(tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, status: true, email: true, name: true, stripeSubscriptionId: true, externalRef: true },
+      select: { id: true, status: true, email: true, name: true, stripeSubscriptionId: true, externalRef: true, unverifiedEmail: true },
     }),
   );
   if (!member) {
@@ -399,35 +399,74 @@ export async function POST(req: Request) {
   // stored import file of the club HERE, before the database erasure: a file
   // store call is a network call and cannot join the transaction below. A file
   // that names the subject and cannot be rewritten refuses the whole erasure.
-  const importSubject: ErasureSubject = {
-    memberId,
-    sourceKey: originalExternalRef,
-    email: originalEmail && !isSynthesisedEmail(originalEmail) ? originalEmail : null,
-    name: member.name,
-  };
-  let importFiles: { files: number; rows: number };
+  const toSubject = (m: { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null }): ErasureSubject => ({
+    memberId: m.id,
+    sourceKey: m.externalRef,
+    email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
+    unverifiedEmail: m.unverifiedEmail,
+    name: m.name,
+  });
+  // The member, and the children this erasure deletes with them (strategy "cascade").
+  const importSubjects: ErasureSubject[] = [
+    toSubject({ id: memberId, name: member.name, email: originalEmail, externalRef: originalExternalRef, unverifiedEmail: member.unverifiedEmail }),
+    ...(activeChildren > 0 && childStrategyParam === "cascade"
+      ? (
+          await withTenantContext(tenantId, (tx) =>
+            tx.member.findMany({
+              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+              select: { id: true, name: true, email: true, externalRef: true, unverifiedEmail: true },
+            }),
+          )
+        ).map(toSubject)
+      : []),
+  ];
+  const importFiles = { files: 0, rows: 0, cells: 0 };
   try {
-    importFiles = await eraseSubjectFromImportFiles(tenantId, importSubject);
+    for (const subject of importSubjects) {
+      const r = await eraseSubjectFromImportFiles(tenantId, subject);
+      importFiles.files += r.files;
+      importFiles.rows += r.rows;
+      importFiles.cells += r.cells;
+    }
   } catch (err) {
     console.error("[dsar/erase] import files could not be rewritten; nothing else was erased", err);
     return NextResponse.json(
       {
         error:
           "Erasure stopped: the member's rows could not be removed from a stored import file, so nothing else was erased. " +
+          (importFiles.files > 0 ? `Their rows were already removed from ${importFiles.files} stored import file(s). ` : "") +
           (stripeCancelOutcome.performed ? "The member's Stripe subscription is already set to stop renewing. " : "") +
           "Try again.",
       },
       { status: 500 },
     );
   }
+  // The file rewrites cannot roll back with the transaction below, so they are
+  // recorded on their own now: if the erasure then refuses, the record says
+  // which files already lost the member's rows. Counts only.
+  if (importFiles.files > 0) {
+    await logAudit({
+      tenantId,
+      userId: ownerUserId,
+      action: "member.dsar_erase.import_files",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: { importFilesRewritten: importFiles.files, importFileRowsRemoved: importFiles.rows, importFileCellsBlanked: importFiles.cells, subjects: importSubjects.length },
+      durable: true,
+      req,
+    });
+  }
   // Counted here, written in the transaction below (the fulfilment record goes first).
-  const importDiagnosticsEntries = await withTenantContext(tenantId, (tx) =>
-    eraseSubjectFromImportDiagnostics(tx, tenantId, importSubject, { dryRun: true }),
-  );
+  let importDiagnosticsEntries = 0;
+  for (const subject of importSubjects) {
+    importDiagnosticsEntries += await withTenantContext(tenantId, (tx) => eraseSubjectFromImportDiagnostics(tx, tenantId, subject, { dryRun: true }));
+  }
+  const filesNote = importFiles.files > 0 ? `The member's rows were already removed from ${importFiles.files} stored import file(s). ` : "";
 
   const erasedCounts = {
     importFilesRewritten: importFiles.files,
     importFileRowsRemoved: importFiles.rows,
+    importFileCellsBlanked: importFiles.cells,
     importDiagnosticsEntriesRemoved: importDiagnosticsEntries,
     memberPhotos: scope.photos.length,
     signedWaiversScrubbed: scope.waivers.length,
@@ -536,7 +575,7 @@ export async function POST(req: Request) {
     // The import records keep no trace of the subject: review list, exceptions, kept lists (25 and 27 Oct 2026).
     await scrubImportConflictsFor(tx, tenantId, memberId, originalExternalRef);
     // …and the kept diagnostics of every import, attendance included, name-only entries too (6 Nov 2026).
-    await eraseSubjectFromImportDiagnostics(tx, tenantId, importSubject);
+    for (const subject of importSubjects) await eraseSubjectFromImportDiagnostics(tx, tenantId, subject);
 
     await tx.member.update({
       where: { id: memberId },
@@ -687,7 +726,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "This member's details changed while the erasure was being prepared, so nothing was erased. " +
+          "This member's details changed while the erasure was being prepared, so nothing else was erased. " +
+          filesNote +
           (stripeCancelOutcome.performed
             ? "The member's Stripe subscription is already set to stop renewing. "
             : "") +
@@ -700,7 +740,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "Erasure failed and nothing was erased (the audit record and the erasure commit together). " +
+          "Erasure failed and nothing else was erased (the audit record and the erasure commit together). " +
+          filesNote +
           (stripeCancelOutcome.performed
             ? "The member's Stripe subscription is already set to stop renewing. "
             : "") +
