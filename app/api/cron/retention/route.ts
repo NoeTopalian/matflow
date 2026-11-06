@@ -3,10 +3,15 @@
  * Schedule defined in vercel.json: "30 3 * * *".
  *
  * Closes audit findings P0-4 (published retention policy was fiction — no
- * deleteMany existed anywhere for AuditLog / EmailLog / tokens / ImportJob),
- * P2-2 (expired auth tokens accumulated forever with email + IP + UA), and
- * P1-6 ("deleted" tenants were never actually deleted despite the operator
- * UI promising "reversible for 30 days, then a cron hard-deletes").
+ * deleteMany existed anywhere for AuditLog / EmailLog / tokens / ImportJob)
+ * and P2-2 (expired auth tokens accumulated forever with email + IP + UA).
+ *
+ * This sweep never touches a club. Product rule (Noe, 16 Oct 2026): a club
+ * that closes is KEPT, with sign-in disabled, so it can reopen; erasure
+ * happens only on the club's written request, run by an operator
+ * (lib/tenant-purge.ts `purgeTenantById`). The by-age tenant purge that used
+ * to be rule g here was removed that day — tests/unit/keep-closed-clubs-
+ * ratchet.test.ts keeps it out.
  *
  * Design rules, all deliberate:
  *
@@ -38,7 +43,6 @@ import { Prisma } from "@prisma/client";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { isTenantBlobUrl } from "@/lib/blob-url";
 import { DB_UPLOAD_PREFIX } from "@/lib/import-storage";
-import { purgeSoftDeletedTenants } from "@/lib/tenant-purge";
 import { auditLogRetentionWhere } from "@/lib/audit-log";
 import { runStripeReconciliation, type ReconcileResult } from "@/lib/stripe/reconcile";
 
@@ -87,8 +91,7 @@ const IMPORT_JOB_RETENTION_MS = 30 * DAY_MS;
  * days-long useful life, not history: the row's counters carry the history.
  */
 const IMPORT_JOB_DIAGNOSTICS_RETENTION_MS = 30 * DAY_MS;
-// The 30-day tenant soft-delete window is TENANT_SOFT_DELETE_GRACE_MS in
-// lib/tenant-lifecycle.ts, shared with the restore route so the two agree.
+// There is no tenant window: closed clubs are kept (lib/tenant-lifecycle.ts).
 
 /**
  * ImportJob status vocabulary (app/api/admin/import/*): pending | preview |
@@ -211,10 +214,10 @@ async function handle(req: Request, call: { reason: CallReason }) {
 
   // `?dryRun=1`: count what every rule WOULD remove and delete nothing. The
   // first-ever production run of this sweep is a one-way door — it purges a
-  // year of logs, 90 days of Stripe events and any tenant past its 30-day
-  // soft-delete grace in one pass — so the counts get read by a human before
-  // the scheduler is allowed to run it for real. Reconcile still runs (it is
-  // read-only). The bearer is still required: counts name tenants.
+  // year of logs and 90 days of Stripe events in one pass — so the counts get
+  // read by a human before the scheduler is allowed to run it for real.
+  // Reconcile still runs (it is read-only). The bearer is still required:
+  // counts are per club.
   const dryRun = dryRunRequested;
   const sweep = (pick: PickModel, where: object) =>
     dryRun ? countOnly(pick, where) : deleteInBatches(pick, where, elapsed);
@@ -314,7 +317,7 @@ async function handle(req: Request, call: { reason: CallReason }) {
       name: "importJobDiagnostics",
       run: () => scrubImportJobDiagnostics(ago(IMPORT_JOB_DIAGNOSTICS_RETENTION_MS), dryRun),
     },
-    { name: "tenantHardDelete", run: () => purgeSoftDeletedTenants(now, () => elapsed() > DEADLINE_MS, dryRun) },
+    // No tenant rule, deliberately: closed clubs are kept (see the header).
   ];
 
   const results: RuleResult[] = [];
@@ -535,5 +538,6 @@ async function deleteBlobsBestEffort(urls: string[]): Promise<number> {
   }
 }
 
-// Rule g (tenant hard-delete) lives in lib/tenant-purge.ts so the
-// restore-versus-purge coordination can be tested against a real database.
+// Club erasure is NOT a retention rule. It lives in lib/tenant-purge.ts
+// (`purgeTenantById`), runs only on a club's written request by an operator,
+// and is never scheduled.

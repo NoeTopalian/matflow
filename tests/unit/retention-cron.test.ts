@@ -1,10 +1,13 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
-// Audit P0-4 / P1-6 / P2-2: the daily retention sweep. These tests pin the
-// three things that make it safe to run unattended against production:
+// Audit P0-4 / P2-2: the daily retention sweep. These tests pin the three
+// things that make it safe to run unattended against production:
 //   1. it is unreachable without CRON_SECRET,
 //   2. every rule deletes on the window the privacy policy publishes,
 //   3. one failing rule cannot take the others down with it.
+// The sweep has NO tenant rule (closed clubs are kept, 16 Oct 2026). The
+// explicit erasure path, lib/tenant-purge.ts purgeTenantById, is exercised
+// directly at the bottom of this file with the same mocked client.
 
 // The fake prisma below does not model the RateLimitHit store; the limiter is assumed to allow (lane C4, R6-N3).
 vi.mock("@/lib/rate-limit", async (orig) => (await import("./sec-c4-allow-rate-limit")).allowRateLimit(orig));
@@ -112,6 +115,7 @@ import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import { GET } from "@/app/api/cron/retention/route";
 import { auditLogRetentionWhere } from "@/lib/audit-log";
+import { purgeTenantById } from "@/lib/tenant-purge";
 
 const SECRET = "test-cron-secret";
 const NOW = new Date("2026-08-16T03:30:00.000Z");
@@ -125,7 +129,7 @@ function req(auth?: string) {
 
 type RuleResult = { rule: string; deleted?: number; error?: string; skipped?: boolean };
 
-/** A soft-deleted club past its window, not yet claimed (the shape the purge reads). */
+/** A closed club, not yet claimed (the shape the erasure's preflight reads). */
 function dueClub(over: Record<string, unknown> = {}) {
   return {
     stripeAccountId: null,
@@ -164,10 +168,10 @@ beforeEach(() => {
     m.delete?.mockResolvedValue({});
     m.findUnique?.mockResolvedValue({ stripeAccountId: null });
   }
-  // Restore-vs-purge (lib/tenant-lifecycle.ts, 6 Oct 2026): the purge claims
+  // Reopen-vs-erase (lib/tenant-lifecycle.ts, 6 Oct 2026): the erasure claims
   // the club and every step re-validates the claim with a conditional tenant
   // updateMany; the final delete is a conditional deleteMany. Default: one
-  // soft-deleted, unclaimed, due club that every conditional write matches.
+  // closed, unclaimed club that every conditional write matches.
   vi.mocked(prisma.tenant.updateMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.tenant.deleteMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub() as never);
@@ -218,8 +222,10 @@ describe("GET /api/cron/retention — auth", () => {
       "importUpload",
       "importJob",
       "importJobDiagnostics",
-      "tenantHardDelete",
     ]);
+    // Never a club: closed clubs are kept (16 Oct 2026).
+    expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
+    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -241,9 +247,6 @@ describe("GET /api/cron/retention?dryRun=1 — counts, never deletes", () => {
     for (const model of [prisma.auditLog, prisma.emailLog, prisma.loginEvent, prisma.magicLinkToken, prisma.passwordResetToken, prisma.rateLimitHit, prisma.stripeEvent, prisma.importUpload, prisma.importJob]) {
       (model as unknown as { count: ReturnType<typeof vi.fn> }).count = vi.fn().mockResolvedValue(7);
     }
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      { id: "t-old", name: "Closed Gym", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
-    ] as never);
 
     const res = await GET(dryReq(`Bearer ${SECRET}`));
     expect(res.status).toBe(200);
@@ -257,10 +260,9 @@ describe("GET /api/cron/retention?dryRun=1 — counts, never deletes", () => {
     expect(byRule.importUpload).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
     expect(byRule.importJob).toMatchObject({ deleted: 0, details: { wouldDelete: 7 } });
     expect(byRule.importJobDiagnostics).toMatchObject({ deleted: 0, details: { wouldScrub: 7 } });
-    expect(byRule.tenantHardDelete).toMatchObject({
-      deleted: 0,
-      details: { candidates: 1, wouldPurge: [{ tenantId: "t-old", name: "Closed Gym" }] },
-    });
+    // A dry run names no club to purge, because no club is ever purged by the sweep.
+    expect(Object.keys(byRule).filter((k) => /tenant|purge/i.test(k))).toEqual([]);
+    expect(prisma.tenant.findMany).not.toHaveBeenCalled();
 
     // The count is keyed on the same window the real rule deletes on.
     const auditCount = (prisma.auditLog as unknown as { count: ReturnType<typeof vi.fn> }).count;
@@ -430,7 +432,7 @@ describe("GET /api/cron/retention — rule independence", () => {
     // Rules after the failure specifically.
     expect(prisma.magicLinkToken.findMany).toHaveBeenCalled();
     expect(prisma.rateLimitHit.findMany).toHaveBeenCalled();
-    expect(prisma.tenant.findMany).toHaveBeenCalled();
+    expect(prisma.importJob.findMany).toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
@@ -512,37 +514,42 @@ describe("GET /api/cron/retention — abandoned import CSVs", () => {
   });
 });
 
-// ─── Tenant hard delete ───────────────────────────────────────────────────────
+// ─── Explicit club erasure (lib/tenant-purge.ts purgeTenantById) ─────────────
+// Closed clubs are kept (16 Oct 2026): the sweep has no tenant rule, so the
+// erasure path is exercised directly, the way an operator runs it on a club's
+// written request. Same mocked client: a closed, unclaimed club that every
+// conditional write matches.
 
-describe("GET /api/cron/retention — tenant hard delete", () => {
-  it("only considers tenants soft-deleted more than 30 days ago, oldest first, max 2 per run", async () => {
-    await GET(req(`Bearer ${SECRET}`));
+describe("purgeTenantById — explicit erasure of one closed club", () => {
+  it("erases a club closed yesterday when asked: there is no age requirement", async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub({ deletedAt: new Date(NOW.getTime() - DAY_MS) }) as never);
 
-    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
-      where: { deletedAt: { not: null, lt: new Date(NOW.getTime() - 30 * DAY_MS) } },
-      select: { id: true, name: true, deletedAt: true, purgeStartedAt: true },
-      orderBy: { deletedAt: "asc" },
-      take: 2,
+    const out = await purgeTenantById("t1", NOW, () => false);
+
+    expect(out).toMatchObject({ kind: "purged", resumed: false });
+    // The claim is keyed on "closed and unclaimed" only — no date predicate.
+    expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: "t1", deletedAt: { not: null }, purgeStartedAt: null },
+      data: { purgeStartedAt: NOW },
     });
   });
 
-  it("never touches a tenant that is inside the 30-day recovery window", async () => {
-    // The route hands the window to Postgres, so the guarantee is the cutoff
-    // itself: a tenant soft-deleted yesterday sits above it and cannot match.
-    await GET(req(`Bearer ${SECRET}`));
-    const where = whereOf(prisma.tenant) as { deletedAt: { lt: Date } };
-    const softDeletedYesterday = new Date(NOW.getTime() - DAY_MS);
-    expect(softDeletedYesterday.getTime()).toBeGreaterThan(where.deletedAt.lt.getTime());
+  it("never erases an open club: skipped as 'restored' with no claim, no Stripe call and no delete", async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub({ deletedAt: null }) as never);
+
+    const out = await purgeTenantById("t1", NOW, () => false);
+
+    expect(out).toEqual({ kind: "skipped", reason: "restored" });
+    expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+    expect(cancelSubMock).not.toHaveBeenCalled();
+    expect(prisma.tenant.deleteMany).not.toHaveBeenCalled();
+    expect(cascadeMock).not.toHaveBeenCalled();
   });
 
-  it("writes the erasure-evidence audit row in the same transaction as the tenant delete", async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      { id: "t1", name: "Closed Gym", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
-    ] as never);
+  it("writes the erasure-evidence audit row in the same transaction as the tenant delete, naming the written request", async () => {
+    const out = await purgeTenantById("t1", NOW, () => false);
 
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { results: RuleResult[] };
-
+    expect(out).toMatchObject({ kind: "purged" });
     expect(prisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -550,51 +557,29 @@ describe("GET /api/cron/retention — tenant hard delete", () => {
           action: "admin.tenant.hard_deleted",
           entityType: "Tenant",
           entityId: "t1",
+          metadata: expect.objectContaining({ reason: expect.stringMatching(/written request/i) }),
         }),
       }),
     );
-    // Conditional on the club still being soft-deleted under this run's claim.
+    // Conditional on the club still being closed under this run's claim.
     expect(prisma.tenant.deleteMany).toHaveBeenCalledWith({
       where: { id: "t1", deletedAt: { not: null }, purgeStartedAt: NOW },
     });
-    expect(body.results.find((r) => r.rule === "tenantHardDelete")?.deleted).toBe(1);
     // Location RESTRICTs Tenant; the tenant delete fails unless it is emptied first.
     expect(vi.mocked(prisma.location.findMany)).toHaveBeenCalledWith(
       expect.objectContaining({ where: { tenantId: "t1" } }),
     );
   });
 
-  it("reports a failing tenant without aborting the rule", async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      { id: "t1", name: "Gym A", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
-      { id: "t2", name: "Gym B", deletedAt: new Date(NOW.getTime() - 35 * DAY_MS), logoUrl: null },
-    ] as never);
-    vi.mocked(prisma.tenant.deleteMany)
-      .mockRejectedValueOnce(new Error("FK still referenced"))
-      .mockResolvedValue({ count: 1 } as never);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as {
-      results: Array<RuleResult & { details?: { failures: Array<{ tenantId: string }> } }>;
-    };
-
-    const rule = body.results.find((r) => r.rule === "tenantHardDelete")!;
-    expect(rule.deleted).toBe(1);
-    expect(rule.details?.failures).toEqual([
-      { tenantId: "t1", error: "FK still referenced" },
-    ]);
-    expect(prisma.tenant.deleteMany).toHaveBeenCalledTimes(2);
-    // A club left part-deleted is a rule error, so the run is a 500 (6 Oct 2026).
-    expect(rule.error).toContain("t1");
-    expect(res.status).toBe(500);
-    consoleError.mockRestore();
+  it("a failing step throws to the operator — never reported as a clean erasure", async () => {
+    vi.mocked(prisma.tenant.deleteMany).mockRejectedValueOnce(new Error("FK still referenced"));
+    await expect(purgeTenantById("t1", NOW, () => false)).rejects.toThrow("FK still referenced");
   });
 });
 
 // ─── Kids-before-parents ordering (MAJOR-1) ──────────────────────────────────
 
-describe("GET /api/cron/retention — tenant purge deletes kids before parents", () => {
+describe("purgeTenantById — deletes kids before parents", () => {
   /**
    * `Member_kids_must_have_parent` (migration 20260515000001) is a validated,
    * non-deferrable CHECK — `accountType <> 'kids' OR parentMemberId IS NOT NULL`
@@ -603,9 +588,6 @@ describe("GET /api/cron/retention — tenant purge deletes kids before parents",
    * transaction; the stall guard then throws and the gym never gets erased.
    */
   function tenantWithFamily() {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      { id: "t1", name: "Family Gym", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
-    ] as never);
     const kidPages = [[{ id: "kid1" }], []];
     const parentPages = [[{ id: "parent1" }], []];
     vi.mocked(prisma.member.findMany).mockImplementation((async (args: {
@@ -622,8 +604,7 @@ describe("GET /api/cron/retention — tenant purge deletes kids before parents",
   it("drains child rows first, then the parentless remainder", async () => {
     tenantWithFamily();
 
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { results: RuleResult[] };
+    const out = await purgeTenantById("t1", NOW, () => false);
 
     // The kid is handed to the cascade before the parent — this is the whole
     // point of the two-pass walk.
@@ -631,13 +612,13 @@ describe("GET /api/cron/retention — tenant purge deletes kids before parents",
       "kid1",
       "parent1",
     ]);
-    expect(body.results.find((r) => r.rule === "tenantHardDelete")?.deleted).toBe(1);
+    expect(out).toMatchObject({ kind: "purged", membersDeleted: 2 });
     expect(prisma.tenant.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "t1" }) }));
   });
 
   it("scopes the first pass to rows that have a parent link, batched at 10", async () => {
     tenantWithFamily();
-    await GET(req(`Bearer ${SECRET}`));
+    await purgeTenantById("t1", NOW, () => false);
 
     const wheres = vi
       .mocked(prisma.member.findMany)
@@ -655,73 +636,51 @@ describe("GET /api/cron/retention — tenant purge deletes kids before parents",
 
 // ─── Fail-closed on live Stripe subscriptions (MED-3) ────────────────────────
 
-describe("GET /api/cron/retention — tenant purge is fail-closed on live billing", () => {
-  const twoTenants = () =>
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      { id: "t1", name: "Gym A", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), logoUrl: null },
-      { id: "t2", name: "Gym B", deletedAt: new Date(NOW.getTime() - 35 * DAY_MS), logoUrl: null },
-    ] as never);
-
-  /** Only t1 has a member on a live subscription. */
-  const onlyT1Subscribed = () =>
+describe("purgeTenantById — fail-closed on live billing", () => {
+  /** One member on a live subscription. */
+  const subscribed = () =>
     vi.mocked(prisma.member.findMany).mockImplementation((async (args: {
       where: { tenantId?: string; stripeSubscriptionId?: unknown };
     }) =>
-      args.where.stripeSubscriptionId && args.where.tenantId === "t1"
+      args.where.stripeSubscriptionId
         ? [{ id: "m1", name: "Ann", stripeSubscriptionId: "sub_1" }]
         : []) as never);
 
-  it("skips the tenant whose cancellation fails, reports it, and purges the next one", async () => {
-    twoTenants();
-    onlyT1Subscribed();
+  it("a cancellation that fails blocks the erasure: the club is left intact, unclaimed and reopenable, and the reason is reported", async () => {
+    subscribed();
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub({ stripeAccountId: "acct_1" }) as never);
     cancelSubMock.mockResolvedValue({ ok: false, status: 500, error: "card network down" });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as {
-      results: Array<RuleResult & { details?: { failures: Array<Record<string, string>> } }>;
-    };
+    const out = await purgeTenantById("t1", NOW, () => false);
 
-    const rule = body.results.find((r) => r.rule === "tenantHardDelete")!;
-    expect(rule.details?.failures).toEqual([
-      { tenantId: "t1", reason: expect.stringContaining("card network down"), cancelledBeforeBlock: 0 },
-    ]);
-    // t1's rows survive for the operator; t2 is unaffected by its neighbour.
-    expect(prisma.tenant.deleteMany).toHaveBeenCalledTimes(1);
-    expect(prisma.tenant.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "t2" }) }));
-    expect(rule.deleted).toBe(1);
-    consoleError.mockRestore();
+    expect(out).toEqual({
+      kind: "billing-blocked",
+      reason: expect.stringContaining("card network down"),
+      claimed: false,
+      cancelledBeforeBlock: 0,
+    });
+    // No claim was stamped, so a reopen still succeeds; nothing was deleted.
+    expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tenant.deleteMany).not.toHaveBeenCalled();
+    expect(cascadeMock).not.toHaveBeenCalled();
   });
 
-  it("skips a tenant that has subscriptions but no connected Stripe account", async () => {
-    twoTenants();
-    onlyT1Subscribed();
+  it("subscriptions but no connected Stripe account: blocked without calling Stripe", async () => {
+    subscribed();
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub() as never);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as {
-      results: Array<RuleResult & { details?: { failures: Array<Record<string, string>> } }>;
-    };
+    const out = await purgeTenantById("t1", NOW, () => false);
 
-    const rule = body.results.find((r) => r.rule === "tenantHardDelete")!;
     expect(cancelSubMock).not.toHaveBeenCalled();
-    expect(rule.details?.failures).toEqual([
-      { tenantId: "t1", reason: expect.stringContaining("no connected Stripe account"), cancelledBeforeBlock: 0 },
-    ]);
-    expect(prisma.tenant.deleteMany).toHaveBeenCalledTimes(1);
-    expect(prisma.tenant.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "t2" }) }));
-    consoleError.mockRestore();
+    expect(out).toMatchObject({ kind: "billing-blocked", reason: expect.stringContaining("no connected Stripe account"), claimed: false });
+    expect(prisma.tenant.deleteMany).not.toHaveBeenCalled();
   });
 
   it("records successful cancellations in the erasure audit row", async () => {
-    twoTenants();
-    onlyT1Subscribed();
+    subscribed();
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue(dueClub({ stripeAccountId: "acct_1" }) as never);
 
-    const res = await GET(req(`Bearer ${SECRET}`));
-    const body = (await res.json()) as { results: RuleResult[] };
+    const out = await purgeTenantById("t1", NOW, () => false);
 
     expect(cancelSubMock).toHaveBeenCalledWith({
       tenant: { stripeAccountId: "acct_1" },
@@ -735,7 +694,7 @@ describe("GET /api/cron/retention — tenant purge is fail-closed on live billin
         }),
       }),
     );
-    expect(body.results.find((r) => r.rule === "tenantHardDelete")?.deleted).toBe(2);
+    expect(out).toMatchObject({ kind: "purged" });
   });
 });
 

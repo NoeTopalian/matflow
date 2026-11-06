@@ -1,13 +1,12 @@
-// Restore versus purge, against a real Postgres (operator audit 5 Oct 2026,
-// finding 5). Two real connections, explicit barriers, no sleeps standing in
-// for ordering: the first transaction holds the Tenant row (uncommitted) at a
-// barrier; the second is started and confirmed BLOCKED on that row lock in
-// pg_stat_activity; only then is the first released.
+// Reopen versus explicit erasure, against a real Postgres (operator audit
+// 5 Oct 2026, finding 5). Two real connections, explicit barriers, no sleeps
+// standing in for ordering: the first transaction holds the Tenant row
+// (uncommitted) at a barrier; the second is started and confirmed BLOCKED on
+// that row lock in pg_stat_activity; only then is the first released.
 //
-// Restore and purge are given different clocks on purpose. With one clock
-// their time predicates are disjoint (restore inside 30 days, purge past it),
-// so the row-level claim matters exactly where those clocks disagree —
-// different instances, the boundary instant — which is what is modelled.
+// Closed clubs are kept (16 Oct 2026): neither reopen nor the erasure claim
+// carries a time predicate any more (reopen takes no clock at all), so the
+// row-level claim is the ONLY thing that orders them.
 //
 // Synthetic clubs only, unique slugs, everything removed in afterAll. Run with
 // the TEST branch runner (scratchpad att/run-engine.sh); skips without a DB.
@@ -148,7 +147,7 @@ describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () 
     const held = deferred();
     const release = deferred();
     const restoreTx = withRlsBypass(async (tx) => {
-      const r = await restoreSoftDeletedTenant(tx, id, restoreNow);
+      const r = await restoreSoftDeletedTenant(tx, id);
       held.resolve();
       await release.promise;
       return r;
@@ -167,7 +166,6 @@ describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () 
 
   it("purge wins: the claim commits first, the blocked restore reports the real state, then the data is gone", async () => {
     const purgeNow = new Date();
-    const restoreNow = new Date(purgeNow.getTime() - 2 * DAY_MS);
     const id = await makeClub("pw", new Date(purgeNow.getTime() - 31 * DAY_MS));
 
     const held = deferred();
@@ -180,7 +178,7 @@ describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () 
     }, { timeout: 30_000 });
     await held.promise;
 
-    const restore = withRlsBypass((tx) => restoreSoftDeletedTenant(tx, id, restoreNow));
+    const restore = withRlsBypass((tx) => restoreSoftDeletedTenant(tx, id));
     await waitForLockWaiter("deletedAt");
     release.resolve();
 
@@ -194,7 +192,7 @@ describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () 
     expect(await tenantRow(id)).toBeNull();
     expect(await memberCount(id)).toBe(0);
 
-    const after = await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, id, restoreNow));
+    const after = await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, id));
     expect(after).toEqual({ kind: "permanently-deleted" });
   });
 
@@ -208,7 +206,7 @@ describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () 
     expect(partial.kind).toBe("partial");
     const mid = await tenantRow(id);
     expect(mid?.purgeStartedAt).toBeInstanceOf(Date);
-    expect(await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, id, new Date(now.getTime() - 5 * DAY_MS)))).toMatchObject({
+    expect(await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, id))).toMatchObject({
       kind: "purge-in-progress",
     });
 
@@ -236,16 +234,18 @@ describe.skipIf(!HAS_DB)("restore vs purge on the authoritative Tenant row", () 
     expect(evidence).toBe(1);
   });
 
-  it("retention boundary: exactly 30 days is restorable and not claimable; 1 ms past is the reverse", async () => {
+  it("no window: a club closed 400 days ago reopens; a club closed 1 ms ago is claimable when explicitly asked; an open club never is", async () => {
     const now = new Date();
-    const edge = await makeClub("edge", new Date(now.getTime() - 30 * DAY_MS));
-    expect(await withRlsBypass((tx) => claimTenantPurge(tx, edge, now))).toEqual({ kind: "skipped", reason: "not-due" });
-    expect((await tenantRow(edge))?.purgeStartedAt).toBeNull();
+    const old = await makeClub("old", new Date(now.getTime() - 400 * DAY_MS));
+    expect(await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, old))).toEqual({ kind: "restored" });
+    expect(await tenantRow(old)).toEqual({ deletedAt: null, purgeStartedAt: null });
+    // Reopened = open: an explicit erasure cannot claim it.
+    expect(await withRlsBypass((tx) => claimTenantPurge(tx, old, now))).toEqual({ kind: "skipped", reason: "restored" });
+    expect(await memberCount(old)).toBe(3);
 
-    const late = await makeClub("late", new Date(now.getTime() - 30 * DAY_MS - 1));
-    expect(await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, late, now))).toMatchObject({ kind: "window-expired" });
-    expect((await tenantRow(late))?.deletedAt).toBeInstanceOf(Date);
-
-    expect(await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, edge, now))).toEqual({ kind: "restored" });
+    const fresh = await makeClub("fresh", new Date(now.getTime() - 1));
+    expect(await withRlsBypass((tx) => claimTenantPurge(tx, fresh, now))).toMatchObject({ kind: "claimed", resumed: false });
+    expect(await withRlsBypass((tx) => restoreSoftDeletedTenant(tx, fresh))).toMatchObject({ kind: "purge-in-progress" });
+    expect((await tenantRow(fresh))?.deletedAt).toBeInstanceOf(Date);
   });
 });

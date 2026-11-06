@@ -2,9 +2,10 @@
  * R10-5 (lane L2 phase 2, 12 Oct 2026) — a tenant transaction that waits on a row lock must fail as "lock timeout"
  * (55P03), so isTenantRowBusyError (lib/tenant-lifecycle.ts) can answer "busy, try again". Before: lock_timeout was
  * EQUAL to statement_timeout (15 s / 15 s, 60 s / 60 s), so a statement waiting on a lock was cancelled by the
- * statement bound first (57014, "canceling statement due to statement timeout"); a club restore blocked by a purge step
- * answered 500 "could not be recorded" instead of the 503 busy, and the purge cron counted a failure instead of a
- * skip (review R10 phase 2, B4c, both roles).
+ * statement bound first (57014, "canceling statement due to statement timeout"); a club restore blocked by an erasure
+ * step answered 500 "could not be recorded" instead of the 503 busy, and the erasure's caller saw a failure instead of
+ * "busy" (review R10 phase 2, B4c, both roles). Closed clubs are kept (16 Oct 2026): the cron no longer purges, so the
+ * second caller here is `purgeTenantById` itself, the explicit operator-run erasure.
  *
  * Choice: lock_timeout BELOW statement_timeout (10 s / 15 s; 45 s / 60 s) rather than treating 57014 as busy — a
  * statement timeout also means "this query is too slow", which is not "busy", so reading every 57014 as busy would make
@@ -17,9 +18,19 @@ const h = vi.hoisted(() => ({
   sql: [] as string[],
   bypassCalls: 0,
   stepError: null as null | unknown,
-  candidates: [] as Array<{ id: string; name: string; deletedAt: Date; purgeStartedAt: Date | null }>,
+  /** How many leading transactions succeed (a closed, unclaimed club) before the step error is thrown. */
+  happyCalls: 0,
   realPrismaTenant: true,
 }));
+
+/** A closed, unclaimed club with no members: enough for the erasure's preflight, claim and name read. */
+const HAPPY_TX = {
+  tenant: {
+    findUnique: async () => ({ stripeAccountId: null, deletedAt: new Date("2026-09-01T00:00:00.000Z"), purgeStartedAt: null, name: "Club t1", logoUrl: null }),
+    updateMany: async () => ({ count: 1 }),
+  },
+  member: { findMany: async () => [] },
+};
 
 /** The error shapes Postgres + Prisma 7.4.2 + adapter-pg produce (recorded by tests/integration/sec-l2-tenant-bounds-db, both roles: code P2010, the SQLSTATE only in the message). */
 const LOCK_WAIT = () =>
@@ -41,14 +52,12 @@ vi.mock("@/lib/prisma", async (orig) => {
   };
 });
 
-// The route and the cron get a withRlsBypass that fails like the real one does when the Tenant row is locked.
+// The route and the erasure get a withRlsBypass that fails like the real one does when the Tenant row is locked.
 vi.mock("@/lib/prisma-tenant", async (orig) => {
   const real = await orig<typeof import("@/lib/prisma-tenant")>();
   const fake = async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
     h.bypassCalls++;
-    if (h.bypassCalls === 1 && h.candidates.length) {
-      return fn({ tenant: { findMany: async () => h.candidates } });
-    }
+    if (h.bypassCalls <= h.happyCalls) return fn(HAPPY_TX);
     if (h.stepError) throw h.stepError;
     throw new Error("unexpected transaction in this test");
   };
@@ -86,13 +95,13 @@ import {
 } from "@/lib/prisma-tenant";
 import { isTenantRowBusyError } from "@/lib/tenant-lifecycle";
 import { DELETE as restoreClub } from "@/app/api/admin/customers/[id]/soft-delete/route";
-import { purgeSoftDeletedTenants } from "@/lib/tenant-purge";
+import { purgeTenantById } from "@/lib/tenant-purge";
 
 beforeEach(() => {
   h.sql = [];
   h.bypassCalls = 0;
   h.stepError = null;
-  h.candidates = [];
+  h.happyCalls = 0;
   h.realPrismaTenant = true;
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -147,23 +156,28 @@ describe("R10-5: the two callers answer a lock wait as busy", () => {
     expect(res.status).toBe(500);
   });
 
-  it("purge cron: a step blocked on the Tenant row (lock wait) is skipped as busy, not counted as a failure", async () => {
+  // purgeTenantById opens three transactions before its first destructive step: the billing preflight
+  // (withTenantContext), the claim (withRlsBypass) and the name/logo read (withRlsBypass). The fourth is the
+  // first guarded sweep, where the lock wait lands.
+  const ERASURE_HAPPY_CALLS = 3;
+
+  it("explicit erasure: a step blocked on the Tenant row (lock wait) throws a 'busy' error the caller can retry", async () => {
     h.realPrismaTenant = false;
-    const now = new Date("2026-10-12T03:30:00.000Z");
-    h.candidates = [{ id: "t1", name: "Club t1", deletedAt: new Date(now.getTime() - 40 * 86_400_000), purgeStartedAt: null }];
+    h.happyCalls = ERASURE_HAPPY_CALLS;
     h.stepError = LOCK_WAIT();
-    const r = await purgeSoftDeletedTenants(now, () => false);
-    expect(r.deleted).toBe(0);
-    expect(r.error).toBeUndefined();
-    expect(r.details).toMatchObject({ skipped: [{ tenantId: "t1", reason: "busy" }], failures: [] });
+    const now = new Date("2026-10-12T03:30:00.000Z");
+    const thrown = await purgeTenantById("t1", now, () => false).then(() => null, (e: unknown) => e);
+    expect(thrown).not.toBeNull();
+    expect(isTenantRowBusyError(thrown)).toBe(true);
   });
 
-  it("purge cron: a statement timeout in a step is a failure (not a quiet skip)", async () => {
+  it("explicit erasure: a statement timeout in a step is a failure, honestly not 'busy'", async () => {
     h.realPrismaTenant = false;
-    const now = new Date("2026-10-12T03:30:00.000Z");
-    h.candidates = [{ id: "t1", name: "Club t1", deletedAt: new Date(now.getTime() - 40 * 86_400_000), purgeStartedAt: null }];
+    h.happyCalls = ERASURE_HAPPY_CALLS;
     h.stepError = STATEMENT_TIMEOUT();
-    const r = await purgeSoftDeletedTenants(now, () => false);
-    expect(r.details).toMatchObject({ skipped: [], failures: [{ tenantId: "t1" }] });
+    const now = new Date("2026-10-12T03:30:00.000Z");
+    const thrown = await purgeTenantById("t1", now, () => false).then(() => null, (e: unknown) => e);
+    expect(thrown).not.toBeNull();
+    expect(isTenantRowBusyError(thrown)).toBe(false);
   });
 });

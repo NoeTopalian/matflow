@@ -2,8 +2,8 @@
  * RETENTION_CRON_ENABLED, default OFF (security campaign iteration 2, lane M1 v2, 10 Oct 2026; authorised by Noe
  * 10 Oct 22:13 Italy: "Approve implementing and testing RETENTION_CRON_ENABLED, default OFF").
  *
- * The nightly retention sweep is a one-way door (a year of logs, 90 days of Stripe events, any club past its
- * soft-delete grace). Until a human has read a dry run and turned the job on, a scheduler call that carries the real
+ * The nightly retention sweep is a one-way door (a year of logs, 90 days of Stripe events; never a club — closed clubs
+ * are kept, 16 Oct 2026). Until a human has read a dry run and turned the job on, a scheduler call that carries the real
  * bearer must do NOTHING: 503 `{ error: "retention cron disabled" }` before any work — no reconcile, no count, no
  * delete. `?dryRun=1` stays allowed with the gate off (counts only, zero deletes) and the response says so. The gate
  * opens only on the exact string "true". One log line per call, no payload.
@@ -20,10 +20,10 @@ vi.mock("@vercel/blob", () => ({ del: vi.fn().mockResolvedValue(undefined) }));
 
 const m = vi.hoisted(() => ({
   reconcile: vi.fn(),
-  purge: vi.fn(),
 }));
 vi.mock("@/lib/stripe/reconcile", () => ({ runStripeReconciliation: m.reconcile }));
-vi.mock("@/lib/tenant-purge", () => ({ purgeSoftDeletedTenants: m.purge }));
+// The route no longer imports lib/tenant-purge at all (closed clubs are kept; no purge rule), so there is nothing to
+// mock there — tests/unit/keep-closed-clubs-ratchet.test.ts pins that.
 vi.mock("@/lib/prisma-tenant", async () => {
   const { prisma } = await import("@/lib/prisma");
   return {
@@ -87,7 +87,6 @@ beforeEach(() => {
     d.count.mockResolvedValue(7);
   }
   m.reconcile.mockResolvedValue({ ok: true });
-  m.purge.mockResolvedValue({ deleted: 0 });
   for (const k of ["log", "info", "warn", "error"] as const) {
     vi.spyOn(console, k).mockImplementation((...a: unknown[]) => {
       lines.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "));
@@ -101,14 +100,13 @@ afterEach(() => {
 });
 
 describe("RETENTION_CRON_ENABLED gate (default OFF)", () => {
-  it("gate unset + the real bearer → 503 'retention cron disabled' before any work: zero deletes, zero reads, no reconcile, no purge", async () => {
+  it("gate unset + the real bearer → 503 'retention cron disabled' before any work: zero deletes, zero reads, no reconcile", async () => {
     const res = await GET(req());
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "retention cron disabled" });
     expect(writes()).toBe(0);
     expect(reads()).toBe(0);
     expect(m.reconcile).not.toHaveBeenCalled();
-    expect(m.purge).not.toHaveBeenCalled();
   });
 
   for (const v of ["", "false", "TRUE", "True", "1", "yes", " true", "true "]) {
@@ -117,7 +115,6 @@ describe("RETENTION_CRON_ENABLED gate (default OFF)", () => {
       const res = await GET(req());
       expect(res.status).toBe(503);
       expect(writes()).toBe(0);
-      expect(m.purge).not.toHaveBeenCalled();
     });
   }
 
@@ -138,11 +135,11 @@ describe("RETENTION_CRON_ENABLED gate (default OFF)", () => {
     expect(reads()).toBeGreaterThan(0);
     expect(body.results.every((r) => r.deleted === 0)).toBe(true);
     expect(body.results.find((r) => r.rule === "emailLog")?.details).toEqual({ wouldDelete: 7 });
-    expect(m.purge).toHaveBeenCalledTimes(1);
-    expect(m.purge.mock.calls[0][2]).toBe(true);
+    // No club is ever a candidate: closed clubs are kept (16 Oct 2026).
+    expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
   });
 
-  it('gate exactly "true" → unchanged behaviour: the sweep deletes and the purge runs live', async () => {
+  it('gate exactly "true" → unchanged behaviour: the sweep deletes, and still no club rule', async () => {
     process.env.RETENTION_CRON_ENABLED = "true";
     const res = await GET(req());
     expect(res.status).toBe(200);
@@ -151,8 +148,7 @@ describe("RETENTION_CRON_ENABLED gate (default OFF)", () => {
     expect(prisma.emailLog.deleteMany).toHaveBeenCalled();
     expect(body.results.find((r) => r.rule === "emailLog")?.deleted).toBe(1);
     expect(m.reconcile).toHaveBeenCalledTimes(1);
-    expect(m.purge).toHaveBeenCalledTimes(1);
-    expect(m.purge.mock.calls[0][2]).toBe(false);
+    expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
   });
 
   it('gate "true" + ?dryRun=1 → still a dry run (zero deletes)', async () => {

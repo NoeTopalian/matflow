@@ -140,6 +140,8 @@ import { POST as impersonateStart } from "@/app/api/admin/impersonate/route";
 import { GET as classInstancesCron } from "@/app/api/cron/class-instances/route";
 import { GET as monthlyReportsCron } from "@/app/api/cron/monthly-reports/route";
 import { GET as retentionCron } from "@/app/api/cron/retention/route";
+import { purgeTenantById } from "@/lib/tenant-purge";
+import { isTenantRowBusyError } from "@/lib/tenant-lifecycle";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date("2026-10-05T03:30:00.000Z");
@@ -490,45 +492,54 @@ describe("soft-delete: review mode refuses it; otherwise sessions die with it", 
     const [stamp] = writes("tenant", "updateMany");
     const [userBump] = writes("user", "updateMany");
     const [memberBump] = writes("member", "updateMany");
-    // Conditional: a club already soft-deleted is never re-stamped (the purge clock is set once).
+    // Conditional: a club already closed is never re-stamped (the closing date is set once).
     expect(stamp.args[0]).toEqual({ where: { id: "t1", deletedAt: null }, data: { deletedAt: NOW } });
     expect(userBump.args[0]).toMatchObject({ data: { sessionVersion: { increment: 1 } } });
     expect(memberBump.args[0]).toMatchObject({ data: { sessionVersion: { increment: 1 } } });
     expect(new Set([stamp.tx, userBump.tx, memberBump.tx]).size).toBe(1);
   });
 
-  // Was "CURRENT BEHAVIOUR (open finding): restore has no grace-window check
-  // and an unconditional write". Privacy policy §6: recoverable for 30 days.
-  it("FIXED (was open finding): restore past the 30-day window is refused with the real state and writes nothing", async () => {
-    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
-    const res = await softDeleteRoute.DELETE(adminReq("DELETE"), params("t1"));
-    expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ state: "recovery-window-expired" });
-    expect(tenants[0].deletedAt).not.toBeNull();
-    expect(m.logAudit).not.toHaveBeenCalled();
+  it("the closing audit row carries no hard-delete date: nothing is scheduled", async () => {
+    tenants = [tenant({ id: "t1" })];
+    await softDeleteRoute.POST(adminReq("POST", { reason: "Closing down", confirmName: "Club t1" }), params("t1"));
+    const stamped = m.logAudit.mock.calls.map((c) => c[0] as { action: string; metadata: Record<string, unknown> }).find((a) => a.action === "admin.tenant.soft_deleted");
+    expect(stamped).toBeDefined();
+    expect(stamped!.metadata).not.toHaveProperty("hardDeleteAfter");
   });
 
-  it("restore inside the window succeeds through one conditional write", async () => {
-    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 29 * DAY_MS) })];
+  // Was "restore past the 30-day window is refused with the real state".
+  // Product rule (Noe, 16 Oct 2026): closed clubs are KEPT and can be reopened
+  // at any time. There is no window; the only refusals are the erasure race
+  // rules below.
+  it.each([1, 29, 30, 40, 400])("FIXED (was a 30-day window): reopen succeeds %i days after closing through one conditional write with no date predicate", async (days) => {
+    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - days * DAY_MS) })];
     const res = await softDeleteRoute.DELETE(adminReq("DELETE"), params("t1"));
     expect(res.status).toBe(200);
     expect(tenants[0].deletedAt).toBeNull();
     const [restore] = writes("tenant", "updateMany");
-    expect(restore.args[0]).toMatchObject({ where: { id: "t1", purgeStartedAt: null }, data: { deletedAt: null } });
+    expect(restore.args[0]).toEqual({ where: { id: "t1", deletedAt: { not: null }, purgeStartedAt: null }, data: { deletedAt: null } });
+    expect(m.logAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.tenant.restored" }));
   });
 
-  it("restore at exactly 30 days is still allowed; one millisecond later it is not (boundary matches the purge)", async () => {
-    tenants = [tenant({ id: "edge", deletedAt: new Date(NOW.getTime() - 30 * DAY_MS) })];
-    expect((await softDeleteRoute.DELETE(adminReq("DELETE"), params("edge"))).status).toBe(200);
+  it("30 days + 1 ms is just another closed club: reopened, not refused", async () => {
     tenants = [tenant({ id: "late", deletedAt: new Date(NOW.getTime() - 30 * DAY_MS - 1) })];
-    expect((await softDeleteRoute.DELETE(adminReq("DELETE"), params("late"))).status).toBe(409);
+    expect((await softDeleteRoute.DELETE(adminReq("DELETE"), params("late"))).status).toBe(200);
+    expect(tenants[0].deletedAt).toBeNull();
   });
 
-  it("restore after the purge has claimed the club is a 409 'deletion in progress', never 200", async () => {
+  it("reopening an open club is a 409 'not closed' and writes nothing", async () => {
+    tenants = [tenant({ id: "t1" })];
+    const res = await softDeleteRoute.DELETE(adminReq("DELETE"), params("t1"));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ state: "not-deleted" });
+    expect(m.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("restore after an explicit erasure has claimed the club is a 409 'deletion in progress', never 200", async () => {
     tenants = [
       tenant({
         id: "t1",
-        deletedAt: new Date(NOW.getTime() - 20 * DAY_MS), // inside the window, but claimed
+        deletedAt: new Date(NOW.getTime() - 20 * DAY_MS),
         purgeStartedAt: new Date(NOW.getTime() - 60_000),
       }),
     ];
@@ -648,19 +659,37 @@ describe("crons skip suspended and soft-deleted clubs", () => {
   });
 });
 
-// ─── Restore vs purge ────────────────────────────────────────────────────────
+// ─── Reopen vs explicit erasure ──────────────────────────────────────────────
+// Closed clubs are kept (16 Oct 2026): the retention cron has no tenant rule
+// (tests/unit/keep-closed-clubs-ratchet.test.ts), so the erasure path —
+// `purgeTenantById`, run by an operator on a club's written request — is
+// exercised directly against the same mock table. The race rules it relies on
+// are unchanged.
 
-describe("retention purge vs an operator restore", () => {
-  const tenantHardDelete = async (res: { json: () => Promise<unknown> }) =>
-    ((await res.json()) as { results: Array<Record<string, unknown>> }).results.find((r) => r.rule === "tenantHardDelete")!;
+describe("explicit erasure vs an operator reopen", () => {
+  const erase = (id: string, outOfTime: () => boolean = () => false) => purgeTenantById(id, NOW, outOfTime);
+
+  it("the retention sweep never reads, claims or deletes a club — however long it has been closed", async () => {
+    tenants = [
+      tenant({ id: "old", deletedAt: new Date(NOW.getTime() - 400 * DAY_MS) }),
+      tenant({ id: "claimed", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), purgeStartedAt: new Date(NOW.getTime() - DAY_MS) }),
+    ];
+    const res = await retentionCron(cronReq("/api/cron/retention"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: Array<{ rule: string }> };
+    expect(body.results.filter((r) => /tenant|purge/i.test(r.rule))).toEqual([]);
+    expect(h.calls.filter((c) => c.model === "tenant")).toHaveLength(0);
+    expect(tenants).toHaveLength(2);
+    expect(m.cancelAtPeriodEnd).not.toHaveBeenCalled();
+  });
 
   // Was "CURRENT BEHAVIOUR (open finding): a restore that commits mid-purge
-  // does not stop the purge — the tenant row is still deleted". A restore can
-  // no longer commit once the purge has claimed the club (see the 409 tests
+  // does not stop the purge — the tenant row is still deleted". A reopen can
+  // no longer commit once an erasure has claimed the club (see the 409 tests
   // above); this models the one write that still could clear deletedAt — an
   // instance running the OLD restore code during a rollout — and checks the
-  // next guarded step stops the purge instead of erasing a live club.
-  it("FIXED (was open finding): deletedAt cleared mid-purge aborts the next step — the tenant row survives and the run is a 500", async () => {
+  // next guarded step stops the erasure instead of erasing a live club.
+  it("FIXED (was open finding): deletedAt cleared mid-erasure aborts the next step — the tenant row survives", async () => {
     tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
     h.impl.member = {
       findMany: (args: unknown) => {
@@ -669,36 +698,32 @@ describe("retention purge vs an operator restore", () => {
         return [];
       },
     };
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(500);
+    expect(await erase("t1")).toMatchObject({ kind: "aborted", state: "restored" });
     expect(tenants).toHaveLength(1);
     expect(tenants[0].deletedAt).toBeNull();
     expect(writes("tenant", "deleteMany")).toHaveLength(0);
     expect(writes("tenant", "delete")).toHaveLength(0);
   });
 
-  it("a club restored before the purge reaches it is skipped untouched — no claim, no Stripe call, no delete", async () => {
-    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), stripeAccountId: "acct_1" })];
-    // The restore lands after the candidate query but before the preflight.
-    const candidates = h.impl.tenant.findMany;
-    h.impl.tenant.findMany = (args: unknown) => {
-      const out = candidates(args) as TenantRow[];
-      tenants[0].deletedAt = null;
-      return out.map((t) => ({ ...t }));
-    };
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(200);
-    expect(await tenantHardDelete(res)).toMatchObject({ deleted: 0, details: { skipped: [{ tenantId: "t1", reason: "restored" }] } });
+  it("an open club is never erased: skipped as 'restored' — no claim, no Stripe call, no delete", async () => {
+    tenants = [tenant({ id: "t1", stripeAccountId: "acct_1" })];
+    expect(await erase("t1")).toEqual({ kind: "skipped", reason: "restored" });
     expect(tenants[0].purgeStartedAt).toBeNull();
     expect(m.cancelAtPeriodEnd).not.toHaveBeenCalled();
     expect(writes("task", "deleteMany")).toHaveLength(0);
+    expect(writes("tenant", "updateMany")).toHaveLength(0);
+  });
+
+  it("no age requirement: a club closed a minute ago is erased when explicitly asked", async () => {
+    tenants = [tenant({ id: "fresh", deletedAt: new Date(NOW.getTime() - 60_000) })];
+    expect(await erase("fresh")).toMatchObject({ kind: "purged", resumed: false });
+    expect(tenants).toHaveLength(0);
   });
 
   it("every destructive transaction opens with the claim guard, and the final delete is conditional", async () => {
     tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
     h.impl.task = { findMany: () => [{ id: "task1" }] };
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(200);
+    expect(await erase("t1")).toMatchObject({ kind: "purged" });
     expect(tenants).toHaveLength(0);
 
     const guardTxs = new Set(
@@ -718,9 +743,9 @@ describe("retention purge vs an operator restore", () => {
     expect(writes("tenant", "delete")).toHaveLength(0);
   });
 
-  it("purge steps still run as separate transactions (each guarded), so a deadline-cut purge resumes", async () => {
+  it("erasure steps still run as separate transactions (each guarded), so a deadline-cut erasure resumes", async () => {
     tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
-    await retentionCron(cronReq("/api/cron/retention"));
+    await erase("t1");
     const taskTx = writes("task", "findMany")[0]?.tx;
     const tenantDeleteTx = writes("tenant", "deleteMany")[0]?.tx;
     expect(taskTx).toBeDefined();
@@ -728,57 +753,43 @@ describe("retention purge vs an operator restore", () => {
     expect(taskTx).not.toBe(tenantDeleteTx);
   });
 
-  it("an already-claimed club (crash or deadline last night) is resumed with its original claim", async () => {
+  it("an already-claimed club (a run cut short earlier) is resumed with its original claim", async () => {
     const claimedAt = new Date(NOW.getTime() - DAY_MS);
     tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), purgeStartedAt: claimedAt })];
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(200);
-    expect(await tenantHardDelete(res)).toMatchObject({ deleted: 1, details: { purged: [{ tenantId: "t1", resumed: true }] } });
+    expect(await erase("t1")).toMatchObject({ kind: "purged", resumed: true });
     expect(writes("tenant", "deleteMany")[0].args[0]).toMatchObject({ where: { purgeStartedAt: claimedAt } });
   });
 
-  it("a duplicate run after the purge finished finds nothing to do and reports success", async () => {
+  it("a duplicate run after the erasure finished finds nothing to do: skipped as 'gone'", async () => {
     tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
-    expect((await retentionCron(cronReq("/api/cron/retention"))).status).toBe(200);
+    expect(await erase("t1")).toMatchObject({ kind: "purged" });
     h.reset();
     installTenantTable();
-    const again = await retentionCron(cronReq("/api/cron/retention"));
-    expect(again.status).toBe(200);
-    expect(await tenantHardDelete(again)).toMatchObject({ deleted: 0, details: { candidates: 0 } });
+    expect(await erase("t1")).toEqual({ kind: "skipped", reason: "gone" });
   });
 
-  it("retention boundary: exactly 30 days is not yet due; one millisecond past is", async () => {
-    tenants = [
-      tenant({ id: "edge", deletedAt: new Date(NOW.getTime() - 30 * DAY_MS) }),
-      tenant({ id: "due", deletedAt: new Date(NOW.getTime() - 30 * DAY_MS - 1) }),
-    ];
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(200);
-    expect(tenants.map((t) => t.id)).toEqual(["edge"]);
-    expect(tenants[0].purgeStartedAt).toBeNull();
-  });
-
-  // Renamed (review of lane C, D1): was "...unclaimed and still restorable".
-  // The club is past its 30-day window, so restore refuses it; what the
-  // refusal guarantees is that nothing was deleted and nothing was claimed.
-  it("a billing refusal leaves the club unclaimed and intact (past its window, so not restorable)", async () => {
+  // Was "a billing refusal leaves the club unclaimed and intact (past its
+  // window, so not restorable)". There is no window now: the refusal leaves
+  // the club exactly as it was — closed, unclaimed, and REOPENABLE.
+  it("a billing refusal leaves the club unclaimed, intact and reopenable", async () => {
     tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), stripeAccountId: "acct_1" })];
     h.impl.member = {
       findMany: (args: unknown) =>
         JSON.stringify(args).includes("stripeSubscriptionId") ? [{ id: "m1", name: "A Member", stripeSubscriptionId: "sub_1" }] : [],
     };
     m.cancelAtPeriodEnd.mockResolvedValue({ ok: false, status: 500, error: "stripe down" });
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(200);
+    expect(await erase("t1")).toEqual({
+      kind: "billing-blocked",
+      reason: expect.stringContaining("stripe down"),
+      claimed: false,
+      cancelledBeforeBlock: 0,
+    });
     expect(tenants[0].purgeStartedAt).toBeNull();
     expect(writes("task", "deleteMany")).toHaveLength(0);
-    expect(await tenantHardDelete(res)).toMatchObject({
-      details: { failures: [{ tenantId: "t1", reason: expect.stringContaining("stripe down"), cancelledBeforeBlock: 0 }] },
-    });
-    // And restore agrees it is past the window.
+    // And the operator can still reopen it.
     const restore = await softDeleteRoute.DELETE(adminReq("DELETE"), params("t1"));
-    expect(restore.status).toBe(409);
-    expect(await restore.json()).toMatchObject({ state: "recovery-window-expired" });
+    expect(restore.status).toBe(200);
+    expect(tenants[0].deletedAt).toBeNull();
   });
 
   it("D1: subscriptions cancelled before the refusal are counted, not hidden", async () => {
@@ -795,63 +806,14 @@ describe("retention purge vs an operator restore", () => {
     m.cancelAtPeriodEnd
       .mockResolvedValueOnce({ ok: true, cancelAt: null })
       .mockResolvedValueOnce({ ok: false, status: 500, error: "stripe down" });
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(await tenantHardDelete(res)).toMatchObject({
-      details: { failures: [{ tenantId: "t1", cancelledBeforeBlock: 1, reason: expect.stringContaining("1 subscription(s) before it") }] },
+    expect(await erase("t1")).toMatchObject({
+      kind: "billing-blocked",
+      cancelledBeforeBlock: 1,
+      reason: expect.stringContaining("1 subscription(s) before it"),
     });
   });
 
-  it("D2: the claimed/unclaimed split reads the claim inside the preflight, not the stale candidate list", async () => {
-    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS), stripeAccountId: "acct_1" })];
-    // The candidate list is read before another run claims the club.
-    const candidates = h.impl.tenant.findMany;
-    h.impl.tenant.findMany = (args: unknown) => {
-      const out = (candidates(args) as TenantRow[]).map((t) => ({ ...t }));
-      tenants[0].purgeStartedAt = new Date(NOW.getTime() - 60_000);
-      return out;
-    };
-    h.impl.member = {
-      findMany: (args: unknown) =>
-        JSON.stringify(args).includes("stripeSubscriptionId") ? [{ id: "m1", name: "A Member", stripeSubscriptionId: "sub_1" }] : [],
-    };
-    m.cancelAtPeriodEnd.mockResolvedValue({ ok: false, status: 500, error: "stripe down" });
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    // Claimed (possibly part-deleted) is an error, even though the stale list said unclaimed.
-    expect(res.status).toBe(500);
-    expect(await tenantHardDelete(res)).toMatchObject({
-      details: { failures: [{ tenantId: "t1", error: expect.stringContaining("resumed purge blocked on billing") }] },
-    });
-  });
-
-  it("D3: a purge step that times out waiting on the Tenant row is skipped as busy, not reported as a failure", async () => {
-    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
-    h.impl.task = {
-      findMany: () => {
-        throw Object.assign(new Error("Transaction already closed: A commit cannot be executed on an expired transaction."), { code: "P2028" });
-      },
-    };
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(200);
-    const rule = await tenantHardDelete(res);
-    expect(rule).toMatchObject({ deleted: 0, details: { skipped: [{ tenantId: "t1", reason: "busy" }], failures: [] } });
-    expect(rule.error).toBeUndefined();
-    // The claim stands, so the next run resumes it.
-    expect(tenants[0].purgeStartedAt).toEqual(NOW);
-  });
-
-  it("D3: a restore that times out waiting on the Tenant row answers 503 busy, and nothing changed", async () => {
-    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 5 * DAY_MS) })];
-    h.impl.tenant.updateMany = () => {
-      throw Object.assign(new Error("Unable to start a transaction in the given time."), { code: "P2028" });
-    };
-    const res = await softDeleteRoute.DELETE(adminReq("DELETE"), params("t1"));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ state: "busy" });
-    expect(tenants[0].deletedAt).not.toBeNull();
-    expect(m.logAudit).not.toHaveBeenCalled();
-  });
-
-  it("a billing refusal on an already-claimed (possibly part-deleted) club is an error, not a quiet skip", async () => {
+  it("D2: a billing refusal on an already-claimed (possibly part-deleted) club reports claimed: true, read inside the preflight", async () => {
     tenants = [
       tenant({
         id: "t1",
@@ -865,10 +827,35 @@ describe("retention purge vs an operator restore", () => {
         JSON.stringify(args).includes("stripeSubscriptionId") ? [{ id: "m1", name: "A Member", stripeSubscriptionId: "sub_1" }] : [],
     };
     m.cancelAtPeriodEnd.mockResolvedValue({ ok: false, status: 500, error: "stripe down" });
-    const res = await retentionCron(cronReq("/api/cron/retention"));
-    expect(res.status).toBe(500);
-    expect(await tenantHardDelete(res)).toMatchObject({ error: expect.stringContaining("t1") });
+    expect(await erase("t1")).toMatchObject({ kind: "billing-blocked", claimed: true });
     expect(tenants).toHaveLength(1);
+  });
+
+  it("D3: an erasure step that times out waiting on the Tenant row throws a 'busy' error; the claim stands for the retry", async () => {
+    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 40 * DAY_MS) })];
+    h.impl.task = {
+      findMany: () => {
+        throw Object.assign(new Error("Transaction already closed: A commit cannot be executed on an expired transaction."), { code: "P2028" });
+      },
+    };
+    const thrown = await erase("t1").then(() => null, (e: unknown) => e);
+    expect(thrown).not.toBeNull();
+    expect(isTenantRowBusyError(thrown)).toBe(true);
+    // The claim stands, so the next run resumes it.
+    expect(tenants[0].purgeStartedAt).toEqual(NOW);
+    expect(tenants[0].deletedAt).not.toBeNull();
+  });
+
+  it("D3: a restore that times out waiting on the Tenant row answers 503 busy, and nothing changed", async () => {
+    tenants = [tenant({ id: "t1", deletedAt: new Date(NOW.getTime() - 5 * DAY_MS) })];
+    h.impl.tenant.updateMany = () => {
+      throw Object.assign(new Error("Unable to start a transaction in the given time."), { code: "P2028" });
+    };
+    const res = await softDeleteRoute.DELETE(adminReq("DELETE"), params("t1"));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ state: "busy" });
+    expect(tenants[0].deletedAt).not.toBeNull();
+    expect(m.logAudit).not.toHaveBeenCalled();
   });
 
   it("the cron refuses without the bearer (401) and without CRON_SECRET configured (503), before any work", async () => {

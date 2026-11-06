@@ -41,13 +41,10 @@
  * `cron/class-instances` genuinely inserts ClassInstance rows for the 56-day
  * rolling horizon, and `cron/retention` genuinely deletes rows past their
  * published retention windows. Both are the product's own nightly behaviour
- * and both are idempotent. Before writing this file the test branch was
- * checked for the one irreversible case — tenants soft-deleted more than 30
- * days ago, which `purgeSoftDeletedTenants` hard-deletes — and there were
- * zero (and zero soft-deleted tenants at all, and zero AuditLog rows older
- * than 365 days). If that ever stops being true, this file will hard-delete a
- * tenant on the test branch. The guard below asserts the count is still zero
- * BEFORE the retention call, and fails loudly rather than purging.
+ * and both are idempotent. The sweep never touches a club: closed clubs are
+ * kept (product rule, 16 Oct 2026), the by-age tenant purge is gone, and the
+ * retention test below counts closed clubs before and after the call to
+ * prove it.
  *
  * Run it the way the other real-DB files are run:
  *   TEST_DATABASE_URL="$(grep TEST_DATABASE_URL .env.test | cut -d= -f2-)" \
@@ -202,17 +199,12 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
   it(
     "retention sweeps every rule without a single one erroring",
     async () => {
-      // Fail closed before anything irreversible. purgeSoftDeletedTenants
-      // hard-deletes up to 2 tenants per run, and nothing brings one back.
-      const purgeable = await withRlsBypass((tx) =>
+      // Closed clubs are kept: whatever the branch holds (including clubs
+      // closed long ago), the sweep must leave every tenant row in place.
+      const clubsBefore = await withRlsBypass((tx) => tx.tenant.count());
+      const closedBefore = await withRlsBypass((tx) =>
         tx.tenant.count({ where: { deletedAt: { not: null, lt: new Date(Date.now() - 30 * DAY_MS) } } }),
       );
-      expect(
-        purgeable,
-        "The test branch now holds tenant(s) soft-deleted over 30 days ago. Running the " +
-          "retention cron here would HARD-DELETE them. Clear or re-date them deliberately " +
-          "before running this test.",
-      ).toBe(0);
 
       const res = await retentionCron(cronReq("/api/cron/retention", `Bearer ${SECRET}`));
       const body = (await res.json()) as {
@@ -247,9 +239,16 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
         "importUpload",
         "importJob",
         "importJobDiagnostics",
-        "tenantHardDelete",
       ]);
       expect(body.results.filter((r) => r.skipped)).toEqual([]);
+
+      // No club was deleted, claimed or otherwise touched (16 Oct 2026).
+      expect(await withRlsBypass((tx) => tx.tenant.count())).toBe(clubsBefore);
+      expect(
+        await withRlsBypass((tx) =>
+          tx.tenant.count({ where: { deletedAt: { not: null, lt: new Date(Date.now() - 30 * DAY_MS) } } }),
+        ),
+      ).toBe(closedBefore);
     },
     240_000,
   );

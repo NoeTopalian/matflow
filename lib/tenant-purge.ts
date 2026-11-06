@@ -1,11 +1,21 @@
-// Rule g of the retention cron: permanently delete clubs past their 30-day
-// soft-delete window. Moved out of app/api/cron/retention/route.ts (6 Oct 2026)
-// so the restore-versus-purge coordination can be exercised for ONE synthetic
-// club against a real database — a route file can only export handlers.
+// Explicit erasure of ONE closed club — the only path that permanently deletes
+// a club's data. Product rule (Noe, 16 Oct 2026): clubs and their data are
+// KEPT when a club closes so it can come back; MatFlow never deletes a club on
+// its own. `purgeTenantById` runs only on the club's written request, by an
+// operator, and only against a club that is already closed (`deletedAt` set).
+// No cron calls it (tests/unit/keep-closed-clubs-ratchet.test.ts). The by-age
+// bulk purge that the retention cron used to run was removed the same day.
 //
-// Coordination is in lib/tenant-lifecycle.ts: the purge claims the club
+// Moved out of app/api/cron/retention/route.ts (6 Oct 2026) so the
+// reopen-versus-erase coordination can be exercised for ONE synthetic club
+// against a real database — a route file can only export handlers.
+//
+// Coordination is in lib/tenant-lifecycle.ts: the erasure claims the club
 // (`purgeStartedAt`) before anything irreversible happens, and every
-// destructive step re-validates that claim inside its own transaction.
+// destructive step re-validates that claim inside its own transaction. A
+// transaction that gives up waiting on the Tenant row (another writer held it)
+// is thrown to the caller; `isTenantRowBusyError` tells it apart from a real
+// failure, and the claim, if any, stands for a retry.
 
 import { del } from "@vercel/blob";
 import type { Prisma } from "@prisma/client";
@@ -13,13 +23,7 @@ import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { isTenantBlobUrl } from "@/lib/blob-url";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
-import {
-  assertPurgeClaim,
-  claimTenantPurge,
-  isTenantRowBusyError,
-  PurgeAbortedError,
-  softDeleteCutoff,
-} from "@/lib/tenant-lifecycle";
+import { assertPurgeClaim, claimTenantPurge, PurgeAbortedError } from "@/lib/tenant-lifecycle";
 
 type Tx = Prisma.TransactionClient;
 
@@ -32,8 +36,6 @@ const BATCH = 1000;
  */
 const MEMBER_BATCH = 10;
 const MEMBER_TX_TIMEOUT_MS = 60_000;
-/** Tenant hard-delete is the most expensive rule; cap the blast radius. */
-export const MAX_TENANT_PURGES_PER_RUN = 2;
 
 type IdRow = { id: string };
 type BatchDeletable = {
@@ -41,22 +43,6 @@ type BatchDeletable = {
   deleteMany(args: { where: { id: { in: string[] } } }): Promise<{ count: number }>;
 };
 type PickModel = (tx: Tx) => BatchDeletable;
-
-export type TenantPurgeResult = {
-  deleted: number;
-  /**
-   * Set when a club was left part-deleted by something other than the deadline
-   * (an aborted claim, a thrown step). The route turns any rule error into a
-   * 500 so a half state is never reported as a clean run. A billing refusal is
-   * not an error when the club was unclaimed: nothing was deleted, though
-   * the club is past its recovery window and so is not restorable either —
-   * the next run retries (review of lane C, D1).
-   */
-  error?: string;
-  partial?: true;
-  processed?: number;
-  details: Record<string, unknown>;
-};
 
 /** Outcome for one club. `completed: false` = deadline; the claim stands and the next run resumes. */
 export type PurgeOneOutcome =
@@ -67,123 +53,17 @@ export type PurgeOneOutcome =
   | { kind: "gone-during-purge"; membersDeleted: number }
   | { kind: "aborted"; state: string; membersDeleted: number };
 
-/**
- * The cron entry for rule g: pick the oldest candidates and purge each.
- * Candidates already claimed by an earlier run are included — resuming them
- * is how a deadline-cut or crashed purge finishes.
- */
-export async function purgeSoftDeletedTenants(
-  now: Date,
-  outOfTime: () => boolean,
-  dryRun = false,
-): Promise<TenantPurgeResult> {
-  const cutoff = softDeleteCutoff(now);
-  const tenants = await withRlsBypass((tx) =>
-    tx.tenant.findMany({
-      where: { deletedAt: { not: null, lt: cutoff } },
-      select: { id: true, name: true, deletedAt: true, purgeStartedAt: true },
-      orderBy: { deletedAt: "asc" },
-      take: MAX_TENANT_PURGES_PER_RUN,
-    }),
-  );
-
-  if (dryRun) {
-    return {
-      deleted: 0,
-      details: {
-        candidates: tenants.length,
-        wouldPurge: tenants.map((t) => ({
-          tenantId: t.id,
-          name: t.name,
-          deletedAt: t.deletedAt?.toISOString() ?? null,
-          purgeStartedAt: t.purgeStartedAt?.toISOString() ?? null,
-        })),
-      },
-    };
-  }
-
-  let deleted = 0;
-  let partial = false;
-  const purged: Array<{ tenantId: string; membersDeleted: number; resumed: boolean }> = [];
-  const partialTenants: Array<{ tenantId: string; membersDeleted: number }> = [];
-  const skipped: Array<{ tenantId: string; reason: string }> = [];
-  const failures: Array<{ tenantId: string; error?: string; reason?: string; cancelledBeforeBlock?: number }> = [];
-
-  for (const t of tenants) {
-    if (outOfTime()) {
-      partial = true;
-      break;
-    }
-    try {
-      const outcome = await purgeTenantById(t.id, now, outOfTime);
-      switch (outcome.kind) {
-        case "purged":
-          deleted += 1;
-          purged.push({ tenantId: t.id, membersDeleted: outcome.membersDeleted, resumed: outcome.resumed });
-          break;
-        case "partial":
-          partial = true;
-          partialTenants.push({ tenantId: t.id, membersDeleted: outcome.membersDeleted });
-          break;
-        case "skipped":
-        case "gone-during-purge":
-          skipped.push({ tenantId: t.id, reason: outcome.kind === "skipped" ? outcome.reason : "purged by another run" });
-          break;
-        case "billing-blocked":
-          console.error(`[cron/retention] tenant ${t.id} skipped: ${outcome.reason}`);
-          // Unclaimed: nothing was deleted (it is past its recovery window, so
-          // not restorable either; the next run retries), so
-          // this is a reason, not an error. Already claimed (a resumed purge):
-          // the club may be part-deleted, so it must surface as an error.
-          failures.push(
-            // `claimed` comes from the preflight's own in-transaction read, not
-            // the candidate list read earlier (review of lane C, D2).
-            outcome.claimed
-              ? { tenantId: t.id, error: `resumed purge blocked on billing: ${outcome.reason}`, cancelledBeforeBlock: outcome.cancelledBeforeBlock }
-              : { tenantId: t.id, reason: outcome.reason, cancelledBeforeBlock: outcome.cancelledBeforeBlock },
-          );
-          break;
-        case "aborted":
-          console.error(`[cron/retention] tenant ${t.id} purge aborted: ${outcome.state}`);
-          failures.push({ tenantId: t.id, error: `purge aborted (${outcome.state})` });
-          break;
-      }
-      if (outcome.kind === "partial") break;
-    } catch (e) {
-      // Another writer (a restore, a duplicate run's step) held the Tenant row
-      // past this step's budget. The step rolled back; any claim stands and the
-      // next run resumes it, exactly as after the deadline (review of lane C, D3).
-      if (isTenantRowBusyError(e)) {
-        skipped.push({ tenantId: t.id, reason: "busy" });
-        continue;
-      }
-      const message = e instanceof Error ? e.message : "unknown";
-      console.error(`[cron/retention] tenant hard-delete failed for ${t.id}`, e);
-      failures.push({ tenantId: t.id, error: message });
-    }
-  }
-
-  const hard = failures.filter((f) => f.error);
-  return {
-    deleted,
-    ...(hard.length ? { error: `${hard.length} club purge(s) failed part-way: ${hard.map((f) => f.tenantId).join(", ")}` } : {}),
-    ...(partial ? { partial: true as const, processed: purged.length + partialTenants.length } : {}),
-    details: { candidates: tenants.length, purged, partial: partialTenants, skipped, failures },
-  };
-}
-
 // ─── Billing preflight ───────────────────────────────────────────────────────
 
 /**
  * Cancel every live Stripe subscription in the club before its rows are
- * destroyed; any refusal is fatal to tonight's purge of this club (it stays
- * soft-deleted and unclaimed — not restorable, since it is past its window —
- * and tomorrow retries). The read is
- * gated on the club still being due, in the same transaction.
+ * destroyed; any refusal is fatal to this erasure of this club (it stays
+ * closed and unclaimed — still reopenable — and the operator retries once
+ * billing is sorted). The read is gated on the club still being closed, in
+ * the same transaction.
  */
 async function cancelTenantSubscriptions(
   tenantId: string,
-  now: Date,
 ): Promise<
   | { kind: "ok"; cancelled: number }
   | { kind: "blocked"; reason: string; claimed: boolean; cancelled: number }
@@ -195,10 +75,9 @@ async function cancelTenantSubscriptions(
       select: { stripeAccountId: true, deletedAt: true, purgeStartedAt: true },
     });
     if (!tenant) return { due: false as const, reason: "gone" };
-    const due =
-      tenant.purgeStartedAt !== null ||
-      (tenant.deletedAt !== null && tenant.deletedAt.getTime() < softDeleteCutoff(now).getTime());
-    if (!due) return { due: false as const, reason: tenant.deletedAt ? "not-due" : "restored" };
+    // Due = closed (any age) or already claimed. An open club is never erased.
+    const due = tenant.purgeStartedAt !== null || tenant.deletedAt !== null;
+    if (!due) return { due: false as const, reason: "restored" };
     const members = await tx.member.findMany({
       where: { tenantId, stripeSubscriptionId: { not: null } },
       select: { id: true, name: true, stripeSubscriptionId: true },
@@ -218,7 +97,7 @@ async function cancelTenantSubscriptions(
       kind: "blocked",
       reason:
         `${preflight.members.length} member(s) still carry a Stripe subscription but this gym ` +
-        "has no connected Stripe account — cancel them directly in Stripe, then the next run purges",
+        "has no connected Stripe account — cancel them directly in Stripe, then run the erasure again",
       claimed: preflight.claimed,
       cancelled: 0,
     };
@@ -456,27 +335,30 @@ async function drainMembers(
 // ─── One club, end to end ────────────────────────────────────────────────────
 
 /**
- * Purge one club, or explain why not. Order:
+ * Erase one CLOSED club on its explicit written request, or explain why not.
+ * Never called by a cron; an operator runs it. Order:
  *
  *   1. Billing preflight (fail-closed, idempotent Stripe calls). It runs
  *      BEFORE the claim so a club whose billing refuses to stop is left
- *      intact — nothing irreversible has happened to its data. It is past its
- *      recovery window, so restore still refuses it; the next run retries.
- *      Subscriptions cancelled before the refusal are reported
- *      (cancelledBeforeBlock), since those calls are not undone. Its member read
- *      is gated on the club still being due, so a club restored before this
- *      point is not touched at all.
- *   2. Claim (conditional; restore is refused from here on).
+ *      intact — nothing irreversible has happened to its data, and it can
+ *      still be reopened. Subscriptions cancelled before the refusal are
+ *      reported (cancelledBeforeBlock), since those calls are not undone. Its
+ *      member read is gated on the club still being closed, so a club
+ *      reopened before this point is not touched at all.
+ *   2. Claim (conditional; reopen is refused from here on).
  *   3. The walk, each destructive transaction opening with assertPurgeClaim.
  *   4. The tenant row, conditionally, with the evidence row in the same
  *      transaction.
+ *
+ * A row-lock wait (another writer on the Tenant row) is thrown as-is; the
+ * caller reads it with `isTenantRowBusyError` and retries later.
  */
 export async function purgeTenantById(
   tenantId: string,
   now: Date,
   outOfTime: () => boolean,
 ): Promise<PurgeOneOutcome> {
-  const billing = await cancelTenantSubscriptions(tenantId, now);
+  const billing = await cancelTenantSubscriptions(tenantId);
   if (billing.kind === "not-due") return { kind: "skipped", reason: billing.reason };
   if (billing.kind === "blocked") {
     return { kind: "billing-blocked", reason: billing.reason, claimed: billing.claimed, cancelledBeforeBlock: billing.cancelled };
@@ -521,7 +403,7 @@ export async function purgeTenantById(
             stripeSubscriptionsCancelled: billing.cancelled,
             purgeStartedAt: claim.claimedAt.toISOString(),
             resumed: claim.resumed,
-            reason: "Soft-delete grace window elapsed (30 days)",
+            reason: "Explicit erasure on the club's written request (operator-run)",
           },
         },
       });
@@ -540,7 +422,7 @@ export async function purgeTenantById(
 /**
  * Invariant (review of lane C): every blob deletion in this file runs OUTSIDE
  * a database transaction, and only after the club's claim (`purgeStartedAt`)
- * has committed. That is safe only because a claim is irreversible — restore
+ * has committed. That is safe only because a claim is irreversible — reopen
  * refuses a claimed club forever — so a file deleted here can never belong to
  * a club that is later brought back. Do not move a blob deletion before
  * `claimTenantPurge`, and do not add a way to clear `purgeStartedAt`.
@@ -551,7 +433,7 @@ async function deleteBlobsBestEffort(urls: string[]): Promise<number> {
     await del(urls);
     return urls.length;
   } catch (e) {
-    console.warn("[cron/retention] blob delete failed (best-effort)", e);
+    console.warn("[tenant-purge] blob delete failed (best-effort)", e);
     return 0;
   }
 }
