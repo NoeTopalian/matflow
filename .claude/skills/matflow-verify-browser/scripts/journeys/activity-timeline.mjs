@@ -899,6 +899,17 @@ try {
       // The toolbar: search on its own line, then the day and Filters; tap targets at least 44px tall.
       for (const control of [phone.getByRole("combobox", { name: "Search members" }), phone.getByTestId("date-button"), phone.getByTestId("filters-button")]) expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44);
       await expect(views(phone).getByRole("tab")).toHaveCount(5);
+      // Search has the first line to itself; the day and Filters share the second.
+      const [search, day, filtersBox] = await Promise.all([phone.getByRole("combobox", { name: "Search members" }), phone.getByTestId("date-button"), phone.getByTestId("filters-button")].map((l) => l.boundingBox()));
+      expect(Math.abs(day.y - filtersBox.y)).toBeLessThanOrEqual(1);
+      expect(day.y).toBeGreaterThan(search.y + search.height - 1);
+      // A link that opens on the last tab shows that tab: the rail scrolls sideways to it.
+      await open(phone, "/dashboard/activity?types=all");
+      const everything = await view(phone, "Everything").boundingBox();
+      expect(everything.x).toBeGreaterThanOrEqual(0);
+      expect(everything.x + everything.width).toBeLessThanOrEqual(390);
+      expect(await noSideScroll(phone)).toBe(true);
+      await open(phone, "/dashboard/activity");
       // The Filters sheet: a staff member, applied; no Copy link anywhere.
       await phone.getByTestId("filters-button").tap();
       const sheet = phone.getByRole("dialog", { name: "Filters" });

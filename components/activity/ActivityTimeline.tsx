@@ -341,7 +341,7 @@ function PageTimeline({ role, viewerId, staff = [], tiers = [] }: PageProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2" data-testid="activity-toolbar">
-          <div className="min-w-0 flex-1 basis-56 sm:max-w-sm">
+          <div className="min-w-0 flex-1 basis-full sm:max-w-sm sm:basis-56">
             <MemberSearchPicker
               label="Search members"
               placeholder="Search members…"
