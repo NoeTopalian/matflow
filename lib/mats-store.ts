@@ -57,10 +57,11 @@ export async function readLayout(tx: Tx, tenantId: string): Promise<LayoutState>
  * used to open its own) but GUARDED by a savepoint: a statement that fails
  * inside a transaction aborts the whole transaction, and a timetable must not
  * go blank because its mats could not be read. On failure the savepoint is
- * rolled back, so the transaction is usable again and the reads made before
- * it stand; the page renders split by time and says so (`failed`). If even
- * the rollback to the savepoint fails (the connection is gone), that error is
- * thrown: the transaction cannot answer anything else either.
+ * rolled back and released, so the transaction is usable again, no savepoint
+ * is left open, and the reads made before it stand; the page renders split by
+ * time and says so (`failed`). If the savepoint cannot even be opened, or the
+ * rollback to it fails (the connection is gone), that error is thrown: the
+ * transaction cannot answer anything else either.
  *
  * Call it LAST in the transaction and never alongside another statement
  * (no Promise.all): a savepoint covers whatever runs on the connection while it
@@ -70,8 +71,10 @@ export async function readMatsForTimetable(
   tx: Tx,
   tenantId: string,
 ): Promise<{ mats: { id: string; name: string }[]; storedLayout: TimetableLayout | null; failed: boolean }> {
-  await tx.$executeRaw`SAVEPOINT timetable_mats`;
+  let opened = false;
   try {
+    await tx.$executeRaw`SAVEPOINT timetable_mats`;
+    opened = true;
     const mats = await listMats(tx, tenantId);
     const tenant = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timetableLayout: true } });
     await tx.$executeRaw`RELEASE SAVEPOINT timetable_mats`;
@@ -81,7 +84,10 @@ export async function readMatsForTimetable(
       failed: false,
     };
   } catch (e) {
+    // No savepoint to go back to: the transaction itself is failing, and the page with it.
+    if (!opened) throw e;
     await tx.$executeRaw`ROLLBACK TO SAVEPOINT timetable_mats`;
+    await tx.$executeRaw`RELEASE SAVEPOINT timetable_mats`;
     console.error("[timetable] the mats could not be loaded; rendering split by time", e);
     return { mats: [], storedLayout: null, failed: true };
   }

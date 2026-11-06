@@ -116,6 +116,7 @@ function plain(v: unknown): unknown {
 
 const results: Record<string, Count> = {};
 const outputs: Record<string, unknown> = {};
+const timings: Record<string, { p50: number; p95: number; runs: number }> = {};
 
 async function seed() {
   const now = Date.now();
@@ -219,6 +220,7 @@ describe.skipIf(!HAS_DB)("statements per page (S3 measurement)", () => {
     if (OUT_DIR) {
       mkdirSync(OUT_DIR, { recursive: true });
       writeFileSync(path.join(OUT_DIR, `s3-counts-${ROLE}.json`), JSON.stringify(results, null, 2));
+      writeFileSync(path.join(OUT_DIR, `s3-timings-${ROLE}.json`), JSON.stringify(timings, null, 2));
       writeFileSync(path.join(OUT_DIR, `s3-pages-${ROLE}.json`), JSON.stringify(outputs, null, 2).replaceAll(STAMP, "S"));
     }
   }, 120_000);
@@ -236,7 +238,18 @@ describe.skipIf(!HAS_DB)("statements per page (S3 measurement)", () => {
     const { count, out } = await measure(load);
     results[name] = count;
     outputs[name] = plain(out);
+    // Wall time of the page's load (review L5): 11 more loads, uncounted, one after another; p50 and p95. Taken before
+    // the assertion so the base build (which fails it) is timed too.
+    const ms: number[] = [];
+    for (let r = 0; r < 11; r += 1) {
+      const t0 = performance.now();
+      await load();
+      ms.push(performance.now() - t0);
+    }
+    ms.sort((a, b) => a - b);
+    const pct = (p: number) => Math.round(ms[Math.min(ms.length - 1, Math.ceil((p / 100) * ms.length) - 1)]);
+    timings[name] = { p50: pct(50), p95: pct(95), runs: ms.length };
     // S3: one tenant transaction per page or route, so never more than one connection held at once.
     expect([name, count.transactions, count.maxOpenTransactions]).toEqual([name, 1, 1]);
-  });
+  }, 240_000);
 });

@@ -59,7 +59,7 @@ describe("readMatsForTimetable", () => {
     expect((await readMatsForTimetable(tx as never, "t1")).storedLayout).toBeNull();
   });
 
-  it("answers a failed read with no mats, no choice and the flag, and rolls back to its savepoint so the transaction goes on", async () => {
+  it("answers a failed read with no mats, no choice and the flag, rolls back to its savepoint and releases it, so the transaction goes on with none left open", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const $executeRaw = vi.fn(async () => 0);
     const findMany = vi.fn(async () => {
@@ -67,9 +67,22 @@ describe("readMatsForTimetable", () => {
     });
     const tx = { mat: { findMany }, tenant: { findFirst: vi.fn() }, $executeRaw };
     expect(await readMatsForTimetable(tx as never, "t1")).toEqual({ mats: [], storedLayout: null, failed: true });
-    expect(executed($executeRaw)).toEqual(["SAVEPOINT timetable_mats", "ROLLBACK TO SAVEPOINT timetable_mats"]);
+    expect(executed($executeRaw)).toEqual(["SAVEPOINT timetable_mats", "ROLLBACK TO SAVEPOINT timetable_mats", "RELEASE SAVEPOINT timetable_mats"]);
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
+  });
+
+  it("throws the original error, and rolls back to nothing, when the savepoint itself cannot be opened", async () => {
+    const aborted = new Error("current transaction is aborted");
+    const $executeRaw = vi.fn(async (s: TemplateStringsArray) => {
+      if (s.join("?").startsWith("SAVEPOINT")) throw aborted;
+      return 0;
+    });
+    const findMany = vi.fn();
+    const tx = { mat: { findMany }, tenant: { findFirst: vi.fn() }, $executeRaw };
+    await expect(readMatsForTimetable(tx as never, "t1")).rejects.toBe(aborted);
+    expect(executed($executeRaw)).toEqual(["SAVEPOINT timetable_mats"]);
+    expect(findMany).not.toHaveBeenCalled();
   });
 
   it("throws when even the rollback to its savepoint fails: the transaction cannot answer anything else", async () => {

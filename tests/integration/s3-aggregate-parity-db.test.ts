@@ -29,7 +29,7 @@ import {
 import * as viaPrisma from "../unit/support/aggregate-counts-via-prisma";
 import { AT_RISK_DAYS, MATFLOW_CHECKIN_WHERE, atRiskWindowStart, readAtRiskGate, type AtRiskGate } from "@/lib/dashboard-action-items";
 import { readMatsForTimetable } from "@/lib/mats-store";
-import { getReportsData } from "@/lib/reports";
+import { getReportsData, reportsAttendanceScope, reportsBarScope } from "@/lib/reports";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `s3p-${Date.now().toString(36)}`;
@@ -107,12 +107,19 @@ async function mkClub(
 
 // ── The replaced reads, verbatim ─────────────────────────────────────────────
 
-// The dashboard, attendance-summary and chart-bar reads before S3 are tests/unit/support/aggregate-counts-via-prisma.ts:
+// The dashboard and attendance-summary reads before S3 are tests/unit/support/aggregate-counts-via-prisma.ts:
 // the replaced Prisma calls, verbatim, which the unit tests also use as their stand-in for the SQL. Holding them equal
 // here is what lets those unit tests stand for the real statements.
 const oldDashboardCounts = (tx: Tx, tenantId: string, monthStart: Date, weekStart: Date) => viaPrisma.readDashboardCounts(tx, tenantId, { monthStart, weekStart });
 const oldAttendanceSummary = (tx: Tx, tenantId: string, monthStart: Date, weekStart: Date) => viaPrisma.readAttendanceSummaryCounts(tx, tenantId, { monthStart, weekStart });
-const oldBucketCounts = (tx: Tx, tenantId: string, windows: CountWindow[], scope: { classId?: string; accountTypes?: string[] }) => viaPrisma.countAttendanceInWindows(tx, tenantId, windows, scope);
+/**
+ * lib/reports.ts before S3: one count per bar, scoped by the LIVE reportsAttendanceScope (review L1). A change to the
+ * report's scope that the SQL's scope (reportsBarScope → countAttendanceInWindows) does not follow fails the bars test.
+ */
+const oldBucketCounts = (tx: Tx, tenantId: string, windows: CountWindow[], classId: string | undefined, ageGroup: "adult" | "kids" | undefined) =>
+  Promise.all(
+    windows.map((b) => tx.attendanceRecord.count({ where: { tenantId, checkInTime: { gte: b.start, lt: b.end }, ...reportsAttendanceScope(classId, ageGroup) } })),
+  );
 /** lib/dashboard-action-items.ts readAtRiskGate before S3: findFirst probes. Returns the gate and the probes it ran. */
 async function oldAtRiskGate(tx: Tx, tenantId: string, now: Date): Promise<{ gate: AtRiskGate; probes: Partial<AtRiskGateProbes> }> {
   const probes: Partial<AtRiskGateProbes> = {};
@@ -305,22 +312,26 @@ describe.skipIf(!HAS_DB)("S3 aggregate statements return exactly what the replac
       { start: new Date("2025-01-01T00:00:00.000Z"), end: new Date("2025-01-08T00:00:00.000Z") },
       { start: new Date("2026-10-19T00:00:00.000Z"), end: new Date("2026-10-19T00:00:00.000Z") },
     ];
-    const scopes = [
+    const scopes: { classId?: string; ageGroup?: "adult" | "kids" }[] = [
       {},
       { classId: A.cls.live },
       { classId: A.cls.kids },
-      { accountTypes: ["adult"] },
-      { accountTypes: ["kids", "junior"] },
-      { classId: A.cls.live, accountTypes: ["adult"] },
+      { ageGroup: "adult" },
+      { ageGroup: "kids" },
+      { classId: A.cls.live, ageGroup: "adult" },
+      { classId: A.cls.kids, ageGroup: "kids" },
       // A class of another club: Reports never passes one (it validates the id first), but the count must still be 0.
       { classId: B.cls.live },
     ];
     for (const scope of scopes) {
-      const { now, old } = await withTenantContext(A.tenantId, async (tx) => ({
-        now: await countAttendanceInWindows(tx, A.tenantId, windows, scope),
-        old: await oldBucketCounts(tx, A.tenantId, windows, scope),
+      const { now, twin, old } = await withTenantContext(A.tenantId, async (tx) => ({
+        now: await countAttendanceInWindows(tx, A.tenantId, windows, reportsBarScope(scope.classId, scope.ageGroup)),
+        twin: await viaPrisma.countAttendanceInWindows(tx, A.tenantId, windows, reportsBarScope(scope.classId, scope.ageGroup)),
+        old: await oldBucketCounts(tx, A.tenantId, windows, scope.classId, scope.ageGroup),
       }));
       expect([scope, now]).toEqual([scope, old]);
+      // The unit tests' stand-in counts the same.
+      expect([scope, twin]).toEqual([scope, old]);
     }
     const all = await withTenantContext(A.tenantId, (tx) => countAttendanceInWindows(tx, A.tenantId, windows));
     expect(all.filter((n) => n > 0).length).toBeGreaterThan(5);
@@ -370,6 +381,39 @@ describe.skipIf(!HAS_DB)("S3 aggregate statements return exactly what the replac
     expect(out.after).toBe(out.before);
     expect(out.ok.failed).toBe(false);
     expect(out.ok.mats.map((m) => m.name)).toEqual(["Mat 1", "Mat 2"]);
+  });
+
+  it("after a failed mats read the transaction still COMMITS a write made after it, and leaves no savepoint open (review L3)", async () => {
+    const marker = `${STAMP}-commit-marker`;
+    const stillOpen = await withTenantContext(A.tenantId, async (tx) => {
+      const broken = new Proxy(tx, {
+        get: (t, k) => (k === "mat" ? { findMany: () => t.$queryRaw`SELECT * FROM "S3NoSuchTable"` } : Reflect.get(t, k)),
+      }) as Tx;
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      const failed = await readMatsForTimetable(broken, A.tenantId);
+      logged.mockRestore();
+      expect(failed.failed).toBe(true);
+      // No savepoint left: releasing it again must be refused ("savepoint does not exist"). Asked under a probe
+      // savepoint so the refusal does not abort the transaction.
+      await tx.$executeRaw`SAVEPOINT s3_probe`;
+      let open: boolean;
+      try {
+        await tx.$executeRaw`RELEASE SAVEPOINT timetable_mats`;
+        open = true;
+      } catch {
+        open = false;
+        await tx.$executeRaw`ROLLBACK TO SAVEPOINT s3_probe`;
+        await tx.$executeRaw`RELEASE SAVEPOINT s3_probe`;
+      }
+      // A write after the failed read, in the same transaction.
+      await tx.membershipTier.create({ data: { id: marker, tenantId: A.tenantId, name: "S3 commit marker" } });
+      return open;
+    });
+    expect(stillOpen).toBe(false);
+    // Committed: another transaction sees the write.
+    const committed = await withTenantContext(A.tenantId, (tx) => tx.membershipTier.count({ where: { tenantId: A.tenantId, id: marker } }));
+    expect(committed).toBe(1);
+    await withTenantContext(A.tenantId, (tx) => tx.membershipTier.deleteMany({ where: { tenantId: A.tenantId, id: marker } }));
   });
 
   it("Reports loads in one transaction, and the period's bars add up to its check-ins, with and without filters", async () => {

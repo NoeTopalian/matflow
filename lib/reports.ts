@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { withTenantContext } from "@/lib/prisma-tenant";
-import { countAttendanceInWindows } from "@/lib/aggregate-counts";
+import { countAttendanceInWindows, type AttendanceScope } from "@/lib/aggregate-counts";
 import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
@@ -500,6 +500,29 @@ export function createEmptyReportsData(): ReportsData {
 const ADULT_ACCOUNT_TYPES = ["adult"];
 const KIDS_ACCOUNT_TYPES = ["kids", "junior"];
 
+/**
+ * The attendance-scope filter fragment (Track A, D5), merged into every attendance-derived Prisma query of the report.
+ * `classInstance: { classId }` and `member: { accountType: { in: [...] } }` are ordinary Prisma relation filters — real
+ * queries, not a client-side narrowing of an unfiltered fetch, so an honestly-empty result (e.g. a class with no kids'
+ * attendance this window) reads as a real zero rather than a fabricated one. `classId` must already be resolved
+ * against the club's classes.
+ */
+export function reportsAttendanceScope(classId: string | undefined, ageGroup: "adult" | "kids" | undefined) {
+  return {
+    ...(classId ? { classInstance: { classId } } : {}),
+    ...(ageGroup ? { member: { accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES } } } : {}),
+  };
+}
+
+/**
+ * The same scope for the one-statement chart bars (lib/aggregate-counts countAttendanceInWindows). The bars parity test
+ * (tests/integration/s3-aggregate-parity-db.test.ts) counts each bar with `reportsAttendanceScope` and with this, so a
+ * change to one that the other does not follow fails it.
+ */
+export function reportsBarScope(classId: string | undefined, ageGroup: "adult" | "kids" | undefined): AttendanceScope {
+  return { classId, accountTypes: ageGroup ? (ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES) : undefined };
+}
+
 export type ReportsOptions = {
   /** The page's period (lib/report-period); when absent, `weeksBack` is mapped to the nearest preset. */
   period?: ReportPeriodParams;
@@ -516,8 +539,10 @@ export type ReportsOptions = {
  * now one statement instead of one per bar. Each statement keeps the extended per-statement bound
  * (lib/prisma-tenant.ts TENANT_STATEMENT_BOUND_EXTENDED_MS).
  */
+export const REPORTS_TX_BUDGET_MS = 30_000;
+
 export async function getReportsData(tenantId: string, options: ReportsOptions = {}): Promise<ReportsData> {
-  return withTenantContext(tenantId, (tx) => buildReportsData(tx, tenantId, options), { maxWait: 10_000, timeout: 30_000 });
+  return withTenantContext(tenantId, (tx) => buildReportsData(tx, tenantId, options), { maxWait: 10_000, timeout: REPORTS_TX_BUDGET_MS });
 }
 
 async function buildReportsData(tx: Prisma.TransactionClient, tenantId: string, options: ReportsOptions): Promise<ReportsData> {
@@ -570,16 +595,9 @@ async function buildReportsData(tx: Prisma.TransactionClient, tenantId: string, 
   const attendanceBucket: ReportsData["attendanceBucket"] = range.months.length > 3 ? "month" : "week";
   const weeksBack = Math.max(1, Math.ceil((Math.min(rangeEnd.getTime(), now.getTime()) - startOfWeek(rangeStart).getTime()) / (7 * 86_400_000)));
 
-  // Attendance-scope filter fragment (Track A, D5): merged into every
-  // attendance-derived query below. `classInstance: { classId }` and
-  // `member: { accountType: { in: [...] } }` are ordinary Prisma relation
-  // filters — real queries, not a client-side narrowing of an unfiltered
-  // fetch, so an honestly-empty result (e.g. a class with no kids' attendance
-  // this window) reads as a real zero rather than a fabricated one.
-  const attendanceScope = {
-    ...(resolvedClassId ? { classInstance: { classId: resolvedClassId } } : {}),
-    ...(ageGroup ? { member: { accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES } } } : {}),
-  };
+  // Attendance-scope filter fragment (Track A, D5; reportsAttendanceScope):
+  // merged into every attendance-derived query below.
+  const attendanceScope = reportsAttendanceScope(resolvedClassId, ageGroup);
 
   const [
     methodCounts,
@@ -735,10 +753,7 @@ async function buildReportsData(tx: Prisma.TransactionClient, tenantId: string, 
   const [bucketCounts, distinctAttending] = await Promise.all([
         // S3 (6 Nov 2026): every bar in ONE statement over the same windows and
         // the same scope (was one count per bar; lib/aggregate-counts.ts).
-        countAttendanceInWindows(tx, tenantId, buckets, {
-          classId: resolvedClassId,
-          accountTypes: ageGroup ? (ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES) : undefined,
-        }),
+        countAttendanceInWindows(tx, tenantId, buckets, reportsBarScope(resolvedClassId, ageGroup)),
         // Distinct ACTIVE attendees in the period — the "members who attended"
         // rate mode's numerator, counted in the database (one row per member).
         // Its numerator stays within the active-member denominator: an

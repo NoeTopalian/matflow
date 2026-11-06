@@ -13,6 +13,8 @@ import {
   type AtRiskGateProbes,
 } from "@/lib/aggregate-counts";
 import { AT_RISK_DAYS, atRiskGateFromProbes, atRiskGateWindows, atRiskWindowStart } from "@/lib/dashboard-action-items";
+import { reportsAttendanceScope, reportsBarScope } from "@/lib/reports";
+import * as viaPrisma from "./support/aggregate-counts-via-prisma";
 
 const none: AtRiskGateProbes = { before: null, first: null, earlier: null, firstHalf: null, secondHalf: null };
 const d = (iso: string) => new Date(iso);
@@ -116,19 +118,53 @@ describe("atRiskGateWindows", () => {
   });
 });
 
+describe("the Reports attendance scope has one definition (review L1)", () => {
+  const AGES = [undefined, "adult", "kids"] as const;
+  const CLASSES = [undefined, "c1"] as const;
+
+  it("is pinned: class as a session relation filter, age group as the member's account types (parents in neither)", () => {
+    expect(reportsAttendanceScope(undefined, undefined)).toEqual({});
+    expect(reportsAttendanceScope("c1", undefined)).toEqual({ classInstance: { classId: "c1" } });
+    expect(reportsAttendanceScope(undefined, "adult")).toEqual({ member: { accountType: { in: ["adult"] } } });
+    expect(reportsAttendanceScope("c1", "kids")).toEqual({ classInstance: { classId: "c1" }, member: { accountType: { in: ["kids", "junior"] } } });
+    expect(reportsBarScope("c1", "kids")).toEqual({ classId: "c1", accountTypes: ["kids", "junior"] });
+    expect(reportsBarScope(undefined, undefined)).toEqual({ classId: undefined, accountTypes: undefined });
+  });
+
+  it("the unit tests' stand-in for the bars filters with exactly the report's scope, for every class and age choice", async () => {
+    for (const classId of CLASSES) {
+      for (const ageGroup of AGES) {
+        const count = vi.fn(async (args: unknown) => {
+          void args;
+          return 0;
+        });
+        const w = { start: d("2026-10-26T00:00:00.000Z"), end: d("2026-11-02T00:00:00.000Z") };
+        await viaPrisma.countAttendanceInWindows({ attendanceRecord: { count } }, "t1", [w], reportsBarScope(classId, ageGroup));
+        expect(count).toHaveBeenCalledWith({ where: { tenantId: "t1", checkInTime: { gte: w.start, lt: w.end }, ...reportsAttendanceScope(classId, ageGroup) } });
+      }
+    }
+  });
+});
+
 describe("the SQL follows the rules", () => {
   const src = readFileSync(path.join(process.cwd(), "lib/aggregate-counts.ts"), "utf8");
   it("uses tagged templates only, never the Unsafe entry points", () => {
     expect(src).not.toMatch(/\.\$(query|execute)RawUnsafe\b|Prisma\.raw\(/);
     expect(src.match(/\$queryRaw</g)?.length).toBe(4);
   });
-  it("filters the tenant in every FROM of every statement", () => {
+  it("filters the tenant in every FROM of every statement, the windows' EXISTS sub-selects included (review L2)", () => {
+    let seen = 0;
     for (const table of ['"AttendanceRecord"', '"Member"', '"Class"', '"MembershipTier"']) {
       const re = new RegExp(`FROM ${table}(?: [a-z]+)?\\s+WHERE ([^\\n]+)`, "g");
       for (const m of src.matchAll(re)) {
-        // A sub-select joined to an already tenant-filtered row (the windows' EXISTS) filters by that row's id.
-        expect(m[1]).toMatch(/"tenantId" = \$\{tenantId\}|m\."id" = a\."memberId"|ci\."id" = a\."classInstanceId"/);
+        seen += 1;
+        expect(m[1]).toMatch(/"tenantId" = \$\{tenantId\}/);
       }
     }
+    expect(seen).toBeGreaterThanOrEqual(10);
+    // ClassInstance has no tenantId column: its EXISTS reaches the club through its Class.
+    expect(src).toContain(`JOIN "Class" c ON c."id" = ci."classId" AND c."tenantId" = \${tenantId}`);
+    // Every LEFT JOIN of AttendanceRecord is tenant-filtered in its ON.
+    expect(src).toMatch(/LEFT JOIN "AttendanceRecord" a\s+ON a\."tenantId" = \$\{tenantId\}/);
   });
 });

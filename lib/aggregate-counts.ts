@@ -87,9 +87,12 @@ export async function countAttendanceInWindows(
        AND a."checkInTime" >= w."s"
        AND a."checkInTime" < w."e"
        AND (${classId}::text IS NULL OR EXISTS (
-             SELECT 1 FROM "ClassInstance" ci WHERE ci."id" = a."classInstanceId" AND ci."classId" = ${classId}::text))
+             SELECT 1 FROM "ClassInstance" ci
+               JOIN "Class" c ON c."id" = ci."classId" AND c."tenantId" = ${tenantId}
+              WHERE ci."id" = a."classInstanceId" AND ci."classId" = ${classId}::text))
        AND (${accountTypes}::text[] IS NULL OR EXISTS (
-             SELECT 1 FROM "Member" m WHERE m."id" = a."memberId" AND m."accountType" = ANY(${accountTypes}::text[])))
+             SELECT 1 FROM "Member" m
+              WHERE m."id" = a."memberId" AND m."tenantId" = ${tenantId} AND m."accountType" = ANY(${accountTypes}::text[])))
      GROUP BY w."i"
      ORDER BY w."i"`;
   return windowCountsInOrder(rows, windows.length);
