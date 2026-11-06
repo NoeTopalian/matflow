@@ -95,6 +95,7 @@ Earlier runs on this branch (rehearsals on debd6873 and b60afb3e, and a subset o
 ## 7. Not verified
 
 - Safari and iOS: Chromium only. The Safari "+N more" tap fix is proved by a unit test, not a WebKit run.
+- The light shell under accents #ffffff and #ffe14d: those two readings equal the dark shell's to two decimals, so those loads may not have drawn the light shell; only the #111111 load clearly did (lowest 6.53:1).
 - Booked-block contrast in the browser: the harness measures text against the shell behind a gradient fill, not the fill, so its readings for booked blocks (18.9:1, and 1.1:1 for white ink on a #111111 club) are not usable. White ink on mid-tone class colours from the shared `readableText` (about 3.7:1, older than this PR) is unchanged.
 - React hydration mismatch (#418) on real-clock loads of the staff timetable: seen intermittently in earlier runs on this branch, and before PR 3; not seen in the final run. `structureDiff` now names the element when it recurs. Cause unknown.
 - `tenant-restore-purge-race` (times out, as on PR 1 and PR 2) and the other database suites were not re-run on this PR; it adds one database file (`member-timetable-db`, green in both roles).
