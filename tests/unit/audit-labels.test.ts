@@ -27,7 +27,8 @@ function literalActions(): string[] {
     // `action: isKid ? "member.create.kid" : "member.create"` as well.
     for (const line of src.split("\n")) {
       if (!/\baction:/.test(line)) continue;
-      for (const m of line.matchAll(/"([a-z_]+(?:\.[a-z_]+)+)"/g)) names.add(m[1]);
+      // Hyphens too: "waiver.sign-for-child" went unlabelled for want of one.
+      for (const m of line.matchAll(/"([a-z_-]+(?:\.[a-z_-]+)+)"/g)) names.add(m[1]);
     }
   }
   return [...names].sort();

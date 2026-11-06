@@ -59,6 +59,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   // ── Waivers ───────────────────────────────────────────────────────────────
   "waiver.sign": "Signed the waiver",
   "waiver.sign.supervised": "Signed the waiver at the desk (supervised)",
+  // Written by app/api/waiver/sign-for-child since it shipped, with no label:
+  // the scan in tests/unit/audit-labels.test.ts could not see a hyphen.
+  "waiver.sign-for-child": "Parent signed a child's waiver",
   "waiver.signature.view": "Viewed a signed waiver",
 
   // ── Attendance ────────────────────────────────────────────────────────────

@@ -166,7 +166,9 @@ async function lockLoginKeys(tx: LoginClaimTx, keys: number[]): Promise<void> {
   }
 }
 
-const ERASED_SENTINEL = /^deleted-.*@deleted\.invalid$/i;
+/** The address an erased member is left with (app/api/admin/dsar/erase): whoever holds it has been erased. */
+export const ERASED_EMAIL = /^deleted-.*@deleted\.invalid$/i;
+const ERASED_SENTINEL = ERASED_EMAIL;
 
 /**
  * Every row in this club holding any of these canonical addresses, matched on
