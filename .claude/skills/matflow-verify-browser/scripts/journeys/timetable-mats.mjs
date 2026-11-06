@@ -122,7 +122,7 @@ try {
   await chips(main);
   await settled(main);
 
-  await section("by-hand", `a mat added by hand changes nothing on the timetable: still by time, "By mat" cannot be pressed and says why, and the sheet offers the ${ON[1]} classes that already say its name; the mat is then removed`, async () => {
+  await section("by-hand", `a mat added by hand changes nothing on the timetable: still by time, "By mat" says what it will do and opens the mats set-up without saving anything, and the sheet offers the ${ON[1]} classes that already say its name; the mat is then removed`, async () => {
     let sheet = await openMats(main);
     await expect(sheet.getByRole("heading", { name: "Places typed on your classes" })).toBeVisible();
     await sheet.getByRole("button", { name: "Add a mat myself" }).click();
@@ -134,10 +134,13 @@ try {
     await chips(main);
     await expect(weekGrid(main)).not.toHaveAttribute("data-mats", "true");
     const byMat = main.getByTestId("timetable-split-mat");
-    await expect(byMat).toHaveAttribute("aria-disabled", "true");
-    await expect(main.getByTestId("timetable-split-hint")).toHaveText("Put a class on a mat first: open a class and choose its mat.");
+    // Never a dead button: it says what it will do, and pressing it opens the set-up. Nothing is saved by the press.
+    await expect(byMat).not.toHaveAttribute("aria-disabled", "true");
+    await expect(main.getByTestId("timetable-split-hint")).toHaveText("By mat gives each mat its own column. Press it to put your classes on their mats.");
     await expect(byMat).toHaveAttribute("aria-describedby", "timetable-split-hint");
-    await byMat.click({ force: true });
+    await byMat.click();
+    await expect(main.getByRole("dialog").getByLabel("Mat 1 name")).toHaveValue("Mat 1");
+    await closeMats(main);
     await expect(main.getByTestId("timetable-split-time")).toHaveAttribute("aria-pressed", "true");
     expect(await classesOnMats()).toBe(0);
     expect(await storedLayout()).toBeNull();
@@ -150,7 +153,7 @@ try {
     await expect(sheet.getByRole("heading", { name: "Places typed on your classes" })).toBeVisible();
     await closeMats(main);
     expect(await matRows()).toEqual([]);
-    return { offered: ON[1], hint: "Put a class on a mat first: open a class and choose its mat." };
+    return { offered: ON[1], hint: "By mat gives each mat its own column. Press it to put your classes on their mats." };
   });
 
   await section("first-run", `"Add these as mats": a forced failure keeps both boxes ticked and says so; one retry sends one request; then ${ON[1] + ON[2]} classes are on two mats, the sheet says the week is now split by mat, and it is, without anyone pressing the choice`, async () => {

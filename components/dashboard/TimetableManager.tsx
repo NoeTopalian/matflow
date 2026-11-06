@@ -1639,9 +1639,32 @@ export default function TimetableManager({
     showToast(`The timetable is now split by ${layout === "mat" ? "mat" : "time"}.`, "info");
   }, [layout, matsLoadFailed, showToast]);
 
+  // "By mat" pressed before any class is on a mat: the Mats sheet opens to set them up, and the press is
+  // remembered so the club is split by mat as soon as it can be. Forgotten when the sheet is closed.
+  const [wantByMat, setWantByMat] = useState(false);
+  async function splitByMatAfterSetup() {
+    try {
+      const res = await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: "mat" }) });
+      // 409: still no class on a mat (a mat was added but nothing put on it yet). The sheet stays open.
+      if (!res.ok) return;
+      quietSplit.current = true;
+      setChoice((c) => ({ ...c, stored: "mat" }));
+      setWantByMat(false);
+      setMatsOpen(false);
+      showToast("Your timetable is now split by mat. Saved for the whole club.", "success");
+      router.refresh();
+    } catch {
+      // The mats are saved; only the split is not. The control is still there to press.
+    }
+  }
+
   async function chooseLayout(next: TimetableLayout) {
     if (savingLayout) return;
-    if (next === "mat" && inUse === 0) return; // aria-disabled: its sentence says what to do first
+    if (next === "mat" && inUse === 0) {
+      setWantByMat(true);
+      setMatsOpen(true);
+      return;
+    }
     if (choice.stored === next) return; // already saved: nothing to send
     const before = choice.stored;
     const changes = effectiveLayout(next, inUse) !== layout;
@@ -2228,6 +2251,15 @@ export default function TimetableManager({
                 Today
               </span>
             );
+            // What "By mat" will do while no class is on a mat yet, with the places the club has already typed.
+            // One name per place whatever its capitals and spacing; the first spelling met is the one shown.
+            const spellings = new Map<string, string>();
+            for (const c of classes) {
+              const place = c.matId ? "" : (c.location ?? "").trim().replace(/\s+/g, " ");
+              if (place && !spellings.has(place.toLowerCase())) spellings.set(place.toLowerCase(), place);
+            }
+            const typed = [...spellings.values()];
+            const typedList = typed.length === 0 ? "" : typed.length <= 3 ? typed.join(typed.length === 2 ? " and " : ", ") : `${typed.slice(0, 2).join(", ")} and ${typed.length - 2} more`;
             const splitHint = !showSplit
               ? null
               : supportSession
@@ -2235,8 +2267,10 @@ export default function TimetableManager({
                 : !canManage || inUse > 0
                   ? null
                   : mats.length === 0
-                ? "Add your mats first."
-                : "Put a class on a mat first: open a class and choose its mat.";
+                    ? typedList
+                      ? `By mat gives each mat its own column. Press it to set up your mats: your classes say ${typedList}.`
+                      : "By mat gives each mat its own column. Press it to add your mats."
+                    : "By mat gives each mat its own column. Press it to put your classes on their mats.";
             return (
               <>
                 {/* Week navigation. One wrapping row: when it wraps, the right-hand group moves down as a unit. */}
@@ -2298,19 +2332,19 @@ export default function TimetableManager({
                             <span id="timetable-split-label" className="text-xs font-medium text-tx-2 md:whitespace-nowrap">Split same-time classes (whole club)</span>
                             <div className="flex items-center gap-1 rounded-lg bg-sf-2 p-0.5 [&>*]:flex-1 md:[&>*]:flex-none" role="group" aria-labelledby="timetable-split-label">
                               {(["mat", "time"] as const).map((v) => {
-                                const unavailable = v === "mat" && inUse === 0;
+                                // Never a dead button: with no class on a mat yet, "By mat" opens the mats set-up (its sentence says so).
+                                const setsUp = v === "mat" && inUse === 0;
                                 return (
                                   <Button
                                     key={v}
                                     variant="ghost"
                                     size="compact"
                                     aria-pressed={layout === v}
-                                    // Still focusable, so its sentence can be read: aria-disabled, not disabled.
-                                    aria-disabled={unavailable || undefined}
-                                    aria-describedby={unavailable ? "timetable-split-hint" : undefined}
+                                    aria-describedby={setsUp ? "timetable-split-hint" : undefined}
+                                    aria-haspopup={setsUp ? "dialog" : undefined}
                                     onClick={() => void chooseLayout(v)}
                                     data-testid={`timetable-split-${v}`}
-                                    className={[layout === v ? "border border-bd-active bg-sf-1 text-tx-1 shadow-sm" : "text-tx-2", unavailable ? "cursor-not-allowed opacity-60" : ""].join(" ")}
+                                    className={layout === v ? "border border-bd-active bg-sf-1 text-tx-1 shadow-sm" : "text-tx-2"}
                                   >
                                     {v === "mat" ? "By mat" : "By time"}
                                   </Button>
@@ -2338,7 +2372,7 @@ export default function TimetableManager({
                     </Button>
                   </div>
                 </div>
-                {/* Why "By mat" cannot be pressed yet, on its own line under the control. */}
+                {/* What "By mat" does while no class is on a mat yet, on its own line under the control. */}
                 {splitHint && (
                   <p id="timetable-split-hint" className="-mt-1 mb-3 text-xs text-tx-2 md:text-right" data-testid="timetable-split-hint">
                     {splitHint}
@@ -2743,11 +2777,13 @@ export default function TimetableManager({
       {canChangeMats && (
         <MatsSheet
           open={matsOpen}
-          onClose={() => setMatsOpen(false)}
+          onClose={() => { setMatsOpen(false); setWantByMat(false); }}
           onChanged={(opts) => {
             // The sheet has already said what the split is now: the page need not say it again.
             if (opts?.quiet) quietSplit.current = true;
             router.refresh();
+            // Opened by pressing "By mat": now that mats are set up, split by mat as asked.
+            if (wantByMat) void splitByMatAfterSetup();
           }}
         />
       )}

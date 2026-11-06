@@ -198,21 +198,73 @@ describe("the control: Split same-time classes", () => {
     expect(toast).toHaveBeenCalledTimes(1);
   });
 
-  it("By mat cannot be pressed until a class is on a mat: it stays focusable and says what to do first", () => {
+  /** The Mats sheet's reads, and one typed place ("Mat 1", two classes) it offers to turn into a mat. */
+  const matsServer = (over: (call: Call) => { ok: boolean; status?: number; json: () => Promise<unknown> } | undefined = () => undefined) =>
+    stubFetch((call) => {
+      const ok = (data: unknown) => ({ ok: true, status: 200, json: async () => data });
+      const mine = over(call);
+      if (mine) return mine;
+      if (call.method === "GET" && call.url === "/api/mats") return ok({ mats: [], layout: { stored: null, effective: "time" } });
+      if (call.method === "GET" && call.url === "/api/mats/suggestions") return ok({ suggestions: [{ key: "mat 1", name: "Mat 1", classCount: 2, matId: null }], noPlaceCount: 0, matCount: 0 });
+      if (call.method === "POST" && call.url === "/api/mats/adopt") return ok({ mats: [{ id: "m1", name: "Mat 1", created: true, classCount: 2 }], matsAdded: 1, classesAttached: 2, skipped: [], layout: { stored: null, effective: "time" }, layoutChanged: false });
+      return undefined;
+    });
+  const typedOnly = () => [cls("Gi", "Mat 1", [[1, "18:40", "19:30"]]), cls("No-Gi", "mat  1", [[3, "18:40", "19:30"]]), yoga()];
+
+  it("By mat is never a dead button: with no class on a mat it says what it will do, naming the places already typed", () => {
+    calls = matsServer();
     // Mats exist, no class is on one.
     const some = render(<TimetableManager initialClasses={[yoga()]} mats={MATS} {...PROPS} />);
-    expect(byMat().getAttribute("aria-disabled")).toBe("true");
+    expect(byMat().getAttribute("aria-disabled")).toBeNull();
     expect((byMat() as HTMLButtonElement).disabled).toBe(false);
     expect(byMat().getAttribute("aria-describedby")).toBe("timetable-split-hint");
-    expect(document.getElementById("timetable-split-hint")?.textContent).toBe("Put a class on a mat first: open a class and choose its mat.");
-    fireEvent.click(byMat());
-    expect(sent(calls)).toEqual([]);
-    expect(byTime().getAttribute("aria-pressed")).toBe("true");
+    expect(document.getElementById("timetable-split-hint")?.textContent).toBe("By mat gives each mat its own column. Press it to put your classes on their mats.");
     some.unmount();
-    // No mats at all.
-    render(<TimetableManager initialClasses={[yoga()]} {...PROPS} />);
-    expect(document.getElementById("timetable-split-hint")?.textContent).toBe("Add your mats first.");
-    expect(byMat().getAttribute("aria-disabled")).toBe("true");
+    // No mats at all: the sentence names the places the club has already typed (one line per place, whatever its capitals).
+    const none = render(<TimetableManager initialClasses={typedOnly()} {...PROPS} />);
+    expect(document.getElementById("timetable-split-hint")?.textContent).toBe("By mat gives each mat its own column. Press it to set up your mats: your classes say Mat 1 and Sports hall.");
+    none.unmount();
+    // No mats and nothing typed.
+    render(<TimetableManager initialClasses={[openMat()]} {...PROPS} />);
+    expect(document.getElementById("timetable-split-hint")?.textContent).toBe("By mat gives each mat its own column. Press it to add your mats.");
+  });
+
+  it("pressing By mat with no mats opens the set-up; adding the typed places as mats then splits the club by mat, says so, and closes the sheet", async () => {
+    calls = matsServer();
+    render(<TimetableManager initialClasses={typedOnly()} {...PROPS} />);
+    fireEvent.click(byMat());
+    const sheet = await screen.findByRole("dialog");
+    // Nothing is saved by the press itself: the split waits for the mats.
+    expect(sent(calls)).toEqual([]);
+    fireEvent.click(await within(sheet).findByRole("button", { name: "Add these as mats" }));
+    await waitFor(() => expect(sent(calls).map((c) => [c.method, c.body])).toEqual([["PATCH", { layout: "mat" }]]));
+    expect(calls.find((c) => c.url === "/api/mats/adopt")?.body).toEqual({ keys: ["mat 1"] });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(toast).toHaveBeenCalledWith("Your timetable is now split by mat. Saved for the whole club.", "success");
+  });
+
+  it("closing the set-up without adding anything forgets the press: mats added later from the Mats button do not flip the split", async () => {
+    calls = matsServer();
+    render(<TimetableManager initialClasses={typedOnly()} {...PROPS} />);
+    fireEvent.click(byMat());
+    fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByTestId("timetable-mats"));
+    fireEvent.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Add these as mats" }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/mats/adopt")).toBe(true));
+    await act(async () => {});
+    expect(sent(calls)).toEqual([]);
+  });
+
+  it("if the club still has no class on a mat (the server says 409), the set-up stays open and nothing is claimed", async () => {
+    calls = matsServer((call) => (call.url === "/api/timetable/layout" ? { ok: false, status: 409, json: async () => ({ error: "No class is on a mat yet." }) } : undefined));
+    render(<TimetableManager initialClasses={typedOnly()} {...PROPS} />);
+    fireEvent.click(byMat());
+    fireEvent.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Add these as mats" }));
+    await waitFor(() => expect(sent(calls)).toHaveLength(1));
+    await act(async () => {});
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(toast).not.toHaveBeenCalledWith("Your timetable is now split by mat. Saved for the whole club.", "success");
   });
 
   it("has no hint once a class is on a mat", () => {
