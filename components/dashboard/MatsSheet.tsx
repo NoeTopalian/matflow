@@ -17,7 +17,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Sheet } from "@/components/ui/sheet";
+import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/Toast";
 import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, type PlaceSuggestion } from "@/lib/mats";
 
@@ -300,7 +300,9 @@ export function MatsSheet({
 
   return (
     <>
-      <Sheet open={open} onClose={onClose} title="Mats">
+      {/* A small box that grows with the club's mats and scrolls only past the window's height (Noe, 6 Nov 2026:
+          "a small box that opens up as long as the number of locations, not taking up half the screen"). */}
+      <Dialog open={open} onClose={onClose} title="Mats">
         <div className="space-y-4" data-testid="mats-sheet">
           <p className="sr-only" role="status" aria-live="polite" data-testid="mats-live">{live}</p>
 
@@ -458,7 +460,7 @@ export function MatsSheet({
             </section>
           ) : null}
         </div>
-      </Sheet>
+      </Dialog>
       <ConfirmDialog {...dialogProps} />
     </>
   );
