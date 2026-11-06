@@ -43,7 +43,12 @@ export async function POST(
   const ip = getClientIp(req);
   const ua = req.headers.get("user-agent");
   const tokenHash = hashToken(token);
-  const rl = await checkRateLimit(`kiosk:checkin:${tokenHash.slice(0, 12)}:${ip}`, 30, 60_000);
+  // 150 a minute per tablet (token + IP), up from 30 (speed quick win 2i,
+  // 6 Nov 2026): a class start puts the whole class through one front-desk
+  // tablet in a minute or two, and 30 refused the rest of the queue. Each
+  // check-in still needs a signed member token from the lookup below, and
+  // sign-in, magic-link and lockout limits are unchanged.
+  const rl = await checkRateLimit(`kiosk:checkin:${tokenHash.slice(0, 12)}:${ip}`, 150, 60_000);
   if (!rl.allowed) {
     return NextResponse.json({ error: "Rate limited" }, { status: 429 });
   }
