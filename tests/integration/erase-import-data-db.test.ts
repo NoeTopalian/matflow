@@ -59,7 +59,7 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
   let fileUrl = "";
 
   beforeAll(async () => {
-    const csv = Buffer.from(`Customer Name,Customer Email,Phone\n${ADA.name},${ADA.email},07700 900111\n${BEN.name},${BEN.email},07700 900222\n`, "utf8");
+    const csv = Buffer.from(`Customer Name,Customer Email,Phone\n${ADA.name},${ADA.email},07700 900111\n${BEN.name},${BEN.email},07700 900222\n${CARA.name},${CARA.email},${CARA.phone}\n`, "utf8");
     await withRlsBypass(async (tx) => {
       const t = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: STAMP, timezone: "Europe/London", onboardingCompleted: true } });
       const u = await tx.user.create({ data: { tenantId: t.id, email: `${STAMP}-owner@example.test`, name: "Erim Owner", role: "owner", passwordHash: "x" } });
