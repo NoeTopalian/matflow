@@ -41,12 +41,16 @@ export function formatTime(d: DateInput): string {
   });
 }
 
-/** "Fri 15 Aug" */
-export function formatDayLabel(d: DateInput): string {
+/**
+ * "Fri 15 Aug". Pass `timeZone` to name the day in that zone rather than the
+ * reader's — "UTC" for a day marker such as `ClassInstance.date`.
+ */
+export function formatDayLabel(d: DateInput, timeZone?: string): string {
   return toDate(d).toLocaleDateString(LOCALE, {
     weekday: "short",
     day: "numeric",
     month: "short",
+    ...(timeZone ? { timeZone } : {}),
   });
 }
 

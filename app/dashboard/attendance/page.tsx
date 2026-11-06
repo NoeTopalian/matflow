@@ -1,6 +1,11 @@
 import { requireStaff } from "@/lib/authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import AttendanceView from "@/components/dashboard/AttendanceView";
+import { parseIdParam } from "@/lib/id-param";
+import { sessionLabel } from "@/lib/session-label";
+
+/** The most check-ins one session's view will list. */
+const SESSION_ATTENDANCE_LIMIT = 1000;
 
 export type AttendanceRow = {
   id: string;
@@ -29,6 +34,8 @@ async function fetchRecentAttendance(
   tx: Parameters<Parameters<typeof withTenantContext>[1]>[0],
   tenantId: string,
   limit = 100,
+  // One session's check-ins instead of the recent list (?instance=).
+  classInstanceId?: string,
 ): Promise<AttendanceRow[]> {
   // Audit iter-3-database A8I3-P-H-1 [High]: top-level + nested select
   // throughout. Was: outer `include: { classInstance: { include: { class:
@@ -38,7 +45,7 @@ async function fetchRecentAttendance(
   // are used. Also dropped the redundant `member: { tenantId }` join —
   // the outer `tenantId` filter + RLS already enforce isolation.
   const rows = await tx.attendanceRecord.findMany({
-    where: { tenantId },
+    where: { tenantId, ...(classInstanceId ? { classInstanceId } : {}) },
     select: {
       id: true,
       memberId: true,
@@ -134,8 +141,15 @@ async function fetchSummary(
   return inner;
 }
 
-export default async function AttendancePage() {
+export default async function AttendancePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ instance?: string | string[] }>;
+}) {
   const { session } = await requireStaff();
+  // ?instance=<id>: a link to one session (the Activity feed names sessions).
+  // This page lists check-ins, so it shows that session's.
+  const instanceId = parseIdParam((await searchParams).instance);
 
   // UI-RULES §7: no catch. A failed read used to render zero attendances and a
   // zeroed summary, which a manager reads as "nobody trained this week".
@@ -149,14 +163,24 @@ export default async function AttendancePage() {
   // into sequential latency. Folding both into a single withTenantContext
   // shares the connection and runs the queries truly in parallel inside
   // one transaction.
-  const { recordRows: records, summaryData: summary } = await withTenantContext(
+  const { recordRows: records, summaryData: summary, focus } = await withTenantContext(
     session!.user.tenantId,
     async (tx) => {
+      // ClassInstance has no tenantId column: the club is checked through the
+      // session's class.
+      const focus = instanceId
+        ? await tx.classInstance.findFirst({
+            where: { id: instanceId, class: { tenantId: session!.user.tenantId } },
+            select: { id: true, date: true, startTime: true, isCancelled: true, class: { select: { name: true } } },
+          })
+        : null;
       const [recordRows, summaryData] = await Promise.all([
-        fetchRecentAttendance(tx, session!.user.tenantId),
+        focus
+          ? fetchRecentAttendance(tx, session!.user.tenantId, SESSION_ATTENDANCE_LIMIT, focus.id)
+          : fetchRecentAttendance(tx, session!.user.tenantId),
         fetchSummary(tx, session!.user.tenantId),
       ]);
-      return { recordRows, summaryData };
+      return { recordRows, summaryData, focus };
     },
   );
 
@@ -165,6 +189,12 @@ export default async function AttendancePage() {
       records={records}
       summary={summary}
       primaryColor={session!.user.primaryColor}
+      session={
+        focus
+          ? { id: focus.id, label: sessionLabel(focus.class.name, focus.date, focus.startTime) + (focus.isCancelled ? " (cancelled)" : "") }
+          : null
+      }
+      sessionNotFound={instanceId !== null && !focus}
     />
   );
 }

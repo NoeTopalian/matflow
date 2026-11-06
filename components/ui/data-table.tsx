@@ -109,6 +109,13 @@ export interface DataTableProps<T> {
   /** Shown when there is genuinely no data. Never use it for a failed request (§7). */
   empty?: ReactNode;
   onRowClick?: (row: T) => void;
+  /**
+   * The one row a deep link pointed at. It gets `aria-current="true"` and an
+   * outline in `--tx-2`, on the table row and on the card — darker than the
+   * `--bd-active` focus outline, which is too faint to say "this one" on a
+   * long table and would be indistinguishable from keyboard focus.
+   */
+  isRowCurrent?: (row: T) => boolean;
   /** Below `sm:`, render each row through this instead of the table. */
   renderCard?: (row: T) => ReactNode;
   /** Accessible name for the table. */
@@ -239,6 +246,7 @@ export function DataTable<T>({
   loading = false,
   empty,
   onRowClick,
+  isRowCurrent,
   renderCard,
   label,
   skeletonRows = 5,
@@ -367,9 +375,11 @@ export function DataTable<T>({
               : sortedRows.map((row, index) => {
                   const zebra = index % 2 === 1;
                   const isLastRow = index === sortedRows.length - 1;
+                  const current = isRowCurrent?.(row) === true;
                   return (
                     <tr
                       key={rowKey(row)}
+                      aria-current={current ? "true" : undefined}
                       // `group`, because the zebra and hover fills live on the
                       // CELLS now: only a cell background can be clipped by a
                       // `border-radius`, and the last row has to round itself
@@ -380,6 +390,7 @@ export function DataTable<T>({
                         // a keyboard-focused row showed nothing at all.
                         onRowClick &&
                           "cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--bd-active)]",
+                        current && "outline outline-2 -outline-offset-2 outline-[var(--tx-2)]",
                       )}
                       {...(onRowClick
                         ? {
@@ -452,17 +463,24 @@ export function DataTable<T>({
                   ))}
                 </Card>
               );
+              const current = isRowCurrent?.(row) === true;
+              const currentClass = current
+                ? "rounded-[var(--r-md)] outline outline-2 outline-offset-2 outline-[var(--tx-2)]"
+                : undefined;
               return onRowClick ? (
                 <button
                   key={rowKey(row)}
                   type="button"
                   onClick={() => onRowClick(row)}
-                  className="block w-full text-left"
+                  aria-current={current ? "true" : undefined}
+                  className={cn("block w-full text-left", currentClass)}
                 >
                   {content}
                 </button>
               ) : (
-                <div key={rowKey(row)}>{content}</div>
+                <div key={rowKey(row)} aria-current={current ? "true" : undefined} className={currentClass}>
+                  {content}
+                </div>
               );
             })}
       </div>
