@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+import { z } from "@/lib/zod-client";
 import { ArrowLeft, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shape";

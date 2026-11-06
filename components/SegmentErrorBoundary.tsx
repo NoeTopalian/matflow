@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { reportClientError } from "@/lib/sentry-client";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { errorReferenceFromDigest } from "@/lib/error-reference";
 
@@ -44,10 +44,7 @@ export function SegmentErrorBoundary({
   );
 
   useEffect(() => {
-    Sentry.withScope((scope) => {
-      if (reference) scope.setTag("error_reference", reference);
-      Sentry.captureException(error);
-    });
+    reportClientError(error, { reference });
   }, [error, reference]);
 
   return (
