@@ -36,13 +36,13 @@ import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Sheet } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { parseIdParam } from "@/lib/id-param";
+import { ActivityTimeline } from "@/components/activity/ActivityTimeline";
 import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
@@ -435,115 +435,6 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
   },
 ];
 
-
-// ─── Details history (owner-only) ─────────────────────────────────────────────
-// Version trail of the member's personal details, sourced from the audit log
-// (member.self_update from the member app; member.update from staff edits —
-// both store {changes: {field: {from, to}}} since 2026-08-17). History begins
-// from that date; older edits recorded field names only and are omitted.
-
-const HISTORY_FIELD_LABELS: Record<string, string> = {
-  name: "Name",
-  email: "Email",
-  phone: "Phone",
-  membershipType: "Membership",
-  status: "Status",
-  paymentStatus: "Payment status",
-  emergencyContactName: "Emergency contact",
-  emergencyContactPhone: "Emergency phone",
-  emergencyContactRelation: "Emergency relation",
-  dateOfBirth: "Date of birth",
-};
-
-type HistoryEntry = {
-  id: string;
-  action: string;
-  createdAt: string;
-  user: { name: string | null } | null;
-  metadata: { source?: string; changes?: Record<string, { from: unknown; to: unknown }> } | null;
-};
-
-function DetailsHistory({ memberId }: { memberId: string }) {
-  const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
-  const [error, setError] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  // A failed load is an ERROR, never the "no changes recorded" empty state
-  // (UI-RULES §7) — the two say opposite things about whether this member's
-  // details were ever edited.
-  //
-  // The retry re-runs this effect by bumping reloadKey rather than calling a
-  // fetch callback the effect also depends on: resetting state synchronously
-  // at the top of an effect cascades renders, and the dependency made every
-  // memberId change race its own in-flight request.
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/audit-log?entityType=Member&entityId=${memberId}&take=20`)
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data: { entries?: HistoryEntry[] }) => {
-        if (cancelled) return;
-        const relevant = (data.entries ?? []).filter(
-          (e) =>
-            (e.action === "member.self_update" || e.action === "member.update") &&
-            e.metadata?.changes && Object.keys(e.metadata.changes).length > 0,
-        );
-        setEntries(relevant);
-      })
-      .catch(() => { if (!cancelled) setError(true); });
-    return () => { cancelled = true; };
-  }, [memberId, reloadKey]);
-
-  const load = useCallback(() => {
-    setError(false);
-    setEntries(null);
-    setReloadKey((k) => k + 1);
-  }, []);
-
-  return (
-    <Card>
-      <h3 className="text-sm font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--tx-1)" }}>
-        <History className="w-4 h-4" style={{ color: "var(--tx-3)" }} aria-hidden />
-        Details history
-      </h3>
-      {error ? (
-        <ErrorState message="Couldn't load the change history" onRetry={load} />
-      ) : entries === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-[70%]" />
-          <Skeleton className="h-4 w-1/2" />
-        </div>
-      ) : entries.length === 0 ? (
-        <p className="text-xs" style={{ color: "var(--tx-3)" }}>
-          No changes recorded — history begins from the first edit after 17 Aug 2026.
-        </p>
-      ) : (
-        <div className="space-y-4">
-          {entries.map((e) => (
-            <div key={e.id} className="text-xs" style={{ borderLeft: "2px solid var(--bd-default)", paddingLeft: 10 }}>
-              <p className="font-medium" style={{ color: "var(--tx-2)" }}>
-                {new Date(e.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}
-                {" · "}
-                {e.action === "member.self_update"
-                  ? "Member (self-service)"
-                  : e.user?.name ?? "Staff"}
-              </p>
-              <ul className="mt-1 space-y-0.5">
-                {Object.entries(e.metadata?.changes ?? {}).map(([field, ch]) => (
-                  <li key={field} style={{ color: "var(--tx-3)" }}>
-                    <span style={{ color: "var(--tx-2)" }}>{HISTORY_FIELD_LABELS[field] ?? field}:</span>{" "}
-                    <span className="line-through opacity-70">{String(ch.from ?? "—")}</span>
-                    {" → "}
-                    <span style={{ color: "var(--tx-1)" }}>{String(ch.to ?? "—")}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -1849,11 +1740,18 @@ export default function MemberProfile({
                     </div>
                   </Card>
 
-                  {/* Owner-only: version history of the member's personal
-                      details (self-service + staff edits). requireOwner on
-                      the API redirects other roles, so the section renders
-                      for owners only and never fires the fetch otherwise. */}
-                  {role === "owner" && <DetailsHistory memberId={member.id} />}
+                  {/* This member's history — the same timeline as the Activity page, for
+                      the two roles that may read it. GET /api/activity decides what
+                      each of them is sent; a coach is not shown the section at all. */}
+                  {(role === "owner" || role === "manager") && (
+                    <Card>
+                      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-tx-1">
+                        <History className="size-4 text-tx-3" aria-hidden />
+                        History
+                      </h3>
+                      <ActivityTimeline variant="embedded" role={role} scope={{ kind: "member", id: member.id }} take={20} />
+                    </Card>
+                  )}
                   {/* teamup-2: the member’s membership rows as TeamUp recorded them. */}
                   {(member.billedBy === "teamup" || !!member.billingStatusAsOf) && <TeamUpHistory memberId={member.id} />}
                 </div>

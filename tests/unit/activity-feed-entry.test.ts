@@ -142,6 +142,19 @@ describe("memberships", () => {
     const e = entry(row({ action: "member.update", ...byJack, metadata: { fields: ["status"], changes: { status: { from: "active", to: "cancelled" } } } }));
     expect(e.plain).toBe("Jack Streeter cancelled Melody Orekoya's membership");
     expect(e.type).toBe("cancellation");
+    // The status change is the sentence; it is in the full list of changes, as words, and not repeated after the sentence.
+    expect(e.changes).toEqual([{ label: "Status", from: "Active", to: "Cancelled" }]);
+    expect(e.detailPlain).toBeNull();
+    expect(entry(row({ action: "member.update", ...byJack, metadata: { fields: ["status"], changes: { status: { from: "active", to: "cancelled" } } } }), { role: "manager" }).detailPlain).toBeNull();
+  });
+
+  it("what else changed in the same save is still said after the sentence", () => {
+    const both = entry(row({ action: "member.update", ...byJack, metadata: { changes: { status: { from: "active", to: "cancelled" }, phone: { from: "07700 900111", to: "07700 900222" } } } }));
+    expect(both.plain).toBe("Jack Streeter cancelled Melody Orekoya's membership");
+    expect(both.detailPlain).toBe("Phone: 07700 900111 → 07700 900222");
+    const moved = entry(row({ action: "member.update", ...byJack, metadata: { changes: { membershipTierId: { from: "t_twice", to: "t_adult" }, status: { from: "inactive", to: "active" } } } }));
+    expect(moved.detailPlain).toBe("Status: Inactive → Active");
+    expect(entry(row({ action: "member.update", ...byJack, metadata: { changes: { membershipTierId: { from: "t_twice", to: "t_adult" }, phone: { from: "1", to: "2" } } } }), { role: "manager" }).detailPlain).toBe("Fields: Phone");
   });
 
   it("a member asking to cancel, with the end date on the club's clock", () => {
@@ -379,9 +392,10 @@ describe("what changed", () => {
       // 23:30 UTC on 30 Nov is still 30 Nov on the club's clock.
       { label: "Next payment due", from: "30 Nov 2026", to: "—" },
       { label: "Hidden from the leaderboard", from: "off", to: "on" },
-      { label: "Payment status", from: "paid", to: "overdue" },
+      // A stored word is shown as a word.
+      { label: "Payment status", from: "Paid", to: "Overdue" },
     ]);
-    expect(e.detailPlain).toBe("Phone: — → 07700 900123 · Date of birth: 1 Jan 1990 → 3 Feb 1991 · Next payment due: 30 Nov 2026 → — · Hidden from the leaderboard: off → on · Payment status: paid → overdue");
+    expect(e.detailPlain).toBe("Phone: — → 07700 900123 · Date of birth: 1 Jan 1990 → 3 Feb 1991 · Next payment due: 30 Nov 2026 → — · Hidden from the leaderboard: off → on · Payment status: Paid → Overdue");
   });
 
   it("a manager sees which fields changed, never what they held", () => {
@@ -395,6 +409,9 @@ describe("what changed", () => {
   it("ids become names, and a before/after snapshot is read as a change list", () => {
     const tier = entry(row({ action: "member.update", ...byJack, metadata: { changes: { membershipTierId: { from: "t_twice", to: "t_adult" } } } }));
     expect(tier.changes).toEqual([{ label: "Plan", from: "Twice a week (OLD)", to: "Adult Unlimited" }]);
+    // The sentence has said it ("moved … from Twice a week (OLD) to Adult Unlimited"): the line after it does not say it again.
+    expect(tier.plain).toBe("Jack Streeter moved Melody Orekoya from Twice a week (OLD) to Adult Unlimited");
+    expect(tier.detailPlain).toBeNull();
     const plan = entry(row({ action: "membership.tier.update", entityType: "MembershipTier", entityId: "t_adult", ...byJack, metadata: { before: { name: "Adult", pricePence: 4000, currency: "GBP", isActive: true }, after: { name: "Adult Unlimited", pricePence: 4500, currency: "GBP", isActive: true } } }));
     expect(plan.changes).toEqual([{ label: "Name", from: "Adult", to: "Adult Unlimited" }, { label: "Price", from: "£40.00", to: "£45.00" }]);
     expect(plan.plain).toBe("Updated a membership plan — Adult Unlimited");

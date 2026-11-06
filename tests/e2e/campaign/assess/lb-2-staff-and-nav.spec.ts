@@ -59,7 +59,7 @@ const PAGE_GATE: Record<string, StaffRole[]> = {
   "/dashboard/payments": ["owner", "manager"],                     // requireOwnerOrManager (≠ nav)
   "/dashboard/analysis": ["owner"],                                // requireRole
   "/dashboard/settings": ["owner"],                                // requireRole
-  "/dashboard/activity": ["owner"],                                // requireOwner (J76, 1 Oct 2026)
+  "/dashboard/activity": ["owner", "manager"],                     // requireOwnerOrManager (5 Nov 2026: the Activity timeline)
 };
 
 /** The API each page reads, for the third leg of the triangle. */
@@ -78,7 +78,7 @@ const PAGE_API: Record<string, string> = {
   "/dashboard/payments": "/api/payments",
   "/dashboard/analysis": "/api/revenue/summary",
   "/dashboard/settings": "/api/settings",
-  "/dashboard/activity": "/api/audit-log",
+  "/dashboard/activity": "/api/activity",
 };
 
 /**

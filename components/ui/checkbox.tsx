@@ -1,6 +1,6 @@
 "use client";
 
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -14,9 +14,13 @@ import { cn } from "@/lib/utils";
  *
  * Controlled component: pass `checked` and `onCheckedChange`. Native
  * <button> semantics give Space/Enter activation for free.
+ *
+ * `checked="mixed"` is the third state of a box that stands for a group in
+ * which some, but not all, are ticked (`aria-checked="mixed"`, a dash instead
+ * of a tick). Activating a mixed box ticks the whole group.
  */
 export interface CheckboxProps {
-  checked: boolean;
+  checked: boolean | "mixed";
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
   id?: string;
@@ -41,7 +45,7 @@ export function Checkbox({
       id={id}
       aria-checked={checked}
       disabled={disabled}
-      onClick={() => onCheckedChange(!checked)}
+      onClick={() => onCheckedChange(checked !== true)}
       className={cn(
         "ui-fixed-size relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-[var(--r-sm)] border-2 disabled:cursor-not-allowed disabled:opacity-50",
         // ≥44px hit area without inflating the visual control (§5a)
@@ -53,19 +57,24 @@ export function Checkbox({
         height: 18,
         background: checked ? "var(--color-primary)" : "transparent",
         borderColor: checked ? "var(--color-primary)" : "var(--bd-active)",
+        // A hairline that only matters when the club's accent is near-white: without it a ticked box is a white
+        // square on a white card (UI-RULES §2a).
+        boxShadow: checked ? "0 0 0 1px var(--bd-active)" : undefined,
         transition:
           "background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
       }}
       {...aria}
     >
-      {checked && (
+      {checked === "mixed" ? (
+        <Minus className="size-3" strokeWidth={3} aria-hidden="true" style={{ color: "var(--tx-on-accent)" }} />
+      ) : checked ? (
         <Check
           className="size-3"
           strokeWidth={3}
           aria-hidden="true"
           style={{ color: "var(--tx-on-accent)" }}
         />
-      )}
+      ) : null}
     </button>
   );
 }

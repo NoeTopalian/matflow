@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -116,6 +116,15 @@ export interface DataTableProps<T> {
    * long table and would be indistinguishable from keyboard focus.
    */
   isRowCurrent?: (row: T) => boolean;
+  /**
+   * Group consecutive rows under a heading: whenever the key differs from the
+   * previous row's, a full-width header row (and, on a phone, a heading before
+   * the card) carries the label — the Activity timeline's "Today", "Yesterday",
+   * "Tuesday 4 November 2026". The rows must already arrive in section order;
+   * nothing is regrouped. Ignored while the table is client-sorted, since a
+   * sort would scatter the sections.
+   */
+  sectionOf?: (row: T) => { key: string; label: string };
   /** Below `sm:`, render each row through this instead of the table. */
   renderCard?: (row: T) => ReactNode;
   /** Accessible name for the table. */
@@ -247,6 +256,7 @@ export function DataTable<T>({
   empty,
   onRowClick,
   isRowCurrent,
+  sectionOf,
   renderCard,
   label,
   skeletonRows = 5,
@@ -278,6 +288,31 @@ export function DataTable<T>({
   }
 
   const skeletonKeys = Array.from({ length: skeletonRows }, (_, index) => index);
+
+  /** The section a row opens, or null when it continues the previous row's (or there are no sections). */
+  const sectionAt = (index: number): { key: string; label: string } | null => {
+    if (!sectionOf || sort) return null;
+    const section = sectionOf(sortedRows[index]);
+    return index === 0 || sectionOf(sortedRows[index - 1]).key !== section.key ? section : null;
+  };
+
+  /**
+   * The table's row groups: one per run of rows in the same section, or a
+   * single group when there are no sections. A group is keyed by its section
+   * (and, should the same section come round again, by which time it is) —
+   * never by a row's position, so rows arriving above a group do not remount
+   * it and drop the focus inside it.
+   */
+  const rowGroups: { key: string; section: { key: string; label: string } | null; indexes: number[] }[] = [];
+  const timesSeen = new Map<string, number>();
+  sortedRows.forEach((_, index) => {
+    const section = sectionAt(index);
+    if (section || rowGroups.length === 0) {
+      const nth = section ? (timesSeen.get(section.key) ?? 0) : 0;
+      if (section) timesSeen.set(section.key, nth + 1);
+      rowGroups.push({ key: section ? (nth ? `${section.key}#${nth}` : section.key) : "rows", section, indexes: [index] });
+    } else rowGroups[rowGroups.length - 1].indexes.push(index);
+  });
 
   return (
     <div ref={rootRef} className={cn("w-full", className)}>
@@ -361,18 +396,39 @@ export function DataTable<T>({
               })}
             </tr>
           </thead>
-          <tbody>
-            {loading
-              ? skeletonKeys.map((index) => (
-                  <tr key={`skeleton-${index}`} className="h-[var(--row-h-dense)]">
-                    {columns.map((column) => (
-                      <td key={column.key} className={cn("border-b border-bd-default px-3 py-1", column.visibleFrom && VISIBLE_FROM[column.visibleFrom])}>
-                        <Skeleton className="h-3 w-full" />
-                      </td>
-                    ))}
+          {loading ? (
+            <tbody>
+              {skeletonKeys.map((index) => (
+                <tr key={`skeleton-${index}`} className="h-[var(--row-h-dense)]">
+                  {columns.map((column) => (
+                    <td key={column.key} className={cn("border-b border-bd-default px-3 py-1", column.visibleFrom && VISIBLE_FROM[column.visibleFrom])}>
+                      <Skeleton className="h-3 w-full" />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          ) : (
+            // One row group per section (one for the whole table when there are
+            // none), so a section's header cell is the header OF its rows
+            // (`scope="rowgroup"`) and a screen reader announces the day with
+            // each row under it.
+            rowGroups.map((group) => (
+              <tbody key={group.key}>
+                {group.section ? (
+                  <tr data-section={group.section.key}>
+                    <th
+                      scope="rowgroup"
+                      colSpan={columns.length}
+                      // White, under the rule the row above draws: the zebra rows are grey, so a grey header read as one more row.
+                      className="border-b border-bd-default bg-sf-1 px-3 pb-1.5 pt-3 text-left text-xs font-semibold text-tx-1"
+                    >
+                      {group.section.label}
+                    </th>
                   </tr>
-                ))
-              : sortedRows.map((row, index) => {
+                ) : null}
+                {group.indexes.map((index) => {
+                  const row = sortedRows[index];
                   const zebra = index % 2 === 1;
                   const isLastRow = index === sortedRows.length - 1;
                   const current = isRowCurrent?.(row) === true;
@@ -430,7 +486,9 @@ export function DataTable<T>({
                     </tr>
                   );
                 })}
-          </tbody>
+              </tbody>
+            ))
+          )}
         </table>
       </div>
 
@@ -443,7 +501,8 @@ export function DataTable<T>({
                 <Skeleton className="mt-2 h-3 w-1/2" />
               </Card>
             ))
-          : sortedRows.map((row) => {
+          : sortedRows.map((row, index) => {
+              const section = sectionAt(index);
               const content = renderCard ? (
                 renderCard(row)
               ) : (
@@ -467,9 +526,8 @@ export function DataTable<T>({
               const currentClass = current
                 ? "rounded-[var(--r-md)] outline outline-2 outline-offset-2 outline-[var(--tx-2)]"
                 : undefined;
-              return onRowClick ? (
+              const card = onRowClick ? (
                 <button
-                  key={rowKey(row)}
                   type="button"
                   onClick={() => onRowClick(row)}
                   aria-current={current ? "true" : undefined}
@@ -478,9 +536,20 @@ export function DataTable<T>({
                   {content}
                 </button>
               ) : (
-                <div key={rowKey(row)} aria-current={current ? "true" : undefined} className={currentClass}>
+                <div aria-current={current ? "true" : undefined} className={currentClass}>
                   {content}
                 </div>
+              );
+              return (
+                <Fragment key={rowKey(row)}>
+                  {section ? (
+                    // The page's title is its h1; a day is the next level down.
+                    <h2 data-section={section.key} className="px-1 pt-2 text-xs font-semibold text-tx-2">
+                      {section.label}
+                    </h2>
+                  ) : null}
+                  {card}
+                </Fragment>
               );
             })}
       </div>
