@@ -17,6 +17,9 @@ import { hex } from "@/lib/color";
 import { describeApiError } from "@/lib/api-field-errors";
 import { clusterLabel, clusterSessions, duplicateSessionKeys, hourWindow, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionCluster, type SessionState } from "@/lib/schedule-state";
 import { DayGrid } from "@/components/schedule/DayGrid";
+import { PosterGrid } from "@/components/schedule/PosterGrid";
+import { MoreChip, WeekChip } from "@/components/schedule/WeekChip";
+import { buildTimetableGrid } from "@/lib/timetable-grid";
 import type { ClassRow, CoachUserOption, TierOption } from "@/app/dashboard/timetable/page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryLabel, classCategoryTag } from "@/lib/class-category";
@@ -320,9 +323,6 @@ function ClassChip({
   );
 }
 
-/** A day with this many sessions switches the week to the wider, compact layout. */
-export const DENSE_DAY = 7;
-
 /** A refused save: the server's sentence, plus its machine reason when it gives one. */
 class ApiRefusal extends Error {
   reason?: string;
@@ -348,7 +348,9 @@ const placeOf = (cls: ClassRow) => cls.location ?? cls.coachUser?.name ?? cls.co
 /**
  * The chips of one day: a plain chip per session, and an overlap group (rail,
  * "Up to N at once", compact chips showing start–end and place) wherever
- * sessions overlap. Used by the week grid and the phone agenda.
+ * sessions overlap. Used by the phone agenda only (`size="agenda"`): the
+ * desktop week is the poster grid (components/schedule/PosterGrid). The other
+ * sizes, with ClassChip, go when the phone moves to the grid.
  */
 function DaySessions({
   sessions,
@@ -1775,18 +1777,21 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
   // Desktop: the week grid, or one day on a time axis (lanes show what clashes).
   const [desktopView, setDesktopView] = useState<"week" | "day">("week");
   const [dayDow, setDayDow] = useState(() => new Date().getDay());
-  // Between md: and xl: the week grid keeps its 980px floor inside a
-  // horizontal scroller, so on a tablet the page opened with Monday on the
-  // left and today (Saturday, say) off-screen to the right — the one column
-  // that carries the Live / Next pills. Bring it into view when the grid
-  // overflows; `block: "nearest"` keeps the page's own scroll where it is.
-  const todayColRef = useRef<HTMLDivElement>(null);
+  // "+N more" on the week opens the Day view with that group open: the key of
+  // one of the folded sessions (components/schedule/DayGrid `openCluster`).
+  const [openCluster, setOpenCluster] = useState<string | null>(null);
+  // "Hide menu": the side menu's 240px goes to the week on a laptop. Plain
+  // state — never stored, so nobody on a shared desk computer arrives without
+  // navigation — and it only counts while its button is on screen.
+  const [hideMenu, setHideMenu] = useState(false);
+  // Without :has() the shell cannot hide the menu, and the button is not shown
+  // (app/globals.css `[data-needs-has]`).
+  const [canHideMenu, setCanHideMenu] = useState(true);
   useEffect(() => {
-    const col = todayColRef.current;
-    const scroller = col?.parentElement?.parentElement;
-    if (!col || !scroller || scroller.scrollWidth <= scroller.clientWidth + 1) return;
-    col.scrollIntoView({ inline: "center", block: "nearest" });
-  }, [weekOffset, desktopView]);
+    setCanHideMenu(typeof CSS !== "undefined" && typeof CSS.supports === "function" ? CSS.supports("selector(:has(*))") : false);
+  }, []);
+  // Whether the week is wider than its scroll box (PosterGrid measures it).
+  const [weekWider, setWeekWider] = useState(false);
   // Which day the MOBILE agenda is showing. Defaults to today so a phone opens
   // on the day the owner almost always wants, rather than on Sunday.
   const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
@@ -1889,10 +1894,13 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
         || (placeOf(a.cls) ?? "").localeCompare(placeOf(b.cls) ?? "")
         || a.cls.id.localeCompare(b.cls.id))
   );
-  // A busy club: once any day has DENSE_DAY sessions the week needs wider
-  // columns (it scrolls sideways below that, as it already does at 980 px) and
-  // the compact two-line chip, so a time range and a full name both fit.
-  const dense = byDay.some((d) => d.length >= DENSE_DAY);
+  // The week as a poster grid: rows are the real times, same-time sessions sit
+  // side by side (lib/timetable-grid). Equal starts order by the typed place.
+  const sessionByKey = new Map(byDay.flat().map((session) => [session.slot.id, session] as const));
+  const weekGrid = buildTimetableGrid(
+    byDay.flat().map(({ cls, slot }) => ({ key: slot.id, day: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime, matId: null, tie: cls.location ?? "" })),
+    { days: [1, 2, 3, 4, 5, 6, 0], layout: "time", mats: [] },
+  );
   // The Day view's hours: the club's earliest and latest session ± 1 h over
   // the whole week, the same clamp the member day view uses.
   const dayHours = hourWindow(visibleClasses.flatMap((c) => c.schedules));
@@ -2168,6 +2176,11 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
 
   return (
     <>
+      {/* UI-RULES §4a.1: Timetable is the one wide staff page, and its "Hide
+          menu" button hides the side menu (app/globals.css .dash-content /
+          .dash-shell). The menu can only be hidden while the button that
+          brings it back is on screen. */}
+      <span hidden data-page-width="wide" data-hide-menu={hideMenu && classes.length > 0 ? "true" : undefined} />
 
       {/* §4: one PageHeader treatment. The description keeps its exact wording
           so the "N of M classes (mine)" count stays the single readout of the
@@ -2346,15 +2359,12 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                         </Button>
                       ))}
                     </div>
+                    <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-hide-menu" onClick={() => setHideMenu((v) => !v)}>
+                      {hideMenu ? "Show menu" : "Hide menu"}
+                    </Button>
                   </div>
                 </div>
 
-                {/* 7-column week grid. Each cell wants ≥130px to fit names like
-                    "Fundamentals BJJ" without cramming, so below `xl:` the grid
-                    keeps its 980px floor and scrolls. From `xl:` the layout's
-                    max-w-6xl content box is wider than that floor, so BOTH the
-                    floor and the scroller are released — otherwise the page
-                    kept a horizontal scrollbar over empty margin (§4a.1). */}
                 {/* ── Mobile: day-at-a-time agenda ──────────────────────────
                     Below `md:` the 7-column grid was a 980px canvas inside a
                     horizontal scroller, so a phone showed roughly two days at a
@@ -2427,77 +2437,117 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                   </div>
                 </div>
 
-                {/* ── Desktop: the week grid ─────────────────────────────── */}
-                {/* The content column is capped at max-w-6xl (1152 px), so a dense
-                    week's 1260 px grid never fits: it scrolls sideways inside this
-                    box at every desktop width, never the page (UI-RULES §4a). */}
+                {/* ── Desktop: the week as a poster grid ─────────────────────
+                    Rows are the real times, so same-time sessions sit side by
+                    side and line up across the week. The grid lives in its own
+                    scroll box with the day headers and the time gutter pinned
+                    (UI-RULES §4a.8); the line above it is a fixed-height slot,
+                    so saying "wider than this window" never moves the box. */}
                 {desktopView === "week" ? (
-                <div className={["hidden md:block overflow-x-auto -mx-1 px-1", dense ? "" : "xl:overflow-x-visible"].join(" ")} data-testid="week-scroller">
-                  <div
-                    className={["grid grid-cols-7 gap-2", dense ? "min-w-[1260px]" : "min-w-[980px] xl:min-w-0"].join(" ")}
-                    data-dense={dense || undefined}
-                  >
-                    {weekDates.map((date, rawIdx) => {
-                      const dow = rawIdx === 6 ? 0 : rawIdx + 1;
-                      const daySessions = byDay[dow];
-                      const isToday = date.getTime() === todayMidnight.getTime();
-                      const chipStates = chipStatesFor(daySessions, isToday, cancelledToday);
-                      return (
-                        <div
-                          key={rawIdx}
-                          ref={isToday ? todayColRef : undefined}
-                          data-today={isToday || undefined}
-                          className="rounded-2xl border p-2 flex flex-col"
-                          style={{
-                            background: isToday ? hex(primaryColor, 0.04) : "var(--sf-1)",
-                            borderColor: isToday ? hex(primaryColor, 0.3) : "var(--bd-default)",
-                          }}
-                        >
-                          {/* Day header */}
-                          <div className="text-center mb-2">
-                            <p
-                              className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-                              style={{ color: isToday ? primaryColor : "var(--tx-3)" }}
-                            >
-                              {DAYS[dow]}
-                            </p>
-                            <div
-                              className="w-7 h-7 rounded-full flex items-center justify-center mx-auto text-sm font-bold"
-                              style={
-                                isToday
-                                  ? { background: primaryColor, color: "var(--tx-on-accent)" }
-                                  : { color: "var(--tx-2)" }
-                              }
-                            >
-                              {date.getDate()}
-                            </div>
-                            {dense && (
-                              <p className="text-[10px] tabular-nums mt-1" style={{ color: "var(--tx-4)" }}>
-                                {daySessions.length === 0 ? "—" : `${daySessions.length} session${daySessions.length === 1 ? "" : "s"}`}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Classes */}
-                          <div className="space-y-1.5 flex-1">
-                            {daySessions.length === 0 ? (
-                              <p className="text-center text-[11px] py-4" style={{ color: "var(--tx-4)" }}>—</p>
-                            ) : (
-                              <DaySessions
-                                sessions={daySessions}
-                                states={chipStates}
-                                size={daySessions.length >= DENSE_DAY ? "compact" : "grid"}
-                                duplicates={duplicates}
-                                primaryColor={primaryColor}
-                                canManage={canManage}
-                                onEdit={openEdit}
-                              />
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div className="hidden md:block">
+                  <p className="mb-1 h-4 text-xs leading-4 text-tx-2" role="status" data-testid="week-wider">
+                    {weekWider ? (hideMenu || !canHideMenu ? "Wider than this window. Scroll sideways." : "Wider than this window. Scroll sideways, or hide the menu.") : ""}
+                  </p>
+                  {(() => {
+                    const todayIdx = weekDates.findIndex((d) => d.getTime() === todayMidnight.getTime());
+                    const todayDow = todayIdx === -1 ? null : todayIdx === 6 ? 0 : todayIdx + 1;
+                    const dateOf = (dow: number) => weekDates[dow === 0 ? 6 : dow - 1];
+                    const stateByKey = new Map<string, SessionState | null>();
+                    for (let dow = 0; dow < 7; dow++) {
+                      const states = chipStatesFor(byDay[dow], dow === todayDow, cancelledToday);
+                      byDay[dow].forEach(({ slot }, i) => stateByKey.set(slot.id, states[i]));
+                    }
+                    // Where the box opens: today's live class, else its next one, under the pinned header.
+                    const todays = todayDow === null ? [] : byDay[todayDow];
+                    const liveOrNext = todays.find(({ slot }) => stateByKey.get(slot.id) === "live") ?? todays.find(({ slot }) => stateByKey.get(slot.id) === "next");
+                    const count = (n: number) => (n === 0 ? "no sessions" : `${n} session${n === 1 ? "" : "s"}`);
+                    const todayPill = (
+                      <span className="rounded-full border border-[color-mix(in_srgb,var(--hue-info)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[9px] font-bold uppercase leading-4 tracking-wide text-[var(--hue-info-ink)]">
+                        Today
+                      </span>
+                    );
+                    // An empty day is a 40 px column: the same pill, a size down and without its
+                    // border and letter-spacing, so "TODAY" stays inside 36 px.
+                    const todayPillNarrow = (
+                      <span className="rounded-full bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[8px] font-bold uppercase leading-[14px] text-[var(--hue-info-ink)]">
+                        Today
+                      </span>
+                    );
+                    return (
+                      <PosterGrid
+                        grid={weekGrid}
+                        label="Week timetable"
+                        today={todayDow}
+                        dayLabel={(day) => {
+                          const date = dateOf(day.day);
+                          return `${DAYS_FULL[day.day]} ${date.getDate()} ${date.toLocaleDateString("en-GB", { month: "long" })}, ${count(day.count)}${day.day === todayDow ? ", today" : ""}`;
+                        }}
+                        dayHeader={(day) => {
+                          const isToday = day.day === todayDow;
+                          if (day.count === 0) {
+                            return (
+                              <span className="flex flex-col items-center text-[13px] font-semibold leading-[15px] text-tx-1">
+                                <span>{DAYS[day.day]}</span>
+                                <span>{dateOf(day.day).getDate()}</span>
+                              </span>
+                            );
+                          }
+                          // A one-lane day is too narrow for the name and the pill on one line: the pill takes the count's line.
+                          const pillBeside = isToday && day.lanes > 1;
+                          return (
+                            <>
+                              <span className="flex items-center gap-1 whitespace-nowrap text-[13px] font-semibold leading-4 text-tx-1">
+                                {DAYS[day.day]} {dateOf(day.day).getDate()}
+                                {pillBeside ? todayPill : null}
+                              </span>
+                              {isToday && !pillBeside ? todayPill : <span className="whitespace-nowrap text-[11px] leading-[14px] text-tx-2">{count(day.count)}</span>}
+                            </>
+                          );
+                        }}
+                        emptyDay={(day) => (
+                          <span className="flex justify-center pt-1.5 text-xs text-tx-2">{day.day === todayDow ? todayPillNarrow : <span aria-hidden="true">—</span>}</span>
+                        )}
+                        renderSession={(item) => {
+                          const session = sessionByKey.get(item.key);
+                          if (!session) return null;
+                          const { cls, slot } = session;
+                          return (
+                            <WeekChip
+                              name={cls.name}
+                              dayName={DAYS_FULL[slot.dayOfWeek]}
+                              startTime={slot.startTime}
+                              endTime={slot.endTime}
+                              color={cls.color ?? primaryColor}
+                              place={placeOf(cls)}
+                              showPlace
+                              state={stateByKey.get(slot.id) ?? null}
+                              duplicate={duplicates.has(slot.id)}
+                              kids={cls.isKids}
+                              category={classCategoryTag(cls)}
+                              canManage={canManage}
+                              onEdit={() => openEdit(cls)}
+                            />
+                          );
+                        }}
+                        renderMore={(item) => (
+                          <MoreChip
+                            count={item.keys.length}
+                            label={`${item.keys.length} more sessions, ${DAYS_FULL[item.day]} ${minToTime(item.startMin)} to ${minToTime(item.endMin)}. Open the day.`}
+                            hint="Open the day"
+                            onOpen={() => {
+                              setDayDow(item.day);
+                              setOpenCluster(item.keys[0]);
+                              setDesktopView("day");
+                            }}
+                          />
+                        )}
+                        breakLabel={(fromMin, toMin) => `No classes ${minToTime(fromMin)} to ${minToTime(toMin)}`}
+                        scrollTarget={weekOffset === 0 ? { key: liveOrNext?.slot.id ?? null, day: todayDow } : null}
+                        scrollToken={weekOffset}
+                        onOverflowChange={setWeekWider}
+                      />
+                    );
+                  })()}
                 </div>
                 ) : (
                   /* ── Desktop: one day on a time axis ───────────────────────
@@ -2559,6 +2609,9 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
                               if (s) openEdit(s.cls);
                             } : undefined}
                             emptyText="No sessions on this day"
+                            openCluster={openCluster}
+                            // One-shot: coming back to this day later must not reopen the group or take focus.
+                            onOpenClusterHandled={() => setOpenCluster(null)}
                           />
                         </div>
                       );
@@ -2577,7 +2630,7 @@ export default function TimetableManager({ initialClasses, initialInactiveClasse
             {/* §4a.2: two columns is a WIDENING, and at `md:` the sidebar left
                 each card only ~236px. It now splits at `lg:`, where the content
                 box can actually carry two readable cards. */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="grid max-w-[72rem] grid-cols-1 lg:grid-cols-2 gap-3">
               {visibleClasses.map((cls) => (
                 <ClassCard
                   key={cls.id}

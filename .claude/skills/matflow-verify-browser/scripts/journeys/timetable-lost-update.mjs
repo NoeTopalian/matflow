@@ -5,7 +5,7 @@
 // in the database; after a reload tab A sees both days and the same rename saves. Also: the dry-run
 // preview path (a squad change) is refused the same way; a save that does not touch the days still works.
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, weekDay } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { expect } = require("@playwright/test");
@@ -14,9 +14,10 @@ if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture
 const L = ledger("timetable-lost-update");
 const errors = [];
 
-const gridDay = (page, day) => page.locator(".grid-cols-7 > div").filter({ has: page.getByText(day, { exact: true }) });
+const gridDay = (page, day) => weekDay(page, day.toLowerCase());
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: new RegExp(`^Edit ${escapeRe(name)}( \\([a-z]+\\))?$`) });
+// A week chip is named "Edit Gi, Monday 18:00 to 19:00" (then its place and, today, its state).
+const chips = (page, day, name) => gridDay(page, day).getByRole("button", { name: new RegExp(`^Edit ${escapeRe(name)}, [A-Z][a-z]+day \\d\\d:\\d\\d to `) });
 // The refusal must be IN the form (role=alert beside the buttons), never a toast.
 const refusal = (page) => page.getByRole("dialog").getByTestId("class-form-save-error");
 const activeDays = async (classId) =>

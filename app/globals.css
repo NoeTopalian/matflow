@@ -267,7 +267,7 @@
   /* Desktop layout + density (UI-RULES §4a.4) — the dashboard container width
      the layout applies, the dense data-table row height, and the standard
      card padding. */
-  --content-max:  72rem;  /* = max-w-6xl, the one staff-dashboard width */
+  --content-max:  72rem;  /* = max-w-6xl, the staff-dashboard width (Timetable alone may be wider: .dash-content below) */
   --row-h-dense:  36px;   /* dense table row (§1.5) */
   --pad-card:     1.5rem; /* = p-6, the calm-shell card padding */
 }
@@ -708,4 +708,182 @@ option {
   -webkit-box-shadow: 0 0 0 1000px var(--login-surface) inset !important;
   caret-color: var(--login-ink);
   transition: background-color 9999s ease-in-out 0s;
+}
+
+/* ── Staff shell: the one wide page, and hiding the side menu ────────────────
+   UI-RULES §4 / §4a.1. Every staff page is `max-w-6xl`. A page whose root
+   carries `data-page-width="wide"` (today only Timetable) may reach 100rem,
+   because a week of two-mat days needs the room. `data-hide-menu="true"` is
+   the Timetable's "Hide menu" button: it gives the week the side menu's
+   240px on a laptop and is never remembered between visits.
+
+   UNLAYERED on purpose: inside `@layer base` these would lose to the
+   `max-w-6xl` and `md:flex` utilities they have to beat. */
+.dash-content:has([data-page-width="wide"]) { max-width: 100rem; }
+.dash-shell:has([data-hide-menu="true"]) .dash-sidebar { display: none; }
+@supports not selector(:has(*)) {
+  [data-needs-has] { display: none; }
+}
+
+/* ── Poster grid (components/schedule/PosterGrid.tsx; UI-RULES §4a.8) ────────
+   Days across, times down. The component writes the column and row templates
+   inline; everything else about the layout is here.
+
+   - The week lives in its OWN scroll box, so the day and mat headers can pin
+     to its top and the time gutter to its left at every width. The component
+     sets the exact max-height after mount; this value is the first paint.
+   - Each day is one element on a SUBGRID: the day card, its group label and
+     the Tab order belong to it. Without subgrid the day is `display: contents`
+     and its children place themselves on the outer grid (`--d` is the day's
+     column offset, `--c` a column inside the day): same lines, no card.
+   - Pinned cells are opaque. `--pg-pin-bg` is the day card's own background
+     (today's tint included), `--pg-page-bg` the page behind the gutter. */
+.pg-box {
+  overflow: auto;
+  max-height: max(320px, calc(100dvh - var(--staff-topbar-h) - 12rem));
+  border-radius: var(--r-md);
+  /* The pinned cells' z-index values stay inside the box: nothing on the page can slip between them. */
+  isolation: isolate;
+}
+.pg-box:focus-visible,
+.pg-cell > :focus-visible {
+  outline: 2px solid var(--tx-1);
+  outline-offset: 1px;
+}
+.pg-grid {
+  --pg-pin-bg: var(--sf-1);
+  --pg-page-bg: var(--sf-bg);
+  position: relative;
+  display: grid;
+  justify-content: start;
+}
+.pg-gutter-bg {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--pg-page-bg);
+}
+.pg-corner {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  position: sticky;
+  left: 0;
+  top: 0;
+  z-index: 7;
+  background: var(--pg-page-bg);
+}
+.pg-tick {
+  grid-column: 1;
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  align-self: start;
+  min-height: 14px;
+  padding: 2px 5px 0 0;
+  font-size: 11px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--tx-2);
+}
+.pg-break {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--tx-2);
+}
+.pg-break > i {
+  flex: 1 1 0;
+  border-top: 1px dashed var(--bd-hover);
+}
+.pg-day { display: contents; }
+.pg-day[data-today] { --pg-pin-bg: color-mix(in srgb, var(--sf-2) 50%, var(--sf-1)); }
+.pg-head {
+  grid-row: 1;
+  grid-column: calc(var(--d) + 1) / span var(--dt);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: var(--pg-pin-bg);
+}
+.pg-mat {
+  grid-row: 2;
+  grid-column: calc(var(--d) + var(--c)) / span var(--s);
+  position: sticky;
+  top: 44px;
+  z-index: 5;
+  display: flex;
+  min-width: 0;
+  padding: 2px 3px 4px;
+  background: var(--pg-pin-bg);
+}
+.pg-mat-pill {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 3px;
+  border-radius: 6px;
+  background: var(--sf-2);
+  font-size: 11px;
+  line-height: 13px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--tx-2);
+}
+.pg-mat-pill > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+/* One hairline under the lowest pinned row. */
+.pg-grid:not([data-mats]) .pg-head,
+.pg-grid[data-mats] .pg-mat { box-shadow: 0 1px 0 var(--bd-default); }
+.pg-empty {
+  grid-row: 3 / -1;
+  grid-column: calc(var(--d) + 1) / span var(--dt);
+}
+.pg-cell {
+  grid-column: calc(var(--d) + var(--c)) / span var(--s);
+  grid-row: var(--r1) / var(--r2);
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  padding: 1.5px;
+}
+.pg-cell:focus-within { z-index: 2; }
+@supports (grid-template-rows: subgrid) {
+  .pg-day {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-template-rows: subgrid;
+    grid-row: 1 / -1;
+    min-width: 0;
+    border: 1px solid var(--bd-default);
+    border-radius: var(--r-md);
+    background: var(--pg-pin-bg);
+  }
+  .pg-day[data-today] { border-color: var(--bd-active); }
+  .pg-day > .pg-head,
+  .pg-day > .pg-empty { grid-column: 1 / -1; }
+  .pg-day > .pg-mat,
+  .pg-day > .pg-cell { grid-column: var(--c) / span var(--s); }
 }

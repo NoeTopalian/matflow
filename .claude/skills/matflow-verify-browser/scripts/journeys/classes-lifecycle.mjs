@@ -269,7 +269,7 @@ try {
 
   // ── 2. Edit: category and description; the lists stay as they are ──
   await page.reload();
-  await page.locator(`button[aria-label="Edit ${CLASS}"]:visible`).first().click();
+  await page.locator(`button[aria-label^="Edit ${CLASS}, "]:visible`).first().click(); // the week chip: "Edit <class>, <day> <start> to <end>"
   await page.locator("#class-category").waitFor();
   await page.locator("#class-category").selectOption("nogi");
   await page.getByLabel("Description", { exact: true }).fill("Edited by the classes journey");
@@ -405,7 +405,7 @@ try {
   // ── 7. Made ineligible after booking ──
   // 7a. Off the squad list, through the timetable form (untick and save).
   await page.goto("/dashboard/timetable");
-  await page.locator(`button[aria-label="Edit ${CLASS}"]:visible`).first().click();
+  await page.locator(`button[aria-label^="Edit ${CLASS}, "]:visible`).first().click(); // the week chip: "Edit <class>, <day> <start> to <end>"
   const ellaBox = page.locator("label").filter({ hasText: ella.name }).locator('input[type="checkbox"]');
   const inForm = await ellaBox.waitFor({ timeout: 30000 }).then(() => true, () => false);
   if (inForm) await ellaBox.uncheck();

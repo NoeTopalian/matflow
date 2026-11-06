@@ -48,6 +48,8 @@ export function DayGrid({
   action,
   onActivate,
   emptyText = "No sessions",
+  openCluster = null,
+  onOpenClusterHandled,
 }: {
   items: DayGridItem[];
   startHour: number;
@@ -60,6 +62,18 @@ export function DayGrid({
   action?: string;
   onActivate?: (key: string) => void;
   emptyText?: string;
+  /**
+   * A session key. The folded group that holds that session opens and focus
+   * moves to its first block — where the week's "+N more" lands, so the
+   * classes it folded are on screen, not behind a second button.
+   */
+  openCluster?: string | null;
+  /**
+   * Called once `openCluster` has been acted on, so the caller can drop the
+   * request. Without that, coming back to this day (the grid mounts afresh)
+   * would open the group again and take focus from whatever was pressed.
+   */
+  onOpenClusterHandled?: () => void;
 }) {
   const spans = items.map((i) => spanMinutes(i.startTime, i.endTime));
   const packed = packLanes(spans, { maxLanes: 3 });
@@ -78,6 +92,19 @@ export function DayGrid({
     });
     setFocusAfter({ open: willOpen, startMin });
   };
+  // The group a caller asked for, by one of its sessions; null when that
+  // session is not in a folded group (or not on this day).
+  const requestedIndex = openCluster === null ? -1 : items.findIndex((it) => it.key === openCluster);
+  const requestedCluster = requestedIndex === -1 ? undefined : packed.clusters[packed.placements[requestedIndex].cluster];
+  const requested = requestedCluster?.dense ? requestedCluster.startMin : null;
+  useEffect(() => {
+    if (openCluster === null) return;
+    if (requested !== null) {
+      setExpanded((prev) => new Set(prev).add(requested));
+      setFocusAfter({ open: true, startMin: requested });
+    }
+    onOpenClusterHandled?.();
+  }, [requested, openCluster, onOpenClusterHandled]);
   // Keep keyboard focus with the group as it opens (first row) or closes (the group button).
   useEffect(() => {
     if (!focusAfter || !root.current) return;
