@@ -17,7 +17,7 @@
 // is thrown to the caller; `isTenantRowBusyError` tells it apart from a real
 // failure, and the claim, if any, stands for a retry.
 
-import { del } from "@vercel/blob";
+import { del, list } from "@vercel/blob";
 import type { Prisma } from "@prisma/client";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { isTenantBlobUrl } from "@/lib/blob-url";
@@ -357,6 +357,7 @@ export async function purgeTenantById(
   tenantId: string,
   now: Date,
   outOfTime: () => boolean,
+  opts: { writtenRequest?: string } = {},
 ): Promise<PurgeOneOutcome> {
   const billing = await cancelTenantSubscriptions(tenantId);
   if (billing.kind === "not-due") return { kind: "skipped", reason: billing.reason };
@@ -381,6 +382,11 @@ export async function purgeTenantById(
     if (tenant.logoUrl && isTenantBlobUrl(tenant.logoUrl, tenantId)) {
       await deleteBlobsBestEffort([tenant.logoUrl]);
     }
+    // Every file still under the club's store prefix: replaced promotion photos,
+    // kept import files, unsaved uploads — anything no row points at any more.
+    // NOT best-effort: a failure throws before the tenant row goes, the claim
+    // stands, and the next run retries, so an erased club leaves no file behind.
+    const storeFilesDeleted = await deleteTenantStore(tenantId);
     await withRlsBypass(async (tx) => {
       await assertPurgeClaim(tx, tenantId, claim.claimedAt);
       const gone = await tx.tenant.deleteMany({
@@ -401,9 +407,12 @@ export async function purgeTenantById(
             tenantName: tenant.name,
             membersDeleted,
             stripeSubscriptionsCancelled: billing.cancelled,
+            // null: no file store is configured where this ran (local or test).
+            storeFilesDeleted,
             purgeStartedAt: claim.claimedAt.toISOString(),
             resumed: claim.resumed,
             reason: "Explicit erasure on the club's written request (operator-run)",
+            ...(opts.writtenRequest ? { writtenRequest: opts.writtenRequest.slice(0, 500) } : {}),
           },
         },
       });
@@ -427,6 +436,27 @@ export async function purgeTenantById(
  * a club that is later brought back. Do not move a blob deletion before
  * `claimTenantPurge`, and do not add a way to clear `purgeStartedAt`.
  */
+/**
+ * Delete every file under `tenants/<tenantId>/` in the Blob store, page by page.
+ * Runs after the claim (see the invariant above) and throws on any failure.
+ * Returns null when no store is configured here (local runs and tests have no token).
+ */
+async function deleteTenantStore(tenantId: string): Promise<number | null> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
+  let deleted = 0;
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: `tenants/${tenantId}/`, cursor, limit: 1000 });
+    const urls = page.blobs.map((b) => b.url).filter((u) => isTenantBlobUrl(u, tenantId));
+    if (urls.length > 0) {
+      await del(urls);
+      deleted += urls.length;
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  return deleted;
+}
+
 async function deleteBlobsBestEffort(urls: string[]): Promise<number> {
   if (urls.length === 0) return 0;
   try {

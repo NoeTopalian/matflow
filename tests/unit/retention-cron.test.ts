@@ -22,7 +22,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-vi.mock("@vercel/blob", () => ({ del: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@vercel/blob", () => ({ del: vi.fn().mockResolvedValue(undefined), list: vi.fn().mockResolvedValue({ blobs: [], hasMore: false }) }));
 
 // The member cascade walk itself is covered by
 // tests/integration/member-cascade-delete.test.ts. Here it is a spy: what these
@@ -112,7 +112,7 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 
-import { del } from "@vercel/blob";
+import { del, list } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import { GET } from "@/app/api/cron/retention/route";
 import { purgeTenantById } from "@/lib/tenant-purge";
@@ -446,6 +446,37 @@ describe("purgeTenantById — explicit erasure of one closed club", () => {
     expect(vi.mocked(prisma.location.findMany)).toHaveBeenCalledWith(
       expect.objectContaining({ where: { tenantId: "t1" } }),
     );
+  });
+
+  it("deletes every file under the club's store prefix before the tenant row, records the count and the written request", async () => {
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token-not-real");
+    try {
+      vi.mocked(list)
+        .mockResolvedValueOnce({ blobs: [{ url: "https://s.blob.vercel-storage.com/tenants/t1/a.png" }, { url: "https://s.blob.vercel-storage.com/tenants/t1/imports/b.csv" }], hasMore: true, cursor: "c2" } as never)
+        .mockResolvedValueOnce({ blobs: [{ url: "https://s.blob.vercel-storage.com/tenants/t1/old-promotion.png" }], hasMore: false } as never);
+      const out = await purgeTenantById("t1", NOW, () => false, { writtenRequest: "Email from the owner, 1 Nov 2026" });
+      expect(out).toMatchObject({ kind: "purged" });
+      expect(list).toHaveBeenNthCalledWith(1, { prefix: "tenants/t1/", cursor: undefined, limit: 1000 });
+      expect(list).toHaveBeenNthCalledWith(2, { prefix: "tenants/t1/", cursor: "c2", limit: 1000 });
+      expect(del).toHaveBeenCalledWith(["https://s.blob.vercel-storage.com/tenants/t1/a.png", "https://s.blob.vercel-storage.com/tenants/t1/imports/b.csv"]);
+      expect(del).toHaveBeenCalledWith(["https://s.blob.vercel-storage.com/tenants/t1/old-promotion.png"]);
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ metadata: expect.objectContaining({ storeFilesDeleted: 3, writtenRequest: "Email from the owner, 1 Nov 2026" }) }) }),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("a store listing failure throws before the tenant row goes, so the claim stands for a retry", async () => {
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-token-not-real");
+    try {
+      vi.mocked(list).mockRejectedValueOnce(new Error("blob store down"));
+      await expect(purgeTenantById("t1", NOW, () => false)).rejects.toThrow("blob store down");
+      expect(prisma.tenant.deleteMany).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("a failing step throws to the operator — never reported as a clean erasure", async () => {
