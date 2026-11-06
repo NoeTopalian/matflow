@@ -138,12 +138,20 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
     const aboutCara = { tenantId, OR: [{ entityId: caraId }, { metadata: { path: ["memberId"], equals: caraId } }] };
     const before = await withRlsBypass((tx) => tx.auditLog.findMany({ where: aboutCara }));
     expect(JSON.stringify(before)).toContain("07700"); // the edit recorded the phone, so the redaction has something to remove
+    // What the erasure will rely on: the edit took, it recorded the old address's digest and the old name, and her
+    // import row is still in the file under the old name and address.
+    const edited = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: caraId }, select: { name: true, email: true } }));
+    expect(edited).toEqual({ name: CARA.newName, email: CARA.newEmail });
+    const editMeta = before.find((r) => r.action === "member.update")?.metadata as { oldEmailSha256?: string; changes?: { name?: { from?: string } } } | undefined;
+    expect(typeof editMeta?.oldEmailSha256).toBe("string");
+    expect(editMeta?.changes?.name?.from).toBe(CARA.name);
+    expect(await readImportFile(fileUrl, tenantId)).toContain(`${CARA.name},${CARA.email},`);
 
     const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${caraId}`, { method: "POST", headers }))) as unknown as { status: number; json: () => Promise<{ erased?: Record<string, number> }> };
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.erased?.auditRowsRedacted).toBeGreaterThanOrEqual(1);
-    expect(body.erased).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 1 });
+    expect(body.erased).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 1, importNameOnlyRowsLeft: 0 });
 
     const rows = await withRlsBypass((tx) => tx.auditLog.findMany({ where: aboutCara }));
     const all = JSON.stringify(rows);
