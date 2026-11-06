@@ -185,7 +185,9 @@ acts on is worse than an error they can see.
   clean-up).
 - **Kept data stays erasable — no orphaned files.** A member's erasure reaches everything kept:
   their rows in every stored import file and every import report entry naming them
-  (`lib/importers/import-erasure.ts`), and their photos, replaced ones included. A club's
+  (`lib/importers/import-erasure.ts`, found by their current and earlier addresses and names),
+  their photos, replaced ones included, and the personal values recorded on their own Activity
+  rows (`lib/audit-redact.ts`; field names and who acted are kept). A club's
   erasure deletes every file under its store prefix.
 - **Two automatic exceptions, both security records, not club data:** sign-in rate-limit
   counters (`RateLimitHit`, and a bucket cleared after a successful sign-in), which the lockout
@@ -199,10 +201,9 @@ acts on is worse than an error they can see.
 - The nightly retention job keeps its Stripe reconciliation and prunes only the rate-limit
   counters; `tests/unit/retention-cron.test.ts` and `tests/integration/cron-smoke.test.ts` fail
   if it deletes anything else. Do not add a rule that deletes club data.
-- **The published legal pages do not say this yet.** Noe deferred the wording on 6 Nov 2026:
-  privacy §6 still states twelve-month log deletion and a 30-day closed-gym window, and terms §8
-  a 30-day retention. The proposal and the mismatch are in
-  `docs/legal/PROPOSED-RETENTION-WORDING-2026-11-06.md`.
+- **The legal pages say this.** Privacy §6 and terms §8 state it (published with PR #72,
+  approved by Noe 6 Nov 2026 14:08; the wording and what it replaced are in
+  `docs/legal/PROPOSED-RETENTION-WORDING-2026-11-06.md`). Change the code and the pages together.
 - **Outside MatFlow's control:** Neon's point-in-time backups, Resend's dashboard and Vercel's
   runtime logs have their own provider windows. They are not the records; the tables are.
 
