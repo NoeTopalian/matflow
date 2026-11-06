@@ -37,7 +37,8 @@
  * to the previous build shows the right number; any other basis sets it NULL
  * (that build then shows Unlimited rather than a wrong "N/wk").
  */
-import { z } from "zod";
+// Bundled into client components too: lib/zod-client sets jitless there first.
+import { z } from "@/lib/zod-client";
 import { zoneOffsetMs } from "@/lib/class-time";
 import { cycleDays, cycleMonths } from "@/lib/billing-cycle";
 

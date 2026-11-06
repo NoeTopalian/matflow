@@ -13,7 +13,8 @@
  * is never edited. tests/unit/class-category.test.ts fails if this tuple and
  * the CHECK in the latest category migration drift apart.
  */
-import { z } from "zod";
+// Bundled into client components too: lib/zod-client sets jitless there first.
+import { z } from "@/lib/zod-client";
 
 export const CLASS_CATEGORIES = [
   "fundamentals",

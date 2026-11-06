@@ -11,7 +11,7 @@
 // 2e: an app-wide SessionProvider fetched the session on every load and every
 // return to the tab.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { z } from "zod";
@@ -38,6 +38,39 @@ function isClient(src: string): boolean {
     else return s.startsWith('"use client"') || s.startsWith("'use client'");
   }
 }
+/** A "use server" file is a reference from the client, not bundled into it. */
+const isServerActions = (src: string) => /^\s*["']use server["']/.test(src.replace(/^(\s*\/\/[^\n]*\n)*/, ""));
+
+/** Every app/components/lib module reachable from a "use client" file by static, non-type imports. */
+let graph: Set<string> | null = null;
+function clientGraph(): Set<string> {
+  if (graph) return graph;
+  const resolve = (from: string, spec: string): string | null => {
+    let base: string;
+    if (spec.startsWith("@/")) base = spec.slice(2);
+    else if (spec.startsWith(".")) base = join(from, "..", spec).replace(/\\/g, "/");
+    else return null;
+    for (const c of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) {
+      if (/\.(ts|tsx)$/.test(c) && existsSync(join(ROOT, c)) && statSync(join(ROOT, c)).isFile()) return c;
+    }
+    return null;
+  };
+  const seen = new Set<string>();
+  const queue = SOURCES.map((p) => p.replace(/\\/g, "/")).filter((p) => isClient(read(p)));
+  while (queue.length) {
+    const p = queue.pop()!;
+    if (seen.has(p)) continue;
+    const src = read(p);
+    if (isServerActions(src)) continue;
+    seen.add(p);
+    for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)\s+(?!type\b)(?:[^'";]*?\sfrom\s*)?["']([^"']+)["']/g)) {
+      const r = resolve(p, m[1]);
+      if (r && !seen.has(r)) queue.push(r);
+    }
+  }
+  return (graph = seen);
+}
+
 const staticImport = (src: string, mod: string) =>
   new RegExp(`^\\s*import\\s[^;]*?from\\s*["']${mod.replace(/[/.]/g, "\\$&")}["']`, "m").test(src) ||
   new RegExp(`^\\s*import\\s*["']${mod.replace(/[/.]/g, "\\$&")}["']`, "m").test(src);
@@ -59,21 +92,35 @@ describe("2d: what every page loads", () => {
     expect(staticImport(src, "./sentry.client.config")).toBe(false);
     expect(staticImport(src, "zod")).toBe(false);
   });
-  it("no client component imports the Sentry SDK statically (report through lib/sentry-client)", () => {
-    const offenders = SOURCES.filter((p) => isClient(read(p)) && staticImport(read(p), "@sentry/nextjs"));
+  it("nothing bundled for the browser imports zod directly (lib/zod-client sets jitless first)", () => {
+    const offenders = [...clientGraph()].filter((p) => p !== "lib/zod-client.ts" && staticImport(read(p), "zod"));
     expect(offenders).toEqual([]);
   });
-  it("no client component imports zod directly (lib/zod-client sets jitless first)", () => {
-    const offenders = SOURCES.filter((p) => isClient(read(p)) && staticImport(read(p), "zod"));
-    expect(offenders).toEqual([]);
+  it("nothing bundled for the browser imports the Sentry SDK statically", () => {
+    expect([...clientGraph()].filter((p) => staticImport(read(p), "@sentry/nextjs"))).toEqual([]);
+  });
+  it("the graph walk sees the modules it must (sanity)", () => {
+    const g = clientGraph();
+    for (const p of ["app/login/page.tsx", "lib/zod-client.ts", "lib/class-category.ts", "lib/billing-cycle.ts", "components/SegmentErrorBoundary.tsx", "lib/sentry-client.ts"]) expect(g.has(p), p).toBe(true);
   });
   it("the client pages that build schemas use lib/zod-client", () => {
     for (const p of ["app/login/page.tsx", "app/apply/page.tsx"]) expect(staticImport(read(p), "@/lib/zod-client"), p).toBe(true);
   });
-  it("lib/zod-client turns jitless on before handing out z", async () => {
-    const { z: clientZ } = await import("@/lib/zod-client");
-    expect(clientZ).toBe(z);
-    expect(z.config().jitless).toBe(true);
+  it("lib/zod-client turns jitless on in the browser and leaves the server's JIT alone", async () => {
+    const before = z.config().jitless;
+    try {
+      vi.resetModules();
+      const { z: serverZ } = await import("@/lib/zod-client");
+      expect(serverZ).toBe(z);
+      expect(z.config().jitless).toBe(before);
+      vi.resetModules();
+      vi.stubGlobal("window", {});
+      await import("@/lib/zod-client");
+      expect(z.config().jitless).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      z.config({ jitless: before });
+    }
   });
 });
 
