@@ -156,11 +156,14 @@ describe("R10-1(a): the blob delete runs after the photo transaction has committ
     expect(res.status).toBe(200);
     expect(h.events).toContain("del-after-commit");
     expect(h.events.filter((e) => e.endsWith("-rollback"))).toEqual([]);
-    // No transaction is opened because of the failed delete: none begins after it, and the photo
-    // transaction's own commit stands (no rollback anywhere).
-    const after = h.events.slice(h.events.indexOf("del-after-commit") + 1);
-    expect(after.filter((e) => /^tx\d+-begin$/.test(e))).toEqual([]);
-    expect(txThatDid("rows-deleted").commit).toBeGreaterThan(-1);
+    // No transaction is opened BECAUSE of the failed delete: the only one that begins after it is the
+    // planned new-photo transaction (the one that creates the photo), exactly as on a successful run,
+    // and the photo-rows transaction's own commit stands (no rollback anywhere).
+    const delAt = h.events.indexOf("del-after-commit");
+    const beganAfter = h.events.slice(delAt + 1).filter((e) => /^tx\d+-begin$/.test(e));
+    expect(beganAfter).toHaveLength(1);
+    expect(txThatDid("photo-created").begin).toBeGreaterThan(delAt);
+    expect(txThatDid("rows-deleted").commit).toBeLessThan(delAt);
     expect(logs.some((l) => /\[rank\/route\].*orphan blob delete failed/.test(l))).toBe(true);
     expect(h.events).toContain("photo-created");
   });
