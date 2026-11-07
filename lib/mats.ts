@@ -50,14 +50,28 @@ export function cleanMatName(raw: string): string {
 }
 
 /**
- * What makes two names the same mat: the clean name with every default-ignorable
- * code point removed as well (the joiners and soft hyphen a name may keep for
- * display, so "Mat\u00AD1" keys as "mat1" and a joiner alone is blank),
- * lower-cased. Names saved before 7 Nov 2026 were keyed without that step:
+ * What makes two names the same mat: the clean name with the default-ignorable
+ * code points removed as well (the joiners and soft hyphen a name may keep for
+ * display, so "Mat\u00AD1" keys as "mat1" and a joiner alone is blank; not the
+ * variation selectors and tags, which make different symbols), lower-cased. Names saved before 7 Nov 2026 were keyed without that step:
  * scripts/check-mat-name-keys.mjs lists any whose stored key differs.
  */
 export function matNameKey(raw: string): string {
-  return cleanMatName(raw).replace(/\p{Default_Ignorable_Code_Point}/gu, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return dropIgnorables(cleanMatName(raw)).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+/**
+ * Default-ignorable code points stay in the key when they make a different
+ * symbol: variation selectors (U+FE00 to U+FE0F, U+E0100 to U+E01EF) and tag
+ * characters (U+E0000 to U+E007F), so the England, Scotland and Wales flags
+ * are three names, not one.
+ */
+const keptInKey = (cp: number) => (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xe0000 && cp <= 0xe007f);
+function dropIgnorables(s: string): string {
+  let out = "";
+  for (const ch of s) if (!DEFAULT_IGNORABLE.test(ch) || keptInKey(ch.codePointAt(0) ?? 0)) out += ch;
+  return out;
 }
 
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
@@ -177,12 +191,15 @@ export function checkLocationName(raw: string, mayAddMat: boolean): { ok: true; 
 /**
  * The club's classes on no mat that type a place, imported history excepted
  * (what a new mat may take: lib/mats-store.ts adoptPlaces and matForLocation),
- * LOCKED (FOR UPDATE) in id order, so an edit that clears or changes one of
- * them cannot be overwritten by the attach that follows. Call under the club's
- * mats lock (LOCK-ORDER: MATS, then these Class rows in id order). Read as
- * they are now: the caller matches the names on this read, never an older one.
+ * LOCKED (FOR NO KEY UPDATE, the strength the undo batch takes: it still
+ * waits for an edit's FOR UPDATE and for any UPDATE, but not for the FOR KEY
+ * SHARE a bulk ClassInstance insert takes on its classes, so it cannot deadlock
+ * with one) in id order, so an edit that clears or changes one of them cannot
+ * be overwritten by the attach that follows. Call under the club's mats lock
+ * (LOCK-ORDER: MATS, then these Class rows in id order). Read as they are now:
+ * the caller matches the names on this read, never an older one.
  * Raw for the row lock; tenantId is a bind parameter.
  */
 export function lockTypedClasses(tx: Prisma.TransactionClient, tenantId: string): Promise<{ id: string; location: string | null; deletedAt: Date | null }[]> {
-  return tx.$queryRaw<{ id: string; location: string | null; deletedAt: Date | null }[]>`SELECT "id", "location", "deletedAt" FROM "Class" WHERE "tenantId" = ${tenantId} AND "matId" IS NULL AND "sourceImportJobId" IS NULL AND "location" IS NOT NULL ORDER BY "id" FOR UPDATE`;
+  return tx.$queryRaw<{ id: string; location: string | null; deletedAt: Date | null }[]>`SELECT "id", "location", "deletedAt" FROM "Class" WHERE "tenantId" = ${tenantId} AND "matId" IS NULL AND "sourceImportJobId" IS NULL AND "location" IS NOT NULL ORDER BY "id" FOR NO KEY UPDATE`;
 }

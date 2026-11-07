@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
-import TimetableManager from "@/components/dashboard/TimetableManager";
+import TimetableManager, { locationCounts, savedAsLocation } from "@/components/dashboard/TimetableManager";
 import { PROPS, cls, stubFetch, type Call } from "./helpers/timetable-fixture";
 import { LOCATION_ERRORS } from "@/lib/mats";
 
@@ -370,6 +370,25 @@ describe("what an edit sends", () => {
     submit("Save changes");
     await waitFor(() => expect(saves(calls)).toHaveLength(1));
     expect(locationPart(saves(calls)[0].body)).toEqual({});
+  });
+});
+
+describe("what the toast says about a new location", () => {
+  it("never says 0 classes: a paused class saved alone is counted as not on the timetable", () => {
+    // The saved class is paused and took nothing with it.
+    expect(locationCounts(false, [], new Set())).toEqual({ live: 0, notLive: 1 });
+    expect(savedAsLocation("Upstairs", 0, 1)).toBe("“Upstairs” is saved as a location. 1 class not on the timetable is on it.");
+    // Paused, with two archived ones typing the name.
+    expect(savedAsLocation("Upstairs", 0, 3)).toBe("“Upstairs” is saved as a location. 3 classes not on the timetable are on it.");
+  });
+
+  it("counts the saved class when it is on the timetable, and the others by whether they are", () => {
+    const live = new Set(["a", "b"]);
+    expect(locationCounts(true, ["a", "x"], live)).toEqual({ live: 2, notLive: 1 });
+    // A paused class saved, taking a live one: one on the timetable, the saved one not.
+    expect(locationCounts(false, ["a"], live)).toEqual({ live: 1, notLive: 1 });
+    expect(savedAsLocation("Cage", 1, 0)).toBe("“Cage” is saved as a location. 1 class is now on it.");
+    expect(savedAsLocation("Cage", 2, 1)).toBe("“Cage” is saved as a location. 2 classes are now on it (and 1 not on the timetable).");
   });
 });
 

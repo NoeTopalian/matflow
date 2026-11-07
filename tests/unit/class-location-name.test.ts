@@ -110,7 +110,7 @@ beforeEach(() => {
   tx.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...values: unknown[]) => {
     if (strings.join("?").includes('"sourceImportJobId" IS NULL')) {
       ops.push("typed-read");
-      expect(strings.join("?")).toMatch(/ORDER BY "id" FOR UPDATE$/);
+      expect(strings.join("?")).toMatch(/ORDER BY "id" FOR NO KEY UPDATE$/);
       return typedClasses
         .filter((c) => c.tenantId === values[0] && c.matId === null && c.sourceImportJobId === null && c.location !== null)
         .sort((a, b) => (a.id < b.id ? -1 : 1))

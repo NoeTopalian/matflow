@@ -147,9 +147,9 @@ describe("the members' day by mat", () => {
   });
 
   it("a booked block's last line is in the block's own ink, not a see-through one", async () => {
-    // The class is today at 18:40 to 19:30: on the real clock it is not upcoming in that window and the bell is not
-    // drawn, so the test failed every evening (CI on PR #77, 7 Nov 2026, 19:05). The morning of the same day, with
-    // only the date frozen (timers stay real for waitFor).
+    // The class is today at 18:40 to 19:30. While it is running a booked block shows Live, not the Bell, so on the
+    // real clock this test failed whenever it ran between 18:40 and 19:30 (CI on PR #77, 7 Nov 2026, 19:05). Run on
+    // the morning of the same day, with only the date frozen (timers stay real for waitFor).
     const morning = new Date();
     morning.setHours(10, 0, 0, 0);
     vi.useFakeTimers({ toFake: ["Date"] });

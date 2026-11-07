@@ -125,10 +125,19 @@ type LocationAdded = MatOption & { classIds?: string[]; savedAt?: string };
 
 /**
  * Said when a save turned a typed Location into one of the club's saved locations (a mat): how many classes on the
- * timetable are now on it, and how many paused or archived ones went with them.
+ * timetable are now on it, and how many paused or archived ones went with them. Never "0 classes": when none on it
+ * is on the timetable (a paused class saved), it says how many that are not.
  */
-const savedAsLocation = (name: string, live: number, notLive: number) =>
-  `“${name}” is saved as a location. ${plural(live, "class is", "classes are")} now on it${notLive > 0 ? ` (and ${notLive} not on the timetable)` : ""}.`;
+export const savedAsLocation = (name: string, live: number, notLive: number) =>
+  live === 0
+    ? `“${name}” is saved as a location. ${plural(notLive, "class not on the timetable is", "classes not on the timetable are")} on it.`
+    : `“${name}” is saved as a location. ${plural(live, "class is", "classes are")} now on it${notLive > 0 ? ` (and ${notLive} not on the timetable)` : ""}.`;
+
+/** How many of the classes a new Location took are on the timetable: the saved class (when it is) and the others. */
+export function locationCounts(savedIsLive: boolean, others: readonly string[], liveIds: ReadonlySet<string>): { live: number; notLive: number } {
+  const live = (savedIsLive ? 1 : 0) + others.filter((id) => liveIds.has(id)).length;
+  return { live, notLive: 1 + others.length - live };
+}
 
 /**
  * The save message, in the interface's voice: state what happened.
@@ -2004,9 +2013,8 @@ export default function TimetableManager({
     const others = loc.classIds ?? [];
     // Remembered with the saved class too, so a snapshot read before the save cannot put any of them back.
     addMat({ ...loc, classIds: [savedId, ...others] });
-    const liveIds = new Set(classes.map((c) => c.id));
-    const live = (savedIsLive ? 1 : 0) + others.filter((id) => liveIds.has(id)).length;
-    const said = savedAsLocation(loc.name, live, 1 + others.length - live);
+    const { live, notLive } = locationCounts(savedIsLive, others, new Set(classes.map((c) => c.id)));
+    const said = savedAsLocation(loc.name, live, notLive);
     if (others.length === 0) return said;
     const moved = new Set(others);
     const onIt = (c: ClassRow) => (moved.has(c.id) ? { ...c, matId: loc.id, location: loc.name } : c);

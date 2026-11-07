@@ -140,8 +140,12 @@ acts on is worse than an error they can see.
 - **Same name, same mat, whatever invisible characters it carries (7 Nov 2026).** Two names are the
   same mat when they match ignoring capitals, spacing and default-ignorable characters (a soft
   hyphen, a zero-width joiner), which stay in the name shown. Mats saved before then were keyed
-  without that last step: `scripts/check-mat-name-keys.mjs` (read-only) lists any whose stored key
-  differs, and renaming one in the Mats sheet puts it right. Noe runs it on production.
+  without that last step. `scripts/check-mat-name-keys.mjs` (read-only) lists any whose stored key
+  differs; Noe runs it on production with
+  `node scripts/check-mat-name-keys.mjs --expect-host ep-bold-wave` (`DATABASE_URL` set to production).
+  To put one right, rename it in the Mats sheet to a different name (a rename to the same name
+  changes nothing), and if another mat already has the name it should take, remove that duplicate
+  first (a rename onto a name in use is refused); it can then be renamed back.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and
   never saved. Once an owner or manager presses a choice it is saved for the club and stays

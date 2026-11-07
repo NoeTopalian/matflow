@@ -301,6 +301,18 @@ describe("POST /api/mats", () => {
     expect(db.ops).toEqual([]);
   });
 
+  it("refuses a name of nothing but invisible characters, on add and on rename, as it refuses a blank one", async () => {
+    // A zero-width joiner and a soft hyphen: kept in a shown name, but on their own no name at all.
+    const invisible = String.fromCodePoint(0x200d, 0xad, 0x200d);
+    expect(await json(await addPOST(req("POST", { name: invisible })))).toEqual({ error: "Give the mat a name." });
+    expect(db.mats).toEqual([]);
+    db.mats.push({ id: "m1", tenantId: A, name: "Mat 1", nameKey: "mat 1", sortOrder: 0 });
+    const renamed = await renamePATCH(req("PATCH", { name: invisible }), params("m1"));
+    expect(renamed.status).toBe(400);
+    expect(await json(renamed)).toEqual({ error: "Give the mat a name." });
+    expect(db.mats[0]).toMatchObject({ name: "Mat 1", nameKey: "mat 1" });
+  });
+
   it("answers the unique index's refusal as the same 409, not a 500", async () => {
     db.failCreateWith = { code: "P2002" };
     const res = await addPOST(req("POST", { name: "Mat 1" }));

@@ -31,6 +31,7 @@ vi.mock("@/lib/revalidate-tag-logged", () => ({ revalidateTagLogged: vi.fn() }))
 
 import { auth } from "@/auth";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { prisma } from "@/lib/prisma";
 import { executeUndo } from "@/lib/undo-batch";
 import { decideUndo, type AuditRowLike } from "@/lib/undo-registry";
 import { POST as classPOST } from "@/app/api/classes/route";
@@ -187,6 +188,48 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     // leaves it alone. Attached first: the clearing edit, which waited on the row lock, takes it off again.
     expect(rows.find((r) => r.id === clearing.id)).toMatchObject({ matId: null, location: null });
   });
+
+  it("deterministic: a class cleared while the attach waits on its row is not put back on the new mat", async () => {
+    // A third connection holds the clearing class's row FOR UPDATE. The save that makes "Attic" a mat reaches its
+    // locked read of the typed classes and waits on that row; the holder then clears the class and commits. The
+    // attach reads the row as it now is (no place) and leaves it alone. A plain read before the wait would have seen
+    // "Attic" and the update that followed would have put the cleared class on the mat.
+    const T = await club("clear-held");
+    const saving = await classRow(T, "Saving", null);
+    const clearing = await classRow(T, "Clearing", "Attic");
+    as(T);
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
+      await tx.$queryRaw`SELECT "id" FROM "Class" WHERE "id" = ${clearing.id} FOR UPDATE`;
+      locked();
+      await released;
+      await tx.class.updateMany({ where: { id: clearing.id, tenantId: T }, data: { location: null } });
+    }, { timeout: 60_000, maxWait: 10_000 });
+    await isLocked;
+    const attach = edit(saving.id, { matName: "Attic" });
+    // Wait until the save is blocked on the held row, by whichever statement reaches it first (seen from another
+    // connection), at most 8 s: its lock wait is bounded at 10 s.
+    let waited = false;
+    for (let i = 0; i < 40 && !waited; i++) {
+      const [{ n }] = await prisma.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%"Class"%' AND pid <> pg_backend_pid()`;
+      waited = n > 0;
+      if (!waited) await new Promise((r) => setTimeout(r, 200));
+    }
+    release();
+    await holder;
+    const res = await attach;
+    expect(waited).toBe(true);
+    expect(res.status).toBe(200);
+    const [mat] = await mats(T);
+    const rows = await classes(T);
+    expect(rows.find((r) => r.id === saving.id)).toMatchObject({ matId: mat.id, location: "Attic" });
+    expect(rows.find((r) => r.id === clearing.id)).toMatchObject({ matId: null, location: null });
+    expect(((await res.json()) as { locationAdded: { classIds: string[] } }).locationAdded.classIds).toEqual([]);
+  }, 60_000);
 
   it("create: a new mat from a typed name takes the classes that type it too", async () => {
     const T = await club("create-takes");
