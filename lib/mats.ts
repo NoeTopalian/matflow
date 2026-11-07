@@ -53,7 +53,8 @@ export function cleanMatName(raw: string): string {
  * What makes two names the same mat: the clean name with the default-ignorable
  * code points removed as well (the joiners and soft hyphen a name may keep for
  * display, so "Mat\u00AD1" keys as "mat1" and a joiner alone is blank; not the
- * variation selectors and tags, which make different symbols), lower-cased. Names saved before 7 Nov 2026 were keyed without that step:
+ * tags and glyph selectors, which make different symbols: see keptInKey),
+ * lower-cased. Names saved before 7 Nov 2026 were keyed without that step:
  * scripts/check-mat-name-keys.mjs lists any whose stored key differs.
  */
 export function matNameKey(raw: string): string {
@@ -63,11 +64,13 @@ export function matNameKey(raw: string): string {
 const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
 /**
  * Default-ignorable code points stay in the key when they make a different
- * symbol: variation selectors (U+FE00 to U+FE0F, U+E0100 to U+E01EF) and tag
- * characters (U+E0000 to U+E007F), so the England, Scotland and Wales flags
- * are three names, not one.
+ * symbol: tag characters (U+E0000 to U+E007F), so the England, Scotland and
+ * Wales flags are three names, not one, and the variation selectors that pick
+ * a glyph (U+FE00 to U+FE0D, U+E0100 to U+E01EF). Not U+FE0E and U+FE0F,
+ * which only choose text or emoji display: "Cage" with a red heart is one
+ * location whichever way the heart is drawn.
  */
-const keptInKey = (cp: number) => (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xe0000 && cp <= 0xe007f);
+const keptInKey = (cp: number) => (cp >= 0xfe00 && cp <= 0xfe0d) || (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xe0000 && cp <= 0xe007f);
 function dropIgnorables(s: string): string {
   let out = "";
   for (const ch of s) if (!DEFAULT_IGNORABLE.test(ch) || keptInKey(ch.codePointAt(0) ?? 0)) out += ch;

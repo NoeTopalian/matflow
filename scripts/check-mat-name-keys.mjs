@@ -2,8 +2,8 @@
 //
 // Why: from 7 Nov 2026 a mat's key also drops default-ignorable characters (a soft hyphen, a zero-width joiner),
 // so "Mat<soft hyphen>1" keys as "mat1". A mat saved before then with such a character keeps its old key, and a
-// new "Mat1" would not be recognised as the same mat. This script only reports; it changes nothing. A listed mat
-// is put right by renaming it in the Mats sheet (a rename stores the key afresh).
+// new "Mat1" would not be recognised as the same mat. This script only reports; it changes nothing. How to put a
+// listed mat right is in docs/RULES.md section 5b ("Same name, same mat").
 //
 // Run with DATABASE_URL set to the database to check. The test branch:
 //   node scripts/check-mat-name-keys.mjs
@@ -14,11 +14,12 @@
 // Prints the count and, per mat: club id, mat id, name (non-ASCII as code points, so invisible ones show), stored key and
 // expected key. Exit 0 when none differ, 1 when some do, 2 when it could not run.
 import { pathToFileURL } from "node:url";
+import { resolveDbTarget, TargetRefused } from "./readiness/db-target.mjs";
 
 // The same steps as lib/mats.ts (cleanMatName, then matNameKey). Kept in step by tests/unit/check-mat-name-keys.test.ts.
 const INVISIBLE_FORMATTING = /[\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
 const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
-const keptInKey = (cp) => (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xe0000 && cp <= 0xe007f);
+const keptInKey = (cp) => (cp >= 0xfe00 && cp <= 0xfe0d) || (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xe0000 && cp <= 0xe007f);
 export function matNameKey(raw) {
   const clean = raw.normalize("NFC").replace(INVISIBLE_FORMATTING, "").replace(/\s+/g, " ").trim();
   let out = "";
@@ -26,24 +27,20 @@ export function matNameKey(raw) {
   return out.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-/** The Neon endpoint of a connection string ("ep-…"), or the bare host when it is not Neon. */
-export function endpointOf(url) {
-  let host = "";
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    return "";
-  }
-  return host.match(/^(ep-[a-z0-9-]+?)(-pooler)?\./)?.[1] ?? host;
-}
-
-/** Production is refused unless the command names its host: --expect-host ep-bold-wave. */
-export function hostRefusal(endpoint, argv) {
+/**
+ * The database the script may read, vetted as scripts/erase-closed-club.mjs vets its target
+ * (scripts/readiness/db-target.mjs resolveDbTarget: the effective host the way pg resolves it, with PGHOST,
+ * PGHOSTADDR, PGOPTIONS and the host=, hostaddr=, options= and endpoint= overrides refused). With no
+ * --expect-host it reads only the test branch, and anything naming production is refused outright; production
+ * needs --expect-host ep-bold-wave. Returns the effective host (never the URL); throws TargetRefused.
+ */
+export function checkTarget(url, argv) {
   const i = argv.indexOf("--expect-host");
-  const expected = i >= 0 ? argv[i + 1] : null;
-  if (expected && expected !== endpoint) return `REFUSED: the URL reaches ${endpoint || "an unknown host"}, not --expect-host ${expected}.`;
-  if (endpoint === "ep-bold-wave" && expected !== "ep-bold-wave") return "REFUSED: this is production (ep-bold-wave). Run it with --expect-host ep-bold-wave if that is meant.";
-  return null;
+  const expectHost = i >= 0 ? argv[i + 1] : null;
+  if (!expectHost && String(url).toLowerCase().includes("ep-bold-wave")) {
+    throw new TargetRefused("REFUSED: this is production (ep-bold-wave). Run it with --expect-host ep-bold-wave if that is meant.");
+  }
+  return resolveDbTarget(url, { expectHost: expectHost ?? "ep-hidden-salad", allowProduction: true });
 }
 
 /** A name as printed: every character outside printable ASCII as its code point, so invisible ones show. */
@@ -61,10 +58,11 @@ async function main() {
     console.error("DATABASE_URL is not set.");
     process.exit(2);
   }
-  const endpoint = endpointOf(url);
-  const refused = hostRefusal(endpoint, process.argv.slice(2));
-  if (refused) {
-    console.error(refused);
+  let endpoint;
+  try {
+    endpoint = checkTarget(url, process.argv.slice(2));
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
     process.exit(2);
   }
   const { default: pg } = await import("pg");

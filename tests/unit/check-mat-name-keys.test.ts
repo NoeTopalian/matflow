@@ -1,9 +1,9 @@
 // The read-only check script (scripts/check-mat-name-keys.mjs) keys names exactly as lib/mats.ts does, and lists
 // a mat only when its stored key differs from that. Invisible characters are built from code points here, so no
 // editor can turn them into something else.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { cleanMatName, matNameKey } from "@/lib/mats";
-import { matNameKey as scriptKey, mismatches, shown, endpointOf, hostRefusal } from "../../scripts/check-mat-name-keys.mjs";
+import { matNameKey as scriptKey, mismatches, shown, checkTarget } from "../../scripts/check-mat-name-keys.mjs";
 
 const ZWJ = String.fromCodePoint(0x200d);
 const ZWNJ = String.fromCodePoint(0x200c);
@@ -18,14 +18,21 @@ describe("matNameKey: what makes two names the same mat", () => {
     expect(matNameKey(`Ma${ZWJ}t 1`)).toBe(matNameKey("Mat 1"));
   });
 
-  it("keeps variation selectors and tag characters in the key, so flag emoji stay three different names", () => {
+  it("keeps tag characters in the key, so flag emoji stay three different names; text or emoji display of one symbol is one name", () => {
     const tagged = (letters: string) => String.fromCodePoint(0x1f3f4, ...[...letters].map((c) => 0xe0000 + c.charCodeAt(0)), 0xe007f);
     const flags = [tagged("gbeng"), tagged("gbsct"), tagged("gbwls")];
     const keys = flags.map((f) => matNameKey(`Flag ${f}`));
     expect(new Set(keys).size).toBe(3);
     for (const f of flags) expect(scriptKey(`Flag ${f}`)).toBe(matNameKey(`Flag ${f}`));
-    // A variation selector makes the emoji form: kept, so it is not the same name as the text form.
-    expect(matNameKey(String.fromCodePoint(0x2764, 0xfe0f))).not.toBe(matNameKey(String.fromCodePoint(0x2764)));
+    // U+FE0F (emoji display) and U+FE0E (text display) only choose how a heart is drawn: one location.
+    const heart = String.fromCodePoint(0x2764);
+    const emojiHeart = String.fromCodePoint(0x2764, 0xfe0f);
+    const textHeart = String.fromCodePoint(0x2764, 0xfe0e);
+    expect(matNameKey(`${emojiHeart} Cage`)).toBe(matNameKey(`${heart} Cage`));
+    expect(matNameKey(`${textHeart} Cage`)).toBe(matNameKey(`${heart} Cage`));
+    expect(scriptKey(`${emojiHeart} Cage`)).toBe(matNameKey(`${emojiHeart} Cage`));
+    // A glyph selector that is not about display stays: it picks a different form.
+    expect(matNameKey(String.fromCodePoint(0x845b, 0xe0100))).not.toBe(matNameKey(String.fromCodePoint(0x845b)));
   });
 
   it("keeps the joiners in the name that is shown", () => {
@@ -51,15 +58,36 @@ describe("scripts/check-mat-name-keys.mjs", () => {
     expect(mismatches(rows)).toEqual([{ ...rows[1], expected: "mat2" }]);
   });
 
-  it("names the endpoint, never the URL, and refuses production unless it is named", () => {
-    const at = (host: string) => `postgresql://user:secret@${host}/neondb?sslmode=require`;
-    expect(endpointOf(at("ep-hidden-salad-123456-pooler.eu-west-2.aws.neon.tech"))).toBe("ep-hidden-salad-123456");
-    expect(endpointOf(at("ep-bold-wave.eu-west-2.aws.neon.tech"))).toBe("ep-bold-wave");
-    expect(endpointOf("not a url")).toBe("");
-    expect(hostRefusal("ep-bold-wave", [])).toMatch(/^REFUSED: this is production/);
-    expect(hostRefusal("ep-bold-wave", ["--expect-host", "ep-bold-wave"])).toBeNull();
-    expect(hostRefusal("ep-hidden-salad-123456", [])).toBeNull();
-    expect(hostRefusal("ep-hidden-salad-123456", ["--expect-host", "ep-bold-wave"])).toMatch(/^REFUSED: the URL reaches ep-hidden-salad-123456/);
+  describe("the target guard (scripts/readiness/db-target.mjs, as erase-closed-club uses it)", () => {
+    // The real endpoint shapes: production and the test branch, pooled.
+    const PROD = "postgresql://user:secret@ep-bold-wave-abt39t7x-pooler.eu-west-2.aws.neon.tech/neondb?sslmode=require";
+    const TEST = "postgresql://user:secret@ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech/neondb?sslmode=require";
+    afterEach(() => {
+      delete process.env.PGHOST;
+    });
+
+    it("refuses production with no flag", () => {
+      expect(() => checkTarget(PROD, [])).toThrow(/^REFUSED: this is production/);
+    });
+    it("allows production with --expect-host ep-bold-wave, and returns the host, never the URL", () => {
+      expect(checkTarget(PROD, ["--expect-host", "ep-bold-wave"])).toBe("ep-bold-wave-abt39t7x-pooler.eu-west-2.aws.neon.tech");
+    });
+    it("allows the test branch with no flag", () => {
+      expect(checkTarget(TEST, [])).toBe("ep-hidden-salad-abom7cg4-pooler.eu-west-2.aws.neon.tech");
+    });
+    it("refuses the test branch when --expect-host names production", () => {
+      expect(() => checkTarget(TEST, ["--expect-host", "ep-bold-wave"])).toThrow(/^REFUSED: host does not contain ep-bold-wave/);
+    });
+    it("refuses a PGHOST in the environment, and a URL that routes elsewhere", () => {
+      process.env.PGHOST = "ep-bold-wave-abt39t7x.eu-west-2.aws.neon.tech";
+      expect(() => checkTarget(TEST, [])).toThrow(/^REFUSED: PGHOST is set/);
+      delete process.env.PGHOST;
+      // Naming production anywhere in the URL is refused before anything else; an override to another endpoint is
+      // refused by the shared guard itself.
+      expect(() => checkTarget(`${TEST}&options=endpoint%3Dep-bold-wave-abt39t7x`, [])).toThrow(/^REFUSED/);
+      expect(() => checkTarget(`${TEST}&options=endpoint%3Dep-quiet-river-12345678`, [])).toThrow(/^REFUSED: connection string carries a options= parameter/);
+      expect(() => checkTarget(`${TEST}&host=ep-bold-wave-abt39t7x.eu-west-2.aws.neon.tech`, [])).toThrow(/REFUSED/);
+    });
   });
 
   it("prints invisible characters as code points", () => {

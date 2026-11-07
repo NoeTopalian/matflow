@@ -193,35 +193,45 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     // A third connection holds the clearing class's row FOR UPDATE. The save that makes "Attic" a mat reaches its
     // locked read of the typed classes and waits on that row; the holder then clears the class and commits. The
     // attach reads the row as it now is (no place) and leaves it alone. A plain read before the wait would have seen
-    // "Attic" and the update that followed would have put the cleared class on the mat.
+    // "Attic" and the update that followed would have put the cleared class on the mat (proved by swapping the lock
+    // for a plain read: this test then fails, 7 Nov 2026).
     const T = await club("clear-held");
     const saving = await classRow(T, "Saving", null);
     const clearing = await classRow(T, "Clearing", "Attic");
     as(T);
     let release!: () => void;
     const released = new Promise<void>((r) => (release = r));
+    let holderPid = -1;
     let locked!: () => void;
     const isLocked = new Promise<void>((r) => (locked = r));
     const holder = prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
+      holderPid = (await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0].pid;
       await tx.$queryRaw`SELECT "id" FROM "Class" WHERE "id" = ${clearing.id} FOR UPDATE`;
       locked();
       await released;
       await tx.class.updateMany({ where: { id: clearing.id, tenantId: T }, data: { location: null } });
     }, { timeout: 60_000, maxWait: 10_000 });
-    await isLocked;
-    const attach = edit(saving.id, { matName: "Attic" });
-    // Wait until the save is blocked on the held row, by whichever statement reaches it first (seen from another
-    // connection), at most 8 s: its lock wait is bounded at 10 s.
+    // The holder may fail before it locks: then this settles on its failure rather than waiting for ever.
+    await Promise.race([isLocked, holder]);
+    expect(holderPid).toBeGreaterThan(0);
+    let attach: ReturnType<typeof edit> | null = null;
     let waited = false;
-    for (let i = 0; i < 40 && !waited; i++) {
-      const [{ n }] = await prisma.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%"Class"%' AND pid <> pg_backend_pid()`;
-      waited = n > 0;
-      if (!waited) await new Promise((r) => setTimeout(r, 200));
+    try {
+      attach = edit(saving.id, { matName: "Attic" });
+      // Until a session of this database is blocked BY THE HOLDER (not any other wait), at most about 8 s of
+      // elapsed time: the save's lock wait is bounded at 10 s.
+      const until = Date.now() + 8_000;
+      while (!waited && Date.now() < until) {
+        const [{ n }] = await prisma.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+        waited = n > 0;
+        if (!waited) await new Promise((r) => setTimeout(r, 200));
+      }
+    } finally {
+      release();
     }
-    release();
     await holder;
-    const res = await attach;
+    const res = await attach!;
     expect(waited).toBe(true);
     expect(res.status).toBe(200);
     const [mat] = await mats(T);
