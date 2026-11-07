@@ -309,7 +309,8 @@ describe("refusals and failures", () => {
     expect(newBox()?.value).toBe("Cage");
     expect(newBox()?.getAttribute("aria-describedby")).toBe("class-form-location-error");
     expect(newBox()?.getAttribute("aria-invalid")).toBe("true");
-    expect(document.activeElement).toBe(newBox());
+    // Focus is moved by an effect, which React runs after the commit that showed the sentence: wait for it.
+    await waitFor(() => expect(document.activeElement).toBe(newBox()));
     expect(limit).toMatch(/Remove a location under Mats/);
     // Changing what was typed clears the refusal until the next save.
     fireEvent.change(newBox()!, { target: { value: "Cage 2" } });
