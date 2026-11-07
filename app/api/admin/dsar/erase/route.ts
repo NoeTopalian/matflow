@@ -40,6 +40,11 @@
  *   - ImportSourceMapping (kind=person) — the owner's decision that a source
  *     person is this member; its sourceKey embeds their source email and name
  *   - Member.externalRef / unverifiedEmail — both hold the source identity
+ *   - Stored import files — every kept file of the club rewritten without the
+ *     rows whose email or source key is the member's (6 Nov 2026: files are
+ *     kept, so the erasure must reach them); ImportJob.errorLog and
+ *     dryRunSummary — every entry naming the member removed, by id, source
+ *     key, email or name (lib/importers/import-erasure.ts)
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
@@ -57,6 +62,9 @@ import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
+import { eraseSubjectsFromImportDiagnostics, eraseSubjectsFromImportFiles, importFileUrls, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { redactSubjectsFromAuditLog, type AddressRowDecision, type RedactionSubject } from "@/lib/audit-redact";
+import { addressHolders, decideAddressRow, digestsHeldByAnotherNow, heldByAnotherNow, type AddressHolders } from "@/lib/erasure-address-holders";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -111,7 +119,7 @@ export async function POST(req: Request) {
   const member = await withTenantContext(tenantId, (tx) =>
     tx.member.findFirst({
       where: { id: memberId, tenantId },
-      select: { id: true, status: true, email: true, name: true, stripeSubscriptionId: true, externalRef: true },
+      select: { id: true, status: true, email: true, name: true, stripeSubscriptionId: true, externalRef: true, unverifiedEmail: true },
     }),
   );
   if (!member) {
@@ -322,73 +330,201 @@ export async function POST(req: Request) {
     OR: [{ targetId: memberId }, ...(originalExternalRef ? [{ sourceKey: originalExternalRef }] : [])],
   };
 
-  const scope = await withTenantContext(tenantId, async (tx) => {
-    const [
-      photos,
-      waivers,
-      loginEvents,
-      pushSubscriptions,
-      notifications,
-      memberNoteTasks,
-      magicLinkTokens,
-      passwordResetTokens,
-      emailLogs,
-      rankHistoryNotes,
-      importedBookings,
-      importSourceMappings,
-    ] = await Promise.all([
-      tx.memberPhoto.findMany({
-        where: { memberId, tenantId },
-        select: { id: true, url: true },
-      }),
-      tx.signedWaiver.findMany({
-        where: { memberId, tenantId },
-        select: { id: true, signatureImageUrl: true },
-      }),
-      tx.loginEvent.count({ where: { memberId, tenantId } }),
-      tx.pushSubscription.count({ where: { memberId, tenantId } }),
-      tx.notification.count({ where: { memberId, tenantId } }),
-      tx.task.count({ where: { tenantId, assigneeMemberId: memberId, kind: "member_note" } }),
-      // GDPR obs-3: the counts must use the same case-insensitive predicate as
-      // the deletes below, or the fulfilment record understates what was
-      // destroyed.
-      tx.magicLinkToken.count({
-        where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
-      }),
-      tx.passwordResetToken.count({
-        where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
-      }),
-      tx.emailLog.count({
-        where: { tenantId, recipient: { equals: originalEmail, mode: "insensitive" } },
-      }),
-      // GDPR NEW-2: free-text promotion notes. The SAR export hands these to
-      // the subject as their own personal data (export/route.ts selects
-      // RankHistory.notes), so leaving them untouched under Article 17 is
-      // self-inconsistent — and it is exactly the coach-typed-their-name risk
-      // that justified scrubbing Member.notes. RankHistory has no tenantId
-      // column; it is reached through MemberRank.memberId (RLS policy
-      // 20260503100000 joins the same way), and memberId is a global cuid.
-      tx.rankHistory.count({ where: { memberRank: { memberId }, notes: { not: null } } }),
-      tx.importedBooking.count({ where: importedBookingWhere }),
-      tx.importSourceMapping.count({ where: personMappingWhere }),
-    ]);
+  // Kept import data (6 Nov 2026: nothing is deleted automatically, so import files, their diagnostics and the
+  // Activity log stay), so the erasure reaches them too. Who the subjects are: the member, and the children this
+  // erasure deletes with them (strategy "cascade").
+  type SubjectRow = { id: string; name: string | null; email: string | null; externalRef: string | null; unverifiedEmail: string | null };
+  // Earlier login addresses and names: a member.update (staff edit) or member.self_update (the member's own edit) row
+  // records the keyed digest of the address it replaced and the name it replaced, so an import made under an old
+  // address or name is still recognised (L2, 6 Nov 2026). Digests only; no address is read back. An earlier address
+  // another member of the club now holds (a junior first recorded under the parent's address) is checked the same way
+  // as a shared unverified address (the second adult at a TeamUp address keeps the FIRST adult's login there): it
+  // still marks the subject's own rows, but is never blanked or treated as theirs alone.
+  const toSubject = (m: SubjectRow, edits: { entityId: string; metadata: unknown }[], holders: AddressHolders): ErasureSubject => {
+    const metas = edits.filter((e) => e.entityId === m.id).map((e) => e.metadata as { oldEmailSha256?: unknown; changes?: { name?: { from?: unknown } } } | null);
+    const digests = metas.map((d) => d?.oldEmailSha256).filter((d): d is string => typeof d === "string");
+    const shared = new Set(digestsHeldByAnotherNow(holders, m.id, digests));
     return {
-      photos,
-      waivers,
-      loginEvents,
-      pushSubscriptions,
-      notifications,
-      memberNoteTasks,
-      magicLinkTokens,
-      passwordResetTokens,
-      emailLogs,
-      rankHistoryNotes,
-      importedBookings,
-      importSourceMappings,
+      memberId: m.id,
+      sourceKey: m.externalRef,
+      email: m.email && !isSynthesisedEmail(m.email) ? m.email : null,
+      pastAddressDigests: digests.filter((d) => !shared.has(d)),
+      pastSharedAddressDigests: digests.filter((d) => shared.has(d)),
+      pastNames: metas.map((d) => d?.changes?.name?.from).filter((n): n is string => typeof n === "string"),
+      addressDigest: (a: string) => emailDigest(a),
+      unverifiedEmail: m.unverifiedEmail,
+      unverifiedEmailShared: m.unverifiedEmail ? heldByAnotherNow(holders, m.id, m.unverifiedEmail) : false,
+      name: m.name,
     };
+  };
+  // An address-keyed Activity row (the kiosk waiver row before 6 Nov 2026) is repointed to a subject only when no
+  // other member ever held its address; otherwise the row may be the other member's, so its address is replaced by
+  // the neutral "erased" (lib/audit-redact.ts, lib/erasure-address-holders.ts).
+  const redactionSubjects = (subjects: ErasureSubject[], holders: AddressHolders): RedactionSubject[] =>
+    subjects.map((s) => ({ memberId: s.memberId, addressRow: (address: string): AddressRowDecision => decideAddressRow(address, s, holders) }));
+
+  // Everything the erasure reads before it writes, in ONE transaction (one pool connection) of set-based reads: what
+  // it will delete, then what it reaches in the kept import data and the Activity log (7 Nov 2026: an erasure costs
+  // its round trips; tests/integration/erase-large-club-db.test.ts). Nothing here writes: the counts are dry runs,
+  // written in the transaction below (the fulfilment record goes first).
+  const { scope, prep } = await withTenantContext(tenantId, async (tx) => {
+    const readScope = async () => {
+      const [
+        photos,
+        waivers,
+        loginEvents,
+        pushSubscriptions,
+        notifications,
+        memberNoteTasks,
+        magicLinkTokens,
+        passwordResetTokens,
+        emailLogs,
+        rankHistoryNotes,
+        importedBookings,
+        importSourceMappings,
+      ] = await Promise.all([
+        tx.memberPhoto.findMany({
+          where: { memberId, tenantId },
+          select: { id: true, url: true },
+        }),
+        tx.signedWaiver.findMany({
+          where: { memberId, tenantId },
+          select: { id: true, signatureImageUrl: true },
+        }),
+        tx.loginEvent.count({ where: { memberId, tenantId } }),
+        tx.pushSubscription.count({ where: { memberId, tenantId } }),
+        tx.notification.count({ where: { memberId, tenantId } }),
+        tx.task.count({ where: { tenantId, assigneeMemberId: memberId, kind: "member_note" } }),
+        // GDPR obs-3: the counts must use the same case-insensitive predicate as
+        // the deletes below, or the fulfilment record understates what was
+        // destroyed.
+        tx.magicLinkToken.count({
+          where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
+        }),
+        tx.passwordResetToken.count({
+          where: { tenantId, email: { equals: originalEmail, mode: "insensitive" } },
+        }),
+        tx.emailLog.count({
+          where: { tenantId, recipient: { equals: originalEmail, mode: "insensitive" } },
+        }),
+        // GDPR NEW-2: free-text promotion notes. The SAR export hands these to
+        // the subject as their own personal data (export/route.ts selects
+        // RankHistory.notes), so leaving them untouched under Article 17 is
+        // self-inconsistent — and it is exactly the coach-typed-their-name risk
+        // that justified scrubbing Member.notes. RankHistory has no tenantId
+        // column; it is reached through MemberRank.memberId (RLS policy
+        // 20260503100000 joins the same way), and memberId is a global cuid.
+        tx.rankHistory.count({ where: { memberRank: { memberId }, notes: { not: null } } }),
+        tx.importedBooking.count({ where: importedBookingWhere }),
+        tx.importSourceMapping.count({ where: personMappingWhere }),
+      ]);
+      return {
+        photos,
+        waivers,
+        loginEvents,
+        pushSubscriptions,
+        notifications,
+        memberNoteTasks,
+        magicLinkTokens,
+        passwordResetTokens,
+        emailLogs,
+        rankHistoryNotes,
+        importedBookings,
+        importSourceMappings,
+      };
+    };
+    const readPrep = async () => {
+      const childRows: SubjectRow[] =
+        activeChildren > 0 && childStrategyParam === "cascade"
+          ? await tx.member.findMany({
+              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+              select: { id: true, name: true, email: true, externalRef: true, unverifiedEmail: true },
+            })
+          : [];
+      // Children before their guardian: a child's import rows are recognised by the guardian's address, which the
+      // guardian's own pass blanks in every row that is not theirs.
+      const subjectRows: SubjectRow[] = [...childRows, { id: memberId, name: member.name, email: originalEmail, externalRef: originalExternalRef, unverifiedEmail: member.unverifiedEmail }];
+      // The subjects' own edit rows (a handful each), filtered in code: no JSON-path filter to depend on.
+      const edits = await tx.auditLog.findMany({
+        where: { tenantId, entityId: { in: subjectRows.map((r) => r.id) }, action: { in: ["member.update", "member.self_update"] } },
+        select: { entityId: true, metadata: true },
+      });
+      // Who ever held each address in this club: every member's current addresses, and every change or release row
+      // of a member (the rows lib/attendance-import.ts reads), compared in each digest form the club has written.
+      const members = await tx.member.findMany({ where: { tenantId }, select: { id: true, email: true, unverifiedEmail: true } });
+      const history = await tx.$queryRaw<{ entityId: string; metadata: Record<string, unknown> | null }[]>`
+        SELECT "entityId", metadata FROM "AuditLog"
+        WHERE "tenantId" = ${tenantId} AND "entityType" = 'Member'
+          AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'newEmailSha256' IS NOT NULL
+            OR metadata->>'oldEmailDigest' IS NOT NULL OR metadata->'releasedEmailSha256' IS NOT NULL
+            OR metadata->>'originalEmailHash' IS NOT NULL)`;
+      const holders = addressHolders(members, history);
+      const subjects = subjectRows.map((m) => toSubject(m, edits, holders));
+      // One read of the club's import jobs serves the file list and the diagnostics.
+      const jobs = await tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true, errorLog: true, dryRunSummary: true } });
+      const uploads = await tx.importUpload.findMany({ where: { tenantId }, select: { id: true, status: true, expiresAt: true } });
+      return {
+        subjects,
+        holders,
+        fileUrls: importFileUrls(jobs, uploads),
+        importDiagnosticsEntries: await eraseSubjectsFromImportDiagnostics(tx, tenantId, subjects, { dryRun: true, jobs }),
+        auditRowsRedacted: await redactSubjectsFromAuditLog(tx, tenantId, redactionSubjects(subjects, holders), { dryRun: true }),
+      };
+    };
+    return { scope: await readScope(), prep: await readPrep() };
   });
+  const importSubjects = prep.subjects;
+  const fileUrls = prep.fileUrls;
+  const importDiagnosticsEntries = prep.importDiagnosticsEntries;
+  const auditRowsRedacted = prep.auditRowsRedacted;
+  // The subject's rows come out of every stored import file of the club HERE, before the database erasure: a file
+  // store call is a network call and cannot join the transaction below. A file that names the subject and cannot be
+  // rewritten refuses the whole erasure.
+  // The file rewrites cannot roll back with the transaction below, so they are
+  // recorded on their own, durably, whether the walk finishes or stops part-way:
+  // if the erasure then refuses, the record says files already lost the rows.
+  const importFiles: { files: number; rows: number; cells: number; nameOnly?: number } = { files: 0, rows: 0, cells: 0, nameOnly: 0 };
+  const recordFileRewrites = async () => {
+    if (importFiles.files === 0) return;
+    await logAudit({
+      tenantId,
+      userId: ownerUserId,
+      action: "member.dsar_erase.import_files",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: { importFilesRewritten: importFiles.files, importFileRowsRemoved: importFiles.rows, importFileCellsBlanked: importFiles.cells, subjects: importSubjects.length },
+      durable: true,
+      req,
+    });
+  };
+  try {
+    await eraseSubjectsFromImportFiles(tenantId, importSubjects, fileUrls, importFiles);
+  } catch (err) {
+    console.error("[dsar/erase] import files could not be rewritten; nothing else was erased", err);
+    await recordFileRewrites();
+    return NextResponse.json(
+      {
+        error:
+          "Erasure stopped: the member's rows could not be removed from a stored import file, so nothing else was erased. " +
+          (importFiles.files > 0 ? `Their rows were already removed from ${importFiles.files} stored import file(s). ` : "") +
+          (stripeCancelOutcome.performed ? "The member's Stripe subscription is already set to stop renewing. " : "") +
+          "Try again.",
+      },
+      { status: 500 },
+    );
+  }
+  await recordFileRewrites();
+  const filesNote = importFiles.files > 0 ? `The member's rows were already removed from ${importFiles.files} stored import file(s). ` : "";
 
   const erasedCounts = {
+    importFilesRewritten: importFiles.files,
+    importFileRowsRemoved: importFiles.rows,
+    importFileCellsBlanked: importFiles.cells,
+    importDiagnosticsEntriesRemoved: importDiagnosticsEntries,
+    // Rows in stored import files with this member's name at an address that is not theirs: left as they are and
+    // reported to the owner (they may be another person of the same name).
+    importNameOnlyRowsLeft: importFiles.nameOnly ?? 0,
+    auditRowsRedacted,
     memberPhotos: scope.photos.length,
     signedWaiversScrubbed: scope.waivers.length,
     loginEvents: scope.loginEvents,
@@ -419,7 +555,9 @@ export async function POST(req: Request) {
       // Audit P3-6: HMAC-SHA256 (lib/token-hash), not the old 32-bit
       // hashSnippet — that one was brute-forceable over the email space,
       // i.e. weak pseudonymisation in the fulfilment record itself.
-      originalEmailHash: member.email ? hashToken(member.email) : null,
+      // Of the lower-cased address (7 Nov 2026), the form the attendance import compares; older rows hashed it as
+      // stored, and lib/erasure-address-holders.ts compares both.
+      originalEmailHash: member.email ? hashToken(member.email.trim().toLowerCase()) : null,
       // The address the erasure releases, in the keyed login-email digest every release path writes (the attendance
       // import refuses a released address — SF-54). A keyed digest, like originalEmailHash: no address is kept.
       releasedEmailSha256: member.email ? emailDigest(member.email) : null,
@@ -495,6 +633,11 @@ export async function POST(req: Request) {
     await tx.importSourceMapping.deleteMany({ where: personMappingWhere });
     // The import records keep no trace of the subject: review list, exceptions, kept lists (25 and 27 Oct 2026).
     await scrubImportConflictsFor(tx, tenantId, memberId, originalExternalRef);
+    // …and the kept diagnostics of every import, attendance included, name-only entries too (6 Nov 2026).
+    await eraseSubjectsFromImportDiagnostics(tx, tenantId, importSubjects);
+    // …and the personal values recorded on their own Activity rows, kept permanently since 6 Nov 2026: metadata
+    // only, the actor columns untouched (lib/audit-redact.ts, the one documented write to an existing row).
+    await redactSubjectsFromAuditLog(tx, tenantId, redactionSubjects(importSubjects, prep.holders));
 
     await tx.member.update({
       where: { id: memberId },
@@ -645,7 +788,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "This member's details changed while the erasure was being prepared, so nothing was erased. " +
+          "This member's details changed while the erasure was being prepared, so nothing else was erased. " +
+          filesNote +
           (stripeCancelOutcome.performed
             ? "The member's Stripe subscription is already set to stop renewing. "
             : "") +
@@ -658,7 +802,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "Erasure failed and nothing was erased (the audit record and the erasure commit together). " +
+          "Erasure failed and nothing else was erased (the audit record and the erasure commit together). " +
+          filesNote +
           (stripeCancelOutcome.performed
             ? "The member's Stripe subscription is already set to stop renewing. "
             : "") +
@@ -684,6 +829,15 @@ export async function POST(req: Request) {
     memberId,
     erasedAt: new Date().toISOString(),
     erased: erasedCounts,
+    // Told, never skipped silently (L2): rows that carry this member's name at an address that is not theirs.
+    ...(erasedCounts.importNameOnlyRowsLeft > 0
+      ? {
+          notes: [
+            `${erasedCounts.importNameOnlyRowsLeft} row(s) in stored import files carry this member's name at an address that is not theirs. ` +
+              "They were left as they are, as they may be another person with the same name. Check them before relying on the erasure.",
+          ],
+        }
+      : {}),
     children: {
       affected: activeChildren,
       strategy: activeChildren > 0 ? childStrategyParam : null,

@@ -26,7 +26,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { DB_UPLOAD_PREFIX, deleteImportFile, readImportFile } from "@/lib/import-storage";
+import { DB_UPLOAD_PREFIX, readImportFile } from "@/lib/import-storage";
 import { claimUpload, readUploadBytes } from "@/lib/import-upload";
 import { sniffCsvKind, WRONG_PATH_MESSAGE } from "@/lib/importers/sniff";
 import { clubWallClockToInstant, EXPORT_TIME_PROVENANCES, type ExportTimeProvenance } from "@/lib/importers";
@@ -210,14 +210,9 @@ async function preview(req: Request, tenantId: string, userId: string, body: Rec
     const claim = await claimUpload(tx, { tenantId, userId, uploadId, purpose: PURPOSE });
     if (!claim.ok) return null;
     // A new file makes every earlier attendance preview stale: it can never be
-    // committed, and its stored file (member names and emails) goes now.
-    const stale = await tx.importJob.findMany({ where: { tenantId, source: JOB_SOURCE, status: "preview" }, select: { fileBlobUrl: true } });
+    // committed. Its stored file is kept with its job: the chunks ARE that file,
+    // and nothing is deleted automatically (product rule, Noe, 6 Nov 2026).
     await tx.importJob.updateMany({ where: { tenantId, source: JOB_SOURCE, status: "preview" }, data: { status: "superseded" } });
-    const staleUploads = stale.map((j) => j.fileBlobUrl).filter((u) => u.startsWith(DB_UPLOAD_PREFIX)).map((u) => u.slice(DB_UPLOAD_PREFIX.length));
-    if (staleUploads.length) {
-      await tx.importUploadChunk.deleteMany({ where: { tenantId, uploadId: { in: staleUploads } } });
-      await tx.importUpload.deleteMany({ where: { tenantId, id: { in: staleUploads } } });
-    }
     return tx.importJob.create({
       data: {
         tenantId, createdById: userId, source: JOB_SOURCE, fileName: upload.fileName.slice(0, 200), fileBlobUrl: `${DB_UPLOAD_PREFIX}${uploadId}`,
@@ -236,13 +231,12 @@ async function preview(req: Request, tenantId: string, userId: string, body: Rec
   return NextResponse.json({ jobId: job.id, status: "preview", planHash, summary, priorImport: prior ? { jobId: prior.id, completedAt: prior.completedAt } : null }, { status: 201 });
 }
 
-/** Set a preview aside: it can never be committed and is not offered again; its stored file goes. */
+/** Set a preview aside: it can never be committed and is not offered again. Its stored file is kept with the job (nothing is deleted automatically, 6 Nov 2026). */
 async function discard(tenantId: string, jobId: string) {
   const job = await loadJob(tenantId, jobId);
   if (!job) return bad("Not found", 404);
   const res = await withTenantContext(tenantId, (tx) => tx.importJob.updateMany({ where: { id: job.id, tenantId, status: "preview" }, data: { status: "superseded" } }));
   if (res.count !== 1) return bad("Only a preview can be set aside.", 409);
-  try { await deleteImportFile(job.fileBlobUrl, tenantId); } catch { /* retention removes it */ }
   return NextResponse.json({ ok: true });
 }
 
@@ -367,8 +361,7 @@ async function step(req: Request, tenantId: string, userId: string, jobId: strin
   if (r.kind === "not_found") return bad("Not found", 404);
   if (r.kind === "failed") return NextResponse.json({ job: fresh ? jobView(fresh) : null, error: "This step failed; the import stopped at its last saved point and can be resumed." }, { status: 500 });
   if (r.kind === "complete") {
-    // The file holds member names and emails; it goes as soon as it is used.
-    try { await deleteImportFile(job.fileBlobUrl, tenantId); } catch (e) { console.warn("[import-attendance] file delete failed", e); }
+    // The file is kept, private, with its job (nothing is deleted automatically, 6 Nov 2026).
     await logAudit({
       tenantId, userId, action: "import.attendance.complete", entityType: "ImportJob", entityId: jobId, req,
       metadata: { outcomes: (r.manifest as { outcomes?: unknown }).outcomes, attendance: (r.manifest as { attendance?: unknown }).attendance, reconciles: (r.manifest as { reconciles?: unknown }).reconciles },
@@ -453,8 +446,7 @@ export async function DELETE(req: Request) {
       return report;
     }, { timeout: 120_000, maxWait: 15_000 });
     if (!result) return bad("This import is busy in another tab. Try again in a minute.", 409, { busy: true });
-    // A stopped import may still hold its file.
-    try { await deleteImportFile(job.fileBlobUrl, tenantId); } catch { /* already gone */ }
+    // The rollback undoes what the import wrote; the uploaded file stays with its job (nothing is deleted automatically, 6 Nov 2026).
     await logAudit({ tenantId, userId, action: "import.attendance.rollback", entityType: "ImportJob", entityId: job.id, req, metadata: result });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

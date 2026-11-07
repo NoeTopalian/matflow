@@ -17,9 +17,9 @@ vi.mock("next/server", () => ({
 }));
 vi.mock("@vercel/blob", () => ({ del: vi.fn().mockResolvedValue(undefined) }));
 
-const m = vi.hoisted(() => ({ reconcile: vi.fn(), purge: vi.fn() }));
+const m = vi.hoisted(() => ({ reconcile: vi.fn() }));
 vi.mock("@/lib/stripe/reconcile", () => ({ runStripeReconciliation: m.reconcile }));
-vi.mock("@/lib/tenant-purge", () => ({ purgeSoftDeletedTenants: m.purge }));
+// No lib/tenant-purge mock: the route no longer imports it (closed clubs are kept, 16 Oct 2026).
 vi.mock("@/lib/prisma-tenant", async () => {
   const { prisma } = await import("@/lib/prisma");
   return {
@@ -71,7 +71,6 @@ beforeEach(() => {
     d.count.mockResolvedValue(7);
   }
   m.reconcile.mockResolvedValue({ ok: true });
-  m.purge.mockResolvedValue({ deleted: 0 });
   for (const k of ["log", "info", "warn", "error"] as const) {
     vi.spyOn(console, k).mockImplementation((...a: unknown[]) => {
       lines.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "));

@@ -48,6 +48,18 @@ export function csvCell(v: string | number | null | undefined): string {
   return s;
 }
 
+/**
+ * A field written back VERBATIM into a stored file that is being edited, not
+ * exported: RFC-4180 quoting with the file's own delimiter and NO formula
+ * prefix, because the value is someone's stored data and must not change.
+ * Used only by a member's erasure, which rewrites a kept import file without
+ * their rows (lib/importers/import-erasure.ts). Never for a file a person opens
+ * in a spreadsheet from MatFlow — that is {@link csvCell}.
+ */
+export function csvFieldVerbatim(v: string, delimiter: string): string {
+  return v.includes(delimiter) || /["\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
 /** One CSV line from a row of raw values, each passed through {@link csvCell}. */
 export function csvRow(cells: (string | number | null | undefined)[]): string {
   return cells.map(csvCell).join(",");

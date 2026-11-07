@@ -331,6 +331,17 @@ describe("ranks, classes and the rest", () => {
     expect(e.source.label).toBe("Kiosk");
   });
 
+  it("a kiosk waiver row since 6 Nov 2026 names the member by id: the sentence links them", () => {
+    const e = entry(row({ action: "member.waiver.signed_via_kiosk", entityId: "m_mel", metadata: { signerName: "Melody O", method: "kiosk_waiver_link" } }));
+    expect(e.plain).toBe("Melody Orekoya signed the waiver at the kiosk");
+    expect(links(e.parts)).toEqual(["Melody Orekoya -> /dashboard/members/m_mel"]);
+    expect(e.source.label).toBe("Kiosk");
+    // A row an erasure neutralised ("erased": the address was also another member's) names no one.
+    const neutral = entry(row({ action: "member.waiver.signed_via_kiosk", entityId: "erased", metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true } }));
+    expect(neutral.plain).toBe("Member signed the waiver at the kiosk");
+    expect(links(neutral.parts)).toEqual([]);
+  });
+
   it("an undo row names who undid what", () => {
     const e = entry(row({ action: "undo.member.update", ...byJack, metadata: { undoneAuditId: "a1" } }));
     expect(e.plain).toBe("Jack Streeter undid: updated a member's details — Melody Orekoya");

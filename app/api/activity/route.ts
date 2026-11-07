@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-error";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { TenantTransactionBudgetError, withTenantContext } from "@/lib/prisma-tenant";
 import { usableTimezone } from "@/lib/class-time";
-import { clubDayKey, clubDayWindow, parseDayKey, shiftDayKey } from "@/lib/club-month";
+import { clubDayKey, clubDayWindow, parseDayKey } from "@/lib/club-month";
 import { formatDate } from "@/lib/date";
 import { parseIdParam } from "@/lib/id-param";
 import { ERASED_EMAIL } from "@/lib/login-email";
@@ -61,8 +61,6 @@ const MAX_TAKE = 50;
 /** Requests per person per minute. A page load is one; paging and filtering are one each. */
 const RATE_MAX = 120;
 const RATE_WINDOW_MS = 60_000;
-/** The log is kept for a year (lib/audit-log.ts AUDIT_LOG_RETENTION_MS). */
-const RETENTION_DAYS = 365;
 /** A member's payments read to find rows on those payments (a refund carries no member id). */
 const MEMBER_PAYMENTS_CAP = 500;
 /** Undo rows read to mark a page's rows "already undone". Undos are rare; this only bounds the read. */
@@ -128,22 +126,18 @@ export async function GET(req: Request) {
   const startedRows = Date.now();
   try {
     first = await withTenantContext(tenantId, async (tx) => {
-      const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true, currency: true } });
+      const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true, currency: true, createdAt: true } });
       const currency = tenant?.currency ?? "GBP";
       const timeZone = usableTimezone(tenant?.timezone);
       const todayKey = clubDayKey(new Date(), timeZone);
-      const minDayKey = shiftDayKey(todayKey, -RETENTION_DAYS);
+      // Activity is kept permanently (docs/RULES.md), so there is no age floor: the earliest day offered is the
+      // club's first day. A day asked for before it is not refused or moved — it simply has nothing older.
+      const minDayKey = tenant ? clubDayKey(tenant.createdAt, timeZone) : todayKey;
       let dayKey = dayAsked;
-      let clamped = false;
       if (dayKey && dayKey > todayKey) dayKey = todayKey;
-      if (dayKey && dayKey < minDayKey) {
-        dayKey = minDayKey;
-        clamped = true;
-      }
 
       const filters: Omit<ActivityResponse["filters"], "types"> = { member: null, class: null, payment: null, tier: null, staff: null, dayKey };
-      // Nothing older than the year the log is kept for: the same bound the page states, and a floor under every scan.
-      const and: Where[] = [{ tenantId }, { createdAt: { gte: clubDayWindow(minDayKey, timeZone).start } }, visibleWhere(role), whereForTypes(types.keys, role)];
+      const and: Where[] = [{ tenantId }, visibleWhere(role), whereForTypes(types.keys, role)];
       // An id that is not a record of this club selects nothing — and the audit query is not run for it.
       let unknown = false;
 
@@ -183,7 +177,7 @@ export async function GET(req: Request) {
       if (by) and.push(actorKindWhere(by));
       if (dayKey) and.push({ createdAt: { lt: clubDayWindow(dayKey, timeZone).nextStart } });
 
-      const clock = { timeZone, todayKey, minDayKey, clamped };
+      const clock = { timeZone, todayKey, minDayKey };
       const nothing = { timeZone, currency, clock, filters, rows: [], hasMore: false, undone: new Set<string>() };
       if (unknown) return nothing;
 

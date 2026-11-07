@@ -94,7 +94,7 @@ export async function POST(req: Request) {
   const ua = req.headers.get("user-agent");
 
   try {
-    await withTenantContext(tokenRow.tenantId, async (tx) => {
+    const memberId = await withTenantContext(tokenRow.tenantId, async (tx) => {
       const tenant = await tx.tenant.findUnique({
         where: { id: tokenRow.tenantId },
         select: { name: true, waiverTitle: true, waiverContent: true },
@@ -128,6 +128,7 @@ export async function POST(req: Request) {
         where: { id: tokenRow.id },
         data: { used: true, usedAt: new Date(), ipAddress: ip === "unknown" ? null : ip, userAgent: ua },
       });
+      return member.id;
     });
 
     await logAudit({
@@ -135,7 +136,9 @@ export async function POST(req: Request) {
       userId: null,
       action: "member.waiver.signed_via_kiosk",
       entityType: "Member",
-      entityId: tokenRow.email,
+      // The member's id, never their address (6 Nov 2026): an address in entityId outlived their erasure. Rows
+      // written before this change carry the address; the erasure finds those by address and repoints them.
+      entityId: memberId,
       metadata: { signerName, method: "kiosk_waiver_link" },
       req,
     });

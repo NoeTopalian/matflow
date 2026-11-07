@@ -48,7 +48,8 @@ export async function POST(req: Request) {
           auth: parsed.data.keys.auth,
           userAgent: ua,
         },
-        update: { p256dh: parsed.data.keys.p256dh, auth: parsed.data.keys.auth, userAgent: ua },
+        // A subscription marked gone (lib/push.ts, disabledAt) that the browser registers again is active again.
+        update: { p256dh: parsed.data.keys.p256dh, auth: parsed.data.keys.auth, userAgent: ua, disabledAt: null },
       }),
     );
     return NextResponse.json({ ok: true, id: sub.id }, { status: 201 });

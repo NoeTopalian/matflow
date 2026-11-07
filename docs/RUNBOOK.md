@@ -175,10 +175,25 @@ When you need to stop bleeding faster than fix-forward will allow:
 - Effect: `Tenant.subscriptionStatus = "suspended"`. `auth.ts:155` rejects all logins immediately. No data is touched. Reversible via DELETE on the same route.
 - Audit: `admin.tenant.suspended` with reason.
 
-### Soft-delete a tenant (and its data goes invisible)
-- `/admin/tenants/[id]` → Danger Zone → "Soft-delete gym" (requires typed gym name + 7-second cooldown)
-- Effect: `Tenant.deletedAt = now`. `auth.ts:154` rejects all logins. Tenant disappears from active lists. Cron hard-deletes after 30 days.
-- Audit: `admin.tenant.soft_deleted`.
+### Close a tenant (kept, reopenable at any time)
+- `/admin/tenants/[id]` → Danger Zone → "Close gym" (requires typed gym name + 7-second cooldown + authenticator code)
+- Effect: `Tenant.deletedAt = now`. `auth.ts:154` rejects all logins. The club leaves the default list and appears under "Closed clubs" on `/admin/tenants`. **Nothing is deleted and nothing is scheduled** (product rules, 16 Oct and 6 Nov 2026): the club and its data are kept so it can come back. "Reopen gym" on the same page clears `deletedAt` at any time — there is no window.
+- Audit: `admin.tenant.soft_deleted` / `admin.tenant.restored` (historical action names; the hub says close/reopen).
+
+### Erase a closed club on its written request (Noe or an operator, by hand — never an agent)
+Permanent and irreversible. Only after the club has asked **in writing** for its data to be erased. No cron, CI job or route does this; the runner refuses CI, Vercel and non-interactive shells.
+1. Keep the written request (email or letter) with the date. Confirm the club is **closed** in the hub (Closed clubs). If it is open, close it first.
+2. Check billing: every member subscription must be cancellable (the runner cancels them first and stops, leaving the club intact and reopenable, if Stripe refuses one).
+3. Dry check, from a checkout with Node 24, with the target database URL **and that deployment's `BLOB_READ_WRITE_TOKEN`** in your own shell (never printed, never committed; the runner refuses without the token, because the club's files are erased with it):
+   `DATABASE_URL=<target> BLOB_READ_WRITE_TOKEN=<token> node scripts/erase-closed-club.mjs <tenantId> --reason "<who asked, when, how>" --expect-host ep-bold-wave`
+   It shows the club (id, slug, closing date, member count) and changes nothing.
+4. Erase: the same command with `--confirm`. It cancels live subscriptions, claims the club (reopen is refused from here on), deletes its rows, **every file under its `tenants/<id>/` store prefix**, then the club row, with the evidence row `admin.tenant.hard_deleted` (members deleted, files deleted, the written request) in the same transaction. AuditLog rows are kept.
+5. Read the printed outcome:
+   - `purged` — done. Record the date and the outcome with the written request.
+   - `partial`, or exit 75 "BUSY" — run the same command again later; the claim stands and it resumes.
+   - `billing-blocked` — sort the named subscription out in Stripe, then run again.
+   - `skipped` / exit 2 — nothing changed; the message says why (open club, unknown id, wrong target).
+- Code: `scripts/erase-closed-club.mjs` → `scripts/erase-closed-club-run.ts` → `purgeTenantById` (`lib/tenant-purge.ts`).
 
 ### Force a single owner's password reset
 - `/admin/tenants/[id]` → Danger Zone → "Force password reset"

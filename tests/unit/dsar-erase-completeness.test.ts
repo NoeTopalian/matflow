@@ -111,6 +111,8 @@ vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
 vi.mock("@/lib/authz", () => ({ requireRole: requireRoleMock }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: checkRateLimitMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
+// Reached only by the cascade case below (a child erased with its guardian); its own completeness is pinned elsewhere.
+vi.mock("@/lib/member-delete", () => ({ deleteMemberCascade: vi.fn(async () => undefined) }));
 vi.mock("@/lib/stripe/subscriptions", () => ({
   cancelSubscriptionAtPeriodEnd: cancelSubscriptionMock,
 }));
@@ -147,20 +149,23 @@ vi.mock("@/lib/prisma", () => ({
     importSourceMapping: { count: mappingCountMock, deleteMany: mappingDeleteManyMock },
     // Import review lists are scrubbed of the subject (lib/importers/import-conflicts-scrub, 25 Oct 2026).
     importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
+    // The erasure walks every stored upload too (lib/importers/import-erasure.ts, 6 Nov 2026).
+    importUpload: { findMany: vi.fn(async () => []) },
+    // Earlier-address digests are read, and the member's own Activity rows redacted (6 Nov 2026).
+    auditLog: { findMany: vi.fn(async () => []), updateMany: vi.fn(async () => ({ count: 0 })) },
     memberStatusEvent: { create: statusEventCreateMock, findFirst: statusEventFindFirstMock },
   },
 }));
 
-vi.mock("@/lib/prisma-tenant", () => ({
-  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
-    const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
-  },
-  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
-    const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
-  },
-}));
+vi.mock("@/lib/prisma-tenant", () => {
+  // One import, shared: two concurrent dynamic imports of a mocked module can resolve the second to the real one.
+  let mocked: Promise<typeof import("@/lib/prisma")> | undefined;
+  const fake = async () => (await (mocked ??= import("@/lib/prisma"))).prisma;
+  return {
+    withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => fn(await fake()),
+    withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(await fake()),
+  };
+});
 
 const MEMBER_ID = "m1";
 const TENANT_ID = "tenant-A";
@@ -464,6 +469,12 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(body.memberId).toBe(MEMBER_ID);
     expect(body.erasedAt).toEqual(expect.any(String));
     expect(body.erased).toEqual({
+      importFilesRewritten: 0,
+      importFileRowsRemoved: 0,
+      importFileCellsBlanked: 0,
+      importDiagnosticsEntriesRemoved: 0,
+      importNameOnlyRowsLeft: 0,
+      auditRowsRedacted: 0,
       memberPhotos: 2,
       signedWaiversScrubbed: 3,
       loginEvents: 4,
@@ -477,6 +488,37 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
       importedBookings: 12,
       importSourceMappings: 1,
     });
+  });
+
+  it("clears the subject from kept import diagnostics (errorLog, dryRunSummary), name-only entries included, and counts it in the audit row", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    const job = {
+      id: "job-1",
+      source: "teamup",
+      manifest: null,
+      fileBlobUrl: "",
+      errorLog: [{ row: 2, reason: "Duplicate email alice@example.com" }, { row: 3, reason: "Missing plan" }],
+      dryRunSummary: { drafts: [{ name: "Alice Smith", phone: "07700 900111" }, { name: "Bob Jones" }] },
+    };
+    memberFindFirstMock.mockResolvedValue({ id: MEMBER_ID, status: "active", email: ORIGINAL_EMAIL, name: "Alice Smith", stripeSubscriptionId: "sub_123", externalRef: EXTERNAL_REF });
+    // The file walk asks only for jobs with a stored file; this one has none.
+    vi.mocked(prisma.importJob.findMany).mockImplementation((async (args: { where: { NOT?: unknown } }) => (args.where.NOT ? [] : [job])) as never);
+    const res = await erase();
+    expect(res.status).toBe(200);
+    const update = vi.mocked(prisma.importJob.updateMany).mock.calls.map(([a]) => a as { where: { id: string }; data: Record<string, unknown> }).find((a) => "errorLog" in a.data);
+    expect(update?.where).toMatchObject({ id: "job-1", tenantId: TENANT_ID });
+    expect(update?.data.errorLog).toEqual([{ row: 3, reason: "Missing plan" }]);
+    expect(update?.data.dryRunSummary).toEqual({ drafts: [{ name: "Bob Jones" }] });
+    const fulfilment = logAuditMock.mock.calls.map(([a]) => a as { action: string; metadata: { erasedCounts: Record<string, number> } }).find((a) => a.action === "member.dsar_erase");
+    expect(fulfilment?.metadata.erasedCounts).toMatchObject({ importDiagnosticsEntriesRemoved: 2, importFilesRewritten: 0, importFileRowsRemoved: 0 });
+  });
+
+  it("reads earlier addresses and names from both a staff edit (member.update) and the member's own edit (member.self_update)", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    await erase();
+    const lookups = vi.mocked(prisma.auditLog.findMany).mock.calls.map(([a]) => a as { where: { entityId?: unknown; action?: unknown } });
+    // One read for every subject of the erasure (the member, and any children erased with them).
+    expect(lookups).toContainEqual(expect.objectContaining({ where: { tenantId: TENANT_ID, entityId: { in: [MEMBER_ID] }, action: { in: ["member.update", "member.self_update"] } } }));
   });
 
   it("records the erase counts in the pre-erase audit row", async () => {
@@ -500,6 +542,31 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(logAuditMock.mock.invocationCallOrder[0]).toBeLessThan(
       memberUpdateMock.mock.invocationCallOrder[0],
     );
+  });
+
+  it("an address with capitals: the fulfilment's originalEmailHash is the hashToken of the lower-cased address (the form the attendance import compares)", async () => {
+    const { hashToken } = await import("@/lib/token-hash");
+    const { emailDigest } = await import("@/lib/login-email");
+    memberFindFirstMock.mockResolvedValue({ id: MEMBER_ID, status: "active", email: "Alice.Smith@Example.com", stripeSubscriptionId: null, externalRef: null });
+    await erase();
+    const fulfilment = logAuditMock.mock.calls.map(([a]) => a as { action: string; metadata: Record<string, unknown> }).find((a) => a.action === "member.dsar_erase");
+    expect(fulfilment?.metadata.originalEmailHash).toBe(hashToken("alice.smith@example.com"));
+    expect(fulfilment?.metadata.originalEmailHash).not.toBe(hashToken("Alice.Smith@Example.com"));
+    expect(fulfilment?.metadata.releasedEmailSha256).toBe(emailDigest("alice.smith@example.com"));
+  });
+
+  it("a guardian erased with a cascaded child: an Activity row naming both is counted once in auditRowsRedacted", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    memberCountMock.mockResolvedValue(1);
+    memberFindManyMock.mockResolvedValue([{ id: "kid-1", name: "Kid Smith", email: "kid-1@kids.matflow.invalid", externalRef: null, unverifiedEmail: null }]);
+    const both = { id: "row-both", metadata: { memberId: MEMBER_ID, childId: "kid-1", childName: "Kid Smith" } };
+    vi.mocked(prisma.auditLog.findMany).mockImplementation((async (args: { where: { OR?: unknown; entityId?: unknown } }) =>
+      Array.isArray(args.where.OR) && (args.where.OR as { entityId?: unknown }[]).some((o) => "entityId" in o) ? [both] : []) as never);
+    const { POST } = await import("@/app/api/admin/dsar/erase/route");
+    const res = await POST(new Request(`http://localhost/api/admin/dsar/erase?memberId=${MEMBER_ID}&strategy=cascade`, { method: "POST", headers: { origin: "http://localhost:3000" } }));
+    expect(res.status).toBe(200);
+    const fulfilment = logAuditMock.mock.calls.map(([a]) => a as { action: string; metadata: { erasedCounts: Record<string, number> } }).find((a) => a.action === "member.dsar_erase");
+    expect(fulfilment?.metadata.erasedCounts.auditRowsRedacted).toBe(1);
   });
 });
 

@@ -171,7 +171,7 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     defaultOn: true,
   }),
   type({ key: "undo", label: "Undone changes", group: "Staff & club", icon: "RotateCcw", actions: [], prefixes: ["undo."], roles: OWNER, defaultOn: true }),
-  type({ key: "data_request", label: "Data requests", group: "Staff & club", icon: "ShieldCheck", actions: ["member.dsar_export", "member.dsar_erase", "member.dsar_erase.requested"], roles: OWNER, defaultOn: false }),
+  type({ key: "data_request", label: "Data requests", group: "Staff & club", icon: "ShieldCheck", actions: ["member.dsar_export", "member.dsar_erase", "member.dsar_erase.requested", "member.dsar_erase.import_files"], roles: OWNER, defaultOn: false }),
   type({ key: "staff", label: "Staff accounts", group: "Staff & club", icon: "Users", actions: labelled("staff."), roles: OWNER, defaultOn: false }),
   type({ key: "sign_in", label: "Sign-in and security", group: "Staff & club", icon: "Lock", actions: labelled("auth.", "user."), roles: OWNER, defaultOn: false }),
   type({
@@ -329,7 +329,8 @@ export type ActivityResponse = {
   nextCursor: string | null;
   /** False when names could not be loaded: every entry is its plain label. */
   enriched: boolean;
-  clock: { timeZone: string; todayKey: string; minDayKey: string; clamped: boolean };
+  /** `minDayKey` is the club's first day: activity is kept permanently, so nothing older is hidden. */
+  clock: { timeZone: string; todayKey: string; minDayKey: string };
   filters: {
     types: { view: string | null; keys: string[] };
     /** `name: null` means the id is not a record of this club (removed, or never was). */

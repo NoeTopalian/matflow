@@ -31,7 +31,8 @@ const files = vi.hoisted(() => new Map<string, string>());
 vi.mock("@/lib/import-storage", () => ({
   importStorageAvailable: () => true,
   readImportFile: async (url: string) => files.get(url) ?? null,
-  deleteImportFile: async (url: string) => { files.delete(url); },
+  // A member's erasure rewrites a kept file without their rows (lib/importers/import-erasure.ts, 6 Nov 2026).
+  rewriteImportFile: async (url: string, _tenantId: string, text: string) => { files.set(url, text); return url; },
 }));
 const gate = vi.hoisted(() => ({ current: null as null | { tenantId: string; userId: string } }));
 const sessionOf = () => (gate.current ? { user: { id: gate.current.userId, tenantId: gate.current.tenantId, role: "owner" } } : null);

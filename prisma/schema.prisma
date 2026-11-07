@@ -446,6 +446,9 @@ model PushSubscription {
   auth      String
   userAgent String?
   createdAt DateTime @default(now())
+  /// Set when the push service reports the subscription gone (410). The row is
+  /// kept, never deleted (product rule, 6 Nov 2026), and is skipped when sending.
+  disabledAt DateTime?
 
   @@index([tenantId])
   @@index([memberId])
@@ -475,6 +478,9 @@ model MemberPhoto {
   uploadedByMember   Member?     @relation("MemberPhotoUploader", fields: [uploadedByMemberId], references: [id], onDelete: SetNull)
   memberRankId       String?
   memberRank         MemberRank? @relation(fields: [memberRankId], references: [id], onDelete: SetNull)
+  /// Set when a newer promotion photo replaced this one (app/api/members/[id]/rank). The row and its file are kept
+  /// (product rule, 6 Nov 2026) but hidden from every photo list; erasure and a club's erasure still reach it.
+  replacedAt         DateTime?
 
   @@index([memberId, uploadedAt])
   @@index([tenantId])

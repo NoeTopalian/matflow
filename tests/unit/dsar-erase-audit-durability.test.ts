@@ -141,7 +141,8 @@ describe("DSAR erase — durable audit", () => {
     const res = await erase();
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/nothing was erased/);
+    // "else": a stored import file may already have lost the member's rows (said when it did).
+    expect(body.error).toMatch(/nothing else was erased/);
     // Honest about the one side effect that did happen.
     expect(body.error).toMatch(/Stripe subscription is already set to stop renewing/);
     expect(destructiveCalls()).toHaveLength(0);

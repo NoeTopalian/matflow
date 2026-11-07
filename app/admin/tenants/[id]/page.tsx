@@ -11,7 +11,6 @@ import LoginAsOwnerButton from "./LoginAsOwnerButton";
 import DangerZone, { type DeletionState } from "./DangerZone";
 import LoginEmailCard from "./LoginEmailCard";
 import OwnerProfileCard from "./OwnerProfileCard";
-import { softDeleteCutoff } from "@/lib/tenant-lifecycle";
 import { emailDeliveryMode } from "@/lib/email-delivery";
 import { ACTIVE_MEMBER, POPULATION_COPY } from "@/lib/member-population";
 
@@ -59,16 +58,11 @@ export default async function AdminTenantDetailPage({
   const owner = tenant.users[0];
   const isSuspended = tenant.subscriptionStatus === "suspended";
   const isDeleted = tenant.deletedAt !== null;
-  // Restore is possible only inside the 30-day window and before a purge has
-  // claimed the club (lib/tenant-lifecycle.ts); the Danger Zone must not offer
-  // it otherwise (review of lane C, D5).
-  const deletionState: DeletionState = !tenant.deletedAt
-    ? "live"
-    : tenant.purgeStartedAt
-      ? "in-progress"
-      : tenant.deletedAt < softDeleteCutoff(new Date())
-        ? "window-expired"
-        : "recoverable";
+  // A closed club can be reopened at any time (no window — closed clubs are
+  // kept, 16 Oct 2026) unless an explicit erasure has claimed it
+  // (lib/tenant-lifecycle.ts); the Danger Zone must not offer reopen then
+  // (review of lane C, D5).
+  const deletionState: DeletionState = !tenant.deletedAt ? "live" : tenant.purgeStartedAt ? "in-progress" : "recoverable";
 
   return (
     <div style={adminPage}>
@@ -117,7 +111,7 @@ export default async function AdminTenantDetailPage({
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, fontSize: 13 }}>
             <Stat label={POPULATION_COPY.active.label} value={String(tenant._count.members)} />
             <Stat label="Classes" value={String(tenant._count.classes)} />
-            <Stat label="Status" value={isDeleted ? "deleted" : tenant.subscriptionStatus} />
+            <Stat label="Status" value={isDeleted ? "closed" : tenant.subscriptionStatus} />
             <Stat label="Tier" value={tenant.subscriptionTier} />
             <Stat label="Currency" value={tenant.currency} />
             <Stat label="Country" value={tenant.country ?? "-"} />

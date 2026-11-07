@@ -63,7 +63,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
     const [computed, ps, tenant] = await Promise.all([
       computeMemberStats(tx, { memberId: c.id, tenantId: session.user.tenantId }),
       tx.memberPhoto.findMany({
-        where: { memberId: c.id, tenantId: session.user.tenantId },
+        where: { memberId: c.id, tenantId: session.user.tenantId, replacedAt: null },
         orderBy: { uploadedAt: "desc" },
         select: { id: true, url: true, caption: true, kind: true, uploadedAt: true },
       }),

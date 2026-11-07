@@ -1,12 +1,15 @@
-// How long does the Activity feed's query take on a year of rows?
+// How long does the Activity feed's query take on the club's whole history?
 //
 //   node scripts/perf/activity-feed-explain.mjs            (from a worktree without .env; Neon TEST branch only)
 //   ROWS=20000 node scripts/perf/activity-feed-explain.mjs  (a quicker, smaller run)
+//   SPAN_DAYS=365 node scripts/perf/activity-feed-explain.mjs (spread the rows over one year instead of two)
 //
-// Seeds two synthetic clubs (slug mfv-perf-…) with ROWS audit rows each (default 200,000) spread over 365 days,
-// runs GET /api/activity for each scenario, replays the SQL Prisma actually sent under EXPLAIN (ANALYZE, BUFFERS),
-// prints one line per scenario and tears both clubs down to nothing. Pass line: every scenario's execution time
-// at or under 300 ms. Exit 1 when any is over, 0 otherwise.
+// Seeds two synthetic clubs (slug mfv-perf-…) with ROWS audit rows each (default 200,000) spread over SPAN_DAYS
+// (default 730: Activity has no age floor since 6 Nov 2026), runs GET /api/activity for each scenario (every view
+// included), replays the SQL Prisma actually sent under EXPLAIN (ANALYZE, BUFFERS), prints one line per scenario
+// with the rows its scans read, and tears both clubs down to nothing. Pass line: every scenario's execution time
+// at or under 300 ms. Exit 1 when any is over, 0 otherwise. Rows read over 5,000 for one page is reported
+// ("READS OVER"), not failed: it is the signal for an index on (tenantId, action, createdAt).
 //
 // Refuses production: the database URL comes from .env.test in the main checkout and must be the test branch
 // (the guards are the verification skill's — .claude/skills/matflow-verify-local/scripts/env.mjs). The URL is never

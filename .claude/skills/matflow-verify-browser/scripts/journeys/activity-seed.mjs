@@ -81,6 +81,8 @@ export async function ready(page, retried = false) {
 /** Do something that changes the filters, and wait for the rows that answer it. */
 export async function changed(page, action) {
   const answered = page.waitForResponse(isFeed, { timeout: 30_000 });
+  // When the action itself fails, its section fails; the wait it leaves behind must not crash the whole run.
+  answered.catch(() => {});
   await action();
   await answered;
   await ready(page);
@@ -155,6 +157,10 @@ export async function seedActivity(main, club, className = "Activity Gi") {
     ...pending.flatMap((r) => [r.id, r.userId, r.action, r.entityType, r.entityId, r.metadata ? JSON.stringify(r.metadata) : null, r.at]),
     tenantId,
   ]);
+  // The seeded history reaches back three days, so the club must be older than that: Activity's earliest day is the
+  // club's first day (Activity is kept permanently, 6 Nov 2026), and a club made today could not be stepped back to
+  // yesterday. Thirty days back, never later than it already is.
+  await q(`update "Tenant" set "createdAt" = least("createdAt", $2) where id = $1`, [tenantId, new Date(now - 30 * DAY)]);
 
   return { tenantId, timeZone, mel, other, cls, className, session, sessionLabel, tierOld, tierNew, payment, rows, owner, now, yesterdayAt, olderAt };
 }

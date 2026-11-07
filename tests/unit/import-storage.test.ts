@@ -3,7 +3,10 @@
 // be reachable in production, whatever TESTING_MODE says.
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { importStorageAvailable, putImportFile, readImportFile, deleteImportFile, sha256 } from "@/lib/import-storage";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { importStorageAvailable, putImportFile, readImportFile, sha256 } from "@/lib/import-storage";
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -31,13 +34,15 @@ describe("import storage", () => {
     await expect(readImportFile("local-import://t1-x.csv")).rejects.toThrow(/not available/);
   });
 
-  it("round-trips a file locally in a testing environment and deletes it", async () => {
+  it("round-trips a file locally in a testing environment, and offers no delete (files are kept)", async () => {
     envWith({ BLOB_READ_WRITE_TOKEN: undefined, TESTING_MODE: "true", VERCEL_ENV: undefined });
     const url = await putImportFile("t1", new TextEncoder().encode("Customer Name\nAda"));
     expect(url.startsWith("local-import://")).toBe(true);
     expect(await readImportFile(url)).toBe("Customer Name\nAda");
-    await deleteImportFile(url);
-    expect(await readImportFile(url)).toBeNull();
+    // Product rule (Noe, 6 Nov 2026): an import file is kept with its job; there is no delete to call.
+    expect(await import("@/lib/import-storage")).not.toHaveProperty("deleteImportFile");
+    // The test's own temp file is removed by the test.
+    await rm(join(tmpdir(), "matflow-imports", url.slice("local-import://".length)), { force: true });
   });
 
   it("cannot be steered outside its directory by a crafted url", async () => {

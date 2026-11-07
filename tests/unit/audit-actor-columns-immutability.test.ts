@@ -6,10 +6,11 @@
 //    the caller's transaction), AuditLog.requestId carries the correlation id
 //    (the spent step-up grant's id when given, else the platform request id or
 //    a UUID on durable rows). metadata.actingAs is still written for readers.
-// 2. Audit history is append-only from the application: no route or library
-//    updates or deletes AuditLog rows, except the retention cron, which deletes
-//    by AGE only (auditLogRetentionWhere). DBA reality: anyone holding the
-//    database owner role can still edit history; that is outside the app.
+// 2. Audit history is append-only from the application: no route, library or
+//    scheduled job updates or deletes AuditLog rows. Since 6 Nov 2026 that
+//    includes the retention cron: Activity is kept permanently (product rule,
+//    docs/RULES.md). DBA reality: anyone holding the database owner role can
+//    still edit history; that is outside the app.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -30,7 +31,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 vi.mock("@/lib/impersonation", () => ({ readImpersonationCookie: async () => null }));
 
-import { logAudit, auditLogRetentionWhere } from "@/lib/audit-log";
+import { logAudit } from "@/lib/audit-log";
 
 beforeEach(() => {
   db.created = [];
@@ -89,15 +90,45 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe("audit history is append-only from the application", () => {
   const files = [...walk("app"), ...walk("lib")];
-  const RETENTION = join("app", "api", "cron", "retention", "route.ts");
 
-  it("no app/ or lib/ code updates or deletes AuditLog rows through Prisma", () => {
+  // The ONE documented exception (6 Nov 2026): a member's erasure redacts the personal values in the METADATA of
+  // that member's own rows (lib/audit-redact.ts) — Activity is kept permanently, so an Article 17 erasure must reach
+  // it. Widened by the coordinator's decision on the 6 Nov 2026 re-review: a row whose entityId is one of the
+  // subject's ADDRESSES (the kiosk waiver row before 6 Nov 2026) also has that entityId replaced: by the member's id
+  // when no other member of the club ever held the address, else by the neutral "erased", which names no one
+  // (second 6 Nov 2026 re-review). Nothing else: never an actor or correlation column, never a delete; one caller,
+  // scoped by { id, tenantId }.
+  const REDACT = join("lib", "audit-redact.ts");
+
+  it("no app/ or lib/ code updates or deletes AuditLog rows through Prisma (one documented exception: erasure redaction)", () => {
     const offenders: string[] = [];
     for (const f of files) {
+      if (f === REDACT) continue;
       const src = readFileSync(f, "utf8");
       if (/\bauditLog\s*\.\s*(update|updateMany|upsert|delete|deleteMany)\s*\(/.test(src)) offenders.push(f);
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("the erasure redaction writes metadata and an address-valued entityId only, to this club's rows only, and never deletes", () => {
+    const src = readFileSync(REDACT, "utf8");
+    const writes = [...src.matchAll(/\bauditLog\s*\.\s*(update|updateMany|upsert|delete|deleteMany)\s*\(([\s\S]*?)\);/g)];
+    expect(writes.map((w) => w[1])).toEqual(["updateMany"]);
+    expect(writes[0][2].trim()).toBe("{ where: { id, tenantId }, data }");
+    // `data` is built in exactly one place: the redacted metadata and, for an address-keyed row, its new entityId.
+    expect(src.match(/\bconst data = /g)).toHaveLength(1);
+    expect(src).toContain("const data = { ...(next ? { metadata: next as Prisma.InputJsonValue } : {}), ...(row.entityTo ? { entityId: row.entityTo } : {}) };");
+    // That entityId is only ever the member's id or the neutral "erased", chosen by the caller per address; a row
+    // found by id keeps its entityId.
+    expect(src.match(/rows\.set\(/g)).toHaveLength(2);
+    expect(src).toContain("rows.set(r.id, { metadata: r.metadata, entityTo: null });");
+    expect(src).toContain("rows.set(r.id, { metadata: r.metadata, entityTo });");
+    expect(src).toContain("const entityTo = r.entityId ? entityFor(r.entityId, subjects) : null;");
+    expect(src).toContain('return claims.length === 1 && claims[0].decision === "repoint" ? claims[0].memberId : ERASED_ENTITY_ID;');
+    expect(src).toContain('export const ERASED_ENTITY_ID = "erased";');
+    // The only caller is the erasure.
+    const callers = files.filter((f) => f !== REDACT && /redactSubjectsFromAuditLog\(/.test(readFileSync(f, "utf8")));
+    expect(callers).toEqual([join("app", "api", "admin", "dsar", "erase", "route.ts")]);
   });
 
   it("no raw SQL in app/ or lib/ updates or deletes AuditLog", () => {
@@ -109,16 +140,15 @@ describe("audit history is append-only from the application", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the only generic handle on the AuditLog delegate is the retention cron, with the age-only predicate", () => {
+  it("nothing takes a generic handle on the AuditLog delegate — not even the retention cron", () => {
     const users = files.filter((f) => /tx\.auditLog as unknown as/.test(readFileSync(f, "utf8")));
-    expect(users).toEqual([RETENTION]);
-    expect(readFileSync(RETENTION, "utf8")).toMatch(/tx\.auditLog as unknown as BatchDeletable,\s*auditLogRetentionWhere\(now\)/);
+    expect(users).toEqual([]);
+    const cron = readFileSync(join("app", "api", "cron", "retention", "route.ts"), "utf8");
+    expect(cron).not.toMatch(/auditLog/);
   });
 
-  it("the retention predicate deletes by AGE only: every branch is bounded by createdAt", () => {
-    const where = auditLogRetentionWhere(new Date("2026-10-09T00:00:00Z")) as { OR: Array<Record<string, unknown>> };
-    expect(where.OR.length).toBeGreaterThan(0);
-    for (const branch of where.OR) expect(branch.createdAt).toMatchObject({ lt: expect.any(Date) });
-    expect(JSON.stringify(where)).not.toMatch(/"id"|"requestId"|"operatorId"/);
+  it("the age-based retention predicate and its windows are gone", async () => {
+    const mod = (await import("@/lib/audit-log")) as Record<string, unknown>;
+    for (const name of ["auditLogRetentionWhere", "AUDIT_LOG_RETENTION_MS", "AUDIT_EVIDENCE_RETENTION_MS", "AUDIT_EVIDENCE_ACTION_PREFIXES"]) expect(mod, name).not.toHaveProperty(name);
   });
 });

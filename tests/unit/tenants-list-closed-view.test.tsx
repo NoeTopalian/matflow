@@ -248,8 +248,8 @@ describe("authorization and no side effects", () => {
     const element = await Detail({ params: Promise.resolve({ id: "c1" }) });
     render(element);
     expect(db.calls.map((c) => c.method)).toEqual(["findUnique"]);
-    expect(screen.getByText("deleted")).toBeTruthy(); // Status stat
-    expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy(); // offered, not performed
+    expect(screen.getByText("closed")).toBeTruthy(); // Status stat
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeTruthy(); // offered, not performed
     expect(closed("c1").deletedAt).toBe(before);
   });
 });

@@ -68,7 +68,6 @@ vi.mock("@vercel/blob", () => ({
 vi.mock("@/lib/audit-log", () => ({
   logAudit: vi.fn(async () => { st.effects.push("audit"); }),
   logAuditStrict: vi.fn(async () => { st.effects.push("audit"); }),
-  auditLogRetentionWhere: () => ({}),
 }));
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),

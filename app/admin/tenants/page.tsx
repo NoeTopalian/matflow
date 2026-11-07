@@ -4,8 +4,8 @@
 //
 // Two views, chosen on the server so a view never receives the other's rows:
 // open clubs (the default, deletedAt null — unchanged) and "Closed clubs"
-// (?view=closed: soft-deleted through the club page's Danger zone; sign-in is
-// refused and the club page offers Restore). Closure is deletedAt, separate
+// (?view=closed: closed through the club page's Danger zone and kept; sign-in
+// is refused and the club page offers Reopen). Closure is deletedAt, separate
 // from the subscription status each row still shows.
 
 import { withRlsBypass } from "@/lib/prisma-tenant";

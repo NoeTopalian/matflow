@@ -368,7 +368,7 @@ try {
     await expect(main.getByTestId("activity-status")).toHaveText(/^\d+ more loaded$/, SLOW);
     expect(await rows(main).count()).toBeGreaterThan(50);
     expect(await main.evaluate(() => document.activeElement?.tagName)).toBe("A");
-    await expect(main.getByText("That's everything. Activity is kept for one year.")).toBeVisible();
+    await expect(main.getByText("That's everything.", { exact: true })).toBeVisible();
     return { rows: await rows(main).count() };
   });
 
@@ -984,6 +984,48 @@ try {
     } finally {
       await mobile.close();
       await q(`update "Class" set name = $2 where id = $1`, [s.cls.id, s.className]);
+    }
+  });
+
+  await section("kept-permanently", "activity is kept permanently: in a club 800 days old, the day sheet starts at the club's first day, a day 400 days back opens with its row, and nothing says activity is kept for one year (desktop and phone)", async () => {
+    const created = new Date(s.now - 800 * 86_400_000);
+    const oldAt = new Date(s.now - 400 * 86_400_000);
+    const firstDay = clubDay(created, s.timeZone);
+    const oldDay = clubDay(oldAt, s.timeZone);
+    const [{ createdAt: wasCreated }] = await q(`select "createdAt" from "Tenant" where id = $1`, [s.tenantId]);
+    const oldId = id();
+    await q(`update "Tenant" set "createdAt" = $2 where id = $1`, [s.tenantId, created]);
+    await q(`insert into "AuditLog" (id, "tenantId", "userId", action, "entityType", "entityId", metadata, "createdAt") values ($1, $2, $3, 'staff.update', 'User', $4, $5::jsonb, $6)`, [
+      oldId,
+      s.tenantId,
+      s.owner,
+      coach.id,
+      JSON.stringify({ changes: { name: { from: "Casey Older", to: "Casey Coach" } } }),
+      oldAt,
+    ]);
+    try {
+      const out = {};
+      for (const [width, height] of [[1440, 900], [390, 844]]) {
+        await main.setViewportSize({ width, height });
+        await open(main, `/dashboard/activity?types=all&day=${oldDay}`);
+        // The row from 400 days ago is shown (a table row on desktop, a card on a phone).
+        await expect(main.locator(`[data-entry-id="${oldId}"]:visible`).first()).toBeVisible(SLOW);
+        if (width === 1440) await expect(headings(main).first()).toHaveText(longDate(oldDay));
+        // The earliest day the sheet offers is the club's first day, not a year ago.
+        const sheet = await daySheet(main);
+        await expect(sheet.getByLabel("Jump to date")).toHaveValue(oldDay);
+        await expect(sheet.getByLabel("Jump to date")).toHaveAttribute("min", firstDay);
+        await sheet.getByRole("button", { name: "Done", exact: true }).click();
+        await expect(sheet).toHaveCount(0);
+        await expect(main.getByText(/one year|nothing to show before/i)).toHaveCount(0);
+        expect(await noSideScroll(main), `sideways scroll at ${width}`).toBe(true);
+        await shot(main, `activity-older-than-a-year-${width}`);
+        out[width] = true;
+      }
+      return { firstDay, oldDay, ...out };
+    } finally {
+      await main.setViewportSize({ width: 1440, height: 900 });
+      await q(`update "Tenant" set "createdAt" = $2 where id = $1`, [s.tenantId, wasCreated]);
     }
   });
 
