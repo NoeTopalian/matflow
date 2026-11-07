@@ -6,7 +6,7 @@
 // split is the club's choice; by keyboard, types "Mat 1" as a new location on one class and picks it from the list
 // on a second; types "Mat 2" on a third with a forced failed save first (the typed text is kept, one retry saves);
 // sees that saving locations did not change the split; presses By mat and gets two columns; the members' Monday
-// follows; picks a place typed on two Tuesday classes for one of them, which moves that one class only; on a phone
+// follows; picks a place typed on two Tuesday classes for a third class, which moves that one class only; on a phone
 // picks a saved location for a new class from the same list; and at 390 px a refused Location (twelve already) is
 // said beside the field with the typed name kept and focus on it.
 import { createRequire } from "node:module";
@@ -28,6 +28,7 @@ const CLASSES = ["Gi Fundamentals", "No-Gi", "Wrestling"];
 const MONDAY_1800 = [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }];
 const TUESDAY_1000 = [{ dayOfWeek: 2, startTime: "10:00", endTime: "11:00" }];
 const TYPED = ["Yoga", "Pilates"];
+const UNPLACED = "Barre";
 const matRows = () => q(`select id, name from "Mat" where "tenantId" = $1 order by "sortOrder", "createdAt"`, [club.tenantId]);
 const classRow = async (name) => (await q(`select c.location, c."matId", m.name mat from "Class" c left join "Mat" m on m.id = c."matId" where c."tenantId" = $1 and c.name = $2`, [club.tenantId, name]))[0];
 const storedLayout = async () => (await q(`select "timetableLayout" v from "Tenant" where id = $1`, [club.tenantId]))[0].v;
@@ -195,31 +196,32 @@ try {
     }
   });
 
-  await section("pick-place", `"Upstairs" typed on two Tuesday classes is offered between the saved locations and No location; picking it for ${TYPED[0]} saves "Upstairs" as a location and moves that one class only`, async () => {
-    for (const name of TYPED) {
-      const status = await main.evaluate(async (body) => (await fetch("/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status, { name, location: "Upstairs", duration: 60, schedules: TUESDAY_1000 });
+  await section("pick-place", `"Upstairs", typed on two Tuesday classes, is offered to a third (${UNPLACED}, no place) between the saved locations and No location; picked by keyboard, it is saved as a location and only ${UNPLACED} moves onto it: the two that type it stay as typed`, async () => {
+    for (const [name, location] of [[TYPED[0], "Upstairs"], [TYPED[1], "Upstairs"], [UNPLACED, null]]) {
+      const status = await main.evaluate(async (body) => (await fetch("/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status, { name, location, duration: 60, schedules: TUESDAY_1000 });
       expect(status).toBe(201);
     }
     await main.reload();
-    await expect(weekDay(main, "tue").locator("[data-cell-key] button")).toHaveCount(2);
-    const select = await openEdit(main, TYPED[0], "tue");
+    await expect(weekDay(main, "tue").locator("[data-cell-key] button")).toHaveCount(3);
+    // A class that types the place opens on it; leaving it alone saves nothing (no silent move).
+    const own = await openEdit(main, TYPED[0], "tue");
+    await expect(own).toHaveValue("place:Upstairs");
+    await dialog(main).getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog(main)).toHaveCount(0);
+    const select = await openEdit(main, UNPLACED, "tue");
     await expect(select.locator("option")).toHaveText(["Mat 1", "Mat 2", "Upstairs", "No location", "Add a new location…"]);
-    await expect(select).toHaveValue("place:Upstairs");
-    // Its own typed place, unchanged, would save nothing: pick it by keyboard from another value and back.
+    await expect(select).toHaveValue("none");
     await select.focus();
-    await main.keyboard.type("Mat 2");
-    await expect(select).toHaveValue(/^mat:/);
-    // A pause, so the select starts a new type-ahead search rather than looking for "Mat 2Up".
-    await main.waitForTimeout(1500);
     await main.keyboard.type("Up");
     await expect(select).toHaveValue("place:Upstairs");
     await saveByKeyboard(main);
     await expect(dialog(main)).toHaveCount(0);
+    await expect(main.getByText("“Upstairs” is saved as a location.", { exact: false }).first()).toBeVisible();
     const mats = await matRows();
     expect(mats.map((m) => m.name)).toEqual(["Mat 1", "Mat 2", "Upstairs"]);
-    expect(await classRow(TYPED[0])).toEqual({ location: "Upstairs", matId: mats[2].id, mat: "Upstairs" });
-    // The other class that types it is left as it was: the Mats sheet does the bulk conversion.
-    expect(await classRow(TYPED[1])).toEqual({ location: "Upstairs", matId: null, mat: null });
+    expect(await classRow(UNPLACED)).toEqual({ location: "Upstairs", matId: mats[2].id, mat: "Upstairs" });
+    // The classes that type it are left as they were: the Mats sheet does the bulk conversion.
+    for (const name of TYPED) expect(await classRow(name)).toEqual({ location: "Upstairs", matId: null, mat: null });
     expect(await matCreateAudits()).toBe(3);
     return { mats: mats.map((m) => m.name) };
   });
