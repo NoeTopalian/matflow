@@ -357,8 +357,11 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
     expect((after.edit?.metadata as { redactedForErasure?: boolean }).redactedForErasure).toBeUndefined();
 
     // And she can still be restored (to the erased guardian's row; staff re-link her if needed).
-    const restored = (await restorePOST(new Request(`https://test.local/api/members/${seeded.junoId}/restore`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }), { params: Promise.resolve({ id: seeded.junoId }) })) as unknown as { status: number };
+    const restored = (await restorePOST(new Request(`https://test.local/api/members/${seeded.junoId}/restore`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }), { params: Promise.resolve({ id: seeded.junoId }) })) as unknown as { status: number; json: () => Promise<{ parentErased?: boolean; note?: string }> };
     expect(restored.status).toBe(200);
+    const restoredBody = await restored.json();
+    expect(restoredBody.parentErased).toBe(true);
+    expect(restoredBody.note).toBe("Their parent's personal data was erased. Link them to another parent if they need one.");
     const junoRestored = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: seeded.junoId }, select: { name: true, archivedAt: true } }));
     expect(junoRestored).toEqual({ name: JUNO.name, archivedAt: null });
   }, 180_000);

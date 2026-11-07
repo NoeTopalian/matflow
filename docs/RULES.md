@@ -157,8 +157,8 @@ acts on is worse than an error they can see.
   own shows its existing label; nothing is guessed.
 - **Erased is not the same as deleted.** A member erased under a data-protection request is
   "Deleted member": no link, and their old values are shown to nobody. A member deleted in the
-  ordinary way (`member.delete`, deleted before archive (PR #73)) keeps the name recorded on
-  their deletion, permanently (§5d). Since PR #73 removing a member archives them instead.
+  ordinary way before PR #73 (`member.delete`) keeps the name recorded on their deletion,
+  permanently (§5d). Since PR #73 removing a member archives them instead.
 - **All of it, with no age limit.** The timeline reaches back to the club's first day. Nothing
   says or implies that activity is kept for a year.
 - **It opens predictably.** The page opens on the standard view, or on the one view a person has
@@ -193,6 +193,13 @@ acts on is worse than an error they can see.
   their photos, replaced ones included, and the personal values recorded on their own Activity
   rows (`lib/audit-redact.ts`; field names and who acted are kept). A club's
   erasure deletes every file under its store prefix.
+- **Known limit: a guardian's address stays in a kept child's import keys.** TeamUp keys a junior
+  under the payer's address (`teamup:<guardian email>|<child name>`). When a guardian is erased,
+  a child the erasure keeps (archived, cancelled or re-linked to another guardian) still carries
+  the guardian's address inside that key: in its record key (`Member.externalRef`), its saved
+  import decisions (person mappings) and its imported bookings (the ledger's person and booking
+  keys). The fix is tracked separately (branch `fix/erase-guardian-keys`), because rewriting
+  those keys changes how a later re-import and a TeamUp status refresh match the child.
 - **Two automatic exceptions, both security records, not club data:** sign-in rate-limit
   counters (`RateLimitHit`, and a bucket cleared after a successful sign-in), which the lockout
   depends on clearing; and password history, trimmed to its limit when a password changes
