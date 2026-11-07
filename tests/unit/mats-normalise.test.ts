@@ -3,7 +3,7 @@
 // (plan §4.8, §5.4).
 
 import { describe, expect, it } from "vitest";
-import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, compareMatNames, matNameKey, placeSuggestions } from "@/lib/mats";
+import { LOCATION_ERRORS, MAT_LIMIT, MAT_NAME_MAX, checkLocationName, cleanMatName, compareMatNames, matNameKey, placeSuggestions } from "@/lib/mats";
 
 describe("cleanMatName / matNameKey", () => {
   it("trims and single-spaces a name, keeping its capitals", () => {
@@ -17,6 +17,16 @@ describe("cleanMatName / matNameKey", () => {
     expect(matNameKey("mat  1 ")).toBe("mat 1");
     expect(matNameKey("MAT 1")).toBe("mat 1");
     expect(matNameKey("Mat 10")).not.toBe(matNameKey("Mat 1"));
+  });
+
+  it("removes invisible format characters, so a name of nothing but them is blank and cannot be saved", () => {
+    // Zero-width space, zero-width joiner, zero-width non-joiner, word joiner, byte order mark.
+    expect(cleanMatName("​‍‌⁠﻿")).toBe("");
+    expect(cleanMatName(" ​ ")).toBe("");
+    expect(cleanMatName("Mat​ 1")).toBe("Mat 1");
+    expect(matNameKey("Mat‍ 1")).toBe(matNameKey("Mat 1"));
+    expect(checkLocationName("​​", true)).toEqual({ ok: false, error: LOCATION_ERRORS.empty });
+    expect(checkLocationName("Cage​", true)).toEqual({ ok: true, name: "Cage" });
   });
 
   it("treats a composed and a decomposed accent as the same name", () => {

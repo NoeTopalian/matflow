@@ -15,6 +15,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import React from "react";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import { PROPS, cls, stubFetch, type Call } from "./helpers/timetable-fixture";
+import { LOCATION_ERRORS } from "@/lib/mats";
 
 const { refresh, toast } = vi.hoisted(() => ({ refresh: vi.fn(), toast: vi.fn() }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ refresh }) }));
@@ -22,7 +23,7 @@ vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast }) }));
 
 const MATS = [{ id: "m1", name: "Mat 1" }, { id: "m2", name: "Mat 2" }];
 const select = () => screen.getByLabelText("Location") as HTMLSelectElement;
-const newBox = () => screen.queryByLabelText("New location name") as HTMLInputElement | null;
+const newBox = (label = "Name of the new location") => screen.queryByLabelText(label) as HTMLInputElement | null;
 const options = () => Array.from(select().options).map((o) => [o.value, o.textContent]);
 const saves = (calls: Call[]) => calls.filter((c) => c.url.startsWith("/api/classes") && !c.url.includes("dryRun") && (c.method === "POST" || c.method === "PATCH"));
 const LOCATION_KEYS = ["matId", "matName", "location"];
@@ -180,6 +181,30 @@ describe("what a new class sends", () => {
   });
 });
 
+describe("a location added from the form, then removed", () => {
+  it("is gone from the list as soon as the server's mats no longer have it", async () => {
+    calls = stubFetch((call) => {
+      if (call.url !== "/api/classes" || call.method !== "POST") return undefined;
+      return { ok: true, status: 201, json: async () => ({ ...cls("Wrestling", "Mat 3", [[1, "18:00", "19:00"]], { matId: "m3" }), instancesCreated: 8, locationAdded: { id: "m3", name: "Mat 3" } }) };
+    });
+    const classes = CLUB();
+    const view = render(<TimetableManager initialClasses={classes} mats={MATS} {...PROPS} />);
+    await createClass("Wrestling");
+    choose("new");
+    fireEvent.change(newBox()!, { target: { value: "Mat 3" } });
+    submit("Create class");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringContaining("“Mat 3” is saved as a location."), "success"));
+    await createClass("Judo");
+    expect(options().map(([v]) => v)).toContain("mat:m3");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    // The refresh after Mat 3 was removed in the Mats sheet: a new list without it.
+    view.rerender(<TimetableManager initialClasses={classes} mats={[...MATS]} {...PROPS} />);
+    await createClass("Judo");
+    expect(options().map(([v]) => v)).not.toContain("mat:m3");
+    expect(options().slice(0, 2)).toEqual([["mat:m1", "Mat 1"], ["mat:m2", "Mat 2"]]);
+  });
+});
+
 describe("what an edit sends", () => {
   it("a class on a mat starts on it, and an edit that leaves it there sends nothing about the place", async () => {
     render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
@@ -220,10 +245,21 @@ describe("what an edit sends", () => {
     expect(locationPart(saves(calls)[0].body)).toEqual({});
   });
 
-  it("a class whose typed place names a saved location starts on it, and saving puts it there", async () => {
+  it("a class whose typed place is a saved location's name opens on its typed place, and an unrelated edit does not move it", async () => {
     render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
     edit("Kids");
-    expect(select().value).toBe("mat:m2");
+    expect(select().value).toBe("keep");
+    expect(select().selectedOptions[0].textContent).toBe("mat 2");
+    fireEvent.change(screen.getByLabelText("Class Name"), { target: { value: "Kids BJJ" } });
+    submit("Save changes");
+    await waitFor(() => expect(saves(calls)).toHaveLength(1));
+    expect(locationPart(saves(calls)[0].body)).toEqual({});
+  });
+
+  it("the same class is moved onto the saved location only when it is picked", async () => {
+    render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
+    edit("Kids");
+    choose("mat:m2");
     submit("Save changes");
     await waitFor(() => expect(saves(calls)).toHaveLength(1));
     expect(locationPart(saves(calls)[0].body)).toEqual({ matId: "m2" });
@@ -260,7 +296,7 @@ describe("refusals and failures", () => {
   });
 
   it("a refused Location (twelve already) is said beside the field, not under the buttons, with the typed name kept and focused", async () => {
-    const limit = "You already have 12 locations, the most a club can have. Choose one from the list, or remove one under Mats.";
+    const limit = LOCATION_ERRORS.limit;
     calls = answerSaves(409, { error: limit, reason: "location" });
     render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
     await createClass("Wrestling");
@@ -272,11 +308,61 @@ describe("refusals and failures", () => {
     expect(screen.queryByTestId("class-form-save-error")).toBeNull();
     expect(newBox()?.value).toBe("Cage");
     expect(newBox()?.getAttribute("aria-describedby")).toBe("class-form-location-error");
+    expect(newBox()?.getAttribute("aria-invalid")).toBe("true");
     expect(document.activeElement).toBe(newBox());
+    expect(limit).toMatch(/Remove a location under Mats/);
+    // Changing what was typed clears the refusal until the next save.
+    fireEvent.change(newBox()!, { target: { value: "Cage 2" } });
+    expect(screen.queryByTestId("class-form-location-error")).toBeNull();
+    expect(newBox()?.getAttribute("aria-invalid")).toBeNull();
+    expect(newBox()?.getAttribute("aria-describedby")).toBeNull();
+    // A second refused save says it again.
+    submit("Create class");
+    expect((await screen.findByTestId("class-form-location-error")).textContent).toBe(limit);
+    // Changing the select clears it too.
+    choose("mat:m1");
+    expect(screen.queryByTestId("class-form-location-error")).toBeNull();
+    expect(select().getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("the box for a new name has a visible label and no example text standing in for one", async () => {
+    render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
+    await createClass("Wrestling");
+    choose("new");
+    const box = newBox()!;
+    const label = document.querySelector(`label[for="${box.id}"]`);
+    expect(label?.textContent).toBe("Name of the new location");
+    expect(box.getAttribute("placeholder")).toBeNull();
   });
 });
 
 describe("who can use it", () => {
+  it("in a support session the last option is 'Type a place', and the box says it stays this class's place", async () => {
+    render(<TimetableManager initialClasses={CLUB()} mats={MATS} supportSession {...PROPS} />);
+    await createClass("Wrestling");
+    expect(options().at(-1)).toEqual(["new", "Type a place"]);
+    expect(options().map(([, t]) => t)).not.toContain("Add a new location…");
+    choose("new");
+    const box = newBox("Place for this class")!;
+    expect(box).not.toBeNull();
+    const hint = screen.getByTestId("class-form-new-location-hint");
+    expect(hint.textContent).toMatch(/can.t add saved locations/);
+    expect(box.getAttribute("aria-describedby")).toBe(hint.id);
+    fireEvent.change(box, { target: { value: "The beach" } });
+    submit("Create class");
+    await waitFor(() => expect(saves(calls)).toHaveLength(1));
+    // Sent by name as ever; the server keeps it as this class's typed place.
+    expect(locationPart(saves(calls)[0].body)).toEqual({ matName: "The beach" });
+  });
+
+  it("an owner sees 'Add a new location…' and no support hint", async () => {
+    render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
+    await createClass("Wrestling");
+    expect(options().at(-1)).toEqual(["new", "Add a new location…"]);
+    choose("new");
+    expect(screen.queryByTestId("class-form-new-location-hint")).toBeNull();
+  });
+
   it("a coach has no class form, so a coach cannot type a new location or add one", () => {
     render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} role="coach" />);
     expect(screen.queryAllByRole("button", { name: "Add class" })).toHaveLength(0);

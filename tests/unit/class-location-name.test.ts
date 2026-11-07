@@ -189,9 +189,53 @@ describe("POST /api/classes with a Location by name", () => {
     expect(res.status).toBe(201);
     expect(created()).toMatchObject({ matId: null, location: "The sports hall down the road" });
   });
+
+  it("a mat-name clash on the unique index is a Location refusal; any other unique refusal is not", async () => {
+    tx.mat.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002", meta: { modelName: "Mat", target: ["tenantId", "nameKey"] } }));
+    const clash = await post({ matName: "Cage" });
+    expect(clash.status).toBe(409);
+    expect(await clash.json()).toEqual({ error: "Couldn't save the location. Try again.", reason: "location" });
+    // The same code from another table, on a save that also names a location: not the Location's to explain.
+    tx.class.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002", meta: { modelName: "ClassInstance", target: ["classId", "date", "startTime"] } }));
+    const other = await post({ matName: "Mat 1" });
+    expect(other.status).toBe(500);
+    expect(await other.json()).toEqual({ error: "Failed to create class" });
+  });
 });
 
 describe("PATCH /api/classes/[id] with a Location by name", () => {
+  it("refuses a mat id with a name, a blank name and an over-long one, before anything is read", async () => {
+    for (const [body, error] of [
+      [{ matName: "Mat 2", matId: "m1" }, LOCATION_ERRORS.both],
+      [{ matName: "​ " }, LOCATION_ERRORS.empty],
+      [{ matName: "x".repeat(25) }, LOCATION_ERRORS.tooLong],
+    ] as const) {
+      const res = await patch(body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error, reason: "location" });
+    }
+    expect(ops).toEqual([]);
+  });
+
+  it("a mat-name clash on the unique index is a Location refusal; any other unique refusal is not", async () => {
+    tx.mat.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002", meta: { target: ["tenantId", "nameKey"] } }));
+    const clash = await patch({ matName: "Cage" });
+    expect(clash.status).toBe(409);
+    expect(await clash.json()).toEqual({ error: "Couldn't save the location. Try again.", reason: "location" });
+    tx.class.updateMany.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002", meta: { modelName: "Class", target: ["id"] } }));
+    const other = await patch({ matName: "Mat 1" });
+    expect(other.status).toBe(500);
+    expect(await other.json()).toEqual({ error: "Failed to update class" });
+  });
+
+  it("a support session naming an existing mat puts the class on it", async () => {
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
+    const res = await patch({ matName: "mat 1" });
+    expect(res.status).toBe(200);
+    expect(tx.mat.create).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({ matId: "m1", location: "Mat 1" });
+  });
+
   it("a new name adds one mat and puts only this class on it, in the edit's transaction, before the class is written", async () => {
     const res = await patch({ matName: "Mat 2" });
     expect(res.status).toBe(200);

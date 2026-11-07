@@ -457,7 +457,7 @@ try {
       return [o.slice(0, 3), o.slice(-2)];
     }).toEqual([["Mat 1", "Cage", LONG], ["No location", "Add a new location…"]]);
     await expect(mat).toHaveValue("none");
-    await expect(main.getByLabel("New location name")).toHaveCount(0);
+    await expect(main.getByLabel("Name of the new location")).toHaveCount(0);
     await mat.selectOption({ label: LONG });
     const posts = count(main, (r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/classes" && !r.url().includes("dryRun"));
     await main.route("**/api/classes", (r) => (r.request().method() === "POST" ? r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Failed to create class" }) }) : r.fallback()), { times: 1 });

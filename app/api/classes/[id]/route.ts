@@ -19,7 +19,7 @@ import {
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
-import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError, isMatNameClash } from "@/lib/class-refs";
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
 import { matForLocation } from "@/lib/mats-store";
 import { isSupportSession } from "@/lib/support-session";
@@ -557,11 +557,11 @@ export async function PATCH(req: Request, { params }: Params) {
     }
 
     const updated = await withTenantContext(tenantId, async (tx) => {
-      // MATS LOCK FIRST, and only when this edit names a mat: it is the first
-      // lock of every transaction that takes it (lib/mats.ts), ahead of the
-      // Class row lock below, so a rename of that mat and this save are
-      // serial and cannot deadlock. An edit that does not name a mat takes no
-      // mats lock at all.
+      // MATS LOCK FIRST, and only when this edit names a mat, by id or by
+      // name (`matName`, which may add one): it is the first lock of every
+      // transaction that takes it (lib/mats.ts), ahead of the Class row lock
+      // below, so a rename of that mat and this save are serial and cannot
+      // deadlock. An edit that names no mat takes no mats lock at all.
       if (parsed.data.matId || locationName !== null) await lockClubMats(tx, tenantId);
       // OWNERSHIP FIRST — before any destructive statement.
       //
@@ -895,7 +895,7 @@ export async function PATCH(req: Request, { params }: Params) {
       return NextResponse.json({ error: LOCATION_ERRORS.limit, reason: "location" }, { status: 409 });
     }
     // The unique (club, name key) index is the backstop behind the mats lock.
-    if ((e as { code?: string })?.code === "P2002" && locationName !== null) {
+    if (locationName !== null && isMatNameClash(e)) {
       return NextResponse.json({ error: "Couldn't save the location. Try again.", reason: "location" }, { status: 409 });
     }
     if (e instanceof StaleScheduleError) {

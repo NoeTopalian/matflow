@@ -6,9 +6,14 @@
 // split is the club's choice; by keyboard, types "Mat 1" as a new location on one class and picks it from the list
 // on a second; types "Mat 2" on a third with a forced failed save first (the typed text is kept, one retry saves);
 // sees that saving locations did not change the split; presses By mat and gets two columns; the members' Monday
-// follows; and on a phone picks a saved location for a new class from the same list.
+// follows; picks a place typed on two Tuesday classes for one of them, which moves that one class only; on a phone
+// picks a saved location for a new class from the same list; and at 390 px a refused Location (twelve already) is
+// said beside the field with the typed name kept and focus on it.
 import { createRequire } from "node:module";
 import { state, q, ledger, shot, context, ownerSignIn, memberLogin, memberSignIn, weekGrid, weekDay, launchWithScrollbars } from "../lib.mjs";
+// The refusal sentence the server gives past twelve mats (lib/mats.ts LOCATION_ERRORS.limit), quoted so the
+// journey checks the words a person reads.
+const LIMIT = "You already have 12 locations, the most a club can have, so this one can't be added. Remove a location under Mats, or choose one from the list.";
 
 const require = createRequire(import.meta.url);
 // Assertions wait 20 s (see timetable-mats.mjs: the slow path to the test branch measured 5 Nov 2026).
@@ -21,6 +26,8 @@ const watch = (page) => page.on("pageerror", (e) => errors.push(e.message));
 
 const CLASSES = ["Gi Fundamentals", "No-Gi", "Wrestling"];
 const MONDAY_1800 = [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }];
+const TUESDAY_1000 = [{ dayOfWeek: 2, startTime: "10:00", endTime: "11:00" }];
+const TYPED = ["Yoga", "Pilates"];
 const matRows = () => q(`select id, name from "Mat" where "tenantId" = $1 order by "sortOrder", "createdAt"`, [club.tenantId]);
 const classRow = async (name) => (await q(`select c.location, c."matId", m.name mat from "Class" c left join "Mat" m on m.id = c."matId" where c."tenantId" = $1 and c.name = $2`, [club.tenantId, name]))[0];
 const storedLayout = async () => (await q(`select "timetableLayout" v from "Tenant" where id = $1`, [club.tenantId]))[0].v;
@@ -44,9 +51,9 @@ async function section(id, desc, fn) {
   }
 }
 
-/** Opens a Monday class's edit form from the week grid and returns its Location select. */
-async function openEdit(page, name) {
-  await weekDay(page, "mon").getByRole("button", { name: new RegExp(`^Edit ${name},`) }).first().click();
+/** Opens a class's edit form from the week grid (Monday unless said) and returns its Location select. */
+async function openEdit(page, name, day = "mon") {
+  await weekDay(page, day).getByRole("button", { name: new RegExp(`^Edit ${name},`) }).first().click();
   await expect(dialog(page)).toBeVisible();
   return dialog(page).getByLabel("Location", { exact: true });
 }
@@ -88,7 +95,7 @@ try {
     await main.keyboard.type("Add");
     await expect(select).toHaveValue("new");
     await main.keyboard.press("Tab");
-    const box = dialog(main).getByLabel("New location name", { exact: true });
+    const box = dialog(main).getByLabel("Name of the new location", { exact: true });
     await expect(box).toBeFocused();
     await main.keyboard.type("Mat 1");
     await saveByKeyboard(main);
@@ -121,7 +128,7 @@ try {
     await select.focus();
     await main.keyboard.type("Add");
     await expect(select).toHaveValue("new");
-    const box = dialog(main).getByLabel("New location name", { exact: true });
+    const box = dialog(main).getByLabel("Name of the new location", { exact: true });
     await box.fill("Mat 2");
     const patches = [];
     const onReq = (r) => { if (r.method() === "PATCH" && /\/api\/classes\/[^/?]+$/.test(new URL(r.url()).pathname)) patches.push(r.url()); };
@@ -188,6 +195,35 @@ try {
     }
   });
 
+  await section("pick-place", `"Upstairs" typed on two Tuesday classes is offered between the saved locations and No location; picking it for ${TYPED[0]} saves "Upstairs" as a location and moves that one class only`, async () => {
+    for (const name of TYPED) {
+      const status = await main.evaluate(async (body) => (await fetch("/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status, { name, location: "Upstairs", duration: 60, schedules: TUESDAY_1000 });
+      expect(status).toBe(201);
+    }
+    await main.reload();
+    await expect(weekDay(main, "tue").locator("[data-cell-key] button")).toHaveCount(2);
+    const select = await openEdit(main, TYPED[0], "tue");
+    await expect(select.locator("option")).toHaveText(["Mat 1", "Mat 2", "Upstairs", "No location", "Add a new location…"]);
+    await expect(select).toHaveValue("place:Upstairs");
+    // Its own typed place, unchanged, would save nothing: pick it by keyboard from another value and back.
+    await select.focus();
+    await main.keyboard.type("Mat 2");
+    await expect(select).toHaveValue(/^mat:/);
+    // A pause, so the select starts a new type-ahead search rather than looking for "Mat 2Up".
+    await main.waitForTimeout(1500);
+    await main.keyboard.type("Up");
+    await expect(select).toHaveValue("place:Upstairs");
+    await saveByKeyboard(main);
+    await expect(dialog(main)).toHaveCount(0);
+    const mats = await matRows();
+    expect(mats.map((m) => m.name)).toEqual(["Mat 1", "Mat 2", "Upstairs"]);
+    expect(await classRow(TYPED[0])).toEqual({ location: "Upstairs", matId: mats[2].id, mat: "Upstairs" });
+    // The other class that types it is left as it was: the Mats sheet does the bulk conversion.
+    expect(await classRow(TYPED[1])).toEqual({ location: "Upstairs", matId: null, mat: null });
+    expect(await matCreateAudits()).toBe(3);
+    return { mats: mats.map((m) => m.name) };
+  });
+
   for (const width of [375, 390]) {
     await section(`phone-${width}`, `${width} px, owner: a new class picks "Mat 2" from the same Location list; the select and the new-name box are at least 44 px tall to tap; the page does not scroll sideways; the class is saved on Mat 2 and no mat is added`, async () => {
       const mobile = await context(browser, `10.96.1.${width === 375 ? 30 : 31}`, { viewport: { width, height: 812 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState(), timezoneId: "Europe/London" });
@@ -202,9 +238,9 @@ try {
         await form.getByLabel("Class Name", { exact: true }).fill(name);
         await form.getByRole("button", { name: "Add day", exact: true }).tap();
         const select = form.getByLabel("Location", { exact: true });
-        expect(await select.locator("option").allTextContents()).toEqual(["Mat 1", "Mat 2", "No location", "Add a new location…"]);
+        expect(await select.locator("option").allTextContents()).toEqual(["Mat 1", "Mat 2", "Upstairs", "No location", "Add a new location…"]);
         await select.selectOption({ label: "Add a new location…" });
-        const box = form.getByLabel("New location name", { exact: true });
+        const box = form.getByLabel("Name of the new location", { exact: true });
         await expect(box).toBeVisible();
         const sizes = { select: Math.round((await select.boundingBox()).height), box: Math.round((await box.boundingBox()).height) };
         expect(sizes.select).toBeGreaterThanOrEqual(44);
@@ -216,7 +252,7 @@ try {
         await form.getByRole("button", { name: "Create class", exact: true }).tap();
         await expect(form).toHaveCount(0);
         const mats = await matRows();
-        expect(mats.map((m) => m.name)).toEqual(["Mat 1", "Mat 2"]);
+        expect(mats.map((m) => m.name)).toEqual(["Mat 1", "Mat 2", "Upstairs"]);
         expect(await classRow(name)).toEqual({ location: "Mat 2", matId: mats[1].id, mat: "Mat 2" });
         return sizes;
       } finally {
@@ -224,6 +260,54 @@ try {
       }
     });
   }
+
+  await section("phone-refused", "390 px: a Location refused past twelve mats is said beside the field, not under the buttons; the typed name stays in its box with focus on it; nothing is saved; changing the name clears it", async () => {
+    const mobile = await context(browser, "10.96.1.32", { viewport: { width: 390, height: 812 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState(), timezoneId: "Europe/London" });
+    const phone = await mobile.newPage();
+    watch(phone);
+    try {
+      const name = "Refused 390";
+      await phone.goto("/dashboard/timetable");
+      await phone.getByRole("button", { name: "Add class", exact: true }).first().tap();
+      const form = phone.getByRole("dialog", { name: "New class" });
+      await expect(form).toBeVisible();
+      await form.getByLabel("Class Name", { exact: true }).fill(name);
+      await form.getByRole("button", { name: "Add day", exact: true }).tap();
+      await form.getByLabel("Location", { exact: true }).selectOption({ label: "Add a new location…" });
+      const box = form.getByLabel("Name of the new location", { exact: true });
+      await box.fill("Garage");
+      // The server's own refusal past twelve mats, so the journey does not need twelve real ones.
+      await phone.route("**/api/classes", (r) => (r.request().method() === "POST" && !r.request().url().includes("dryRun")
+        ? r.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: LIMIT, reason: "location" }) })
+        : r.fallback()), { times: 1 });
+      await form.getByRole("button", { name: "Create class", exact: true }).tap();
+      const said = form.getByTestId("class-form-location-error");
+      await expect(said).toHaveText(LIMIT);
+      await expect(form.getByTestId("class-form-save-error")).toHaveCount(0);
+      await expect(box).toHaveValue("Garage");
+      await expect(box).toBeFocused();
+      await expect(box).toHaveAttribute("aria-invalid", "true");
+      // On screen: the sentence sits inside the window, just under the box.
+      const where = await phone.evaluate(() => {
+        const r = document.querySelector('[data-testid="class-form-location-error"]').getBoundingClientRect();
+        const b = document.querySelector('[data-testid="class-form-new-location"]').getBoundingClientRect();
+        return { top: Math.round(r.top), bottom: Math.round(r.bottom), gap: Math.round(r.top - b.bottom), height: window.innerHeight };
+      });
+      expect(where.top).toBeGreaterThanOrEqual(0);
+      expect(where.bottom).toBeLessThanOrEqual(where.height);
+      expect(where.gap).toBeGreaterThanOrEqual(0);
+      expect(where.gap).toBeLessThanOrEqual(40);
+      expect(await phone.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)).toBe(false);
+      await shot(phone, "timetable-location-refused-phone-390");
+      expect(await classRow(name)).toBeUndefined();
+      expect((await matRows()).map((m) => m.name)).toEqual(["Mat 1", "Mat 2", "Upstairs"]);
+      await box.fill("Garage 2");
+      await expect(said).toHaveCount(0);
+      return where;
+    } finally {
+      await mobile.close();
+    }
+  });
 
   L.check("errors", "no uncaught browser errors", errors.length === 0, errors);
   if (errors.length) process.exitCode = 1;

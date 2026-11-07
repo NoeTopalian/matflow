@@ -30,9 +30,13 @@ export const MAT_LIMIT = 12;
 /** First key of the per-club advisory lock ("MATS"). The second is hashtext(tenantId). */
 export const MATS_LOCK_NS = 0x4d415453;
 
-/** A name as it is stored and shown: trimmed, runs of white space made one space. */
+/**
+ * A name as it is stored and shown: invisible format characters (zero-width
+ * spaces and joiners, Unicode category Cf) removed, so a name of nothing but
+ * those is blank; trimmed; runs of white space made one space.
+ */
 export function cleanMatName(raw: string): string {
-  return raw.normalize("NFC").replace(/\s+/g, " ").trim();
+  return raw.normalize("NFC").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").trim();
 }
 
 /** What makes two names the same mat: the clean name, lower-cased. */
@@ -53,8 +57,9 @@ export function compareMatNames(a: string, b: string): number {
  * class being saved onto that mat. Held until the transaction ends.
  *
  * ORDER: this is the FIRST statement of a transaction that takes it, before
- * any row lock (docs/design/LOCK-ORDER-2026-10-24.md). A class edit takes
- * it only when the request names a mat.
+ * any row lock (docs/design/LOCK-ORDER-2026-10-24.md). A class create or
+ * edit takes it only when the request names a mat, by id (`matId`) or by
+ * name (`matName`, the class form's Location).
  *
  * The one raw statement mats need: the project keeps raw SQL out of
  * application code except reviewed locks of this shape (lib/login-email.ts);
@@ -128,8 +133,8 @@ export function placeSuggestions(
  */
 export const LOCATION_ERRORS = {
   empty: "Give the new location a name.",
-  tooLong: `A location name can be up to ${MAT_NAME_MAX} characters.`,
-  limit: `You already have ${MAT_LIMIT} locations, the most a club can have. Choose one from the list, or remove one under Mats.`,
+  tooLong: `A location name can be up to ${MAT_NAME_MAX} characters. Use a shorter name.`,
+  limit: `You already have ${MAT_LIMIT} locations, the most a club can have, so this one can't be added. Remove a location under Mats, or choose one from the list.`,
   both: "Choose a location from the list or add a new one, not both.",
 } as const;
 

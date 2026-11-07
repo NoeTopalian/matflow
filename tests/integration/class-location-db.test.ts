@@ -13,7 +13,11 @@
 //  - the twelfth-mat cap holds and writes nothing past it;
 //  - another club's mat id is refused, and another club's mat of the same
 //    name is never used;
-//  - two saves naming the same new place at once make one mat, not two.
+//  - two saves naming the same new place at once make one mat, not two, on
+//    create and on edit;
+//  - Undo of an edit that put a class on a mat by name returns the class to
+//    its typed place and leaves the mat;
+//  - a support session uses an existing mat by name and adds none.
 // Synthetic data only; skips without TEST_DATABASE_URL.
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -22,7 +26,9 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/revalidate-tag-logged", () => ({ revalidateTagLogged: vi.fn() }));
 
 import { auth } from "@/auth";
-import { withRlsBypass } from "@/lib/prisma-tenant";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { executeUndo } from "@/lib/undo-batch";
+import { decideUndo, type AuditRowLike } from "@/lib/undo-registry";
 import { POST as classPOST } from "@/app/api/classes/route";
 import { PATCH as classPATCH } from "@/app/api/classes/[id]/route";
 import { LOCATION_ERRORS, MAT_LIMIT } from "@/lib/mats";
@@ -58,6 +64,18 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, action: "mat.create" }, orderBy: { createdAt: "asc" }, select: { entityId: true, metadata: true } }));
   const addMatRow = (tenantId: string, name: string, sortOrder: number) =>
     withRlsBypass((tx) => tx.mat.create({ data: { tenantId, name, nameKey: name.toLowerCase(), sortOrder }, select: { id: true, name: true } }));
+  /** A class edit's `class.updated` row is written after the response, best effort: wait for it (as mats-db does). */
+  const classEdits = async (tenantId: string, classId: string, n: number) => {
+    for (let i = 0; i < 100; i++) {
+      const rows = await withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, action: "class.updated", entityId: classId }, orderBy: { createdAt: "asc" } }));
+      if (rows.length >= n) return rows as unknown as AuditRowLike[];
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error(`class ${classId} has fewer than ${n} class.updated rows after 10 s`);
+  };
+  /** A real staff owner, for Undo (its audit row names the user who undid). */
+  const owner = async (tenantId: string) =>
+    (await withRlsBypass((tx) => tx.user.create({ data: { tenantId, email: `owner-${randomUUID()}@example.test`, passwordHash: "synthetic-not-a-hash", name: "Synthetic Owner", role: "owner" }, select: { id: true } }))).id;
 
   afterAll(async () => {
     if (tenants.length === 0) return;
@@ -67,6 +85,7 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
       await tx.classSchedule.deleteMany({ where: { class: { tenantId: { in: tenants } } } });
       await tx.class.deleteMany({ where: { tenantId: { in: tenants } } });
       await tx.mat.deleteMany({ where: { tenantId: { in: tenants } } });
+      await tx.user.deleteMany({ where: { tenantId: { in: tenants } } });
       await tx.tenant.deleteMany({ where: { id: { in: tenants } } });
     });
   });
@@ -172,5 +191,69 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     const rows = await classes(T);
     expect(rows.map((c) => c.matId)).toEqual([all[0].id, all[0].id]);
     expect(await matAudits(T)).toHaveLength(1);
+  });
+
+  it("two edits naming the same new place at once make one mat, and both classes are on it", async () => {
+    const T = await club("patch-race");
+    const a = await classRow(T, "A", null);
+    const b = await classRow(T, "B", null);
+    as(T);
+    const [one, two] = await Promise.all([edit(a.id, { matName: "Cage" }), edit(b.id, { matName: "CAGE" })]);
+    expect([one.status, two.status]).toEqual([200, 200]);
+    const all = await mats(T);
+    expect(all).toEqual([{ id: all[0].id, name: expect.stringMatching(/^cage$/i), nameKey: "cage", sortOrder: 0 }]);
+    expect((await classes(T)).map((c) => c.matId)).toEqual([all[0].id, all[0].id]);
+    expect(await matAudits(T)).toHaveLength(1);
+  });
+
+  it("edit by name: another club's mat of the same name is never used; the caller's club gets its own", async () => {
+    const A = await club("patch-iso-A");
+    const B = await club("patch-iso-B");
+    const theirs = await addMatRow(B, "Upstairs", 0);
+    const theirClass = await classRow(B, "Theirs", "Upstairs", { matId: theirs.id });
+    const mine = await classRow(A, "Mine", null);
+    as(A);
+    expect((await edit(mine.id, { matName: "upstairs" })).status).toBe(200);
+    const [own] = await mats(A);
+    expect(own.id).not.toBe(theirs.id);
+    expect((await classes(A)).find((c) => c.id === mine.id)).toMatchObject({ matId: own.id, location: "upstairs" });
+    expect(await mats(B)).toEqual([{ id: theirs.id, name: "Upstairs", nameKey: "upstairs", sortOrder: 0 }]);
+    expect((await classes(B)).find((c) => c.id === theirClass.id)).toMatchObject({ matId: theirs.id, location: "Upstairs" });
+    // And another club's class id is not the caller's to edit by name either.
+    expect((await edit(theirClass.id, { matName: "Cage" })).status).toBe(404);
+    expect((await mats(A)).map((m) => m.name)).toEqual(["upstairs"]);
+  });
+
+  it("Undo of an edit that put a class on a mat by name returns it to its typed place and leaves the mat", async () => {
+    const T = await club("undo");
+    const undoer = await owner(T);
+    const cls = await classRow(T, "Yoga", "Sports hall");
+    as(T);
+    expect((await edit(cls.id, { matName: "Studio" })).status).toBe(200);
+    const [studio] = await mats(T);
+    expect((await classes(T))[0]).toMatchObject({ matId: studio.id, location: "Studio" });
+    const [row] = await classEdits(T, cls.id, 1);
+    expect((row.metadata as { before: unknown; fields: unknown }).before).toEqual({ matId: null, location: "Sports hall" });
+    expect((row.metadata as { fields: unknown }).fields).toEqual(["matId", "location"]);
+    await withTenantContext(T, (tx) => executeUndo(tx, [{ row, decision: decideUndo(row, false) }], { tenantId: T, userId: undoer }));
+    expect((await classes(T))[0]).toMatchObject({ matId: null, location: "Sports hall" });
+    // The mat stays: adding it was its own action (mat.create), recorded apart.
+    expect(await mats(T)).toEqual([{ id: studio.id, name: "Studio", nameKey: "studio", sortOrder: 0 }]);
+    expect(await matAudits(T)).toHaveLength(1);
+  }, 60_000);
+
+  it("a support session's edit naming an existing mat puts the class on it and adds none", async () => {
+    const T = await club("support-patch");
+    const mat = await addMatRow(T, "Mat 1", 0);
+    const cls = await classRow(T, "Gi", null);
+    as(T, { impersonatedBy: "synthetic-operator" });
+    expect((await edit(cls.id, { matName: "MAT 1" })).status).toBe(200);
+    expect((await classes(T))[0]).toMatchObject({ matId: mat.id, location: "Mat 1" });
+    expect(await mats(T)).toHaveLength(1);
+    // A new name stays the class's typed place.
+    expect((await edit(cls.id, { matName: "The beach" })).status).toBe(200);
+    expect((await classes(T))[0]).toMatchObject({ matId: null, location: "The beach" });
+    expect(await mats(T)).toHaveLength(1);
+    expect(await matAudits(T)).toEqual([]);
   });
 });

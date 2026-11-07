@@ -125,11 +125,15 @@ acts on is worse than an error they can see.
 - **The class form's Location saves what is typed (Noe, 7 Nov 2026).** It is one list: the
   club's mats, then the places typed on its classes that are not mats yet, "No location" and
   "Add a new location…". Choosing a typed place or a new name puts that one class on the mat
-  of that name, adding the mat if there is none (up to twelve; past that it says so beside the
-  field and keeps the text). The club's other classes that type the name stay as they are: the
-  Mats sheet turns them all into mats in one press. It never saves a split: a club that chose
-  one keeps it, and one that has not follows the rule below. A support session's new name
-  stays a typed place.
+  of that name, adding the mat if there is none. A new mat past the twelfth, or a name over 24
+  characters, is refused beside the field, saying why and what to do (remove a location under
+  Mats, or use a shorter name); the save is not made and the typed name stays in the box. The
+  club's other classes that type the name stay as they are: the Mats sheet turns them all into
+  mats in one press. A class is moved only when its Location is changed: one whose typed place
+  is a mat's name opens on that typed place, and a save that leaves it alone keeps it there.
+  It never saves a split: a club that chose one keeps it, and one that has not follows the rule
+  below. A support session cannot add mats: the list says "Type a place", and the name stays
+  that class's typed place.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and
   never saved. Once an owner or manager presses a choice it is saved for the club and stays

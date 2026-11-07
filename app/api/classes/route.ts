@@ -8,7 +8,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
-import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError, isMatNameClash } from "@/lib/class-refs";
 import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
 import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
@@ -157,7 +157,8 @@ export async function POST(req: Request) {
       // A class created on a mat: the club's mats lock FIRST (so the mat
       // cannot be renamed or removed under this write), then the mat's name,
       // which becomes the class's place whatever was typed (the write-through
-      // rule, lib/mats.ts). A class with no mat takes no mats lock.
+      // rule, lib/mats.ts). The same lock when a mat is named by name
+      // (`matName`). A class that names no mat takes no mats lock.
       let place: { matId: string | null; location: string } | null = null;
       let locationAdded: { id: string; name: string } | null = null;
       if (classData.matId) {
@@ -291,7 +292,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: LOCATION_ERRORS.limit, reason: "location" }, { status: 409 });
     }
     // The unique (club, name key) index is the backstop behind the mats lock.
-    if ((e as { code?: string })?.code === "P2002" && locationName !== null) {
+    if (locationName !== null && isMatNameClash(e)) {
       return NextResponse.json({ error: "Couldn't save the location. Try again.", reason: "location" }, { status: 409 });
     }
     // The mat went between the club check and the write, or the foreign key refused it.
