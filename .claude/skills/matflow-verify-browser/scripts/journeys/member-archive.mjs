@@ -115,12 +115,18 @@ try {
   L.check("journey", "A1 the Remove dialog says the member will be archived and can be restored, not deleted",
     /archived/i.test(dialogText) && /restore/i.test(dialogText) && !/permanently deletes|cannot be undone/i.test(dialogText), dialogText.slice(0, 300));
   await shot(page, "archive-remove-dialog");
-  // Keyboard: focus the confirm action and press Enter.
+  // Keyboard: reach the confirm action with Tab (a script focus after a mouse click is not :focus-visible, so it
+  // proves nothing about the keyboard ring), check the ring, and press Enter.
   const archiveBtn = dialog.getByRole("button", { name: "Archive member" });
   await archiveBtn.waitFor();
-  await archiveBtn.focus();
-  const focusVisible = await archiveBtn.evaluate((e) => { const s = getComputedStyle(e); return !s.outlineStyle.startsWith("none") || s.boxShadow !== "none"; });
-  L.check("keyboard", "K1 the Archive member button takes keyboard focus with a visible indicator", focusVisible, "focus");
+  let tabbed = 0, reached = false;
+  while (!reached && tabbed < 12) {
+    await page.keyboard.press("Tab");
+    tabbed++;
+    reached = await archiveBtn.evaluate((e) => e === document.activeElement);
+  }
+  const focusVisible = reached && await archiveBtn.evaluate((e) => { const s = getComputedStyle(e); return e.matches(":focus-visible") && (!s.outlineStyle.startsWith("none") || s.boxShadow !== "none"); });
+  L.check("keyboard", "K1 the Archive member button takes keyboard focus with a visible indicator", focusVisible, { reachedByTab: reached, tabs: tabbed });
   await page.keyboard.press("Enter");
   await page.waitForURL(/\/dashboard\/members(\?|$)/, { timeout: 60000 });
   const row1 = await memberRow(sam.id);
@@ -215,13 +221,15 @@ try {
   L.check("journey", "C3 export downloads a JSON file", /\.json$/.test(download.suggestedFilename()), download.suggestedFilename().replace(/[a-z0-9]{20,}/g, "…"));
   await picked.getByRole("button", { name: "Erase personal data" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Continue" }).click();
+  // Wait for the erase request itself (not a fixed delay): on a slow link it takes longer than a few seconds.
+  const eraseDone = page.waitForResponse((r) => r.url().includes("/api/admin/dsar/erase") && !r.url().includes("probe=1") && r.request().method() === "POST", { timeout: 180000 });
   await page.getByRole("dialog").getByRole("button", { name: "Erase permanently" }).click();
-  await page.waitForTimeout(3000);
+  const eraseStatus = (await eraseDone).status();
   const erased = await memberRow(ola.id);
   const olaAttendance = Number((await q(`select count(*)::int as n from "AttendanceRecord" where "memberId" = $1`, [ola.id]))[0].n);
   const erasureRecord = (await q(`select count(*)::int as n from "AuditLog" where "tenantId" = $1 and "entityId" = $2 and action like '%dsar%'`, [tenantId, ola.id]))[0].n;
   L.check("journey", "C4 erasure removes the name and contact details, keeps the attendance row and the erasure record",
-    erased?.name === "Deleted member" && /^deleted-/.test(erased?.email ?? "") && olaAttendance === 1 && erasureRecord > 0, { name: erased?.name, attendance: olaAttendance, records: erasureRecord });
+    eraseStatus === 200 && erased?.name === "Deleted member" && /^deleted-/.test(erased?.email ?? "") && olaAttendance === 1 && erasureRecord > 0, { status: eraseStatus, name: erased?.name, attendance: olaAttendance, records: erasureRecord });
   await shot(page, "data-requests-erased");
   await page.goto(`/dashboard/members/${sam.id}`);
   await page.getByRole("button", { name: "More actions" }).click();
@@ -236,7 +244,9 @@ try {
   const settingsLinks = await mgpage.getByRole("link", { name: /^Settings$/ }).count();
   const dataReqLinks = await mgpage.getByRole("link", { name: /Data requests/ }).count();
   await mgpage.goto("/dashboard/settings?tab=requests");
-  await mgpage.waitForLoadState("load");
+  // The owner-only refusal is a redirect raised inside the dashboard's loading boundary, so the browser follows it
+  // after the document has loaded: wait for it (a page that stays on Settings fails the check below).
+  await mgpage.waitForURL((u) => !u.pathname.startsWith("/dashboard/settings"), { timeout: 60000 }).catch(() => {});
   L.check("permissions", "P1 a manager sees no Settings or Data requests menu item and cannot open the page",
     settingsLinks === 0 && dataReqLinks === 0 && !new URL(mgpage.url()).pathname.startsWith("/dashboard/settings"), { settingsLinks, dataReqLinks, landed: new URL(mgpage.url()).pathname });
   const mreq = mgctx.request;
@@ -275,8 +285,9 @@ try {
   const signedIn = await staffSignIn(c2page, club, coach).then(() => true, () => false);
   L.check("journey", "D5 a fresh sign-in as the deactivated coach fails", !signedIn && new URL(c2page.url()).pathname.startsWith("/login"), new URL(c2page.url()).pathname);
   await c2.close();
+  const reactivated = page.waitForResponse((r) => r.url().includes(`/api/staff/${coach.id}/reactivate`) && r.request().method() === "POST", { timeout: 120000 });
   await deactivated.getByRole("button", { name: `Reactivate ${coach.name}` }).click();
-  await page.waitForTimeout(2000);
+  await reactivated;
   const urow2 = (await q(`select "deactivatedAt" from "User" where id = $1`, [coach.id]))[0];
   const c3 = await context(browser, "10.93.0.10");
   const c3page = await c3.newPage();
