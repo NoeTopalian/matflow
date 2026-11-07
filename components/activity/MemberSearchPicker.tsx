@@ -39,11 +39,16 @@ export function MemberSearchPicker({
   value,
   onChange,
   disabled = false,
+  label = "Member",
+  placeholder = "Name or email",
 }: {
   /** The picked member, or null. A name of null means the id is not a member of this club any more. */
   value: { id: string; name: string | null } | null;
   onChange: (member: PickedMember | null) => void;
   disabled?: boolean;
+  /** The field's accessible name. */
+  label?: string;
+  placeholder?: string;
 }) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -141,13 +146,13 @@ export function MemberSearchPicker({
       <Input
         ref={inputRef}
         role="combobox"
-        aria-label="Member"
+        aria-label={label}
         aria-expanded={showList}
         aria-controls={showList && options.length ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={showList && options[active] ? `${listId}-${options[active].id}` : undefined}
         autoComplete="off"
-        placeholder="Name or email"
+        placeholder={placeholder}
         className="pl-8"
         value={text}
         disabled={disabled}

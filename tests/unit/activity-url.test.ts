@@ -9,7 +9,7 @@ const params = (query: string) => new URLSearchParams(query);
 
 describe("readFilters", () => {
   it("reads each filter, and treats blank as absent", () => {
-    expect(readFilters(params("types=money&memberId=m1&classId=c1&paymentId=p1&tierId=t1&userId=u1&day=2026-11-04"))).toEqual({ types: "money", memberId: "m1", classId: "c1", paymentId: "p1", tierId: "t1", userId: "u1", day: "2026-11-04" });
+    expect(readFilters(params("types=money&memberId=m1&classId=c1&paymentId=p1&tierId=t1&userId=u1&by=staff&day=2026-11-04"))).toEqual({ types: "money", memberId: "m1", classId: "c1", paymentId: "p1", tierId: "t1", userId: "u1", by: "staff", day: "2026-11-04" });
     expect(readFilters(params(""))).toEqual(NO_FILTERS);
     expect(readFilters(params("memberId=&day=%20"))).toEqual(NO_FILTERS);
   });

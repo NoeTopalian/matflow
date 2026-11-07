@@ -69,6 +69,8 @@ function column(filter: unknown, value: unknown): Tri {
   if (typeof filter !== "object") return value == null ? null : value === filter;
   const f = filter as Record<string, unknown>;
   if ("in" in f) return value == null ? null : (f.in as unknown[]).includes(value);
+  if ("notIn" in f) return value == null ? null : !(f.notIn as unknown[]).includes(value);
+  if ("not" in f) return f.not === null ? value != null : value == null ? null : value !== f.not; // IS NOT NULL / <>
   if ("startsWith" in f) return typeof value === "string" ? value.startsWith(f.startsWith as string) : null;
   if ("lt" in f) {
     if (value instanceof Date) return value.getTime() < (f.lt as Date).getTime();

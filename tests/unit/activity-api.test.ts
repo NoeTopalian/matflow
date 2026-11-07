@@ -284,6 +284,66 @@ describe("the manager's feed", () => {
   });
 });
 
+describe("Done by, by kind (`by`)", () => {
+  beforeEach(seed);
+  const typesOf = async (query: string) => (await get(query)).body.entries.map((e) => e.type).sort();
+
+  it("each kind is its own rows, and together they are every row exactly once", async () => {
+    expect(await typesOf("?types=all&by=members")).toEqual(["checkin"]);
+    expect(await typesOf("?types=all&by=automatic")).toEqual(["other", "payment"]);
+    expect(await typesOf("?types=all&by=support")).toEqual(["member_updated", "member_updated", "support"]);
+    const staff = (await get("?types=all&by=staff")).body.entries;
+    expect(staff).toHaveLength(10);
+    expect([...new Set(staff.map((e) => e.source.label))].sort()).toEqual(["Card scan", "Staff"]);
+    const ids = (await Promise.all(["staff", "members", "automatic", "support"].map(async (k) => (await get(`?types=all&by=${k}`)).body.entries.map((e) => e.id)))).flat();
+    expect(ids).toHaveLength(16);
+    expect(new Set(ids).size).toBe(16);
+    expect(ids.sort()).toEqual((await get("?types=all")).body.entries.map((e) => e.id).sort());
+  });
+
+  it("narrows with the other filters, the staff member included; an unknown kind is everyone", async () => {
+    expect((await get(`?types=all&by=staff&userId=${JACK.id}`)).body.entries).toHaveLength(2);
+    expect((await get(`?types=all&by=members&userId=${JACK.id}`)).body.entries).toHaveLength(0);
+    expect((await get("?types=money&by=automatic")).body.entries.map((e) => e.type)).toEqual(["payment"]);
+    expect((await get("?types=all&by=robots")).body.entries).toHaveLength(16);
+  });
+
+  it("a manager cannot ask for MatFlow support: the kind is ignored, and no support row is ever sent", async () => {
+    asManager();
+    const plain = (await get("?types=all")).body.entries.map((e) => e.id);
+    const asked = (await get("?types=all&by=support")).body.entries;
+    expect(asked.map((e) => e.id)).toEqual(plain);
+    expect(asked.some((e) => e.type === "support" || e.source.support)).toBe(false);
+    // The query the database is sent says the same: the support predicate is not in it.
+    const where = JSON.stringify(tx.auditLog.findMany.mock.calls.at(-1)![0].where);
+    expect(where).not.toContain('"operatorId":{"not":null}');
+    for (const k of ["staff", "members", "automatic"]) for (const e of (await get(`?types=all&by=${k}`)).body.entries) expect(e.source.support, `${k}: ${e.plain}`).toBe(false);
+  });
+
+  it("pages exactly: a kind is a condition of the query, not a filter on the fetched page", async () => {
+    audit = [];
+    for (let i = 0; i < 120; i++) {
+      log("attendance.self_checkin", { entityType: "AttendanceRecord", entityId: `self${i}`, metadata: { classInstanceId: "s_wed", memberId: "m_mel", actorId: "m_mel" }, createdAt: new Date(Date.UTC(2026, 10, 5, 10, 0, 0) - i * 2000) });
+      log("attendance.mark", { entityType: "AttendanceRecord", entityId: `desk${i}`, userId: JACK.id, metadata: { classInstanceId: "s_wed", memberId: "m_mel" }, createdAt: new Date(Date.UTC(2026, 10, 5, 10, 0, 0) - i * 2000 - 1000) });
+    }
+    for (const [kind, label] of [["members", "Member app"], ["staff", "Staff"]] as const) {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const { body } = await get(`?types=all&by=${kind}${cursor ? `&cursor=${cursor}` : ""}`);
+        expect(body.entries.length, `${kind} page ${pages + 1}`).toBe(pages < 2 ? 50 : 20);
+        for (const e of body.entries) expect(e.source.label).toBe(label);
+        seen.push(...body.entries.map((e) => e.id));
+        cursor = body.nextCursor;
+        pages++;
+      } while (cursor && pages < 10);
+      expect(pages).toBe(3);
+      expect(new Set(seen).size).toBe(120);
+    }
+  });
+});
+
 describe("parameters never break the page", () => {
   beforeEach(seed);
 

@@ -6,7 +6,7 @@
  * phone.
  *
  * The selection is STAGED: ticking changes nothing behind the sheet until
- * "Show activity" is pressed, so twenty ticks cost one request, and Cancel,
+ * the apply button is pressed, so twenty ticks cost one request, and Cancel,
  * Escape and the scrim all leave the page exactly as it was. "None" is not a
  * state — with nothing ticked the button is disabled and says why.
  *
@@ -30,21 +30,24 @@ export function ActivityTypesSheet({
   role,
   selected,
   onApply,
+  applyLabel = "Show activity",
 }: {
   open: boolean;
   onClose: () => void;
   role: ActivityRole;
   /** What the page is showing now. */
   selected: string[];
-  /** Called once, with the new selection, when "Show activity" is pressed. */
+  /** Called once, with the new selection, when the apply button is pressed. */
   onApply: (keys: string[]) => void;
+  /** The apply button's words: "Show activity" when it changes the list, "Done" when it hands back to another sheet. */
+  applyLabel?: string;
 }) {
   // Mounted only while open, so the staged copy always starts from what the page is showing.
   if (!open) return null;
-  return <Staged onClose={onClose} role={role} selected={selected} onApply={onApply} />;
+  return <Staged onClose={onClose} role={role} selected={selected} onApply={onApply} applyLabel={applyLabel} />;
 }
 
-function Staged({ onClose, role, selected, onApply }: { onClose: () => void; role: ActivityRole; selected: string[]; onApply: (keys: string[]) => void }) {
+function Staged({ onClose, role, selected, onApply, applyLabel }: { onClose: () => void; role: ActivityRole; selected: string[]; onApply: (keys: string[]) => void; applyLabel: string }) {
   const visible = visibleTypeKeys(role);
   const [staged, setStaged] = useState<Set<string>>(() => new Set(selected.filter((k) => visible.includes(k))));
   const types = ACTIVITY_TYPES.filter((t) => visible.includes(t.key));
@@ -84,7 +87,7 @@ function Staged({ onClose, role, selected, onApply }: { onClose: () => void; rol
                 onClose();
               }}
             >
-              Show activity
+              {applyLabel}
             </Button>
           </div>
         </div>
