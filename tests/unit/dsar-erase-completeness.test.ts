@@ -158,8 +158,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/prisma-tenant", () => {
-  // One import, shared: the erase opens two transactions side by side (7 Nov 2026), and two concurrent dynamic imports
-  // of a mocked module can resolve the second to the real one.
+  // One import, shared: two concurrent dynamic imports of a mocked module can resolve the second to the real one.
   let mocked: Promise<typeof import("@/lib/prisma")> | undefined;
   const fake = async () => (await (mocked ??= import("@/lib/prisma"))).prisma;
   return {

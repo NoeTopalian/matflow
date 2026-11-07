@@ -363,12 +363,12 @@ export async function POST(req: Request) {
   const redactionSubjects = (subjects: ErasureSubject[], holders: AddressHolders): RedactionSubject[] =>
     subjects.map((s) => ({ memberId: s.memberId, addressRow: (address: string): AddressRowDecision => decideAddressRow(address, s, holders) }));
 
-  // Everything the erasure reads before it writes, in two transactions run side by side: what it will delete (as
-  // before), and what it reaches in the kept import data and the Activity log, in ONE transaction of set-based reads
-  // (7 Nov 2026: an erasure costs its round trips; tests/integration/erase-large-club-db.test.ts). Nothing here
-  // writes: the counts are dry runs, written in the transaction below (the fulfilment record goes first).
-  const [scope, prep] = await Promise.all([
-    withTenantContext(tenantId, async (tx) => {
+  // Everything the erasure reads before it writes, in ONE transaction (one pool connection) of set-based reads: what
+  // it will delete, then what it reaches in the kept import data and the Activity log (7 Nov 2026: an erasure costs
+  // its round trips; tests/integration/erase-large-club-db.test.ts). Nothing here writes: the counts are dry runs,
+  // written in the transaction below (the fulfilment record goes first).
+  const { scope, prep } = await withTenantContext(tenantId, async (tx) => {
+    const readScope = async () => {
       const [
         photos,
         waivers,
@@ -432,8 +432,8 @@ export async function POST(req: Request) {
         importedBookings,
         importSourceMappings,
       };
-    }),
-    withTenantContext(tenantId, async (tx) => {
+    };
+    const readPrep = async () => {
       const childRows: SubjectRow[] =
         activeChildren > 0 && childStrategyParam === "cascade"
           ? await tx.member.findMany({
@@ -470,8 +470,9 @@ export async function POST(req: Request) {
         importDiagnosticsEntries: await eraseSubjectsFromImportDiagnostics(tx, tenantId, subjects, { dryRun: true, jobs }),
         auditRowsRedacted: await redactSubjectsFromAuditLog(tx, tenantId, redactionSubjects(subjects, holders), { dryRun: true }),
       };
-    }),
-  ]);
+    };
+    return { scope: await readScope(), prep: await readPrep() };
+  });
   const importSubjects = prep.subjects;
   const fileUrls = prep.fileUrls;
   const importDiagnosticsEntries = prep.importDiagnosticsEntries;
