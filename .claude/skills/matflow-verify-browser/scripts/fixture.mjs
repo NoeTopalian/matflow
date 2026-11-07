@@ -15,6 +15,7 @@ import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import { APP, DB_URL, RUN, state, saveState, bcrypt, newSecret, sha256 } from "./lib.mjs";
 import { ledgerAppend, ledgerRead, ledgerSlugs, openFixtures } from "./harness.mjs";
+import { deleteTenant as deleteTenantRows } from "./tenant-teardown.mjs";
 
 const require = createRequire(`${APP}/package.json`);
 const { PrismaClient } = require("@prisma/client");
@@ -28,38 +29,10 @@ const FAULT = process.env.MF_HARNESS_FAULT ?? "";
 const runId = RUN.runId;
 const prefix = `mfv-${runId}-`;
 
-/** Delete one fixture tenant's rows (child tables first). Models the schema under test lacks are skipped. */
-async function deleteTenant(tx, tenantId) {
-  const del = async (model, where) => { if (tx[model]) await tx[model].deleteMany({ where }); };
-  for (const m of ["auditLog", "emailLog", "magicLinkToken", "passwordResetToken", "attendanceRecord", "memberStatusEvent", "memberPhoto", "importJob", "payment", "classMembershipTier"]) {
-    await del(m, { tenantId });
-    if (FAULT === "teardown-crash" && m === "attendanceRecord") { console.log("[fault] teardown-crash: exiting inside the delete transaction"); process.exit(9); }
-  }
-  // Class packs a journey gave a member (allowance-eligibility, scanner-override): the redemption first, then the
-  // member's pack (it references the member), then the pack template.
-  await del("classPackRedemption", { memberPack: { tenantId } });
-  await del("memberClassPack", { tenantId });
-  await del("classPack", { tenantId });
-  await tx.$executeRawUnsafe(`delete from "LoginEvent" where "tenantId" = $1`, tenantId);
-  await tx.$executeRawUnsafe(`delete from "PasswordHistory" where "userId" in (select id from "User" where "tenantId" = $1)`, tenantId);
-  const rankIds = (await tx.memberRank.findMany({ where: { member: { tenantId } }, select: { id: true } })).map((r) => r.id);
-  await tx.rankHistory.deleteMany({ where: { memberRankId: { in: rankIds } } });
-  await tx.memberRank.deleteMany({ where: { id: { in: rankIds } } });
-  await tx.rankSystem.deleteMany({ where: { tenantId } });
-  const classIds = (await tx.class.findMany({ where: { tenantId }, select: { id: true } })).map((x) => x.id);
-  // Bookings and squad lists reference the class without a cascade; the membership list cascades.
-  await del("classSubscription", { classId: { in: classIds } });
-  await del("classRoster", { classId: { in: classIds } });
-  await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
-  await tx.classInstance.deleteMany({ where: { classId: { in: classIds } } });
-  await tx.class.deleteMany({ where: { tenantId } });
-  // Mats: the tenant link is RESTRICT, so they go before the tenant (their classes have just gone).
-  await del("mat", { tenantId });
-  await tx.membershipTier.deleteMany({ where: { tenantId } });
-  await tx.member.deleteMany({ where: { tenantId } });
-  await tx.user.deleteMany({ where: { tenantId } });
-  await tx.tenant.deleteMany({ where: { id: tenantId } });
-}
+/** The shared deletion (tenant-teardown.mjs), with the harness self-test fault inside the transaction. */
+const deleteTenant = (tx, tenantId) => deleteTenantRows(tx, tenantId, {
+  onModel: (m) => { if (FAULT === "teardown-crash" && m === "attendanceRecord") { console.log("[fault] teardown-crash: exiting inside the delete transaction"); process.exit(9); } },
+});
 
 /** Rows a fixture tenant still has in the tables a fixture writes to. */
 async function rowsLeft(tenantId) {
