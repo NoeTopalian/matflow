@@ -7,6 +7,8 @@
  * fails the request, and never re-enters the transaction.
  *
  * No database: withTenantContext is replaced by a fake that records whether a call happens inside a transaction.
+ * The archived-member check (PR 3, lib/archived-member-guard) runs for real against the same fake; the photo
+ * transaction is found by what it does (it deletes the rows), never by its position.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -16,6 +18,7 @@ const h = vi.hoisted(() => ({
   events: [] as string[],
   delImpl: null as null | (() => Promise<void>),
   oldPhotos: [] as Array<{ id: string; url: string }>,
+  archivedAt: null as Date | null,
 }));
 
 vi.mock("next/server", () => ({
@@ -37,7 +40,16 @@ vi.mock("@vercel/blob", () => ({
 
 const rankSystem = { id: "rank-blue", name: "Blue", discipline: "BJJ", tenantId: "tenant-L2" };
 const tx = {
-  member: { findFirst: async () => ({ id: "member-1" }) },
+  member: {
+    // The archived-member check selects only archivedAt; the route's own read gets the member.
+    findFirst: async (args?: { select?: Record<string, unknown> }) => {
+      if (args?.select && Object.keys(args.select).length === 1 && args.select.archivedAt === true) {
+        h.events.push("archive-check");
+        return { archivedAt: h.archivedAt };
+      }
+      return { id: "member-1" };
+    },
+  },
   rankSystem: { findFirst: async () => rankSystem },
   memberRank: {
     findFirst: async () => ({ id: "mr-1", rankSystemId: "rank-white", stripes: 2, rankSystem }),
@@ -51,8 +63,6 @@ const tx = {
   },
 };
 
-// PR 3: the archived-record guard runs its own read before the route's transactions; it is not what this file pins.
-vi.mock("@/lib/archived-member-guard", () => ({ refuseArchivedMember: async () => null }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async (_tenantId: string, fn: (t: typeof tx) => Promise<unknown>) => {
     h.inTx++;
@@ -91,12 +101,25 @@ function req(body: unknown): Request {
 }
 const promote = () => POST(req({ rankSystemId: "rank-blue", stripes: 0, photoUrl: NEW_PHOTO }), { params: Promise.resolve({ id: "member-1" }) });
 
+/** The transaction that did `marker` (by its events, not its number): its begin and commit indexes. */
+function txThatDid(marker: string): { begin: number; commit: number } {
+  const at = h.events.indexOf(marker);
+  expect(at, `no ${marker} event`).toBeGreaterThan(-1);
+  for (let n = 1; n <= h.txCount; n++) {
+    const begin = h.events.indexOf(`tx${n}-begin`);
+    const end = h.events.findIndex((e) => e === `tx${n}-commit` || e === `tx${n}-rollback`);
+    if (begin < at && at < end) return { begin, commit: h.events.indexOf(`tx${n}-commit`) };
+  }
+  throw new Error(`${marker} happened outside every transaction`);
+}
+
 let logs: string[] = [];
 beforeEach(() => {
   h.inTx = 0;
   h.txCount = 0;
   h.events = [];
   h.delImpl = null;
+  h.archivedAt = null;
   h.oldPhotos = [
     { id: "ph-a", url: BLOB_A },
     { id: "ph-b", url: BLOB_B },
@@ -115,11 +138,13 @@ describe("R10-1(a): the blob delete runs after the photo transaction has committ
     expect(res.status).toBe(200);
     expect(h.events).not.toContain("del-INSIDE-tx");
     expect(h.events).toContain("del-after-commit");
-    // tx2 = the photo-replacement transaction: rows deleted, committed, THEN the blob delete.
-    const i = (e: string) => h.events.indexOf(e);
-    expect(i("rows-deleted")).toBeGreaterThan(i("tx2-begin"));
-    expect(i("tx2-commit")).toBeGreaterThan(i("rows-deleted"));
-    expect(i("del-after-commit")).toBeGreaterThan(i("tx2-commit"));
+    // The photo-replacement transaction (the one that deleted the rows) committed, THEN the blob delete ran.
+    const photoTx = txThatDid("rows-deleted");
+    expect(photoTx.commit).toBeGreaterThan(h.events.indexOf("rows-deleted"));
+    expect(h.events.indexOf("del-after-commit")).toBeGreaterThan(photoTx.commit);
+    // The archived-member check ran for real, before any write.
+    expect(h.events.indexOf("archive-check")).toBeGreaterThan(-1);
+    expect(h.events.indexOf("archive-check")).toBeLessThan(h.events.indexOf("rows-deleted"));
     expect(vi.mocked(del)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(del)).toHaveBeenCalledWith([BLOB_A, BLOB_B]);
     expect(h.events).toContain("photo-created");
@@ -131,10 +156,23 @@ describe("R10-1(a): the blob delete runs after the photo transaction has committ
     expect(res.status).toBe(200);
     expect(h.events).toContain("del-after-commit");
     expect(h.events.filter((e) => e.endsWith("-rollback"))).toEqual([]);
-    // tx1 rank, tx2 photo rows, tx3 new photo — no extra transaction opened because of the failed delete.
-    expect(h.txCount).toBe(3);
+    // No transaction is opened because of the failed delete: none begins after it, and the photo
+    // transaction's own commit stands (no rollback anywhere).
+    const after = h.events.slice(h.events.indexOf("del-after-commit") + 1);
+    expect(after.filter((e) => /^tx\d+-begin$/.test(e))).toEqual([]);
+    expect(txThatDid("rows-deleted").commit).toBeGreaterThan(-1);
     expect(logs.some((l) => /\[rank\/route\].*orphan blob delete failed/.test(l))).toBe(true);
     expect(h.events).toContain("photo-created");
+  });
+
+  it("PR 3: an ARCHIVED member is refused 409 before any write, and no blob is touched", async () => {
+    h.archivedAt = new Date();
+    const res = await promote();
+    expect(res.status).toBe(409);
+    expect(h.events).toContain("archive-check");
+    expect(h.events).not.toContain("rows-deleted");
+    expect(h.events).not.toContain("photo-created");
+    expect(vi.mocked(del)).not.toHaveBeenCalled();
   });
 
   it("a slow delete is not inside any transaction while it waits", async () => {
