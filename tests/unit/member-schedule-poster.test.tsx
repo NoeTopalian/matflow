@@ -147,14 +147,25 @@ describe("the members' day by mat", () => {
   });
 
   it("a booked block's last line is in the block's own ink, not a see-through one", async () => {
-    stub(EVENING, ["gi"]);
-    render(<MemberSchedulePage />);
-    const { day } = await today();
-    const block = within(day).getByRole("button", { name: /^Beginners Course Gi,/ });
-    await waitFor(() => expect(block.style.background).toContain("linear-gradient"));
-    await waitFor(() => expect(block.querySelector("svg")).not.toBeNull()); // the Bell: booked
-    const last = block.querySelector<HTMLElement>('[data-block-part="place"]')!;
-    expect(last.style.color).toBe(block.style.color);
+    // The class is today at 18:40 to 19:30. While it is running a booked block shows Live, not the Bell, so on the
+    // real clock this test failed whenever it ran between 18:40 and 19:30 (CI on PR #77, 7 Nov 2026, 19:05). Run on
+    // the morning of the same day, with only the date frozen (timers stay real for waitFor).
+    const morning = new Date();
+    morning.setHours(10, 0, 0, 0);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(morning);
+    try {
+      stub(EVENING, ["gi"]);
+      render(<MemberSchedulePage />);
+      const { day } = await today();
+      const block = within(day).getByRole("button", { name: /^Beginners Course Gi,/ });
+      await waitFor(() => expect(block.style.background).toContain("linear-gradient"));
+      await waitFor(() => expect(block.querySelector("svg")).not.toBeNull()); // the Bell: booked
+      const last = block.querySelector<HTMLElement>('[data-block-part="place"]')!;
+      expect(last.style.color).toBe(block.style.color);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a booked class that has ended is greyed, its ink unchanged", async () => {

@@ -44,6 +44,15 @@ const tx = {
     db.ops.push(`lock:${strings.join("?").includes("pg_advisory_xact_lock") ? "mats" : "?"}:${String(values[1])}`);
     return 1;
   },
+  // lib/mats.ts lockTypedClasses: the club's classes on no mat that type a place, imported history excepted, in id
+  // order (FOR UPDATE). Its one bind value is the club. Copies, as a database read is.
+  $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!strings.join("?").includes('"sourceImportJobId" IS NULL')) throw new Error(`unexpected raw read: ${strings.join("?")}`);
+    return db.classes
+      .filter((c) => c.tenantId === values[0] && c.matId == null && c.sourceImportJobId == null && c.location != null)
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      .map((c) => ({ id: c.id, location: c.location, deletedAt: c.deletedAt ?? null }));
+  },
   mat: {
     findMany: async ({ where }: { where: Row }) => {
       db.ops.push("mat.findMany");
@@ -290,6 +299,18 @@ describe("POST /api/mats", () => {
     expect((await addPOST(req("POST", { name: "Mat 1", sortOrder: 0 }))).status).toBe(400);
     expect(db.mats).toEqual([]);
     expect(db.ops).toEqual([]);
+  });
+
+  it("refuses a name of nothing but invisible characters, on add and on rename, as it refuses a blank one", async () => {
+    // A zero-width joiner and a soft hyphen: kept in a shown name, but on their own no name at all.
+    const invisible = String.fromCodePoint(0x200d, 0xad, 0x200d);
+    expect(await json(await addPOST(req("POST", { name: invisible })))).toEqual({ error: "Give the mat a name." });
+    expect(db.mats).toEqual([]);
+    db.mats.push({ id: "m1", tenantId: A, name: "Mat 1", nameKey: "mat 1", sortOrder: 0 });
+    const renamed = await renamePATCH(req("PATCH", { name: invisible }), params("m1"));
+    expect(renamed.status).toBe(400);
+    expect(await json(renamed)).toEqual({ error: "Give the mat a name." });
+    expect(db.mats[0]).toMatchObject({ name: "Mat 1", nameKey: "mat 1" });
   });
 
   it("answers the unique index's refusal as the same 409, not a 500", async () => {

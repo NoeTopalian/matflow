@@ -8,15 +8,19 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
-import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError } from "@/lib/class-refs";
+import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError, isMatNameClash } from "@/lib/class-refs";
 import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
 import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
-import { lockClubMats } from "@/lib/mats";
+import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
+import { matForLocation } from "@/lib/mats-store";
+import { isSupportSession } from "@/lib/support-session";
 
 /** A tier vanished between the club check and the write: roll the class back. */
 class TierRefError extends Error {}
 /** The mat is not this club's, or was removed between the club check and the write. */
 class MatRefError extends Error {}
+/** A new Location would be the club's thirteenth mat: roll the class back. */
+class MatLimitError extends Error {}
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -82,7 +86,21 @@ export async function POST(req: Request) {
 
   // `allowedTierIds` is destructured, never spread into `class.create`: it is
   // written as ClassMembershipTier rows in the same transaction.
-  const { schedules, roster, allowedTierIds, ...classData } = parsed.data;
+  // `matName` is resolved to a mat (or a typed place) inside the write
+  // transaction, never written as a column.
+  const { schedules, roster, allowedTierIds, matName, ...classData } = parsed.data;
+
+  // The class form's Location by name. A MatFlow support session may put a
+  // class on an existing mat but may not add one (RULES §5b): its new name
+  // stays a typed place.
+  const mayAddMat = !isSupportSession(session);
+  let locationName: string | null = null;
+  if (matName !== undefined) {
+    if (classData.matId) return NextResponse.json({ error: LOCATION_ERRORS.both, reason: "location" }, { status: 400 });
+    const checked = checkLocationName(matName, mayAddMat);
+    if (!checked.ok) return NextResponse.json({ error: checked.error, reason: "location" }, { status: 400 });
+    locationName = checked.name;
+  }
 
   // Roster mode and rank gates are mutually exclusive — the same rule the PATCH
   // route enforces by clearing one when the other is set. At create time there
@@ -135,17 +153,27 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { cls, instancesCreated, tierIdsWritten, tiersWritten, rosterWritten } = await withTenantContext(session.user.tenantId, async (tx) => {
+    const { cls, instancesCreated, tierIdsWritten, tiersWritten, rosterWritten, locationAdded } = await withTenantContext(session.user.tenantId, async (tx) => {
       // A class created on a mat: the club's mats lock FIRST (so the mat
       // cannot be renamed or removed under this write), then the mat's name,
       // which becomes the class's place whatever was typed (the write-through
-      // rule, lib/mats.ts). A class with no mat takes no mats lock.
-      let matName: string | null = null;
+      // rule, lib/mats.ts). The same lock when a mat is named by name
+      // (`matName`). A class that names no mat takes no mats lock.
+      let place: { matId: string | null; location: string } | null = null;
+      let locationAdded: { id: string; name: string; classIds: string[] } | null = null;
       if (classData.matId) {
         await lockClubMats(tx, session.user.tenantId);
         const mat = await tx.mat.findFirst({ where: { id: classData.matId, tenantId: session.user.tenantId }, select: { name: true } });
         if (!mat) throw new MatRefError();
-        matName = mat.name;
+        place = { matId: classData.matId, location: mat.name };
+      } else if (locationName !== null) {
+        // A Location by name: the club's mat of that name, added here when
+        // there is none (same lock, same transaction as the class).
+        await lockClubMats(tx, session.user.tenantId);
+        const found = await matForLocation(tx, session.user.tenantId, locationName, { mayAddMat, userId: session.user.id, req });
+        if (found.kind === "limit") throw new MatLimitError();
+        place = found.kind === "mat" ? { matId: found.id, location: found.name } : { matId: null, location: found.name };
+        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
       }
       // The club's zone is needed BEFORE the write, not only for the window
       // below: `startDate` is a day marker and the club's calendar date is what
@@ -157,7 +185,7 @@ export async function POST(req: Request) {
         data: {
           tenantId: session.user.tenantId,
           ...classData,
-          ...(matName !== null ? { location: matName } : {}),
+          ...(place !== null ? place : {}),
           schedules: {
             create: schedules.map((s: typeof schedules[number]) => ({
               dayOfWeek: s.dayOfWeek,
@@ -240,7 +268,7 @@ export async function POST(req: Request) {
         days: ROLLING_WINDOW_DAYS,
       });
       const minted = rows.length > 0 ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
-      return { cls, instancesCreated: minted.count, tierIdsWritten, tiersWritten, rosterWritten };
+      return { cls, instancesCreated: minted.count, tierIdsWritten, tiersWritten, rosterWritten, locationAdded };
     });
     await logAudit({
       tenantId: session.user.tenantId,
@@ -252,12 +280,21 @@ export async function POST(req: Request) {
       req,
     });
     return NextResponse.json(
-      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten },
+      // `locationAdded`: the mat this save added from a typed Location, the club's other classes it took with it, and
+      // when the save was done (after the commit), so the page can tell a list read before it from one read after.
+      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten, locationAdded: locationAdded ? { ...locationAdded, savedAt: new Date().toISOString() } : null },
       { status: 201 },
     );
   } catch (e) {
     if (e instanceof TierRefError) {
       return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
+    }
+    if (e instanceof MatLimitError) {
+      return NextResponse.json({ error: LOCATION_ERRORS.limit, reason: "location" }, { status: 409 });
+    }
+    // The unique (club, name key) index is the backstop behind the mats lock.
+    if (locationName !== null && isMatNameClash(e)) {
+      return NextResponse.json({ error: "Couldn't save the location. Try again.", reason: "location" }, { status: 409 });
     }
     // The mat went between the club check and the write, or the foreign key refused it.
     if (e instanceof MatRefError || isMatForeignKeyError(e)) {

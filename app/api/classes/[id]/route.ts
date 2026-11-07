@@ -5,7 +5,7 @@ import { snapshotDiff } from "@/lib/audit-snapshot";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { scheduleSchema, allowedTierIdsSchema } from "@/lib/schemas/class";
+import { scheduleSchema, allowedTierIdsSchema, matNameSchema } from "@/lib/schemas/class";
 import { classCategorySchema } from "@/lib/class-category";
 import { rulesAfterEdit, type ClassAccessRules, type RestrictionPreview } from "@/lib/booking-eligibility";
 import {
@@ -19,8 +19,10 @@ import {
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker, scheduleStartMarker } from "@/lib/today-sessions";
 import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
-import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError } from "@/lib/class-refs";
-import { lockClubMats } from "@/lib/mats";
+import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError, isMatNameClash } from "@/lib/class-refs";
+import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
+import { matForLocation } from "@/lib/mats-store";
+import { isSupportSession } from "@/lib/support-session";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 
@@ -28,6 +30,8 @@ import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 class TierRefError extends Error {}
 /** The mat is not this club's, or was removed between the pre-flight and the write. */
 class MatRefError extends Error {}
+/** A new Location would be the club's thirteenth mat: roll the whole edit back. */
+class MatLimitError extends Error {}
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -51,6 +55,11 @@ const updateSchema = z.object({
   // is replaced by the mat's name when `matId` names a mat, and dropped when
   // the key is omitted and the class is on a mat.
   matId: z.string().min(1).max(64).optional().nullable(),
+  // The class form's Location by name (lib/schemas/class.ts matNameSchema):
+  // this class goes on the club's mat of that name, added in the same
+  // transaction when there is none (taking the club's other classes that type
+  // that name with it). Not with `matId`.
+  matName: matNameSchema.optional(),
   duration: z.number().int().min(1).max(480).optional(),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
@@ -439,6 +448,18 @@ export async function PATCH(req: Request, { params }: Params) {
   const nextTierIds = parsed.data.allowedTierIds ?? [];
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
 
+  // The class form's Location by name. A MatFlow support session may put a
+  // class on an existing mat but may not add one (RULES §5b): its new name
+  // stays a typed place. Checked before anything is read or written.
+  const mayAddMat = !isSupportSession(session);
+  let locationName: string | null = null;
+  if (parsed.data.matName !== undefined) {
+    if (parsed.data.matId) return NextResponse.json({ error: LOCATION_ERRORS.both, reason: "location" }, { status: 400 });
+    const checked = checkLocationName(parsed.data.matName, mayAddMat);
+    if (!checked.ok) return NextResponse.json({ error: checked.error, reason: "location" }, { status: 400 });
+    locationName = checked.name;
+  }
+
   try {
     // Pre-flight: ownership, then every foreign id in the body, then (dry run
     // only) the owner's preview of who the change turns away (D2: bookings
@@ -537,12 +558,12 @@ export async function PATCH(req: Request, { params }: Params) {
     }
 
     const updated = await withTenantContext(tenantId, async (tx) => {
-      // MATS LOCK FIRST, and only when this edit names a mat: it is the first
-      // lock of every transaction that takes it (lib/mats.ts), ahead of the
-      // Class row lock below, so a rename of that mat and this save are
-      // serial and cannot deadlock. An edit that does not name a mat takes no
-      // mats lock at all.
-      if (parsed.data.matId) await lockClubMats(tx, tenantId);
+      // MATS LOCK FIRST, and only when this edit names a mat, by id or by
+      // name (`matName`, which may add one): it is the first lock of every
+      // transaction that takes it (lib/mats.ts), ahead of the Class row lock
+      // below, so a rename of that mat and this save are serial and cannot
+      // deadlock. An edit that names no mat takes no mats lock at all.
+      if (parsed.data.matId || locationName !== null) await lockClubMats(tx, tenantId);
       // OWNERSHIP FIRST — before any destructive statement.
       //
       // This check used to sit AFTER the deletes below, as the `updateMany`
@@ -572,10 +593,23 @@ export async function PATCH(req: Request, { params }: Params) {
       // naming one while the class is on a mat: the place text belongs to the
       // mat, so a sent `location` is dropped — and no mats lock is needed.
       let placeOverride: { location: string } | { location: undefined } | null = null;
+      // The mat written: as sent, unless a Location by name decides it.
+      let matIdWrite = parsed.data.matId;
+      let locationAdded: { id: string; name: string; classIds: string[] } | null = null;
       if (parsed.data.matId) {
         const mat = await tx.mat.findFirst({ where: { id: parsed.data.matId, tenantId }, select: { name: true } });
         if (!mat) throw new MatRefError();
         placeOverride = { location: mat.name };
+      } else if (locationName !== null) {
+        // A Location by name: the club's mat of that name, added here when
+        // there is none (under the mats lock, in this transaction), taking the
+        // club's other classes that type the name with it. A caller that may
+        // not add mats keeps a new name as the class's typed place, off any mat.
+        const found = await matForLocation(tx, tenantId, locationName, { mayAddMat, userId: session.user.id, req, exceptClassId: id });
+        if (found.kind === "limit") throw new MatLimitError();
+        placeOverride = { location: found.name };
+        matIdWrite = found.kind === "mat" ? found.id : null;
+        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
       } else if (parsed.data.matId === undefined && owned[0].matId != null) {
         placeOverride = { location: undefined };
       }
@@ -725,7 +759,7 @@ export async function PATCH(req: Request, { params }: Params) {
         coachUserId: parsed.data.coachUserId,
         // On a mat, the place is the mat's name; off one (or leaving one), the text that was sent.
         location: placeOverride ? placeOverride.location : parsed.data.location,
-        matId: parsed.data.matId,
+        matId: matIdWrite,
         duration: parsed.data.duration,
         maxCapacity: parsed.data.maxCapacity,
         // Roster mode and rank gates are mutually exclusive, so entering roster
@@ -792,7 +826,7 @@ export async function PATCH(req: Request, { params }: Params) {
       };
       return {
         cls, scheduleChange, before, tiersBefore, tiersAfter, keptBookings, sessionsCreatedOnResume,
-        lifecycleChange, legacyArchivedOn,
+        lifecycleChange, legacyArchivedOn, locationAdded,
       };
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -805,7 +839,8 @@ export async function PATCH(req: Request, { params }: Params) {
       entityId: id,
       metadata: {
         // `baseScheduleIds` is the client's freshness check, not a field of the class.
-        fields: Object.keys(parsed.data).filter((k) => k !== "baseScheduleIds"),
+        // A Location by name (`matName`) is recorded as the columns it sets.
+        fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" ? [] : k === "matName" ? ["matId", "location"] : [k])))],
         // D2: no booking is cancelled by an edit any more. The members it newly
         // turns away (bookings kept) are on the durable
         // class.bookings.kept_ineligible rows written inside the transaction;
@@ -849,12 +884,23 @@ export async function PATCH(req: Request, { params }: Params) {
       sessionsCreatedOnResume: updated.sessionsCreatedOnResume,
       // D2: booked members this save newly turns away, by trigger; bookings kept.
       bookingsKeptIneligible: updated.keptBookings,
+      // The mat this save added from a typed Location, the club's other classes it took with it, and when the save
+      // was done (after the commit), so the page can tell a list read before it from one read after.
+      locationAdded: updated.locationAdded ? { ...updated.locationAdded, savedAt: new Date().toISOString() } : null,
     });
   } catch (e) {
     // Thrown, not returned, so the transaction rolls back: no roster, tier or
     // booking change survives a refused tier list.
     if (e instanceof TierRefError) {
       return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
+    }
+    // The same for a Location past the twelfth mat: nothing of the edit is written.
+    if (e instanceof MatLimitError) {
+      return NextResponse.json({ error: LOCATION_ERRORS.limit, reason: "location" }, { status: 409 });
+    }
+    // The unique (club, name key) index is the backstop behind the mats lock.
+    if (locationName !== null && isMatNameClash(e)) {
+      return NextResponse.json({ error: "Couldn't save the location. Try again.", reason: "location" }, { status: 409 });
     }
     if (e instanceof StaleScheduleError) {
       return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
