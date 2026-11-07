@@ -594,21 +594,21 @@ export async function PATCH(req: Request, { params }: Params) {
       let placeOverride: { location: string } | { location: undefined } | null = null;
       // The mat written: as sent, unless a Location by name decides it.
       let matIdWrite = parsed.data.matId;
-      let locationAdded: { id: string; name: string } | null = null;
+      let locationAdded: { id: string; name: string; classIds: string[] } | null = null;
       if (parsed.data.matId) {
         const mat = await tx.mat.findFirst({ where: { id: parsed.data.matId, tenantId }, select: { name: true } });
         if (!mat) throw new MatRefError();
         placeOverride = { location: mat.name };
       } else if (locationName !== null) {
         // A Location by name: the club's mat of that name, added here when
-        // there is none (under the mats lock, in this transaction). Only this
-        // class is put on it. A caller that may not add mats keeps a new name
-        // as the class's typed place, off any mat.
-        const found = await matForLocation(tx, tenantId, locationName, { mayAddMat, userId: session.user.id, req });
+        // there is none (under the mats lock, in this transaction), taking the
+        // club's other classes that type the name with it. A caller that may
+        // not add mats keeps a new name as the class's typed place, off any mat.
+        const found = await matForLocation(tx, tenantId, locationName, { mayAddMat, userId: session.user.id, req, exceptClassId: id });
         if (found.kind === "limit") throw new MatLimitError();
         placeOverride = { location: found.name };
         matIdWrite = found.kind === "mat" ? found.id : null;
-        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name };
+        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
       } else if (parsed.data.matId === undefined && owned[0].matId != null) {
         placeOverride = { location: undefined };
       }
@@ -881,8 +881,9 @@ export async function PATCH(req: Request, { params }: Params) {
       sessionsCreatedOnResume: updated.sessionsCreatedOnResume,
       // D2: booked members this save newly turns away, by trigger; bookings kept.
       bookingsKeptIneligible: updated.keptBookings,
-      // The mat this save added from a typed Location, or null.
-      locationAdded: updated.locationAdded,
+      // The mat this save added from a typed Location, the club's other classes it took with it, and when the save
+      // was done (after the commit), so the page can tell a list read before it from one read after.
+      locationAdded: updated.locationAdded ? { ...updated.locationAdded, savedAt: new Date().toISOString() } : null,
     });
   } catch (e) {
     // Thrown, not returned, so the transaction rolls back: no roster, tier or

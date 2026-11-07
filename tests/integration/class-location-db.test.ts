@@ -8,8 +8,12 @@
 //    transaction, with one `mat.create` audit row; a refused save leaves
 //    neither a mat nor a class behind;
 //  - a name matching a mat whatever its capitals and spacing reuses it, and
-//    only the saved class moves (the club's other classes that type the name
-//    stay as they are);
+//    only the saved class moves;
+//  - a NEW mat takes every class of the club that types its name (capitals and
+//    spacing aside), in the same transaction, with one mat.adopt row; no other
+//    club's class is touched;
+//  - the Mat name-key unique index refuses a duplicate in the shape the routes
+//    read as a Location clash (isMatNameClash), under both roles;
 //  - the twelfth-mat cap holds and writes nothing past it;
 //  - another club's mat id is refused, and another club's mat of the same
 //    name is never used;
@@ -32,6 +36,7 @@ import { decideUndo, type AuditRowLike } from "@/lib/undo-registry";
 import { POST as classPOST } from "@/app/api/classes/route";
 import { PATCH as classPATCH } from "@/app/api/classes/[id]/route";
 import { LOCATION_ERRORS, MAT_LIMIT } from "@/lib/mats";
+import { isMatNameClash } from "@/lib/class-refs";
 
 const HAS_DB = !!process.env.TEST_DATABASE_URL;
 const request = (path: string, method = "GET", body?: unknown) =>
@@ -60,8 +65,8 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     withRlsBypass((tx) => tx.mat.findMany({ where: { tenantId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { id: true, name: true, nameKey: true, sortOrder: true } }));
   const classes = (tenantId: string) =>
     withRlsBypass((tx) => tx.class.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, matId: true, location: true } }));
-  const matAudits = (tenantId: string) =>
-    withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, action: "mat.create" }, orderBy: { createdAt: "asc" }, select: { entityId: true, metadata: true } }));
+  const matAudits = (tenantId: string, action = "mat.create") =>
+    withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, action }, orderBy: { createdAt: "asc" }, select: { entityId: true, metadata: true } }));
   const addMatRow = (tenantId: string, name: string, sortOrder: number) =>
     withRlsBypass((tx) => tx.mat.create({ data: { tenantId, name, nameKey: name.toLowerCase(), sortOrder }, select: { id: true, name: true } }));
   /** A class edit's `class.updated` row is written after the response, best effort: wait for it (as mats-db does). */
@@ -95,10 +100,10 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     as(T);
     const res = await create({ matName: "  Mat   1 " });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; locationAdded: { id: string; name: string } | null };
+    const body = (await res.json()) as { id: string; locationAdded: { id: string; name: string; classIds: string[]; savedAt: string } | null };
     const [mat] = await mats(T);
     expect(await mats(T)).toEqual([{ id: mat.id, name: "Mat 1", nameKey: "mat 1", sortOrder: 0 }]);
-    expect(body.locationAdded).toEqual({ id: mat.id, name: "Mat 1" });
+    expect(body.locationAdded).toEqual({ id: mat.id, name: "Mat 1", classIds: [], savedAt: expect.any(String) });
     expect((await classes(T)).find((c) => c.id === body.id)).toMatchObject({ matId: mat.id, location: "Mat 1" });
     expect(await matAudits(T)).toEqual([{ entityId: mat.id, metadata: expect.objectContaining({ name: "Mat 1" }) }]);
   });
@@ -122,17 +127,58 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     expect(await matAudits(T)).toHaveLength(1);
   });
 
-  it("edit: a typed place picked from the list becomes a mat for this class only", async () => {
+  it("edit: a typed place picked from the list becomes a mat, and every class of the club that types it goes on it; no other club's", async () => {
     const T = await club("edit");
-    as(T);
-    const a = await classRow(T, "A", "Upstairs");
+    const other = await club("edit-other");
+    const a = await classRow(T, "A", null);
     const b = await classRow(T, "B", "Upstairs");
-    expect((await edit(a.id, { matName: "Upstairs" })).status).toBe(200);
+    const c = await classRow(T, "C", "  UPSTAIRS ");
+    const d = await classRow(T, "D", "Upstairs room");
+    const theirs = await classRow(other, "Theirs", "Upstairs");
+    as(T);
+    const res = await edit(a.id, { matName: "Upstairs" });
+    expect(res.status).toBe(200);
     const [mat] = await mats(T);
     expect(mat).toMatchObject({ name: "Upstairs", nameKey: "upstairs" });
+    const body = (await res.json()) as { locationAdded: { classIds: string[] } };
+    expect([...body.locationAdded.classIds].sort()).toEqual([b.id, c.id].sort());
     const rows = await classes(T);
-    expect(rows.find((c) => c.id === a.id)).toMatchObject({ matId: mat.id, location: "Upstairs" });
-    expect(rows.find((c) => c.id === b.id)).toMatchObject({ matId: null, location: "Upstairs" });
+    for (const id of [a.id, b.id, c.id]) expect(rows.find((r) => r.id === id)).toMatchObject({ matId: mat.id, location: "Upstairs" });
+    expect(rows.find((r) => r.id === d.id)).toMatchObject({ matId: null, location: "Upstairs room" });
+    expect((await classes(other)).find((r) => r.id === theirs.id)).toMatchObject({ matId: null, location: "Upstairs" });
+    expect(await mats(other)).toEqual([]);
+    expect(await matAudits(T)).toHaveLength(1);
+    const adopt = await matAudits(T, "mat.adopt");
+    expect(adopt).toHaveLength(1);
+    expect((adopt[0].metadata as { mats: { id: string; created: boolean; classIds: string[] }[] }).mats.map((m) => ({ ...m, classIds: [...m.classIds].sort() })))
+      .toEqual([expect.objectContaining({ id: mat.id, created: false, classIds: [b.id, c.id].sort() })]);
+  });
+
+  it("create: a new mat from a typed name takes the classes that type it too", async () => {
+    const T = await club("create-takes");
+    const typed = await classRow(T, "Typed", "cage");
+    as(T);
+    const res = await create({ name: "New", matName: "Cage" });
+    expect(res.status).toBe(201);
+    const [mat] = await mats(T);
+    const rows = await classes(T);
+    expect(rows.find((r) => r.id === typed.id)).toMatchObject({ matId: mat.id, location: "Cage" });
+    expect(rows.find((r) => r.name === "New")).toMatchObject({ matId: mat.id, location: "Cage" });
+  });
+
+  it("the Mat name-key unique index refuses a duplicate in the shape the routes read as a Location clash", async () => {
+    const T = await club("p2002");
+    await addMatRow(T, "Cage", 0);
+    let caught: unknown = null;
+    try {
+      await withTenantContext(T, (tx) => tx.mat.create({ data: { tenantId: T, name: "CAGE", nameKey: "cage", sortOrder: 1 } }));
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { code?: string } | null)?.code).toBe("P2002");
+    expect(isMatNameClash(caught)).toBe(true);
+    // Another unique refusal (a class instance at the same date and start) is not a Location clash.
+    expect(isMatNameClash({ code: "P2002", meta: { modelName: "ClassInstance", target: ["classId", "date", "startTime"] } })).toBe(false);
   });
 
   it(`the cap: past ${MAT_LIMIT} mats a create and an edit are refused in plain words, and nothing is written`, async () => {

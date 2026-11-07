@@ -58,8 +58,12 @@ export function isMatForeignKeyError(e: unknown): boolean {
 export function isMatNameClash(e: unknown): boolean {
   const err = e as { code?: unknown; meta?: unknown } | null;
   if (!err || err.code !== "P2002") return false;
-  const meta = (err.meta ?? {}) as { modelName?: unknown };
+  const meta = (err.meta ?? {}) as { modelName?: unknown; target?: unknown; driverAdapterError?: { cause?: { constraint?: { fields?: unknown } } } };
   if (meta.modelName === "Mat") return true;
+  // The pg driver adapter's shape (Prisma 7 with @prisma/adapter-pg) names the index's fields here.
+  const fields = meta.driverAdapterError?.cause?.constraint?.fields;
+  if (Array.isArray(fields) && fields.some((f) => String(f).includes("nameKey"))) return true;
+  if (Array.isArray(meta.target) && meta.target.some((f) => String(f).includes("nameKey"))) return true;
   try {
     return JSON.stringify(meta).includes("nameKey");
   } catch {

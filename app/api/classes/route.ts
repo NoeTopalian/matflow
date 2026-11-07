@@ -160,7 +160,7 @@ export async function POST(req: Request) {
       // rule, lib/mats.ts). The same lock when a mat is named by name
       // (`matName`). A class that names no mat takes no mats lock.
       let place: { matId: string | null; location: string } | null = null;
-      let locationAdded: { id: string; name: string } | null = null;
+      let locationAdded: { id: string; name: string; classIds: string[] } | null = null;
       if (classData.matId) {
         await lockClubMats(tx, session.user.tenantId);
         const mat = await tx.mat.findFirst({ where: { id: classData.matId, tenantId: session.user.tenantId }, select: { name: true } });
@@ -173,7 +173,7 @@ export async function POST(req: Request) {
         const found = await matForLocation(tx, session.user.tenantId, locationName, { mayAddMat, userId: session.user.id, req });
         if (found.kind === "limit") throw new MatLimitError();
         place = found.kind === "mat" ? { matId: found.id, location: found.name } : { matId: null, location: found.name };
-        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name };
+        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
       }
       // The club's zone is needed BEFORE the write, not only for the window
       // below: `startDate` is a day marker and the club's calendar date is what
@@ -280,8 +280,9 @@ export async function POST(req: Request) {
       req,
     });
     return NextResponse.json(
-      // `locationAdded`: the mat this save added from a typed Location, or null.
-      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten, locationAdded },
+      // `locationAdded`: the mat this save added from a typed Location, the club's other classes it took with it, and
+      // when the save was done (after the commit), so the page can tell a list read before it from one read after.
+      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten, locationAdded: locationAdded ? { ...locationAdded, savedAt: new Date().toISOString() } : null },
       { status: 201 },
     );
   } catch (e) {

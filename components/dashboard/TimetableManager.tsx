@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { MAT_NAME_MAX, matNameKey, placeSuggestions } from "@/lib/mats";
+import { matNameKey, placeSuggestions } from "@/lib/mats";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
   X, Edit2, RefreshCw, Tag, Pause, Archive, ArchiveRestore, Play,
@@ -56,6 +56,8 @@ interface Props {
   matsLoadFailed?: boolean;
   /** A MatFlow support session: mats and the split are the club's to change, so neither control is shown. */
   supportSession?: boolean;
+  /** When the server began reading this page's mats (ISO time): tells a list read after a save from one read before it. */
+  matsReadAt?: string;
   primaryColor: string;
   role: string;
   // Session F: drives the "My classes" filter. When null (e.g. no
@@ -118,8 +120,14 @@ interface ScheduleChange {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** Said when a save turned a typed Location into one of the club's saved locations (a mat). */
-const savedAsLocation = (name: string) => `“${name}” is saved as a location.`;
+/** What a save that added a Location reports: the mat, the club's other classes it took, and when it was saved. */
+type LocationAdded = MatOption & { classIds?: string[]; savedAt?: string };
+
+/** Said when a save turned a typed Location into one of the club's saved locations (a mat), with every class now on it. */
+const savedAsLocation = (added: LocationAdded) => {
+  const n = 1 + (added.classIds?.length ?? 0);
+  return `“${added.name}” is saved as a location. ${plural(n, "class is", "classes are")} now on it.`;
+};
 
 /**
  * The save message, in the interface's voice: state what happened.
@@ -824,6 +832,11 @@ function ClassForm({
   const locationError = error?.reason === "location" && error !== locationErrorDismissed ? error.message : null;
   // The box's visible label (and its accessible name).
   const newLocationLabel = supportSession ? "Place for this class" : "Name of the new location";
+  // The class's own place when the list cannot offer it. Never the same text as another option: a typed place that
+  // is a saved location's name (older data, on no mat) says it is only typed here.
+  const keepLabel = !initial?.matId && initial?.location && mats.some((m) => matNameKey(m.name) === matNameKey(initial.location ?? ""))
+    ? `${initial.location} (typed on this class only)`
+    : (initial?.location ?? "");
   // A refused Location is said beside the field; focus goes there so it is on screen, with what was typed kept.
   useEffect(() => {
     if (error?.reason !== "location") return;
@@ -1189,7 +1202,7 @@ function ClassForm({
             {places.map((p) => (
               <option key={p.key} value={`place:${p.name}`}>{p.name}</option>
             ))}
-            {initialChoice === "keep" && <option value="keep">{initial?.location}</option>}
+            {initialChoice === "keep" && <option value="keep">{keepLabel}</option>}
             <option value="none">No location</option>
             <option value="new">{supportSession ? "Type a place" : "Add a new location…"}</option>
           </Select>
@@ -1202,7 +1215,6 @@ function ClassForm({
                 ref={newLocationInput}
                 id="class-form-new-location"
                 aria-label={newLocationLabel}
-                maxLength={MAT_NAME_MAX}
                 value={newLocation}
                 onChange={(e) => {
                   setNewLocation(e.target.value);
@@ -1214,7 +1226,7 @@ function ClassForm({
               />
               {supportSession && (
                 <p id="class-form-new-location-hint" className="mt-1 text-[11px] text-tx-3" data-testid="class-form-new-location-hint">
-                  Support access can&rsquo;t add saved locations, so this stays a place typed on this class only.
+                  Support access can&rsquo;t add saved locations. If this name is one of them, the class goes on it; otherwise it stays a place typed on this class only.
                 </p>
               )}
             </>
@@ -1622,16 +1634,20 @@ const NO_CLASSES: ClassRow[] = [];
 
 export default function TimetableManager({
   initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [],
-  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportSession = false,
+  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportSession = false, matsReadAt,
   primaryColor, role, currentUserId,
 }: Props) {
   // A class saved with a new Location adds a mat: it is used at once, before the refresh brings the server's list.
-  // The server's next list is the truth: every new snapshot drops what was added here (it has it, or the mat was
-  // removed since, in the Mats sheet or another tab), as the classes snapshot below is adopted during render.
-  const [added, setAdded] = useState<{ from: MatOption[]; mats: MatOption[] }>({ from: serverMats, mats: [] });
-  if (added.from !== serverMats) setAdded({ from: serverMats, mats: [] });
-  const addedMats = added.from === serverMats ? added.mats : NO_MATS;
-  const addMat = (mat: MatOption) => setAdded((a) => ({ ...a, mats: [...a.mats, mat] }));
+  // It is kept until a server list has it, or until a list read AFTER the save lacks it (the mat was removed since,
+  // in the Mats sheet or another tab). A list read before the save (a refresh that was already in flight) is not
+  // the truth about it, so it does not drop it.
+  const [added, setAdded] = useState<LocationAdded[]>([]);
+  const readAt = matsReadAt ? Date.parse(matsReadAt) : Number.NaN;
+  const addedMats = useMemo(
+    () => added.filter((a) => !serverMats.some((m) => m.id === a.id) && !(readAt > Date.parse(a.savedAt ?? ""))),
+    [added, serverMats, readAt],
+  );
+  const addMat = (mat: LocationAdded) => setAdded((a) => [...a, mat]);
   const mats = useMemo(() => {
     const extra = addedMats.filter((a) => !serverMats.some((m) => m.id === a.id));
     return extra.length > 0 ? [...serverMats, ...extra] : serverMats;
@@ -1973,6 +1989,16 @@ export default function TimetableManager({
     setDrawerOpen(true);
   }
 
+  // A save that added a Location: the new mat is used at once, and the club's other classes it took are shown on it.
+  function takeLocation(loc: LocationAdded) {
+    addMat(loc);
+    const moved = new Set(loc.classIds ?? []);
+    if (moved.size === 0) return;
+    const onIt = (c: ClassRow) => (moved.has(c.id) ? { ...c, matId: loc.id, location: loc.name } : c);
+    setClasses((prev) => prev.map(onIt));
+    setInactiveClasses((prev) => prev.map(onIt));
+  }
+
   async function handleSave(data: Record<string, unknown>) {
     setSaving(true);
     setSaveError(null);
@@ -2017,9 +2043,9 @@ export default function TimetableManager({
         const { scheduleChange, bookingsKeptIneligible, locationAdded, ...updated } = (await res.json()) as {
           scheduleChange: ScheduleChange | null;
           bookingsKeptIneligible?: Partial<Record<"squad" | "rank" | "membership", string[]>>;
-          locationAdded?: MatOption | null;
+          locationAdded?: LocationAdded | null;
         } & Partial<ClassRow>;
-        if (locationAdded) addMat(locationAdded);
+        if (locationAdded) takeLocation(locationAdded);
         setClasses((prev) =>
           prev.map((c) =>
             c.id === editTarget.id
@@ -2036,7 +2062,7 @@ export default function TimetableManager({
         showToast(
           (turnedAway > 0
             ? `${describeSave(scheduleChange).replace(/\.?$/, ".")} ${turnedAway} booked ${turnedAway === 1 ? "member is" : "members are"} now turned away at the door; ${turnedAway === 1 ? "the booking is" : "their bookings are"} kept.`
-            : describeSave(scheduleChange)) + (locationAdded ? ` ${savedAsLocation(locationAdded.name)}` : ""),
+            : describeSave(scheduleChange)) + (locationAdded ? ` ${savedAsLocation(locationAdded)}` : ""),
           kept > 0 || turnedAway > 0 ? "warning" : "success",
         );
       } else {
@@ -2053,10 +2079,10 @@ export default function TimetableManager({
         // `instancesCreated` is a report about the save (the sessions minted
         // for the next eight weeks), not a field of the class — kept off the row
         // and put in the toast, so "created" also says it is on the timetable.
-        const { instancesCreated, locationAdded, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[]; locationAdded?: MatOption | null } & ClassRow;
-        if (locationAdded) addMat(locationAdded);
+        const { instancesCreated, locationAdded, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[]; locationAdded?: LocationAdded | null } & ClassRow;
+        if (locationAdded) takeLocation(locationAdded);
         setClasses((prev) => [...prev, createdClassRow(created, membershipTiers)]);
-        showToast(`Class created · ${instancesCreated} sessions added to the timetable${locationAdded ? `. ${savedAsLocation(locationAdded.name)}` : ""}`, "success");
+        showToast(`Class created · ${instancesCreated} sessions added to the timetable${locationAdded ? `. ${savedAsLocation(locationAdded)}` : ""}`, "success");
       }
       // The page's cached copy predates this save; without a refresh, browser
       // Back re-mounts the timetable from it and the change is not shown.

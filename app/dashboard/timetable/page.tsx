@@ -157,6 +157,8 @@ export default async function TimetablePage() {
   // UI-RULES §7: unguarded. An empty timetable used to be the failure mode as
   // well as the genuine state, so an outage looked like a gym that runs no
   // classes — and invited someone to rebuild a schedule that already exists.
+  // Before the mats are read: a list read after a class save that added a mat is the truth about that mat.
+  const matsReadAt = new Date().toISOString();
   const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses, matsAndLayout] = await Promise.all([
     getClasses(session!.user.tenantId),
     getRankSystems(session!.user.tenantId),
@@ -183,6 +185,7 @@ export default async function TimetablePage() {
       mats={matsAndLayout.mats}
       storedLayout={matsAndLayout.storedLayout}
       matsLoadFailed={matsAndLayout.failed}
+      matsReadAt={matsReadAt}
       // A MatFlow support session can put a class on a mat, but cannot set up mats or change the split.
       supportSession={typeof (session!.user as { impersonatedBy?: unknown }).impersonatedBy === "string"}
       primaryColor={session!.user.primaryColor}

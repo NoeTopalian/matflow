@@ -19,14 +19,23 @@ describe("cleanMatName / matNameKey", () => {
     expect(matNameKey("Mat 10")).not.toBe(matNameKey("Mat 1"));
   });
 
-  it("removes invisible format characters, so a name of nothing but them is blank and cannot be saved", () => {
-    // Zero-width space, zero-width joiner, zero-width non-joiner, word joiner, byte order mark.
-    expect(cleanMatName("​‍‌⁠﻿")).toBe("");
-    expect(cleanMatName(" ​ ")).toBe("");
-    expect(cleanMatName("Mat​ 1")).toBe("Mat 1");
-    expect(matNameKey("Mat‍ 1")).toBe(matNameKey("Mat 1"));
-    expect(checkLocationName("​​", true)).toEqual({ ok: false, error: LOCATION_ERRORS.empty });
-    expect(checkLocationName("Cage​", true)).toEqual({ ok: true, name: "Cage" });
+  it("removes invisible formatting characters, so a name of nothing but them is blank and cannot be saved", () => {
+    // Zero-width space, left-to-right and right-to-left marks, an embedding and an override, word joiner, the
+    // isolates, byte order mark.
+    expect(cleanMatName("\u200B\u200E\u200F\u202A\u202E\u2060\u2066\u2069\uFEFF")).toBe("");
+    expect(cleanMatName(" \u200B ")).toBe("");
+    expect(cleanMatName("Mat\u200B 1")).toBe("Mat 1");
+    expect(matNameKey("\u2066Mat 1\u2069")).toBe(matNameKey("Mat 1"));
+    expect(checkLocationName("\u200B\u200B", true)).toEqual({ ok: false, error: LOCATION_ERRORS.empty });
+    expect(checkLocationName("Cage\u200B", true)).toEqual({ ok: true, name: "Cage" });
+  });
+
+  it("keeps zero-width joiners and non-joiners, which emoji and several scripts need", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(cleanMatName(`Kids ${family}`)).toBe(`Kids ${family}`);
+    // Persian "mi-ravam" (I go): the non-joiner is part of the spelling.
+    expect(cleanMatName("\u0645\u06CC\u200C\u0631\u0648\u0645")).toBe("\u0645\u06CC\u200C\u0631\u0648\u0645");
+    expect(cleanMatName("\u200D")).toBe("\u200D");
   });
 
   it("treats a composed and a decomposed accent as the same name", () => {

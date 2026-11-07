@@ -6,7 +6,8 @@
 // split is the club's choice; by keyboard, types "Mat 1" as a new location on one class and picks it from the list
 // on a second; types "Mat 2" on a third with a forced failed save first (the typed text is kept, one retry saves);
 // sees that saving locations did not change the split; presses By mat and gets two columns; the members' Monday
-// follows; picks a place typed on two Tuesday classes for a third class, which moves that one class only; on a phone
+// follows; picks a place typed on two Tuesday classes for a third class, which takes all three onto the new location
+// (and one of them, edited for something else, stays put); on a phone
 // picks a saved location for a new class from the same list; and at 390 px a refused Location (twelve already) is
 // said beside the field with the typed name kept and focus on it.
 import { createRequire } from "node:module";
@@ -33,6 +34,8 @@ const matRows = () => q(`select id, name from "Mat" where "tenantId" = $1 order 
 const classRow = async (name) => (await q(`select c.location, c."matId", m.name mat from "Class" c left join "Mat" m on m.id = c."matId" where c."tenantId" = $1 and c.name = $2`, [club.tenantId, name]))[0];
 const storedLayout = async () => (await q(`select "timetableLayout" v from "Tenant" where id = $1`, [club.tenantId]))[0].v;
 const matCreateAudits = async () => (await q(`select count(*)::int n from "AuditLog" where "tenantId" = $1 and action = 'mat.create'`, [club.tenantId]))[0].n;
+const adoptAudits = async () => (await q(`select count(*)::int n from "AuditLog" where "tenantId" = $1 and action = 'mat.adopt'`, [club.tenantId]))[0].n;
+const capacityOf = async (name) => (await q(`select "maxCapacity" v from "Class" where "tenantId" = $1 and name = $2`, [club.tenantId, name]))[0].v;
 const matHeads = (page, day) => weekDay(page, day).locator("[data-mat-head]").evaluateAll((els) => els.map((e) => (e.textContent ?? "").trim()));
 const dialog = (page) => page.getByRole("dialog", { name: "Edit class" });
 
@@ -196,7 +199,7 @@ try {
     }
   });
 
-  await section("pick-place", `"Upstairs", typed on two Tuesday classes, is offered to a third (${UNPLACED}, no place) between the saved locations and No location; picked by keyboard, it is saved as a location and only ${UNPLACED} moves onto it: the two that type it stay as typed`, async () => {
+  await section("pick-place", `"Upstairs", typed on two Tuesday classes, is offered to a third (${UNPLACED}, no place) between the saved locations and No location; picked by keyboard, it is saved as a location and all three classes are on it ("3 classes are now on it"); ${TYPED[0]} then lists "Upstairs" once, on it, and an edit of its capacity leaves its Location as it was`, async () => {
     for (const [name, location] of [[TYPED[0], "Upstairs"], [TYPED[1], "Upstairs"], [UNPLACED, null]]) {
       const status = await main.evaluate(async (body) => (await fetch("/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status, { name, location, duration: 60, schedules: TUESDAY_1000 });
       expect(status).toBe(201);
@@ -216,14 +219,30 @@ try {
     await expect(select).toHaveValue("place:Upstairs");
     await saveByKeyboard(main);
     await expect(dialog(main)).toHaveCount(0);
-    await expect(main.getByText("“Upstairs” is saved as a location.", { exact: false }).first()).toBeVisible();
+    await expect(main.getByText("“Upstairs” is saved as a location. 3 classes are now on it.", { exact: false }).first()).toBeVisible();
     const mats = await matRows();
     expect(mats.map((m) => m.name)).toEqual(["Mat 1", "Mat 2", "Upstairs"]);
-    expect(await classRow(UNPLACED)).toEqual({ location: "Upstairs", matId: mats[2].id, mat: "Upstairs" });
-    // The classes that type it are left as they were: the Mats sheet does the bulk conversion.
-    for (const name of TYPED) expect(await classRow(name)).toEqual({ location: "Upstairs", matId: null, mat: null });
+    const upstairs = mats[2].id;
+    // All three: the one saved and the two that typed it (as "Add these as mats" does).
+    for (const name of [UNPLACED, ...TYPED]) expect(await classRow(name)).toEqual({ location: "Upstairs", matId: upstairs, mat: "Upstairs" });
     expect(await matCreateAudits()).toBe(3);
-    return { mats: mats.map((m) => m.name) };
+    expect(await adoptAudits()).toBe(1);
+    // Yoga, now on Upstairs: the list names it once, selected; an unrelated edit does not touch its Location.
+    const yoga = await openEdit(main, TYPED[0], "tue");
+    const texts = await yoga.locator("option").allTextContents();
+    expect(texts).toEqual(["Mat 1", "Mat 2", "Upstairs", "No location", "Add a new location…"]);
+    expect(new Set(texts.map((t) => t.trim().toLowerCase())).size).toBe(texts.length);
+    await expect(yoga).toHaveValue(`mat:${upstairs}`);
+    await dialog(main).getByLabel("Max Capacity", { exact: true }).fill("20");
+    const patch = main.waitForRequest((r) => r.method() === "PATCH" && /\/api\/classes\/[^/?]+$/.test(new URL(r.url()).pathname));
+    await saveByKeyboard(main);
+    const sent = JSON.parse((await patch).postData() ?? "{}");
+    await expect(dialog(main)).toHaveCount(0);
+    expect(Object.keys(sent).filter((k) => ["matId", "matName", "location"].includes(k))).toEqual([]);
+    await expect.poll(() => capacityOf(TYPED[0])).toBe(20);
+    expect(await classRow(TYPED[0])).toEqual({ location: "Upstairs", matId: upstairs, mat: "Upstairs" });
+    expect((await matRows()).map((m) => m.name)).toEqual(["Mat 1", "Mat 2", "Upstairs"]);
+    return { mats: mats.map((m) => m.name), yogaOptions: texts };
   });
 
   for (const width of [375, 390]) {

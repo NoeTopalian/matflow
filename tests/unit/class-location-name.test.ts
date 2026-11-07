@@ -4,7 +4,9 @@
  * `matName`: the class goes on the club's mat of that name whatever its
  * capitals and spacing, and a mat is added when there is none, under the mats
  * lock and in the SAME transaction as the class write, recorded as
- * `mat.create` exactly as POST /api/mats records one. Past the twelfth mat the
+ * `mat.create` exactly as POST /api/mats records one. A mat added this way
+ * takes every other class of the club that types the name, in the same
+ * transaction, recorded as adopt records it. Past the twelfth mat the
  * save is refused in plain words and nothing is written. A MatFlow support
  * session (which may edit a class but not set up mats) keeps a new name as a
  * typed place. Another club's mat id is refused.
@@ -24,7 +26,7 @@ const { ops, tx, session } = vi.hoisted(() => {
     }),
     mat: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
-    class: { create: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
+    class: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     classInstance: { createMany: vi.fn(async () => ({ count: 0 })) },
     classRoster: { findMany: vi.fn(async () => []) },
     classSubscription: { findMany: vi.fn(async () => []) },
@@ -57,6 +59,8 @@ import { LOCATION_ERRORS, MAT_LIMIT } from "@/lib/mats";
 
 type MatRow = { id: string; tenantId: string; name: string; nameKey: string; sortOrder: number };
 let clubMats: MatRow[] = [];
+/** Classes of both clubs on no mat, with what they type (what the attach step reads). */
+let typedClasses: { id: string; tenantId: string; location: string | null; matId: string | null; sourceImportJobId: string | null }[] = [];
 const mat = (id: string, name: string, sortOrder: number, tenantId = "t1"): MatRow => ({ id, tenantId, name, nameKey: name.toLowerCase(), sortOrder });
 
 const SLOT = { dayOfWeek: 1, startTime: "18:00", endTime: "19:00" };
@@ -67,7 +71,8 @@ const patch = (body: Record<string, unknown>) =>
 /** The statements of the last transaction, in order. */
 const lastTx = () => ops.slice(ops.lastIndexOf("tx") + 1);
 const created = () => tx.class.create.mock.calls[0][0].data as Record<string, unknown>;
-const written = () => tx.class.updateMany.mock.calls[0][0].data as Record<string, unknown>;
+/** The write of the class being saved (an attach of other classes, when there is one, is a separate call). */
+const written = () => (tx.class.updateMany.mock.calls.find((c) => (c[0] as { where: { id?: unknown } }).where.id === "c1") ?? tx.class.updateMany.mock.calls[0])[0].data as Record<string, unknown>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -99,6 +104,13 @@ beforeEach(() => {
   });
   const row = { id: "c1", tenantId: "t1", name: "Gi", location: "Sports hall", matId: null, isActive: true, deletedAt: null, sourceImportJobId: null, schedules: [], allowedTiers: [], rosterMembers: [] };
   tx.class.findFirst.mockResolvedValue(row);
+  typedClasses = [];
+  tx.class.findMany.mockImplementation(async ({ where }: { where: { tenantId: string; matId: null; sourceImportJobId: null } }) => {
+    ops.push("typed-read");
+    return typedClasses
+      .filter((c) => c.tenantId === where.tenantId && c.matId === null && c.sourceImportJobId === null && c.location !== null)
+      .map(({ id, location }) => ({ id, location }));
+  });
 });
 
 describe("POST /api/classes with a Location by name", () => {
@@ -111,11 +123,40 @@ describe("POST /api/classes with a Location by name", () => {
     expect(created()).not.toHaveProperty("matName");
     // One transaction holds all of it (the only one this request opened).
     expect(ops.filter((o) => o === "tx")).toHaveLength(1);
-    expect(lastTx().slice(0, 5)).toEqual(["mats-lock", "mats-read", "mat-create", "audit:mat.create:in-tx", "class-create"]);
+    expect(lastTx().slice(0, 6)).toEqual(["mats-lock", "mats-read", "mat-create", "audit:mat.create:in-tx", "typed-read", "class-create"]);
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: "t1", userId: "u1", action: "mat.create", entityType: "Mat", entityId: "m-new", metadata: { name: "Mat 2" },
     }));
-    expect((await res.json()).locationAdded).toEqual({ id: "m-new", name: "Mat 2" });
+    expect((await res.json()).locationAdded).toEqual({ id: "m-new", name: "Mat 2", classIds: [], savedAt: expect.any(String) });
+  });
+
+  it("a new mat takes every class of the club that types the name, in the same transaction; other clubs' classes and other names are untouched", async () => {
+    typedClasses = [
+      { id: "k1", tenantId: "t1", location: "Upstairs", matId: null, sourceImportJobId: null },
+      { id: "k2", tenantId: "t1", location: "  upstairs ", matId: null, sourceImportJobId: null },
+      { id: "k3", tenantId: "t1", location: "Upstairs room", matId: null, sourceImportJobId: null },
+      { id: "k4", tenantId: "t1", location: "Upstairs", matId: null, sourceImportJobId: "import-1" },
+      { id: "theirs", tenantId: "t2", location: "Upstairs", matId: null, sourceImportJobId: null },
+    ];
+    const res = await post({ matName: "Upstairs" });
+    expect(res.status).toBe(201);
+    expect(ops.filter((o) => o === "tx")).toHaveLength(1);
+    const attach = tx.class.updateMany.mock.calls.map((c) => c[0] as { where: Record<string, unknown>; data: Record<string, unknown> });
+    expect(attach).toEqual([{ where: { tenantId: "t1", id: { in: ["k1", "k2"] }, matId: null }, data: { matId: "m-new", location: "Upstairs" } }]);
+    expect(lastTx().slice(0, 8)).toEqual(["mats-lock", "mats-read", "mat-create", "audit:mat.create:in-tx", "typed-read", "class-update", "audit:mat.adopt:in-tx", "class-create"]);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "t1", action: "mat.adopt", entityType: "Tenant", entityId: "t1",
+      metadata: { mats: [{ id: "m-new", name: "Upstairs", created: false, classIds: ["k1", "k2"] }] },
+    }));
+    expect(created()).toMatchObject({ matId: "m-new", location: "Upstairs" });
+    expect((await res.json()).locationAdded).toMatchObject({ id: "m-new", name: "Upstairs", classIds: ["k1", "k2"] });
+  });
+
+  it("a mat that is already there takes only the class being saved", async () => {
+    typedClasses = [{ id: "k1", tenantId: "t1", location: "Mat 1", matId: null, sourceImportJobId: null }];
+    expect((await post({ matName: "mat 1" })).status).toBe(201);
+    expect(tx.class.findMany).not.toHaveBeenCalled();
+    expect(tx.class.updateMany).not.toHaveBeenCalled();
   });
 
   it("a name that matches a mat whatever its capitals and spacing reuses that mat and adds none", async () => {
@@ -207,7 +248,7 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
   it("refuses a mat id with a name, a blank name and an over-long one, before anything is read", async () => {
     for (const [body, error] of [
       [{ matName: "Mat 2", matId: "m1" }, LOCATION_ERRORS.both],
-      [{ matName: "​ " }, LOCATION_ERRORS.empty],
+      [{ matName: "\u200B " }, LOCATION_ERRORS.empty],
       [{ matName: "x".repeat(25) }, LOCATION_ERRORS.tooLong],
     ] as const) {
       const res = await patch(body);
@@ -218,7 +259,8 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
   });
 
   it("a mat-name clash on the unique index is a Location refusal; any other unique refusal is not", async () => {
-    tx.mat.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002", meta: { target: ["tenantId", "nameKey"] } }));
+    // The pg driver adapter's shape: no model name, the index's fields under driverAdapterError.
+    tx.mat.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002", meta: { driverAdapterError: { cause: { constraint: { fields: ["tenantId", "nameKey"] } } } } }));
     const clash = await patch({ matName: "Cage" });
     expect(clash.status).toBe(409);
     expect(await clash.json()).toEqual({ error: "Couldn't save the location. Try again.", reason: "location" });
@@ -236,6 +278,21 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
     expect(written()).toMatchObject({ matId: "m1", location: "Mat 1" });
   });
 
+  it("a new mat from an edit takes the club's other classes that type the name, not the class being saved twice", async () => {
+    typedClasses = [
+      { id: "c1", tenantId: "t1", location: "Cage", matId: null, sourceImportJobId: null },
+      { id: "k1", tenantId: "t1", location: "cage", matId: null, sourceImportJobId: null },
+      { id: "theirs", tenantId: "t2", location: "Cage", matId: null, sourceImportJobId: null },
+    ];
+    const res = await patch({ matName: "Cage" });
+    expect(res.status).toBe(200);
+    const calls = tx.class.updateMany.mock.calls.map((c) => c[0] as { where: Record<string, unknown>; data: Record<string, unknown> });
+    expect(calls[0]).toEqual({ where: { tenantId: "t1", id: { in: ["k1"] }, matId: null }, data: { matId: "m-new", location: "Cage" } });
+    expect(written()).toMatchObject({ matId: "m-new", location: "Cage" });
+    expect(calls).toHaveLength(2);
+    expect((await res.json()).locationAdded).toMatchObject({ id: "m-new", name: "Cage", classIds: ["k1"] });
+  });
+
   it("a new name adds one mat and puts only this class on it, in the edit's transaction, before the class is written", async () => {
     const res = await patch({ matName: "Mat 2" });
     expect(res.status).toBe(200);
@@ -248,7 +305,7 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
     expect(t.slice(0, 2)).toEqual(["mats-lock", "class-lock"]);
     expect(t.indexOf("mat-create")).toBeLessThan(t.indexOf("class-update"));
     expect(t).toContain("audit:mat.create:in-tx");
-    expect((await res.json()).locationAdded).toEqual({ id: "m-new", name: "Mat 2" });
+    expect((await res.json()).locationAdded).toEqual({ id: "m-new", name: "Mat 2", classIds: [], savedAt: expect.any(String) });
   });
 
   it("a name matching a mat by its key reuses it", async () => {

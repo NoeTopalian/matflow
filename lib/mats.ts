@@ -31,12 +31,20 @@ export const MAT_LIMIT = 12;
 export const MATS_LOCK_NS = 0x4d415453;
 
 /**
- * A name as it is stored and shown: invisible format characters (zero-width
- * spaces and joiners, Unicode category Cf) removed, so a name of nothing but
- * those is blank; trimmed; runs of white space made one space.
+ * Invisible formatting characters that carry nothing in a name: zero-width
+ * space, the direction marks, embeddings, overrides and isolates, word joiner
+ * and byte order mark. Zero-width joiner and non-joiner are kept: emoji and
+ * several scripts need them.
+ */
+const INVISIBLE_FORMATTING = /[\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
+
+/**
+ * A name as it is stored and shown: invisible formatting characters removed,
+ * so a name of nothing but those is blank; trimmed; runs of white space made
+ * one space.
  */
 export function cleanMatName(raw: string): string {
-  return raw.normalize("NFC").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").trim();
+  return raw.normalize("NFC").replace(INVISIBLE_FORMATTING, "").replace(/\s+/g, " ").trim();
 }
 
 /** What makes two names the same mat: the clean name, lower-cased. */

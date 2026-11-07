@@ -124,15 +124,18 @@ acts on is worse than an error they can see.
   as mats; nothing is turned into a mat without a press, and no migration writes one.
 - **The class form's Location saves what is typed (Noe, 7 Nov 2026).** It is one list: the
   club's mats, then the places typed on its classes that are not mats yet, "No location" and
-  "Add a new location…". Choosing a typed place or a new name puts that one class on the mat
-  of that name, adding the mat if there is none. A new mat past the twelfth, or a name over 24
-  characters, is refused beside the field, saying why and what to do (remove a location under
-  Mats, or use a shorter name); the save is not made and the typed name stays in the box. The
-  club's other classes that type the name stay as they are: the Mats sheet turns them all into
-  mats in one press. A class is moved only when its Location is changed: one whose typed place
-  is a mat's name opens on that typed place, and a save that leaves it alone keeps it there.
-  It never saves a split: a club that chose one keeps it, and one that has not follows the rule
-  below. A support session cannot add mats: the list says "Type a place", and the name stays
+  "Add a new location…". Choosing a typed place or a new name puts the class on the mat of
+  that name. When there is no such mat it is added, and every other class of the club that
+  types that name (whatever its capitals and spacing) goes on it with it, as the Mats sheet's
+  "Add these as mats" does; the owner is told how many classes are now on it. A new mat past
+  the twelfth, or a name over 24 characters, is refused beside the field, saying why and what
+  to do (remove a location under Mats, or use a shorter name); the save is not made and the
+  typed name stays in the box. A class is moved only when its own Location is changed or a
+  new mat takes its typed name: a save that leaves the Location alone never moves it, and a
+  class from before that still types a mat's name without being on it says so in its list
+  ("typed on this class only"). It never saves a split: a club that chose one keeps it, and one
+  that has not follows the rule below. A support session cannot add mats: the list says "Type
+  a place"; a name that is one of the club's mats puts the class on it, and any other stays
   that class's typed place.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and

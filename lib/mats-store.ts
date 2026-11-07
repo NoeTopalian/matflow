@@ -164,8 +164,11 @@ export async function adoptPlaces(tx: Tx, tenantId: string, keys: readonly strin
 
 /** The class form's Location, as the class routes resolve it (`matForLocation`). */
 export type LocationResult =
-  /** The class goes on this mat; `created` when this call added it. */
-  | { kind: "mat"; id: string; name: string; created: boolean }
+  /**
+   * The class goes on this mat; `created` when this call added it. `classIds`: the club's other classes that
+   * typed the name and were put on the new mat with it (always empty for a mat that was already there).
+   */
+  | { kind: "mat"; id: string; name: string; created: boolean; classIds: string[] }
   /** No mat: the class keeps the name as its typed place (a caller that may not add mats). */
   | { kind: "place"; name: string }
   /** No mat of that name and the club already has MAT_LIMIT: nothing was written. */
@@ -177,9 +180,17 @@ export type LocationResult =
  * spacing; when there is none, a new mat of that name, added in the caller's
  * transaction and recorded exactly as POST /api/mats records one
  * (`mat.create`, in the same transaction), so Activity and redaction treat it
- * the same. Only this one class is put on it: the club's other classes that
- * type the name stay as they are (the Mats sheet's "Add these as mats" is the
- * bulk conversion).
+ * the same.
+ *
+ * A mat ADDED here takes with it every other class of the club whose typed
+ * place is that name and which is on no mat (the same match, the same
+ * classes and the same place text as the Mats sheet's "Add these as mats",
+ * lib/mats-store.ts adoptPlaces), recorded as adopt records it (`mat.adopt`,
+ * with the class ids). So a saved location never sits beside the same name
+ * still typed on other classes (review of PR #77, 7 Nov 2026). A mat that was
+ * already there takes only the class being saved: older classes that type
+ * its name are left for the Mats sheet, and no save that does not change a
+ * class's Location ever moves it.
  *
  * `mayAddMat: false` (a MatFlow support session, which may edit a class but
  * not set up mats — RULES §5b): an existing mat is still used, and a new
@@ -188,21 +199,36 @@ export type LocationResult =
  * Call with the club's mats lock held (lockClubMats), so the cap and the next
  * position cannot be raced. `name` is already clean (cleanMatName), non-empty
  * and, when a mat may be added, at most MAT_NAME_MAX characters.
+ * `exceptClassId`: the class being saved, which the caller writes itself.
  */
 export async function matForLocation(
   tx: Tx,
   tenantId: string,
   name: string,
-  opts: { mayAddMat: boolean; userId: string; req?: Request },
+  opts: { mayAddMat: boolean; userId: string; req?: Request; exceptClassId?: string },
 ): Promise<LocationResult> {
   const key = matNameKey(name);
   const mats = await listMats(tx, tenantId);
   const found = mats.find((m) => m.nameKey === key);
-  if (found) return { kind: "mat", id: found.id, name: found.name, created: false };
+  if (found) return { kind: "mat", id: found.id, name: found.name, created: false, classIds: [] };
   if (!opts.mayAddMat || name.length > MAT_NAME_MAX) return { kind: "place", name };
   if (mats.length >= MAT_LIMIT) return { kind: "limit" };
   const sortOrder = mats.reduce((max, m) => Math.max(max, m.sortOrder), -1) + 1;
   const row = await tx.mat.create({ data: { tenantId, name, nameKey: key, sortOrder }, select: { id: true, name: true } });
   await logAudit({ tenantId, userId: opts.userId, action: "mat.create", entityType: "Mat", entityId: row.id, metadata: { name: row.name }, req: opts.req, tx });
-  return { kind: "mat", id: row.id, name: row.name, created: true };
+  // The club's other classes that type this name and are on no mat (adoptPlaces' match: imported history excepted).
+  const typed = await tx.class.findMany({
+    where: { tenantId, matId: null, sourceImportJobId: null, location: { not: null } },
+    select: { id: true, location: true },
+    orderBy: { id: "asc" },
+  });
+  const classIds = typed.filter((c) => c.id !== opts.exceptClassId && matNameKey(c.location ?? "") === key).map((c) => c.id);
+  if (classIds.length > 0) {
+    await tx.class.updateMany({ where: { tenantId, id: { in: classIds }, matId: null }, data: { matId: row.id, location: row.name } });
+    await logAudit({
+      tenantId, userId: opts.userId, action: "mat.adopt", entityType: "Tenant", entityId: tenantId,
+      metadata: { mats: [{ id: row.id, name: row.name, created: false, classIds }] }, req: opts.req, tx,
+    });
+  }
+  return { kind: "mat", id: row.id, name: row.name, created: true, classIds };
 }
