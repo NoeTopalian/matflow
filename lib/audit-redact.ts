@@ -15,13 +15,17 @@
  *  - `redactedForErasure: true` is added, so a reader can tell a redacted row from one that never had values.
  *
  * Rows keyed by an ADDRESS. Until 6 Nov 2026 the kiosk waiver row (`member.waiver.signed_via_kiosk`) stored
- * the signer's email as its `entityId`. The erasure also finds this club's rows whose `entityId` is one of the
- * subject's own addresses (current or earlier; the caller decides, `isOwnAddress`), redacts their metadata
- * and replaces that `entityId` with the member's id, so the address does not outlive the erasure.
+ * the signer's email as its `entityId`. The erasure also finds this club's rows whose `entityId` is an address
+ * the subject held (current or earlier), redacts their metadata, and replaces that address, which is personal
+ * data, so it does not outlive the erasure. The caller decides, per address (`addressRow`):
+ *  - "repoint": no other member of the club ever held it, so the row is the subject's: `entityId` = member id;
+ *  - "neutral": another member held it at some time, so the row may be theirs: `entityId` = "erased"
+ *    (ERASED_ENTITY_ID), which points at no one, rather than at the wrong member.
+ * A row found both by id and by address is changed (and counted) once.
  *
  * Actor and correlation columns (userId, operatorId, requestId, action, entityType, createdAt) are never
  * touched. This is the ONE place the application writes to an existing AuditLog row: its `metadata`, and an
- * address-valued `entityId` repointed to the member — the documented exception in
+ * address-valued `entityId` replaced by the member id or "erased" — the documented exception in
  * tests/unit/audit-actor-columns-immutability.test.ts (widened to the entityId rewrite by the 6 Nov 2026 review).
  */
 import type { Prisma } from "@prisma/client";
@@ -66,38 +70,48 @@ export function redactAuditMetadata(metadata: unknown): Record<string, unknown> 
   return out;
 }
 
+/** The `entityId` an address-keyed row gets when the address may have been another member's: it names no one. */
+export const ERASED_ENTITY_ID = "erased";
+
+export type AddressRowDecision = "repoint" | "neutral" | null;
+
 /**
  * Redact the subject's rows in this club. `dryRun` counts without writing (the erasure's fulfilment record is
- * written before the redaction, in the same transaction). `isOwnAddress` says whether an address-valued
- * `entityId` is the subject's own; those rows are redacted and repointed to the member. Returns how many rows
- * were (or would be) changed.
+ * written before the redaction, in the same transaction). `addressRow` decides each address-valued `entityId`:
+ * null when it is not an address the subject held. Returns how many rows were (or would be) changed.
  */
 export async function redactSubjectFromAuditLog(
   tx: Tx,
   tenantId: string,
   memberId: string,
-  opts: { dryRun?: boolean; isOwnAddress?: (address: string) => boolean } = {},
+  opts: { dryRun?: boolean; addressRow?: (address: string) => AddressRowDecision } = {},
 ): Promise<number> {
   const byId = await tx.auditLog.findMany({
     where: { tenantId, OR: [{ entityId: memberId }, { metadata: { path: ["memberId"], equals: memberId } }, { metadata: { path: ["childId"], equals: memberId } }] },
     select: { id: true, metadata: true },
   });
-  const isOwnAddress = opts.isOwnAddress;
-  const byAddress = isOwnAddress
-    ? (await tx.auditLog.findMany({ where: { tenantId, entityId: { contains: "@" } }, select: { id: true, entityId: true, metadata: true } })).filter(
-        (r) => !!r.entityId && isOwnAddress(r.entityId),
-      )
-    : [];
-  const rows = [...byId.map((r) => ({ ...r, repoint: false })), ...byAddress.map((r) => ({ id: r.id, metadata: r.metadata, repoint: true }))];
+  const rows = new Map<string, { metadata: unknown; entityTo: string | null }>();
+  for (const r of byId) rows.set(r.id, { metadata: r.metadata, entityTo: null });
+  const addressRow = opts.addressRow;
+  if (addressRow) {
+    const candidates = await tx.auditLog.findMany({ where: { tenantId, entityId: { contains: "@" } }, select: { id: true, entityId: true, metadata: true } });
+    for (const r of candidates) {
+      const decision = r.entityId ? addressRow(r.entityId) : null;
+      if (!decision) continue;
+      // Once per row, even when it was also found by id.
+      rows.set(r.id, { metadata: r.metadata, entityTo: decision === "repoint" ? memberId : ERASED_ENTITY_ID });
+    }
+  }
   let changed = 0;
-  for (const row of rows) {
+  for (const [id, row] of rows) {
     const next = redactAuditMetadata(row.metadata);
-    if (!next && !row.repoint) continue;
+    if (!next && !row.entityTo) continue;
     changed += 1;
     if (opts.dryRun) continue;
-    // The metadata, and an address-valued entityId repointed to the member: never an actor or correlation column.
-    const data = { ...(next ? { metadata: next as Prisma.InputJsonValue } : {}), ...(row.repoint ? { entityId: memberId } : {}) };
-    await tx.auditLog.updateMany({ where: { id: row.id, tenantId }, data });
+    // The metadata, and an address-valued entityId replaced by the member id or "erased": never an actor or
+    // correlation column.
+    const data = { ...(next ? { metadata: next as Prisma.InputJsonValue } : {}), ...(row.entityTo ? { entityId: row.entityTo } : {}) };
+    await tx.auditLog.updateMany({ where: { id, tenantId }, data });
   }
   return changed;
 }

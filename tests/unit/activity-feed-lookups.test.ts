@@ -58,6 +58,14 @@ describe("subjectRefs", () => {
     expect(refs.member.size).toBe(0);
   });
 
+  it("looks up the member of a kiosk waiver row that names them by id (since 6 Nov 2026), and never the neutral \"erased\"", () => {
+    const refs = subjectRefs([
+      row({ action: "member.waiver.signed_via_kiosk", entityType: "Member", entityId: "m_kiosk", metadata: { signerName: "Some One" } }),
+      row({ action: "member.waiver.signed_via_kiosk", entityType: "Member", entityId: "erased", metadata: { signerName: null, redactedForErasure: true } }),
+    ]);
+    expect([...refs.member]).toEqual(["m_kiosk"]);
+  });
+
   it("ignores anything that is not a plain id", () => {
     const refs = subjectRefs([row({ action: "x.y", entityType: "Member", entityId: "has space", metadata: { memberId: { $ne: null }, classId: ["c1"], actorId: "a".repeat(101), tierId: 7, collectedBy: "self" } })]);
     for (const set of Object.values(refs)) expect(set.size).toBe(0);

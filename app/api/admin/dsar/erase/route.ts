@@ -49,6 +49,7 @@
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
  */
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { del } from "@vercel/blob";
@@ -63,7 +64,7 @@ import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
 import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, isSubjectsOwnAddress, type ErasureSubject } from "@/lib/importers/import-erasure";
-import { redactSubjectFromAuditLog } from "@/lib/audit-redact";
+import { redactSubjectFromAuditLog, type AddressRowDecision } from "@/lib/audit-redact";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -472,6 +473,43 @@ export async function POST(req: Request) {
   for (const m of [{ id: memberId, name: member.name, email: originalEmail, externalRef: originalExternalRef, unverifiedEmail: member.unverifiedEmail }, ...childRows]) {
     importSubjects.push(await toSubject(m));
   }
+  // Who ever held each address in this club: every member's current addresses, and every change or release row of
+  // a member (the rows lib/attendance-import.ts reads), by digest in each form the club has written — keyed, the
+  // unkeyed form from before AH-E2, and the DSAR hashToken form. An address-keyed Activity row (the kiosk waiver
+  // row before 6 Nov 2026) is repointed to the subject only when no other member ever held its address; otherwise
+  // the row may be the other member's, so its address is replaced by the neutral "erased" (lib/audit-redact.ts).
+  const holders = await withTenantContext(tenantId, async (tx) => {
+    const [members, rows] = await Promise.all([
+      tx.member.findMany({ where: { tenantId }, select: { id: true, email: true, unverifiedEmail: true } }),
+      tx.$queryRaw<{ entityId: string; metadata: Record<string, unknown> | null }[]>`
+        SELECT "entityId", metadata FROM "AuditLog"
+        WHERE "tenantId" = ${tenantId} AND "entityType" = 'Member'
+          AND (metadata->>'oldEmailSha256' IS NOT NULL OR metadata->>'newEmailSha256' IS NOT NULL
+            OR metadata->>'oldEmailDigest' IS NOT NULL OR metadata->'releasedEmailSha256' IS NOT NULL
+            OR metadata->>'originalEmailHash' IS NOT NULL)`,
+    ]);
+    const byAddress = new Map<string, Set<string>>();
+    const byDigest = new Map<string, Set<string>>();
+    const add = (map: Map<string, Set<string>>, key: unknown, id: string) => {
+      if (typeof key === "string" && key) (map.get(key) ?? map.set(key, new Set()).get(key)!).add(id);
+    };
+    for (const m of members) for (const a of [m.email, m.unverifiedEmail]) if (a) add(byAddress, a.trim().toLowerCase(), m.id);
+    for (const r of rows) {
+      const md = r.metadata ?? {};
+      const released = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
+      for (const d of [md.oldEmailSha256, md.newEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...released]) add(byDigest, d, r.entityId);
+    }
+    return { byAddress, byDigest };
+  });
+  const addressRowFor = (subject: ErasureSubject) => (address: string): AddressRowDecision => {
+    const a = address.trim().toLowerCase();
+    const forms = [emailDigest(a), createHash("sha256").update(a).digest("hex"), hashToken(a)];
+    const ever = new Set([...(holders.byAddress.get(a) ?? []), ...forms.flatMap((f) => [...(holders.byDigest.get(f) ?? [])])]);
+    const theirs = ever.has(subject.memberId) || isSubjectsOwnAddress(subject, a) || (subject.pastSharedAddressDigests ?? []).includes(forms[0]);
+    if (!theirs) return null;
+    ever.delete(subject.memberId);
+    return ever.size === 0 ? "repoint" : "neutral";
+  };
   // The file rewrites cannot roll back with the transaction below, so they are
   // recorded on their own, durably, whether the walk finishes or stops part-way:
   // if the erasure then refuses, the record says files already lost the rows.
@@ -511,7 +549,7 @@ export async function POST(req: Request) {
   let auditRowsRedacted = 0;
   for (const subject of importSubjects) {
     importDiagnosticsEntries += await withTenantContext(tenantId, (tx) => eraseSubjectFromImportDiagnostics(tx, tenantId, subject, { dryRun: true }));
-    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true, isOwnAddress: (a) => isSubjectsOwnAddress(subject, a) }));
+    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true, addressRow: addressRowFor(subject) }));
   }
   const filesNote = importFiles.files > 0 ? `The member's rows were already removed from ${importFiles.files} stored import file(s). ` : "";
 
@@ -634,7 +672,7 @@ export async function POST(req: Request) {
     for (const subject of importSubjects) await eraseSubjectFromImportDiagnostics(tx, tenantId, subject);
     // …and the personal values recorded on their own Activity rows, kept permanently since 6 Nov 2026: metadata
     // only, the actor columns untouched (lib/audit-redact.ts, the one documented write to an existing row).
-    for (const subject of importSubjects) await redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { isOwnAddress: (a) => isSubjectsOwnAddress(subject, a) });
+    for (const subject of importSubjects) await redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { addressRow: addressRowFor(subject) });
 
     await tx.member.update({
       where: { id: memberId },

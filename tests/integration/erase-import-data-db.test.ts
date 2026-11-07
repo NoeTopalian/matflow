@@ -56,6 +56,10 @@ const CARA = { name: "Erim Cara Lee", email: `${STAMP}-cara@example.test`, phone
 const DEE = { name: "Erim Dee Moss", email: `${STAMP}-dee@example.test`, newName: "Erim Dee Moss-Kay", newEmail: `${STAMP}-dee.new@example.test` };
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const KIOSK = "member.waiver.signed_via_kiosk";
+// Two members who held one address at different times: Eve first, then (after Eve moved on) Fay.
+const SHARED = `${STAMP}-shared@example.test`;
+const EVE = { name: "Erim Eve Holt", newEmail: `${STAMP}-eve.new@example.test` };
+const FAY = { name: "Erim Fay Dunn", email: `${STAMP}-fay@example.test` };
 
 describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", () => {
   let tenantId = "";
@@ -235,5 +239,37 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
     expect(file).not.toContain(DEE.email);
     expect(file).not.toContain(DEE.name);
     expect(file).toContain(BEN.email);
+  }, 120_000);
+
+  it("an address two members held at different times: erasing the later holder redacts the old kiosk row but points it at no one, never at them", async () => {
+    gate.current = { tenantId, userId };
+    const headers = { origin: "https://test.local", host: "test.local", "content-type": "application/json" };
+    const patch = async (id: string, email: string) =>
+      ((await patchMember(new Request(`https://test.local/api/members/${id}`, { method: "PATCH", headers, body: JSON.stringify({ email }) }), { params: Promise.resolve({ id }) })) as unknown as { status: number }).status;
+    const legacyKiosk = (entityId: string, signerName: string) =>
+      withRlsBypass((tx) => tx.auditLog.create({ data: { tenantId, userId: null, action: KIOSK, entityType: "Member", entityId, metadata: { signerName, method: "kiosk_waiver_link" } } }));
+    const [eveId, fayId] = await withRlsBypass(async (tx) => [
+      (await tx.member.create({ data: { tenantId, name: EVE.name, email: SHARED } })).id,
+      (await tx.member.create({ data: { tenantId, name: FAY.name, email: FAY.email } })).id,
+    ]);
+    // Eve signs at the kiosk under the shared address (a row from before 6 Nov 2026, keyed by the address), then
+    // moves to another address; Fay signs under her own first address, then takes the shared one.
+    const evesRow = await legacyKiosk(SHARED, EVE.name);
+    expect(await patch(eveId, EVE.newEmail)).toBe(200);
+    const faysRow = await legacyKiosk(FAY.email, FAY.name);
+    expect(await patch(fayId, SHARED)).toBe(200);
+
+    const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${fayId}`, { method: "POST", headers }))) as unknown as { status: number; json: () => Promise<{ erased?: Record<string, number> }> };
+    expect(res.status).toBe(200);
+    expect((await res.json()).erased?.auditRowsRedacted).toBeGreaterThanOrEqual(2);
+
+    const [eves, fays] = await withRlsBypass((tx) => Promise.all([tx.auditLog.findUnique({ where: { id: evesRow.id } }), tx.auditLog.findUnique({ where: { id: faysRow.id } })]));
+    // The shared address's row may be Eve's: redacted, its address replaced by "erased", never pointed at Fay.
+    expect(eves).toMatchObject({ entityId: "erased", action: KIOSK, metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true } });
+    // Only Fay ever held her first address: her row is repointed to her and redacted.
+    expect(fays).toMatchObject({ entityId: fayId, metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true } });
+    // Neither address is left as an entity id anywhere in the club; Eve herself is untouched.
+    expect(await withRlsBypass((tx) => tx.auditLog.count({ where: { tenantId, entityId: { in: [SHARED, FAY.email] } } }))).toBe(0);
+    expect(await withRlsBypass((tx) => tx.member.findUnique({ where: { id: eveId }, select: { name: true, email: true } }))).toEqual({ name: EVE.name, email: EVE.newEmail });
   }, 120_000);
 });

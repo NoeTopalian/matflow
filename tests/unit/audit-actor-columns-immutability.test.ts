@@ -94,8 +94,10 @@ describe("audit history is append-only from the application", () => {
   // The ONE documented exception (6 Nov 2026): a member's erasure redacts the personal values in the METADATA of
   // that member's own rows (lib/audit-redact.ts) — Activity is kept permanently, so an Article 17 erasure must reach
   // it. Widened by the coordinator's decision on the 6 Nov 2026 re-review: a row whose entityId is one of the
-  // subject's own ADDRESSES (the kiosk waiver row before 6 Nov 2026) also has that entityId replaced by the member's
-  // id. Nothing else: never an actor or correlation column, never a delete; one caller, scoped by { id, tenantId }.
+  // subject's ADDRESSES (the kiosk waiver row before 6 Nov 2026) also has that entityId replaced: by the member's id
+  // when no other member of the club ever held the address, else by the neutral "erased", which names no one
+  // (second 6 Nov 2026 re-review). Nothing else: never an actor or correlation column, never a delete; one caller,
+  // scoped by { id, tenantId }.
   const REDACT = join("lib", "audit-redact.ts");
 
   it("no app/ or lib/ code updates or deletes AuditLog rows through Prisma (one documented exception: erasure redaction)", () => {
@@ -112,12 +114,17 @@ describe("audit history is append-only from the application", () => {
     const src = readFileSync(REDACT, "utf8");
     const writes = [...src.matchAll(/\bauditLog\s*\.\s*(update|updateMany|upsert|delete|deleteMany)\s*\(([\s\S]*?)\);/g)];
     expect(writes.map((w) => w[1])).toEqual(["updateMany"]);
-    expect(writes[0][2].trim()).toBe("{ where: { id: row.id, tenantId }, data }");
-    // `data` is built in exactly one place: the redacted metadata and, for an address-keyed row, the member's id.
+    expect(writes[0][2].trim()).toBe("{ where: { id, tenantId }, data }");
+    // `data` is built in exactly one place: the redacted metadata and, for an address-keyed row, its new entityId.
     expect(src.match(/\bconst data = /g)).toHaveLength(1);
-    expect(src).toContain("const data = { ...(next ? { metadata: next as Prisma.InputJsonValue } : {}), ...(row.repoint ? { entityId: memberId } : {}) };");
-    // An address-keyed row is repointed only when the caller says the address is the subject's own.
-    expect(src).toContain("isOwnAddress(r.entityId)");
+    expect(src).toContain("const data = { ...(next ? { metadata: next as Prisma.InputJsonValue } : {}), ...(row.entityTo ? { entityId: row.entityTo } : {}) };");
+    // That entityId is only ever the member's id or the neutral "erased", chosen by the caller per address; a row
+    // found by id keeps its entityId.
+    expect(src.match(/rows\.set\(/g)).toHaveLength(2);
+    expect(src).toContain("rows.set(r.id, { metadata: r.metadata, entityTo: null });");
+    expect(src).toContain('rows.set(r.id, { metadata: r.metadata, entityTo: decision === "repoint" ? memberId : ERASED_ENTITY_ID });');
+    expect(src).toContain('export const ERASED_ENTITY_ID = "erased";');
+    expect(src).toContain("const decision = r.entityId ? addressRow(r.entityId) : null;");
     // The only caller is the erasure.
     const callers = files.filter((f) => f !== REDACT && /redactSubjectFromAuditLog\(/.test(readFileSync(f, "utf8")));
     expect(callers).toEqual([join("app", "api", "admin", "dsar", "erase", "route.ts")]);

@@ -3,7 +3,7 @@
  * (6 Nov 2026: Activity is kept permanently, so the erasure must reach it).
  */
 import { describe, it, expect, vi } from "vitest";
-import { redactAuditMetadata, redactSubjectFromAuditLog } from "@/lib/audit-redact";
+import { ERASED_ENTITY_ID, redactAuditMetadata, redactSubjectFromAuditLog, type AddressRowDecision } from "@/lib/audit-redact";
 
 describe("redactAuditMetadata", () => {
   it("keeps every changed field's name and nulls its values; keeps everything that is not personal", () => {
@@ -60,30 +60,50 @@ describe("redactSubjectFromAuditLog", () => {
     });
   });
 
-  it("a kiosk row keyed by one of the subject's own addresses is redacted (signerName) and repointed to the member; another address is left", async () => {
+  it("a kiosk row keyed by an address only the subject held is repointed to them; one another member also held gets the neutral \"erased\"; any other address is left", async () => {
     const byAddress = [
       { id: "k1", entityId: "Cara.Old@example.test", metadata: { signerName: "Cara Lee", method: "kiosk_waiver_link" } },
       { id: "k2", entityId: "ben@example.test", metadata: { signerName: "Ben Ray", method: "kiosk_waiver_link" } },
       { id: "k3", entityId: "cara@example.test", metadata: null },
+      { id: "k4", entityId: "shared@example.test", metadata: { signerName: "Eve Earlier", method: "kiosk_waiver_link" } },
     ];
     const findMany = vi.fn(async (args: { where: { entityId?: unknown } }) => (args.where.entityId ? byAddress : []));
     const tx = { auditLog: { findMany, updateMany: vi.fn(async () => ({ count: 1 })) } };
-    const own = new Set(["cara.old@example.test", "cara@example.test"]);
-    const isOwnAddress = (a: string) => own.has(a.toLowerCase());
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true, isOwnAddress })).toBe(2);
+    const decisions: Record<string, AddressRowDecision> = { "cara.old@example.test": "repoint", "cara@example.test": "repoint", "shared@example.test": "neutral" };
+    const addressRow = (a: string) => decisions[a.toLowerCase()] ?? null;
+    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true, addressRow })).toBe(3);
     expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
     expect(findMany).toHaveBeenCalledWith({ where: { tenantId: "t1", entityId: { contains: "@" } }, select: { id: true, entityId: true, metadata: true } });
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { isOwnAddress })).toBe(2);
-    expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(2);
+    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { addressRow })).toBe(3);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(3);
     expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
       where: { id: "k1", tenantId: "t1" },
       data: { metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true }, entityId: "m1" },
     });
     // No metadata to redact: only the address is replaced.
     expect(tx.auditLog.updateMany).toHaveBeenCalledWith({ where: { id: "k3", tenantId: "t1" }, data: { entityId: "m1" } });
+    // Another member also held the address: redacted, and pointed at no one rather than at the wrong member.
+    expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
+      where: { id: "k4", tenantId: "t1" },
+      data: { metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true }, entityId: ERASED_ENTITY_ID },
+    });
+    expect(ERASED_ENTITY_ID).toBe("erased");
   });
 
-  it("without isOwnAddress, no address-keyed rows are read", async () => {
+  it("a row found both by id and by address is written and counted once", async () => {
+    const row = { id: "both", entityId: "cara@example.test", metadata: { memberId: "m1", signerName: "Cara Lee" } };
+    const findMany = vi.fn(async (args: { where: { entityId?: unknown } }) => (args.where.entityId ? [row] : [{ id: row.id, metadata: row.metadata }]));
+    const tx = { auditLog: { findMany, updateMany: vi.fn(async () => ({ count: 1 })) } };
+    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true, addressRow: () => "repoint" })).toBe(1);
+    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { addressRow: () => "repoint" })).toBe(1);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
+      where: { id: "both", tenantId: "t1" },
+      data: { metadata: { memberId: "m1", signerName: null, redactedForErasure: true }, entityId: "m1" },
+    });
+  });
+
+  it("without addressRow, no address-keyed rows are read", async () => {
     const tx = { auditLog: { findMany: vi.fn(async () => []), updateMany: vi.fn() } };
     await redactSubjectFromAuditLog(tx as never, "t1", "m1");
     expect(tx.auditLog.findMany).toHaveBeenCalledTimes(1);
