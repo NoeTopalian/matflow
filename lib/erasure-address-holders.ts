@@ -22,6 +22,8 @@ export type AddressHolders = {
   byAddress: Map<string, Set<string>>;
   /** Any recorded digest of an address → the member ids whose rows recorded it. */
   byDigest: Map<string, Set<string>>;
+  /** The keyed login-email digest of each member's CURRENT address → member ids. */
+  byCurrentDigest: Map<string, Set<string>>;
 };
 
 /** Every digest form a recorded row may hold for this address. The first is the keyed login-email digest. */
@@ -44,13 +46,32 @@ export function addressHolders(
     set.add(id);
     map.set(key, set);
   };
-  for (const m of members) for (const a of [m.email, m.unverifiedEmail]) if (a) add(byAddress, a.trim().toLowerCase(), m.id);
+  const byCurrentDigest = new Map<string, Set<string>>();
+  for (const m of members) {
+    for (const a of [m.email, m.unverifiedEmail]) {
+      if (!a) continue;
+      add(byAddress, a.trim().toLowerCase(), m.id);
+      add(byCurrentDigest, emailDigest(a), m.id);
+    }
+  }
   for (const r of rows) {
     const md = r.metadata ?? {};
     const released = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
     for (const d of [md.oldEmailSha256, md.newEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...released]) add(byDigest, d, r.entityId);
   }
-  return { byAddress, byDigest };
+  return { byAddress, byDigest, byCurrentDigest };
+}
+
+const someoneElse = (ids: Set<string> | undefined, memberId: string) => !!ids && [...ids].some((id) => id !== memberId);
+
+/** Whether another member of the club holds this address now (as their login or unverified address). */
+export function heldByAnotherNow(holders: AddressHolders, memberId: string, address: string): boolean {
+  return someoneElse(holders.byAddress.get(address.trim().toLowerCase()), memberId);
+}
+
+/** The subject's earlier-address digests another member of the club holds now (keyed login-email digests). */
+export function digestsHeldByAnotherNow(holders: AddressHolders, memberId: string, digests: string[]): string[] {
+  return digests.filter((d) => someoneElse(holders.byCurrentDigest.get(d), memberId));
 }
 
 /**

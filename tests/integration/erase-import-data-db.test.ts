@@ -47,6 +47,7 @@ import { PATCH as patchMember } from "@/app/api/members/[id]/route";
 import { POST as kioskSign } from "@/app/api/waiver/open/route";
 import { hashToken } from "@/lib/token-hash";
 import { emailDigest } from "@/lib/login-email";
+import { NO_LOGIN_EMAIL_DOMAIN } from "@/lib/synthesise-kid-email";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `erim${Date.now().toString(36)}`;
@@ -60,6 +61,9 @@ const KIOSK = "member.waiver.signed_via_kiosk";
 const SHARED = `${STAMP}-shared@example.test`;
 const EVE = { name: "Erim Eve Holt", newEmail: `${STAMP}-eve.new@example.test` };
 const FAY = { name: "Erim Fay Dunn", email: `${STAMP}-fay@example.test` };
+// A guardian and her child, whose TeamUp row carries her address (how a junior is imported).
+const GAIL = { name: "Erim Gail Lane", email: `${STAMP}-gail@example.test` };
+const KIT = { name: "Erim Kit Lane", email: `kid-${STAMP}@${NO_LOGIN_EMAIL_DOMAIN}` };
 
 describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", () => {
   let tenantId = "";
@@ -68,17 +72,20 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
   let caraId = "";
   let benId = "";
   let deeId = "";
+  let gailId = "";
   let jobId = "";
   let fileUrl = "";
 
   beforeAll(async () => {
-    const csv = Buffer.from(`Customer Name,Customer Email,Phone\n${ADA.name},${ADA.email},07700 900111\n${BEN.name},${BEN.email},07700 900222\n${CARA.name},${CARA.email},${CARA.phone}\n${DEE.name},${DEE.email},07700 900555\n`, "utf8");
+    const csv = Buffer.from(`Customer Name,Customer Email,Phone\n${ADA.name},${ADA.email},07700 900111\n${BEN.name},${BEN.email},07700 900222\n${CARA.name},${CARA.email},${CARA.phone}\n${DEE.name},${DEE.email},07700 900555\n${GAIL.name},${GAIL.email},07700 900888\n${KIT.name},${GAIL.email},\n`, "utf8");
     await withRlsBypass(async (tx) => {
       const t = await tx.tenant.create({ data: { name: `${STAMP} club`, slug: STAMP, timezone: "Europe/London", onboardingCompleted: true } });
       const u = await tx.user.create({ data: { tenantId: t.id, email: `${STAMP}-owner@example.test`, name: "Erim Owner", role: "owner", passwordHash: "x" } });
       const ada = await tx.member.create({ data: { tenantId: t.id, name: ADA.name, email: ADA.email, externalRef: `teamup:${ADA.email}|${ADA.name.toLowerCase()}` } });
       benId = (await tx.member.create({ data: { tenantId: t.id, name: BEN.name, email: BEN.email } })).id;
       deeId = (await tx.member.create({ data: { tenantId: t.id, name: DEE.name, email: DEE.email } })).id;
+      gailId = (await tx.member.create({ data: { tenantId: t.id, name: GAIL.name, email: GAIL.email, externalRef: `teamup:${GAIL.email}|${GAIL.name.toLowerCase()}` } })).id;
+      await tx.member.create({ data: { tenantId: t.id, name: KIT.name, email: KIT.email, parentMemberId: gailId, externalRef: `teamup:${GAIL.email}|${KIT.name.toLowerCase()}` } });
       // No source key: only the digest of the old address can tie her to her import row once it changes.
       const cara = await tx.member.create({ data: { tenantId: t.id, name: CARA.name, email: CARA.email, phone: CARA.phone } });
       caraId = cara.id;
@@ -271,5 +278,20 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
     // Neither address is left as an entity id anywhere in the club; Eve herself is untouched.
     expect(await withRlsBypass((tx) => tx.auditLog.count({ where: { tenantId, entityId: { in: [SHARED, FAY.email] } } }))).toBe(0);
     expect(await withRlsBypass((tx) => tx.member.findUnique({ where: { id: eveId }, select: { name: true, email: true } }))).toEqual({ name: EVE.name, email: EVE.newEmail });
+  }, 120_000);
+
+  it("a guardian erased with her child (?strategy=cascade): both their rows leave the kept file, the child's too", async () => {
+    // The child's row is recognised by the guardian's address, which the guardian's own pass blanks in every row that
+    // is not hers: children go first, or the child's row would stay (7 Nov 2026).
+    expect(await readImportFile(fileUrl, tenantId)).toContain(`${KIT.name},${GAIL.email},`);
+    gate.current = { tenantId, userId };
+    const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${gailId}&strategy=cascade`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }))) as unknown as { status: number; json: () => Promise<{ erased?: Record<string, number> }> };
+    expect(res.status).toBe(200);
+    expect((await res.json()).erased).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 2 });
+    const file = (await readImportFile(fileUrl, tenantId)) ?? "";
+    expect(file).not.toContain(GAIL.email);
+    expect(file).not.toContain(GAIL.name);
+    expect(file).not.toContain(KIT.name);
+    expect(file).toContain(BEN.email);
   }, 120_000);
 });

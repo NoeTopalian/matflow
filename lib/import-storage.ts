@@ -120,6 +120,29 @@ export async function readImportFileBytes(url: string, tenantId: string): Promis
 }
 
 /**
+ * Several chunked uploads' raw bytes in ONE query (a member's erasure walks every kept file; one transaction per file
+ * cost five round trips each). Read whatever their state, like readImportFileBytes. Missing ids are absent from the map.
+ */
+export async function readUploadBytesMany(tenantId: string, uploadIds: string[]): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  if (uploadIds.length === 0) return out;
+  const chunks = await withTenantContext(
+    tenantId,
+    (tx) =>
+      tx.importUploadChunk.findMany({
+        where: { tenantId, uploadId: { in: uploadIds } },
+        orderBy: [{ uploadId: "asc" }, { index: "asc" }],
+        select: { uploadId: true, bytes: true },
+      }),
+    { timeout: 45_000, maxWait: 10_000 },
+  );
+  const parts = new Map<string, Uint8Array[]>();
+  for (const c of chunks) (parts.get(c.uploadId) ?? parts.set(c.uploadId, []).get(c.uploadId)!).push(c.bytes);
+  for (const [id, list] of parts) out.set(id, new Uint8Array(Buffer.concat(list)));
+  return out;
+}
+
+/**
  * Replace a stored import file's content IN PLACE (same address). Used ONLY by
  * a member's erasure (lib/importers/import-erasure.ts), to take that member's
  * rows out of a kept file. A Blob file is overwritten at its own pathname, so

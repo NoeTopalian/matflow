@@ -75,41 +75,50 @@ export const ERASED_ENTITY_ID = "erased";
 
 export type AddressRowDecision = "repoint" | "neutral" | null;
 
+export type RedactionSubject = { memberId: string; addressRow?: (address: string) => AddressRowDecision };
+
+/** Whose id an address-keyed row gets: the one subject who alone held the address, else no one ("erased"). */
+function entityFor(address: string, subjects: RedactionSubject[]): string | null {
+  const claims = subjects.map((s) => ({ memberId: s.memberId, decision: s.addressRow ? s.addressRow(address) : null })).filter((c) => c.decision);
+  if (claims.length === 0) return null;
+  return claims.length === 1 && claims[0].decision === "repoint" ? claims[0].memberId : ERASED_ENTITY_ID;
+}
+
 /**
- * Redact the subject's rows in this club. `dryRun` counts without writing (the erasure's fulfilment record is
- * written before the redaction, in the same transaction). `addressRow` decides each address-valued `entityId`:
- * null when it is not an address the subject held. `seen` is shared across the subjects of one erasure (a guardian
- * and the children erased with them), so a row naming several of them is counted once. Returns how many rows were
- * (or would be) changed and not already in `seen`.
+ * Redact the subjects' rows in this club (a member, and the children erased with them): one read by id for all of
+ * them, one read of the address-keyed rows, then a write per row that changes. A row naming several subjects is
+ * changed, and counted, once. `dryRun` counts without writing (the erasure's fulfilment record is written before the
+ * redaction, in the same transaction). Each subject's `addressRow` decides an address-valued `entityId`: null when
+ * the address was never theirs. Returns how many rows were (or would be) changed.
  */
-export async function redactSubjectFromAuditLog(
-  tx: Tx,
-  tenantId: string,
-  memberId: string,
-  opts: { dryRun?: boolean; addressRow?: (address: string) => AddressRowDecision; seen?: Set<string> } = {},
-): Promise<number> {
+export async function redactSubjectsFromAuditLog(tx: Tx, tenantId: string, subjects: RedactionSubject[], opts: { dryRun?: boolean } = {}): Promise<number> {
+  if (subjects.length === 0) return 0;
+  const ids = subjects.map((s) => s.memberId);
   const byId = await tx.auditLog.findMany({
-    where: { tenantId, OR: [{ entityId: memberId }, { metadata: { path: ["memberId"], equals: memberId } }, { metadata: { path: ["childId"], equals: memberId } }] },
+    where: {
+      tenantId,
+      OR: [
+        { entityId: { in: ids } },
+        ...ids.flatMap((id) => [{ metadata: { path: ["memberId"], equals: id } }, { metadata: { path: ["childId"], equals: id } }]),
+      ],
+    },
     select: { id: true, metadata: true },
   });
   const rows = new Map<string, { metadata: unknown; entityTo: string | null }>();
   for (const r of byId) rows.set(r.id, { metadata: r.metadata, entityTo: null });
-  const addressRow = opts.addressRow;
-  if (addressRow) {
+  if (subjects.some((s) => s.addressRow)) {
     const candidates = await tx.auditLog.findMany({ where: { tenantId, entityId: { contains: "@" } }, select: { id: true, entityId: true, metadata: true } });
     for (const r of candidates) {
-      const decision = r.entityId ? addressRow(r.entityId) : null;
-      if (!decision) continue;
+      const entityTo = r.entityId ? entityFor(r.entityId, subjects) : null;
+      if (!entityTo) continue;
       // Once per row, even when it was also found by id.
-      rows.set(r.id, { metadata: r.metadata, entityTo: decision === "repoint" ? memberId : ERASED_ENTITY_ID });
+      rows.set(r.id, { metadata: r.metadata, entityTo });
     }
   }
   let changed = 0;
   for (const [id, row] of rows) {
     const next = redactAuditMetadata(row.metadata);
     if (!next && !row.entityTo) continue;
-    if (opts.seen?.has(id)) continue;
-    opts.seen?.add(id);
     changed += 1;
     if (opts.dryRun) continue;
     // The metadata, and an address-valued entityId replaced by the member id or "erased": never an actor or

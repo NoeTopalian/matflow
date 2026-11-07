@@ -122,11 +122,12 @@ describe("audit history is append-only from the application", () => {
     // found by id keeps its entityId.
     expect(src.match(/rows\.set\(/g)).toHaveLength(2);
     expect(src).toContain("rows.set(r.id, { metadata: r.metadata, entityTo: null });");
-    expect(src).toContain('rows.set(r.id, { metadata: r.metadata, entityTo: decision === "repoint" ? memberId : ERASED_ENTITY_ID });');
+    expect(src).toContain("rows.set(r.id, { metadata: r.metadata, entityTo });");
+    expect(src).toContain("const entityTo = r.entityId ? entityFor(r.entityId, subjects) : null;");
+    expect(src).toContain('return claims.length === 1 && claims[0].decision === "repoint" ? claims[0].memberId : ERASED_ENTITY_ID;');
     expect(src).toContain('export const ERASED_ENTITY_ID = "erased";');
-    expect(src).toContain("const decision = r.entityId ? addressRow(r.entityId) : null;");
     // The only caller is the erasure.
-    const callers = files.filter((f) => f !== REDACT && /redactSubjectFromAuditLog\(/.test(readFileSync(f, "utf8")));
+    const callers = files.filter((f) => f !== REDACT && /redactSubjectsFromAuditLog\(/.test(readFileSync(f, "utf8")));
     expect(callers).toEqual([join("app", "api", "admin", "dsar", "erase", "route.ts")]);
   });
 

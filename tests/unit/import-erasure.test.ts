@@ -9,24 +9,23 @@ const h = vi.hoisted(() => ({
   jobs: [] as Array<{ tenantId: string; fileBlobUrl: string }>,
   uploads: [] as Array<{ tenantId: string; id: string; status?: string; expiresAt?: Date }>,
   rewritten: [] as Array<{ url: string; text: string }>,
+  uploadReads: [] as string[][],
 }));
 
 vi.mock("@/lib/import-storage", () => ({
   DB_UPLOAD_PREFIX: "db-upload://",
   readImportFileBytes: vi.fn(async (url: string) => h.files.get(url) ?? null),
+  // Chunked uploads are read set-based (7 Nov 2026): one call per batch of ids.
+  readUploadBytesMany: vi.fn(async (_tenantId: string, ids: string[]) => {
+    h.uploadReads.push([...ids]);
+    return new Map(ids.flatMap((id) => (h.files.has(`db-upload://${id}`) ? [[id, h.files.get(`db-upload://${id}`)!] as const] : [])));
+  }),
   rewriteImportFile: vi.fn(async (url: string, _tenantId: string, bytes: Uint8Array) => {
     h.rewritten.push({ url, text: Buffer.from(bytes).toString("utf8") });
   }),
 }));
-vi.mock("@/lib/prisma-tenant", () => ({
-  withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) =>
-    fn({
-      importJob: { findMany: async ({ where }: { where: { tenantId: string } }) => h.jobs.filter((j) => j.tenantId === where.tenantId && j.fileBlobUrl !== "") },
-      importUpload: { findMany: async ({ where }: { where: { tenantId: string } }) => h.uploads.filter((u) => u.tenantId === where.tenantId).map((u) => ({ status: "complete", expiresAt: new Date(0), ...u })) },
-    }),
-}));
 
-import { csvRecords, decodeImportBytes, eraseSubjectFromImportFiles, isSubjectsOwnAddress, removeSubjectRows, scrubSubjectFromDiagnostics, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { csvRecords, decodeImportBytes, eraseSubjectsFromImportDiagnostics, eraseSubjectsFromImportFiles, importFileUrls, isSubjectsOwnAddress, removeSubjectRows, scrubSubjectFromDiagnostics, type ErasureSubject } from "@/lib/importers/import-erasure";
 
 const TEAMUP = "Customer Name,Customer Email,Phone,Emergency Contact Name,Membership";
 // An adult whose own address is in the file, and her child, whose TeamUp row carries her address.
@@ -41,11 +40,24 @@ const csv = [
   "",
 ].join("\r\n");
 
+/** The club's files (as the erase route lists them) walked for one subject. */
+const walk = (subject: ErasureSubject, progress?: { files: number; rows: number; cells: number; nameOnly?: number }) =>
+  eraseSubjectsFromImportFiles(
+    "t1",
+    [subject],
+    importFileUrls(
+      h.jobs.filter((j) => j.tenantId === "t1"),
+      h.uploads.filter((u) => u.tenantId === "t1").map((u) => ({ status: "complete", expiresAt: new Date(0), ...u })),
+    ),
+    progress,
+  );
+
 beforeEach(() => {
   h.files.clear();
   h.jobs = [];
   h.uploads = [];
   h.rewritten = [];
+  h.uploadReads = [];
 });
 
 describe("removeSubjectRows — a row is the subject's only by name AND address", () => {
@@ -211,7 +223,7 @@ describe("scrubSubjectFromDiagnostics", () => {
   });
 });
 
-describe("eraseSubjectFromImportFiles", () => {
+describe("eraseSubjectsFromImportFiles", () => {
   it("rewrites every file of the club that names the subject — job files and never-used uploads — in place", async () => {
     h.jobs = [
       { tenantId: "t1", fileBlobUrl: "db-upload://up1" },
@@ -225,7 +237,7 @@ describe("eraseSubjectFromImportFiles", () => {
     h.files.set("db-upload://clean", Buffer.from("Name,Email\nBen Ray,ben@example.test\n", "utf8"));
     h.files.set("db-upload://other", Buffer.from(csv, "utf8"));
 
-    const out = await eraseSubjectFromImportFiles("t1", ADA);
+    const out = await walk(ADA);
     expect(out).toMatchObject({ files: 3, rows: 3 });
     expect(h.rewritten.map((r) => r.url).sort()).toEqual(["db-upload://stray", "db-upload://up1", "https://abc.blob.vercel-storage.com/tenants/t1/imports/a.csv"]);
     for (const r of h.rewritten) expect(r.text.toLowerCase()).not.toMatch(/(^|,)ada@example\.test/m);
@@ -237,7 +249,7 @@ describe("eraseSubjectFromImportFiles", () => {
       { tenantId: "t1", id: "abandoned", status: "open", expiresAt: new Date(Date.now() - 3_600_000) },
     ];
     for (const id of ["arriving", "abandoned"]) h.files.set(`db-upload://${id}`, Buffer.from("Name,Email\nAda Obi,ada@example.test\n", "utf8"));
-    expect(await eraseSubjectFromImportFiles("t1", ADA)).toMatchObject({ files: 1, rows: 1 });
+    expect(await walk(ADA)).toMatchObject({ files: 1, rows: 1 });
     expect(h.rewritten.map((r) => r.url)).toEqual(["db-upload://abandoned"]);
   });
 
@@ -247,8 +259,41 @@ describe("eraseSubjectFromImportFiles", () => {
     const storage = await import("@/lib/import-storage");
     vi.mocked(storage.rewriteImportFile).mockImplementationOnce(async () => {}).mockRejectedValueOnce(new Error("store down"));
     const progress = { files: 0, rows: 0, cells: 0 };
-    await expect(eraseSubjectFromImportFiles("t1", ADA, progress)).rejects.toThrow("store down");
+    await expect(walk(ADA, progress)).rejects.toThrow("store down");
     expect(progress).toEqual({ files: 1, rows: 1, cells: 0, nameOnly: 0 });
+  });
+
+  it("several subjects (a guardian and a child erased together): each file is read once and rewritten once, chunked uploads in one read", async () => {
+    h.uploads = [{ tenantId: "t1", id: "a" }, { tenantId: "t1", id: "b" }];
+    h.files.set("db-upload://a", Buffer.from(csv, "utf8"));
+    h.files.set("db-upload://b", Buffer.from("Name,Email\nBen Ray,ben@example.test\n", "utf8"));
+    // Children before their guardian (the route's order): her pass blanks her address in Zara's row, which is how
+    // Zara's own pass recognises it.
+    const out = await eraseSubjectsFromImportFiles("t1", [KID, ADA], importFileUrls([], [{ id: "a", status: "complete", expiresAt: new Date(0) }, { id: "b", status: "complete", expiresAt: new Date(0) }]));
+    expect(h.uploadReads).toEqual([["a", "b"]]);
+    expect(h.rewritten.map((r) => r.url)).toEqual(["db-upload://a"]);
+    // Both of them are out of the one rewrite: Ada's own row and Zara's.
+    expect(h.rewritten[0].text).not.toMatch(/^Ada Obi,ada@example\.test/m);
+    expect(h.rewritten[0].text).not.toMatch(/^Zara Obi,/m);
+    expect(h.rewritten[0].text).toMatch(/^Ben Ray,ben@example\.test/m);
+    expect(out).toMatchObject({ files: 1, rows: 2 });
+  });
+
+  it("diagnostics for several subjects: the caller's jobs are used (no read), and each changed job is written once", async () => {
+    const jobs = [
+      { id: "j1", errorLog: [{ row: 2, reason: "Duplicate email ada@example.test" }, { row: 3, reason: "Zara Obi: missing date of birth" }, { row: 4, reason: "Missing plan" }], dryRunSummary: null },
+      { id: "j2", errorLog: [{ row: 2, reason: "Missing plan" }], dryRunSummary: null },
+    ];
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const findMany = vi.fn(async () => jobs);
+    const tx = { importJob: { findMany, updateMany } };
+    expect(await eraseSubjectsFromImportDiagnostics(tx as never, "t1", [KID, ADA], { dryRun: true, jobs })).toBe(2);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(await eraseSubjectsFromImportDiagnostics(tx as never, "t1", [KID, ADA])).toBe(2);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith({ where: { id: "j1", tenantId: "t1" }, data: { errorLog: [{ row: 4, reason: "Missing plan" }] } });
   });
 
   it("a rewrite failure is thrown, so the erasure refuses rather than reporting success", async () => {
@@ -256,6 +301,6 @@ describe("eraseSubjectFromImportFiles", () => {
     h.files.set("db-upload://up1", Buffer.from("Name,Email\nAda Obi,ada@example.test\n", "utf8"));
     const storage = await import("@/lib/import-storage");
     vi.mocked(storage.rewriteImportFile).mockRejectedValueOnce(new Error("store down"));
-    await expect(eraseSubjectFromImportFiles("t1", ADA)).rejects.toThrow("store down");
+    await expect(walk(ADA)).rejects.toThrow("store down");
   });
 });

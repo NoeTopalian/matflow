@@ -3,7 +3,7 @@
  * (6 Nov 2026: Activity is kept permanently, so the erasure must reach it).
  */
 import { describe, it, expect, vi } from "vitest";
-import { ERASED_ENTITY_ID, redactAuditMetadata, redactSubjectFromAuditLog, type AddressRowDecision } from "@/lib/audit-redact";
+import { ERASED_ENTITY_ID, redactAuditMetadata, redactSubjectsFromAuditLog, type AddressRowDecision } from "@/lib/audit-redact";
 
 describe("redactAuditMetadata", () => {
   it("keeps every changed field's name and nulls its values; keeps everything that is not personal", () => {
@@ -39,20 +39,22 @@ describe("redactAuditMetadata", () => {
   });
 });
 
-describe("redactSubjectFromAuditLog", () => {
+describe("redactSubjectsFromAuditLog", () => {
+  const byIdWhere = (ids: string[]) => ({
+    tenantId: "t1",
+    OR: [{ entityId: { in: ids } }, ...ids.flatMap((id) => [{ metadata: { path: ["memberId"], equals: id } }, { metadata: { path: ["childId"], equals: id } }])],
+  });
+
   it("reads only this club's rows about the member, writes metadata only, and counts without writing in a dry run", async () => {
     const rows = [
       { id: "a1", metadata: { changes: { phone: { from: "07700 900111", to: "07700 900222" } } } },
       { id: "a2", metadata: { classInstanceId: "s1", memberId: "m1" } },
     ];
     const tx = { auditLog: { findMany: vi.fn(async () => rows), updateMany: vi.fn(async () => ({ count: 1 })) } };
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true })).toBe(1);
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", [{ memberId: "m1" }], { dryRun: true })).toBe(1);
     expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
-    expect(tx.auditLog.findMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", OR: [{ entityId: "m1" }, { metadata: { path: ["memberId"], equals: "m1" } }, { metadata: { path: ["childId"], equals: "m1" } }] },
-      select: { id: true, metadata: true },
-    });
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1")).toBe(1);
+    expect(tx.auditLog.findMany).toHaveBeenCalledWith({ where: byIdWhere(["m1"]), select: { id: true, metadata: true } });
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", [{ memberId: "m1" }])).toBe(1);
     expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
       where: { id: "a1", tenantId: "t1" },
@@ -70,11 +72,11 @@ describe("redactSubjectFromAuditLog", () => {
     const findMany = vi.fn(async (args: { where: { entityId?: unknown } }) => (args.where.entityId ? byAddress : []));
     const tx = { auditLog: { findMany, updateMany: vi.fn(async () => ({ count: 1 })) } };
     const decisions: Record<string, AddressRowDecision> = { "cara.old@example.test": "repoint", "cara@example.test": "repoint", "shared@example.test": "neutral" };
-    const addressRow = (a: string) => decisions[a.toLowerCase()] ?? null;
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true, addressRow })).toBe(3);
+    const subjects = [{ memberId: "m1", addressRow: (a: string) => decisions[a.toLowerCase()] ?? null }];
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", subjects, { dryRun: true })).toBe(3);
     expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
     expect(findMany).toHaveBeenCalledWith({ where: { tenantId: "t1", entityId: { contains: "@" } }, select: { id: true, entityId: true, metadata: true } });
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { addressRow })).toBe(3);
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", subjects)).toBe(3);
     expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(3);
     expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
       where: { id: "k1", tenantId: "t1" },
@@ -94,8 +96,9 @@ describe("redactSubjectFromAuditLog", () => {
     const row = { id: "both", entityId: "cara@example.test", metadata: { memberId: "m1", signerName: "Cara Lee" } };
     const findMany = vi.fn(async (args: { where: { entityId?: unknown } }) => (args.where.entityId ? [row] : [{ id: row.id, metadata: row.metadata }]));
     const tx = { auditLog: { findMany, updateMany: vi.fn(async () => ({ count: 1 })) } };
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { dryRun: true, addressRow: () => "repoint" })).toBe(1);
-    expect(await redactSubjectFromAuditLog(tx as never, "t1", "m1", { addressRow: () => "repoint" })).toBe(1);
+    const subjects = [{ memberId: "m1", addressRow: (): AddressRowDecision => "repoint" }];
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", subjects, { dryRun: true })).toBe(1);
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", subjects)).toBe(1);
     expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
       where: { id: "both", tenantId: "t1" },
@@ -103,20 +106,34 @@ describe("redactSubjectFromAuditLog", () => {
     });
   });
 
-  it("a row naming a guardian and a child erased together is counted once across both (shared seen)", async () => {
+  it("a guardian and a child erased together: one read by id for both, and a row naming both is counted and written once", async () => {
     const row = { id: "both", metadata: { memberId: "m_parent", childId: "m_kid", childName: "Kid Obi" } };
-    const tx = { auditLog: { findMany: vi.fn(async () => [row]), updateMany: vi.fn() } };
-    const seen = new Set<string>();
-    const total = (await redactSubjectFromAuditLog(tx as never, "t1", "m_parent", { dryRun: true, seen })) + (await redactSubjectFromAuditLog(tx as never, "t1", "m_kid", { dryRun: true, seen }));
-    expect(total).toBe(1);
-    expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
-    // Without a shared set each subject counts it.
-    expect((await redactSubjectFromAuditLog(tx as never, "t1", "m_parent", { dryRun: true })) + (await redactSubjectFromAuditLog(tx as never, "t1", "m_kid", { dryRun: true }))).toBe(2);
+    const tx = { auditLog: { findMany: vi.fn(async () => [row]), updateMany: vi.fn(async () => ({ count: 1 })) } };
+    const subjects = [{ memberId: "m_parent" }, { memberId: "m_kid" }];
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", subjects, { dryRun: true })).toBe(1);
+    expect(tx.auditLog.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.findMany).toHaveBeenCalledWith({ where: byIdWhere(["m_parent", "m_kid"]), select: { id: true, metadata: true } });
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", subjects)).toBe(1);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledTimes(1);
   });
 
-  it("without addressRow, no address-keyed rows are read", async () => {
+  it("an address two of the subjects claim is neutral, never repointed to either", async () => {
+    const row = { id: "k", entityId: "family@example.test", metadata: { signerName: "Someone", method: "kiosk_waiver_link" } };
+    const findMany = vi.fn(async (args: { where: { entityId?: unknown } }) => (args.where.entityId ? [row] : []));
+    const tx = { auditLog: { findMany, updateMany: vi.fn(async () => ({ count: 1 })) } };
+    const both = (): AddressRowDecision => "repoint";
+    await redactSubjectsFromAuditLog(tx as never, "t1", [{ memberId: "m_parent", addressRow: both }, { memberId: "m_kid", addressRow: both }]);
+    expect(tx.auditLog.updateMany).toHaveBeenCalledWith({
+      where: { id: "k", tenantId: "t1" },
+      data: { metadata: { signerName: null, method: "kiosk_waiver_link", redactedForErasure: true }, entityId: ERASED_ENTITY_ID },
+    });
+  });
+
+  it("without addressRow, no address-keyed rows are read; no subjects, no reads", async () => {
     const tx = { auditLog: { findMany: vi.fn(async () => []), updateMany: vi.fn() } };
-    await redactSubjectFromAuditLog(tx as never, "t1", "m1");
+    await redactSubjectsFromAuditLog(tx as never, "t1", [{ memberId: "m1" }]);
+    expect(tx.auditLog.findMany).toHaveBeenCalledTimes(1);
+    expect(await redactSubjectsFromAuditLog(tx as never, "t1", [])).toBe(0);
     expect(tx.auditLog.findMany).toHaveBeenCalledTimes(1);
   });
 });

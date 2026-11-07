@@ -45,8 +45,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import { csvFieldVerbatim } from "@/lib/csv";
-import { DB_UPLOAD_PREFIX, readImportFileBytes, rewriteImportFile } from "@/lib/import-storage";
-import { withTenantContext } from "@/lib/prisma-tenant";
+import { DB_UPLOAD_PREFIX, readImportFileBytes, readUploadBytesMany, rewriteImportFile } from "@/lib/import-storage";
 
 export type ErasureSubject = {
   memberId: string;
@@ -402,23 +401,37 @@ export function scrubSubjectFromDiagnostics(value: unknown, subject: ErasureSubj
 
 type DiagTx = Pick<Prisma.TransactionClient, "importJob">;
 
+export type DiagnosticsJob = { id: string; errorLog: unknown; dryRunSummary: unknown };
+
 /**
- * Remove the subject from every job's `errorLog` and `dryRunSummary` in this
- * club. `dryRun` counts without writing (the erasure's fulfilment record is
- * written before the scrub, in the same transaction).
+ * Remove the subjects (a member, and the children erased with them; children first, as for the files) from every
+ * job's `errorLog` and `dryRunSummary` in this club: one read of the jobs (or the caller's, from the same
+ * transaction), one write per job that changed.
+ * `dryRun` counts without writing (the erasure's fulfilment record is written before the scrub, in the same
+ * transaction).
  */
-export async function eraseSubjectFromImportDiagnostics(tx: DiagTx, tenantId: string, subject: ErasureSubject, opts: { dryRun?: boolean } = {}): Promise<number> {
-  const jobs = await tx.importJob.findMany({ where: { tenantId }, select: { id: true, errorLog: true, dryRunSummary: true } });
+export async function eraseSubjectsFromImportDiagnostics(
+  tx: DiagTx,
+  tenantId: string,
+  subjects: ErasureSubject[],
+  opts: { dryRun?: boolean; jobs?: DiagnosticsJob[] } = {},
+): Promise<number> {
+  const jobs = opts.jobs ?? (await tx.importJob.findMany({ where: { tenantId }, select: { id: true, errorLog: true, dryRunSummary: true } }));
   let scrubbed = 0;
   for (const job of jobs) {
     const data: { errorLog?: Prisma.InputJsonValue; dryRunSummary?: Prisma.InputJsonValue } = {};
     for (const field of ["errorLog", "dryRunSummary"] as const) {
-      const stored = job[field];
-      if (!stored || typeof stored !== "object") continue;
-      const r = scrubSubjectFromDiagnostics(stored, subject);
-      if (r.scrubbed === 0) continue;
-      scrubbed += r.scrubbed;
-      data[field] = r.value as Prisma.InputJsonValue;
+      let value = job[field];
+      if (!value || typeof value !== "object") continue;
+      let changed = false;
+      for (const subject of subjects) {
+        const r = scrubSubjectFromDiagnostics(value, subject);
+        if (r.scrubbed === 0) continue;
+        scrubbed += r.scrubbed;
+        value = r.value;
+        changed = true;
+      }
+      if (changed) data[field] = value as Prisma.InputJsonValue;
     }
     if (opts.dryRun || Object.keys(data).length === 0) continue;
     await tx.importJob.updateMany({ where: { id: job.id, tenantId }, data });
@@ -429,48 +442,69 @@ export async function eraseSubjectFromImportDiagnostics(tx: DiagTx, tenantId: st
 // ─── Files ───────────────────────────────────────────────────────────────────
 
 /**
- * Rewrite every stored import file of this club — each job's file, and every
- * chunked upload, attached to a job or not — without the subject's rows. Runs
- * outside any transaction (a file store call is a network call). Throws if a
- * file that names the subject cannot be rewritten: the erasure must not
- * report success while the rows survive. Each file is rewritten in place
- * (same address), so a failure leaves the old content, never a lost file.
+ * Every stored import file of this club, by address: each job's file, and every chunked upload, attached to a job or
+ * not. An upload still arriving in chunks (open, not yet expired) is left out, so it is not rewritten under the
+ * browser's feet.
  */
-export async function eraseSubjectFromImportFiles(
+export function importFileUrls(
+  jobs: { fileBlobUrl: string }[],
+  uploads: { id: string; status: string; expiresAt: Date }[],
+  now: Date = new Date(),
+): string[] {
+  const urls = new Set(jobs.map((j) => j.fileBlobUrl).filter((u) => u !== ""));
+  for (const u of uploads) if (!(u.status === "open" && u.expiresAt > now)) urls.add(`${DB_UPLOAD_PREFIX}${u.id}`);
+  return [...urls];
+}
+
+/** Chunked uploads are read set-based, a batch at a time, so a club with many large uploads is never held at once. */
+const UPLOAD_READ_BATCH = 20;
+
+/**
+ * Rewrite every given import file without the subjects' rows (a member, and the children erased with them): each
+ * file is read once and rewritten at most once, whatever the number of subjects. Subjects are applied in the order
+ * given, so pass children BEFORE their guardian: a child's rows are recognised by the guardian's address, which the
+ * guardian's pass blanks in every row that is not theirs. Runs outside any transaction (a
+ * file store call is a network call). Throws if a file that names a subject cannot be rewritten: the erasure must not
+ * report success while the rows survive. Each file is rewritten in place (same address), so a failure leaves the old
+ * content, never a lost file.
+ */
+export async function eraseSubjectsFromImportFiles(
   tenantId: string,
-  subject: ErasureSubject,
+  subjects: ErasureSubject[],
+  urls: string[],
   /** Added to as each file is rewritten, so a caller knows what already changed when a later file throws. */
   progress: { files: number; rows: number; cells: number; nameOnly?: number } = { files: 0, rows: 0, cells: 0 },
 ): Promise<{ files: number; rows: number; cells: number; nameOnly: number }> {
-  const [jobs, uploads] = await withTenantContext(tenantId, (tx) =>
-    Promise.all([
-      tx.importJob.findMany({ where: { tenantId, NOT: { fileBlobUrl: "" } }, select: { fileBlobUrl: true } }),
-      tx.importUpload.findMany({ where: { tenantId }, select: { id: true, status: true, expiresAt: true } }),
-    ]),
-  );
-  const urls = new Set(jobs.map((j) => j.fileBlobUrl));
-  const now = new Date();
-  // An upload still arriving in chunks (open, not yet expired) is not rewritten under the browser's feet.
-  for (const u of uploads) if (!(u.status === "open" && u.expiresAt > now)) urls.add(`${DB_UPLOAD_PREFIX}${u.id}`);
-  let files = 0;
-  let rows = 0;
-  let cells = 0;
-  let nameOnly = 0;
-  for (const url of urls) {
-    const bytes = await readImportFileBytes(url, tenantId);
-    if (bytes === null) continue;
+  const total = { files: 0, rows: 0, cells: 0, nameOnly: 0 };
+  const erase = async (url: string, bytes: Uint8Array | null) => {
+    if (bytes === null) return;
     const decoded = decodeImportBytes(bytes);
-    const r = removeSubjectRows(decoded.text, subject);
-    nameOnly += r.nameOnly;
-    progress.nameOnly = (progress.nameOnly ?? 0) + r.nameOnly;
-    if (r.removed === 0 && r.blanked === 0) continue;
-    await rewriteImportFile(url, tenantId, encodeImportText({ text: r.text, encoding: decoded.encoding }));
-    files += 1;
-    rows += r.removed;
-    cells += r.blanked;
+    let text = decoded.text;
+    let removed = 0;
+    let blanked = 0;
+    for (const subject of subjects) {
+      const r = removeSubjectRows(text, subject);
+      total.nameOnly += r.nameOnly;
+      progress.nameOnly = (progress.nameOnly ?? 0) + r.nameOnly;
+      removed += r.removed;
+      blanked += r.blanked;
+      text = r.text;
+    }
+    if (removed === 0 && blanked === 0) return;
+    await rewriteImportFile(url, tenantId, encodeImportText({ text, encoding: decoded.encoding }));
+    total.files += 1;
+    total.rows += removed;
+    total.cells += blanked;
     progress.files += 1;
-    progress.rows += r.removed;
-    progress.cells += r.blanked;
+    progress.rows += removed;
+    progress.cells += blanked;
+  };
+  const uploads = urls.filter((u) => u.startsWith(DB_UPLOAD_PREFIX)).map((u) => u.slice(DB_UPLOAD_PREFIX.length));
+  for (let i = 0; i < uploads.length; i += UPLOAD_READ_BATCH) {
+    const batch = uploads.slice(i, i + UPLOAD_READ_BATCH);
+    const bytes = await readUploadBytesMany(tenantId, batch);
+    for (const id of batch) await erase(`${DB_UPLOAD_PREFIX}${id}`, bytes.get(id) ?? null);
   }
-  return { files, rows, cells, nameOnly };
+  for (const url of urls) if (!url.startsWith(DB_UPLOAD_PREFIX)) await erase(url, await readImportFileBytes(url, tenantId));
+  return total;
 }

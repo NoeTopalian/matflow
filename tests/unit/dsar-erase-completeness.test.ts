@@ -157,16 +157,16 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/prisma-tenant", () => ({
-  withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
-    const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
-  },
-  withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
-    const { prisma } = await import("@/lib/prisma");
-    return fn(prisma);
-  },
-}));
+vi.mock("@/lib/prisma-tenant", () => {
+  // One import, shared: the erase opens two transactions side by side (7 Nov 2026), and two concurrent dynamic imports
+  // of a mocked module can resolve the second to the real one.
+  let mocked: Promise<typeof import("@/lib/prisma")> | undefined;
+  const fake = async () => (await (mocked ??= import("@/lib/prisma"))).prisma;
+  return {
+    withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => fn(await fake()),
+    withRlsBypass: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(await fake()),
+  };
+});
 
 const MEMBER_ID = "m1";
 const TENANT_ID = "tenant-A";
@@ -518,7 +518,8 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     const { prisma } = await import("@/lib/prisma");
     await erase();
     const lookups = vi.mocked(prisma.auditLog.findMany).mock.calls.map(([a]) => a as { where: { entityId?: unknown; action?: unknown } });
-    expect(lookups).toContainEqual(expect.objectContaining({ where: { tenantId: TENANT_ID, entityId: MEMBER_ID, action: { in: ["member.update", "member.self_update"] } } }));
+    // One read for every subject of the erasure (the member, and any children erased with them).
+    expect(lookups).toContainEqual(expect.objectContaining({ where: { tenantId: TENANT_ID, entityId: { in: [MEMBER_ID] }, action: { in: ["member.update", "member.self_update"] } } }));
   });
 
   it("records the erase counts in the pre-erase audit row", async () => {
