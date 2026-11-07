@@ -24,20 +24,57 @@ import type { Prisma } from "@prisma/client";
 
 /** Longest mat name: it has to fit a column header. */
 export const MAT_NAME_MAX = 24;
+/** Longest typed place (Class.location) a class may keep when no mat is added. */
+export const PLACE_NAME_MAX = 100;
 /** Most mats a club can have. */
 export const MAT_LIMIT = 12;
 
 /** First key of the per-club advisory lock ("MATS"). The second is hashtext(tenantId). */
 export const MATS_LOCK_NS = 0x4d415453;
 
-/** A name as it is stored and shown: trimmed, runs of white space made one space. */
+/**
+ * Invisible formatting characters that carry nothing in a name: zero-width
+ * space, the direction marks, embeddings, overrides and isolates, word joiner
+ * and byte order mark. Zero-width joiner and non-joiner are kept: emoji and
+ * several scripts need them.
+ */
+const INVISIBLE_FORMATTING = /[\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
+
+/**
+ * A name as it is stored and shown: invisible formatting characters removed,
+ * so a name of nothing but those is blank; trimmed; runs of white space made
+ * one space.
+ */
 export function cleanMatName(raw: string): string {
-  return raw.normalize("NFC").replace(/\s+/g, " ").trim();
+  return raw.normalize("NFC").replace(INVISIBLE_FORMATTING, "").replace(/\s+/g, " ").trim();
 }
 
-/** What makes two names the same mat: the clean name, lower-cased. */
+/**
+ * What makes two names the same mat: the clean name with the default-ignorable
+ * code points removed as well (the joiners and soft hyphen a name may keep for
+ * display, so "Mat\u00AD1" keys as "mat1" and a joiner alone is blank; not the
+ * tags and glyph selectors, which make different symbols: see keptInKey),
+ * lower-cased. Names saved before 7 Nov 2026 were keyed without that step:
+ * scripts/check-mat-name-keys.mjs lists any whose stored key differs.
+ */
 export function matNameKey(raw: string): string {
-  return cleanMatName(raw).toLowerCase();
+  return dropIgnorables(cleanMatName(raw)).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
+/**
+ * Default-ignorable code points stay in the key when they make a different
+ * symbol: tag characters (U+E0000 to U+E007F), so the England, Scotland and
+ * Wales flags are three names, not one, and the variation selectors that pick
+ * a glyph (U+FE00 to U+FE0D, U+E0100 to U+E01EF). Not U+FE0E and U+FE0F,
+ * which only choose text or emoji display: "Cage" with a red heart is one
+ * location whichever way the heart is drawn.
+ */
+const keptInKey = (cp: number) => (cp >= 0xfe00 && cp <= 0xfe0d) || (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xe0000 && cp <= 0xe007f);
+function dropIgnorables(s: string): string {
+  let out = "";
+  for (const ch of s) if (!DEFAULT_IGNORABLE.test(ch) || keptInKey(ch.codePointAt(0) ?? 0)) out += ch;
+  return out;
 }
 
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
@@ -53,8 +90,9 @@ export function compareMatNames(a: string, b: string): number {
  * class being saved onto that mat. Held until the transaction ends.
  *
  * ORDER: this is the FIRST statement of a transaction that takes it, before
- * any row lock (docs/design/LOCK-ORDER-2026-10-24.md). A class edit takes
- * it only when the request names a mat.
+ * any row lock (docs/design/LOCK-ORDER-2026-10-24.md). A class create or
+ * edit takes it only when the request names a mat, by id (`matId`) or by
+ * name (`matName`, the class form's Location).
  *
  * The one raw statement mats need: the project keeps raw SQL out of
  * application code except reviewed locks of this shape (lib/login-email.ts);
@@ -105,7 +143,11 @@ export function placeSuggestions(
       noPlaceCount += 1;
       continue;
     }
-    const key = name.toLowerCase();
+    const key = matNameKey(name);
+    if (!key) {
+      noPlaceCount += 1;
+      continue;
+    }
     const seen = spellings.get(key) ?? new Map<string, number>();
     seen.set(name, (seen.get(name) ?? 0) + 1);
     spellings.set(key, seen);
@@ -119,4 +161,48 @@ export function placeSuggestions(
   }
   suggestions.sort((a, b) => compareMatNames(a.name, b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return { suggestions, noPlaceCount };
+}
+
+/**
+ * The class form's Location (Noe, 7 Nov 2026). Every refusal carries
+ * `reason: "location"` so the form shows it beside the field, with what was
+ * typed kept.
+ */
+export const LOCATION_ERRORS = {
+  empty: "Give the new location a name.",
+  tooLong: `A location name can be up to ${MAT_NAME_MAX} characters. Use a shorter name.`,
+  placeTooLong: `A place can be up to ${PLACE_NAME_MAX} characters. Use a shorter name.`,
+  limit: `You already have ${MAT_LIMIT} locations, the most a club can have, so this one can't be added. Remove a location under Mats, or choose one from the list.`,
+  both: "Choose a location from the list or add a new one, not both.",
+} as const;
+
+/**
+ * A Location name sent by the class form (`matName`), checked before any
+ * transaction: the clean name, or the sentence that refuses it. Too long is a
+ * refusal only for a caller that may add mats; anyone else keeps it as a
+ * typed place (lib/mats-store.ts `matForLocation`).
+ */
+export function checkLocationName(raw: string, mayAddMat: boolean): { ok: true; name: string } | { ok: false; error: string } {
+  const name = cleanMatName(raw);
+  // Blank by its key: a name of nothing but invisible characters is no name.
+  if (!matNameKey(name)) return { ok: false, error: LOCATION_ERRORS.empty };
+  if (mayAddMat && name.length > MAT_NAME_MAX) return { ok: false, error: LOCATION_ERRORS.tooLong };
+  if (name.length > PLACE_NAME_MAX) return { ok: false, error: LOCATION_ERRORS.placeTooLong };
+  return { ok: true, name };
+}
+
+/**
+ * The club's classes on no mat that type a place, imported history excepted
+ * (what a new mat may take: lib/mats-store.ts adoptPlaces and matForLocation),
+ * LOCKED (FOR NO KEY UPDATE, the strength the undo batch takes: it still
+ * waits for an edit's FOR UPDATE and for any UPDATE, but not for the FOR KEY
+ * SHARE a bulk ClassInstance insert takes on its classes, so it cannot deadlock
+ * with one) in id order, so an edit that clears or changes one of them cannot
+ * be overwritten by the attach that follows. Call under the club's mats lock
+ * (LOCK-ORDER: MATS, then these Class rows in id order). Read as they are now:
+ * the caller matches the names on this read, never an older one.
+ * Raw for the row lock; tenantId is a bind parameter.
+ */
+export function lockTypedClasses(tx: Prisma.TransactionClient, tenantId: string): Promise<{ id: string; location: string | null; deletedAt: Date | null }[]> {
+  return tx.$queryRaw<{ id: string; location: string | null; deletedAt: Date | null }[]>`SELECT "id", "location", "deletedAt" FROM "Class" WHERE "tenantId" = ${tenantId} AND "matId" IS NULL AND "sourceImportJobId" IS NULL AND "location" IS NOT NULL ORDER BY "id" FOR NO KEY UPDATE`;
 }

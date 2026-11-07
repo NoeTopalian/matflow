@@ -122,6 +122,30 @@ acts on is worse than an error they can see.
   flagged nor blocked: that is the club's own set-up.
 - **Mats are set up from what the club already typed.** The places typed on classes are offered
   as mats; nothing is turned into a mat without a press, and no migration writes one.
+- **The class form's Location saves what is typed (Noe, 7 Nov 2026).** It is one list: the
+  club's mats, then the places typed on its classes that are not mats yet, "No location" and
+  "Add a new location…". Choosing a typed place or a new name puts the class on the mat of
+  that name. When there is no such mat it is added, and every other class of the club that
+  types that name (whatever its capitals and spacing) goes on it with it, as the Mats sheet's
+  "Add these as mats" does; the owner is told how many classes are now on it. A new mat past
+  the twelfth, or a name over 24 characters, is refused beside the field, saying why and what
+  to do (remove a location under Mats, or use a shorter name); the save is not made and the
+  typed name stays in the box. A class is moved only when its own Location is changed or a
+  new mat takes its typed name: a save that leaves the Location alone never moves it, and a
+  class from before that still types a mat's name without being on it says so in its list
+  ("typed on this class only"). It never saves a split: a club that chose one keeps it, and one
+  that has not follows the rule below. A support session cannot add mats: the list says "Type
+  a place"; a name that is one of the club's mats puts the class on it, and any other stays
+  that class's typed place.
+- **Same name, same mat, whatever invisible characters it carries (7 Nov 2026).** Two names are the
+  same mat when they match ignoring capitals, spacing and default-ignorable characters (a soft
+  hyphen, a zero-width joiner), which stay in the name shown. Mats saved before then were keyed
+  without that last step. `scripts/check-mat-name-keys.mjs` (read-only) lists any whose stored key
+  differs; Noe runs it on production with
+  `node scripts/check-mat-name-keys.mjs --expect-host ep-bold-wave` (`DATABASE_URL` set to production).
+  To put one right, rename it in the Mats sheet to a different name (a rename to the same name
+  changes nothing), and if another mat already has the name it should take, remove that duplicate
+  first (a rename onto a name in use is refused); it can then be renamed back.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and
   never saved. Once an owner or manager presses a choice it is saved for the club and stays

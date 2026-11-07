@@ -1584,8 +1584,11 @@ model Location {
 
 /// One of a club's training areas ("Mat 1", "Cage", "Upstairs"). Club-wide, in
 /// the club's own order: the order of the columns on a timetable split by mat.
-/// `nameKey` is the name trimmed, single-spaced and lower-cased; it is written
-/// only by lib/mats.ts and makes "Mat 1" and "mat  1" the same mat.
+/// `nameKey` is lib/mats.ts matNameKey(name): the name trimmed, single-spaced,
+/// without invisible formatting and default-ignorable characters (tags and
+/// glyph variation selectors excepted) and lower-cased. It is written only through
+/// lib/mats.ts and makes "Mat 1" and "mat  1" the same mat. Keys stored before
+/// 7 Nov 2026 kept those characters: scripts/check-mat-name-keys.mjs lists them.
 model Mat {
   id        String   @id @default(cuid())
   tenantId  String

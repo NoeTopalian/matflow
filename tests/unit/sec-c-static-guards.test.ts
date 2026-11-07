@@ -59,7 +59,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "lib/checkin.ts",
       "lib/class-allowance-count.ts", // T7: statement C, the allowance read after the Member lock; tenantId, memberId, session id and the date range are bind parameters
       "lib/login-email.ts",
-      "lib/mats.ts", // per-club mats advisory lock (pg_advisory_xact_lock) opening every mats write; the namespace and tenantId are bind parameters
+      "lib/mats.ts", // per-club mats advisory lock (pg_advisory_xact_lock) opening every mats write, and the FOR UPDATE read of the club's typed classes under it; the namespace and tenantId are bind parameters
       "lib/member-delete.ts", // T7: Member row lock (SELECT … FOR UPDATE) opening the deletion cascade; id and tenantId are bind parameters
       "lib/migration-lock.ts", // 69d87070: pg_try_advisory_xact_lock_shared on Prisma Migrate's key; the key is a module constant bound as a parameter
       "lib/prisma-tenant.ts",

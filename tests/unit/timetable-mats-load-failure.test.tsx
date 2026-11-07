@@ -7,7 +7,7 @@
 // in production code.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import { weekChips, weekDay } from "./helpers/week";
@@ -89,11 +89,20 @@ describe("the timetable when the mats could not be loaded", () => {
     expect(screen.queryByTestId("timetable-mats-phone")).toBeNull();
   });
 
-  it("the class form keeps a class's mat untouched: it shows the typed-place form and names no mat on save", () => {
+  it("the class form keeps a class's mat untouched: its Location shows the place it has and a save names no mat", async () => {
+    const calls = stubFetch();
     render(<TimetableManager initialClasses={classes()} matsLoadFailed {...PROPS} />);
     fireEvent.click(screen.getAllByRole("button", { name: /^Edit Gi/ })[0]);
     expect(screen.queryByLabelText("Mat")).toBeNull();
-    expect((screen.getByLabelText("Location") as HTMLInputElement).value).toBe("Mat 1");
+    const location = screen.getByLabelText("Location") as HTMLSelectElement;
+    expect(location.value).toBe("keep");
+    expect(location.selectedOptions[0].textContent).toBe("Mat 1");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    const body = calls.find((c) => c.method === "PATCH")?.body ?? {};
+    expect(body).not.toHaveProperty("matId");
+    expect(body).not.toHaveProperty("matName");
+    expect(body).not.toHaveProperty("location");
   });
 
   it("a refresh whose mats read fails, and the one after that succeeds, announce no change of split", () => {

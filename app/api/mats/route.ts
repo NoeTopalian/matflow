@@ -53,7 +53,8 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Give the mat a name." }, { status: 400 });
   const name = cleanMatName(parsed.data.name);
-  if (!name) return NextResponse.json({ error: "Give the mat a name." }, { status: 400 });
+  // Blank by its key: a name of nothing but invisible characters is no name (lib/mats.ts matNameKey).
+  if (!matNameKey(name)) return NextResponse.json({ error: "Give the mat a name." }, { status: 400 });
   if (name.length > MAT_NAME_MAX) return NextResponse.json({ error: `A mat name can be up to ${MAT_NAME_MAX} characters.` }, { status: 400 });
   const nameKey = matNameKey(name);
 
