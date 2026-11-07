@@ -1,35 +1,23 @@
-// Loads the Sentry browser SDK.
+// Starts the Sentry browser SDK — off the critical path, and only when this
+// build has a DSN.
 //
-// WHY THIS FILE IS THE WHOLE FIX
-// ------------------------------
-// `sentry.client.config.ts` has existed, complete and correct, for a long time
-// — and has never once run. Nothing imported it: there was no
-// `instrumentation-client.ts` and no `withSentryConfig` in `next.config.ts`, so
-// the browser SDK was never initialised. Every `Sentry.captureException` in the
-// route-segment error boundaries was therefore dead code calling into an
-// uninitialised client, and no client-side error in this product has ever
-// reached a human.
+// History: `sentry.client.config.ts` existed, complete and correct, for a long
+// time and never ran, because nothing imported it; this file is what made
+// client-side error capture real. It used to import the config statically,
+// which put the whole SDK (and zod, below) into the JavaScript every page
+// downloads and parses before it is interactive (speed quick win 2d, 6 Nov
+// 2026). It now hands the load to lib/sentry-client.ts:
+//  - NEXT_PUBLIC_SENTRY_DSN unset at build: nothing is loaded at all;
+//  - set: the SDK loads and initialises straight after start-up, in its own
+//    chunk; an uncaught error or unhandled rejection in the meantime is held
+//    and reported once it is ready, and error boundaries wait for that same
+//    load before reporting.
+// Setting that variable in Vercel is the step that turns capture on, and it is
+// Noe's to do. Deliberately still not `withSentryConfig` (source maps and
+// tunnelling can come later without touching this file).
 //
-// Next loads a root `instrumentation-client.ts` before the app becomes
-// interactive and expects no particular export, so importing the existing
-// config for its side effects is all that is required. Deliberately NOT done
-// via `withSentryConfig`: that wrapper exists mainly for source-map upload and
-// tunnelling, and changing the build wrapper days before a customer meeting is
-// a production risk out of all proportion to the benefit. Source maps can be
-// added later without touching this file.
-//
-// Still a no-op until `NEXT_PUBLIC_SENTRY_DSN` is set — the config guards on
-// it, so contributors and local dev need configure nothing. Setting that
-// variable in Vercel is the step that turns this on, and it is Noe's to do.
-import "./sentry.client.config";
-import { z } from "zod";
+// zod's `jitless` setting moved to lib/zod-client.ts, imported by the modules
+// that build schemas in the browser.
+import { startClientSentry } from "@/lib/sentry-client";
 
-// zod v4 probes `Function("")` the first time an object schema is built, to
-// decide whether it may JIT-compile parsers. Under any CSP without
-// 'unsafe-eval' — the static next.config.ts policy today, and the nonce policy
-// from lib/csp.ts — that probe raises a script-src violation on every page
-// that builds a schema (lane C2 browser pass, 9 Oct 2026: /login, /apply).
-// The probe is caught and zod falls back to its interpreter, so behaviour does
-// not change; jitless skips the probe and the violation noise with it. This
-// file runs before hydration, i.e. before any page chunk builds a schema.
-z.config({ jitless: true });
+startClientSentry();

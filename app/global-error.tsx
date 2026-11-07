@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import * as Sentry from "@sentry/nextjs";
+import { reportClientError } from "@/lib/sentry-client";
 import { errorReferenceFromDigest } from "@/lib/error-reference";
 
 /**
@@ -29,11 +29,7 @@ export default function GlobalError({
   const reference = error.digest ? errorReferenceFromDigest(error.digest) : null;
 
   useEffect(() => {
-    Sentry.withScope((scope) => {
-      scope.setLevel("fatal");
-      if (reference) scope.setTag("error_reference", reference);
-      Sentry.captureException(error);
-    });
+    reportClientError(error, { reference, level: "fatal" });
   }, [error, reference]);
 
   return (

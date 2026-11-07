@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { MoreHorizontal, LogOut, X } from "lucide-react";
-import { STAFF_NAV, isNavActive, type StaffRole } from "@/components/layout/routes";
+import { STAFF_NAV, isNavActive, navPrefetch, type StaffRole } from "@/components/layout/routes";
 
 interface Props {
   role: string;
@@ -72,6 +72,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch={navPrefetch(item)}
                 onClick={() => setMoreOpen(false)}
                 className="flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98]"
                 style={{

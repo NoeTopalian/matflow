@@ -36,9 +36,11 @@ Generated 2026-04-30. Re-run after each `Sprint N` to keep current.
 | `PasswordResetToken` | `@@index([email, tenantId])` | OTP verify | |
 | `PasswordHistory` | `@@index([userId])` | Password-reuse check on reset | |
 | `AuditLog` | `@@index([tenantId, createdAt])` | Audit-trail viewer (planned) | |
+| `AuditLog` | `@@index([tenantId, entityType, entityId])` | One thing's history: activity feed deletions, DSAR export, tenant lifecycle | Migration 20261106140100 |
 | `SignedWaiver` | `@@index([memberId, acceptedAt])` | Member detail view | |
 | `SignedWaiver` | `@@index([tenantId])` | Tenant-scoped audit | |
 | `RateLimitHit` | `@@index([bucket, hitAt])` | `lib/rate-limit.ts` sliding-window count | |
+| `RateLimitHit` | `@@index([hitAt])` | `lib/rate-limit.ts` prune (`hitAt < cutoff`, no bucket) | Migration 20261106140000 |
 | `Initiative` | `@@index([tenantId, startDate])` | Causal-report initiative attribution | |
 | `IndexedDriveFile` | `@@unique([tenantId, driveFileId])` | Drive-index dedupe | |
 | `IndexedDriveFile` | `@@index([tenantId])` | Per-tenant Drive-content fetch | |

@@ -88,3 +88,15 @@ export function isNavActive(href: string, pathname: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
+
+/**
+ * Next's `<Link>` prefetches every route it can see as soon as the page is idle:
+ * on a desktop dashboard that was all sixteen sidebar entries, each a full
+ * server render with its own session check and queries, on every page load —
+ * load on the 5-connection pool for pages nobody opened (speed quick win 2f,
+ * 6 Nov 2026). Only the four main destinations, the phone's bottom tabs, keep
+ * the default; the rest load when clicked.
+ */
+export function navPrefetch(item: StaffNavItem): false | undefined {
+  return item.mobilePrimary ? undefined : false;
+}

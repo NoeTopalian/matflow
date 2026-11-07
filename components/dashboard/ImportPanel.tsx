@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useSession } from "next-auth/react";
+import { SessionProvider, useSession } from "next-auth/react";
 import { Upload, FileText, CheckCircle2, AlertCircle, Database } from "lucide-react";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -161,7 +161,20 @@ function refreshValue(field: string, v: string | null): string {
   return v;
 }
 
+/**
+ * The panel reads useSession(), and the root layout has had no app-wide
+ * SessionProvider since 6 Nov 2026 (it fetched the session on every page load
+ * and tab return). This one fetches it once, when the panel mounts.
+ */
 export default function ImportPanel({ primaryColor }: { primaryColor: string }) {
+  return (
+    <SessionProvider refetchOnWindowFocus={false}>
+      <ImportPanelBody primaryColor={primaryColor} />
+    </SessionProvider>
+  );
+}
+
+function ImportPanelBody({ primaryColor }: { primaryColor: string }) {
   // All four routes behind this panel are `requireApiOwner`
   // (app/api/admin/import/upload:61, [id]/preview:16, [id]/commit:23, [id]:10).
   // Until this gate existed the panel rendered for anyone who could open the
