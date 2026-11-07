@@ -45,6 +45,7 @@ import { readImportFile } from "@/lib/import-storage";
 import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
 import { PATCH as patchMember } from "@/app/api/members/[id]/route";
 import { POST as kioskSign } from "@/app/api/waiver/open/route";
+import { POST as restorePOST } from "@/app/api/members/[id]/restore/route";
 import { hashToken } from "@/lib/token-hash";
 import { emailDigest } from "@/lib/login-email";
 import { NO_LOGIN_EMAIL_DOMAIN } from "@/lib/synthesise-kid-email";
@@ -294,4 +295,71 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
     expect(file).not.toContain(KIT.name);
     expect(file).toContain(BEN.email);
   }, 120_000);
+
+  it("PR 3: a cascade erasure of a guardian erases her current child and leaves her ARCHIVED child untouched and restorable", async () => {
+    // Hope has one current child (Ivy) and one archived child (Juno). Only Hope and Ivy are being erased: Juno's
+    // import-file row, her import diagnostics and her own Activity rows must stay exactly as they were.
+    const HOPE = { name: "Erim Hope Vale", email: `${STAMP}-hope@example.test` };
+    const IVY = { name: "Erim Ivy Vale", email: `kid-ivy-${STAMP}@${NO_LOGIN_EMAIL_DOMAIN}` };
+    const JUNO = { name: "Erim Juno Vale", email: `kid-juno-${STAMP}@${NO_LOGIN_EMAIL_DOMAIN}` };
+    const csv = Buffer.from(`Customer Name,Customer Email,Phone\n${HOPE.name},${HOPE.email},07700 900901\n${IVY.name},${HOPE.email},\n${JUNO.name},${HOPE.email},\n${BEN.name},${BEN.email},07700 900222\n`, "utf8");
+    const junoEdit = { changes: { name: { from: "Erim Juno Old", to: JUNO.name }, phone: { from: "07700 900902", to: null } } };
+    const seeded = await withRlsBypass(async (tx) => {
+      const hope = await tx.member.create({ data: { tenantId, name: HOPE.name, email: HOPE.email, externalRef: `teamup:${HOPE.email}|${HOPE.name.toLowerCase()}` } });
+      const ivy = await tx.member.create({ data: { tenantId, name: IVY.name, email: IVY.email, parentMemberId: hope.id, externalRef: `teamup:${HOPE.email}|${IVY.name.toLowerCase()}` } });
+      const juno = await tx.member.create({ data: { tenantId, name: JUNO.name, email: JUNO.email, parentMemberId: hope.id, externalRef: `teamup:${HOPE.email}|${JUNO.name.toLowerCase()}`, archivedAt: new Date("2026-11-06T12:00:00Z"), archivedById: userId } });
+      const up = await tx.importUpload.create({
+        data: { tenantId, createdById: userId, purpose: "attendance", fileName: "vale.csv", expectedBytes: csv.length, expectedSha256: sha(csv), chunkSize: 1024 * 1024, chunkCount: 1, tokenHash: `${STAMP}-vale-token`, status: "consumed", expiresAt: new Date(Date.now() + 86_400_000) },
+      });
+      await tx.importUploadChunk.create({ data: { uploadId: up.id, tenantId, index: 0, bytes: csv, sha256: sha(csv) } });
+      const job = await tx.importJob.create({
+        data: {
+          tenantId, createdById: userId, source: "teamup", fileName: "vale.csv", fileBlobUrl: `db-upload://${up.id}`, status: "complete",
+          dryRunSummary: { drafts: [{ name: IVY.name, phone: null }, { name: JUNO.name, phone: null }] },
+        },
+      });
+      const edit = await tx.auditLog.create({ data: { tenantId, userId, action: "member.update", entityType: "Member", entityId: juno.id, metadata: junoEdit } });
+      return { hopeId: hope.id, ivyId: ivy.id, junoId: juno.id, jobId: job.id, fileUrl: job.fileBlobUrl, editId: edit.id };
+    });
+    const junoBefore = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: seeded.junoId }, select: { name: true, email: true, archivedAt: true, parentMemberId: true } }));
+
+    gate.current = { tenantId, userId };
+    const res = (await dsarErase(new Request(`https://test.local/api/admin/dsar/erase?memberId=${seeded.hopeId}&strategy=cascade`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }))) as unknown as { status: number; json: () => Promise<{ erased?: Record<string, number> }> };
+    expect(res.status).toBe(200);
+    // Two subjects (Hope and Ivy), two rows out of the file: Juno's row is not one of them.
+    expect((await res.json()).erased).toMatchObject({ importFilesRewritten: 1, importFileRowsRemoved: 2 });
+    const filesRow = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId, action: "member.dsar_erase.import_files", entityId: seeded.hopeId }, select: { metadata: true } }));
+    expect((filesRow?.metadata as { subjects?: number }).subjects).toBe(2);
+
+    // Hope erased, Ivy erased with her.
+    const after = await withRlsBypass(async (tx) => ({
+      hope: await tx.member.findUnique({ where: { id: seeded.hopeId }, select: { name: true } }),
+      ivy: await tx.member.findUnique({ where: { id: seeded.ivyId }, select: { id: true } }),
+      juno: await tx.member.findUnique({ where: { id: seeded.junoId }, select: { name: true, email: true, archivedAt: true, parentMemberId: true } }),
+      job: await tx.importJob.findUnique({ where: { id: seeded.jobId }, select: { dryRunSummary: true } }),
+      edit: await tx.auditLog.findUnique({ where: { id: seeded.editId }, select: { metadata: true } }),
+    }));
+    expect(after.hope?.name).toBe("Deleted member");
+    expect(after.ivy).toBeNull();
+    // Juno: still archived, unchanged.
+    expect(after.juno).toEqual(junoBefore);
+    // Her import-file row stays (the guardian's address in it is Hope's, and Hope's pass may blank that cell).
+    const file = (await readImportFile(seeded.fileUrl, tenantId)) ?? "";
+    expect(file).toContain(JUNO.name);
+    expect(file).not.toContain(IVY.name);
+    expect(file).not.toContain(HOPE.name);
+    // Her diagnostics entry stays; Ivy's is gone.
+    const drafts = JSON.stringify(after.job?.dryRunSummary ?? {});
+    expect(drafts).toContain(JUNO.name);
+    expect(drafts).not.toContain(IVY.name);
+    // Her own Activity row is not redacted.
+    expect(after.edit?.metadata).toEqual(junoEdit);
+    expect((after.edit?.metadata as { redactedForErasure?: boolean }).redactedForErasure).toBeUndefined();
+
+    // And she can still be restored (to the erased guardian's row; staff re-link her if needed).
+    const restored = (await restorePOST(new Request(`https://test.local/api/members/${seeded.junoId}/restore`, { method: "POST", headers: { origin: "https://test.local", host: "test.local" } }), { params: Promise.resolve({ id: seeded.junoId }) })) as unknown as { status: number };
+    expect(restored.status).toBe(200);
+    const junoRestored = await withRlsBypass((tx) => tx.member.findUnique({ where: { id: seeded.junoId }, select: { name: true, archivedAt: true } }));
+    expect(junoRestored).toEqual({ name: JUNO.name, archivedAt: null });
+  }, 180_000);
 });

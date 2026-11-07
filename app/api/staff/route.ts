@@ -47,7 +47,9 @@ export async function GET() {
         // Unlock action, and re-reads this list after an unlock.
         // totpEnabled: Settings → Staff shows "Reset authenticator" only for
         // someone who has enrolled (1 Oct 2026, lib/mfa-policy.ts).
-        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true },
+        // deactivatedAt (PR 3): Settings → Staff lists deactivated accounts
+        // apart, with Reactivate. Every other staff list leaves them out.
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true, deactivatedAt: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
     );
@@ -141,6 +143,13 @@ export async function POST(req: Request) {
     );
   } catch (e: unknown) {
     if (e instanceof LoginIdentityTaken || (e as { code?: string }).code === "P2002") {
+      // PR 3: the owner is told when it is one of their own deactivated staff accounts.
+      const deactivated = await withTenantContext(session.user.tenantId, (tx) =>
+        tx.user.count({ where: { tenantId: session.user.tenantId, email: { equals: email.trim(), mode: "insensitive" }, deactivatedAt: { not: null } } }),
+      ).catch(() => 0);
+      if (deactivated > 0) {
+        return NextResponse.json({ error: "This is a deactivated staff account. Reactivate it under Deactivated accounts below instead of adding it again.", deactivated: true }, { status: 409 });
+      }
       // Opaque: whether a staff member or a member holds it is not said.
       return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }

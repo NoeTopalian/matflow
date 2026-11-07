@@ -39,15 +39,18 @@ export async function POST(req: Request) {
   // (members replying to a sign-in link should land in the gym's inbox,
   // not MatFlow's noreply void).
   const lookups = await withTenantContext(tenant.id, async (tx) => {
-    const u = await tx.user.findFirst({
+    // PR 3: a deactivated staff account gets no link, and its address never
+    // falls through to a member row sharing it (staff precedence, as auth.ts).
+    const uRow = await tx.user.findFirst({
       where: { tenantId: tenant.id, email: normEmail },
-      select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true },
+      select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true, deactivatedAt: true },
     });
-    const m = !u
+    const u = uRow && !uRow.deactivatedAt ? uRow : null;
+    const m = !uRow
       ? await tx.member.findFirst({
           // Sprint 3 K: passwordHash IS NOT NULL excludes kid sub-accounts
           // (which have synthesised emails and are intentionally non-loginable).
-          where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null } },
+          where: { tenantId: tenant.id, email: normEmail, passwordHash: { not: null }, archivedAt: null },
           select: { id: true },
         })
       : null;

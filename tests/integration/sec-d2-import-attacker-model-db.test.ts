@@ -411,14 +411,24 @@ describe.skipIf(!HAS_DB)("SF-74 / SEC-053 — attendance import under an explici
   });
 
   // ── (b) a staff/owner session: only the real routes ─────────────────────────────────────────────────────────────
-  it("(b) RELEASE + ACQUISITION through the routes: victim deleted (real DELETE), an old record renamed and re-addressed (real PATCH) → pending", async () => {
+  // PR 3 (6 Nov 2026): Remove ARCHIVES and the victim's row keeps the address, so the routes no longer release it at
+  // all: the acquirer's PATCH is refused (409) and the import binds the history to the victim, never to the attacker.
+  it("(b) RELEASE + ACQUISITION through the routes: victim removed (real DELETE, archives), an old record cannot take the address (real PATCH 409) → not bound to the attacker", async () => {
     const club = await mkClub("b-acq");
     const vic = await mkOldMember(club, N(VIC), E("vic"));
     const mal = await mkOldMember(club, N("Mal Lory"), E("mal"));
     await ownerDelete(club, vic);
-    await ownerPatch(club, mal, { name: N(VIC), email: E("vic") });
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const r = new Request(`https://test.local/api/members/${mal}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify({ name: N(VIC), email: E("vic") }),
+    });
+    const res = (await patchMember(r, { params: Promise.resolve({ id: mal }) })) as unknown as { status: number };
+    expect(res.status).toBe(409);
     await importVictim(club, N(VIC), E("vic"));
-    await expectNotBound(club, mal, "the routes let an acquirer receive the released holder's history");
+    expect(await attendanceOf(club, mal), "the routes let an acquirer receive the removed holder's history").toBe(0);
+    const rows = await ledger(club);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].memberId).toBe(vic);
   });
 
   it("(b) DECISION RE-POINTED through the real decide route: binds as decided AND the prior target is recoverable from a provenance row written with it", async () => {

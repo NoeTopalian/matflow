@@ -117,7 +117,7 @@ describe("coach tick — class eligibility, no override", () => {
     expect(await res.json()).toEqual({ error: "You're not on the roster for this class. For further information, please speak to a coach.", reason: "roster_not_listed" });
     expect(h.order).toEqual(["lock", "member-lock", "roster"]);
     expect(h.upsert).not.toHaveBeenCalled();
-    expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "tenant_a", classId: "cls_adv" } });
+    expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "tenant_a", classId: "cls_adv", member: { archivedAt: null } } }); // PR 3
   });
 
   it("both gates combine: a rostered member on an excluded plan is refused on the plan", async () => {

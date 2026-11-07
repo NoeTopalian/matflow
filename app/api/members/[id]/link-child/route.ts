@@ -42,7 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const parent = await tx.member.findFirst({
-        where: { id: parentId, tenantId: tenantId },
+        where: { id: parentId, tenantId: tenantId, archivedAt: null },
         select: { id: true, parentMemberId: true },
       });
       if (!parent) return "no-parent" as const;
@@ -60,6 +60,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           id: childMemberId,
           tenantId: tenantId,
           passwordHash: null,
+          archivedAt: null,
         },
         select: { id: true, parentMemberId: true, accountType: true, dateOfBirth: true },
       });

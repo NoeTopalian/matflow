@@ -362,7 +362,7 @@ export async function buildMemberSchedule(
 
   const counts = await tx.classRoster.groupBy({
     by: ["classId"],
-    where: { tenantId, classId: { in: cls.map((c) => c.id) } },
+    where: { tenantId, classId: { in: cls.map((c) => c.id) }, member: { archivedAt: null } },
     _count: { _all: true },
   });
   const rosterCounts = new Map<string, number>(counts.map((c) => [c.classId, c._count._all]));
@@ -462,7 +462,7 @@ export async function buildMemberChildren(
   // suggested parent may well be able to sign in — until staff confirm the
   // link, that adult must see no name, date of birth, belt or timetable.
   const children = await tx.member.findMany({
-    where: { parentMemberId: memberId, tenantId, ...CONFIRMED_GUARDIAN },
+    where: { parentMemberId: memberId, tenantId, archivedAt: null, ...CONFIRMED_GUARDIAN },
     select: {
       id: true,
       name: true,

@@ -60,18 +60,23 @@ export async function POST(req: Request) {
   // codebase-wide precedence at auth.ts:187 — staff identity dominates. A
   // proper fix requires adding `subjectKind` to PasswordResetToken (DB
   // migration, deferred). Until then, document explicitly here.
-  const [user, member] = await withTenantContext(tenant.id, (tx) =>
+  const [userRow, memberRow] = await withTenantContext(tenant.id, (tx) =>
     Promise.all([
       tx.user.findFirst({
         where: { email: normEmail, tenantId: tenant.id },
-        select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true },
+        select: { id: true, mustChangePassword: true, loginEmailProvisionalSince: true, deactivatedAt: true },
       }),
       tx.member.findFirst({
-        where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null } },
+        where: { email: normEmail, tenantId: tenant.id, passwordHash: { not: null }, archivedAt: null },
         select: { id: true },
       }),
     ]),
   );
+  // PR 3: no reset code for a deactivated staff account, and its address
+  // never falls through to a member row sharing it (staff precedence).
+  if (userRow?.deactivatedAt) return NextResponse.json({ ok: true });
+  const user = userRow;
+  const member = userRow ? null : memberRow;
 
   // Always return 200 to prevent email enumeration. Subject type is
   // discovered at consume time (the PasswordResetToken row only carries

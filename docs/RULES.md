@@ -157,7 +157,8 @@ acts on is worse than an error they can see.
   own shows its existing label; nothing is guessed.
 - **Erased is not the same as deleted.** A member erased under a data-protection request is
   "Deleted member": no link, and their old values are shown to nobody. A member deleted in the
-  ordinary way keeps the name recorded on their deletion, permanently (§5d).
+  ordinary way (`member.delete`, deleted before archive (PR #73)) keeps the name recorded on
+  their deletion, permanently (§5d). Since PR #73 removing a member archives them instead.
 - **All of it, with no age limit.** The timeline reaches back to the club's first day. Nothing
   says or implies that activity is kept for a year.
 - **It opens predictably.** The page opens on the standard view, or on the one view a person has
@@ -179,10 +180,13 @@ acts on is worse than an error they can see.
   instead), or a closed club (kept, sign-in disabled, reopenable at any time; the 16 Oct 2026
   rule).
 - **Deletions a person deliberately makes stay**, because each is recorded in Activity and many
-  can be undone: staff removing a member, a photo, an announcement (with its image), a roster
-  entry or a class; unticking attendance; an import rollback; an erasure request. A photo someone
+  can be undone: staff removing a photo, an announcement (with its image), a roster entry or a
+  class; unticking attendance; an import rollback; an erasure request. A photo someone
   uploaded and then did not save was never club data, and is removed (the upload's own
   clean-up).
+- **Staff removing a member archives them** (PR #73): every record is kept and Restore brings
+  them back. A data-protection erasure (Settings → Data requests, owner only) is the only true
+  member delete.
 - **Kept data stays erasable — no orphaned files.** A member's erasure reaches everything kept:
   their rows in every stored import file and every import report entry naming them
   (`lib/importers/import-erasure.ts`, found by their current and earlier addresses and names),

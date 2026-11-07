@@ -71,7 +71,7 @@ export async function listPromotionCandidates(tenantId: string): Promise<Promoti
     // 1. All MemberRanks in the tenant — only for non-deleted members.
     const ranks = await tx.memberRank.findMany({
       where: {
-        member: { tenantId, status: { in: ["active", "taster"] } },
+        member: { tenantId, status: { in: ["active", "taster"] }, archivedAt: null },
       },
       include: {
         member: { select: { id: true, name: true, tenantId: true } },
@@ -187,7 +187,7 @@ export async function isPromotionReady(memberId: string): Promise<boolean> {
   const { withRlsBypass } = await import("@/lib/prisma-tenant");
   const memberRanks = await withRlsBypass((tx) =>
     tx.memberRank.findMany({
-      where: { memberId, member: { status: { in: ["active", "taster"] } } },
+      where: { memberId, member: { status: { in: ["active", "taster"] }, archivedAt: null } },
       include: {
         member: { select: { tenantId: true } },
         rankSystem: { select: { id: true, discipline: true, deletedAt: true } },

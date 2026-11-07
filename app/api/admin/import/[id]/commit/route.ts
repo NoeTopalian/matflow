@@ -806,7 +806,7 @@ async function commitRefresh({
   const changed = 0;
   const unchanged = plan.matched.length - conflicts.length;
   const ex = plan.exceptions;
-  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0) + (ex.decisions?.length ?? 0);
+  const exceptionCount = ex.notInMatFlow.length + ex.notInFile.length + ex.billedByMatFlow.length + ex.refused.length + (ex.holdKept?.length ?? 0) + (ex.decisions?.length ?? 0) + (ex.archivedInMatFlow?.length ?? 0);
   const manifest = {
     mode: "refresh" as const,
     mappingVersion: job.mappingVersion,

@@ -89,7 +89,7 @@ export async function POST(req: Request) {
     // (un-consuming the first code). Merging into one tx removes the race.
     const outcome = await withTenantContext(tenant.id, async (tx) => {
       const member = await tx.member.findFirst({
-        where: { tenantId: tenant.id, email },
+        where: { tenantId: tenant.id, email, archivedAt: null },
         select: { id: true, totpRecoveryCodes: true, totpEnabled: true },
       });
       if (!member) return { kind: "not-found" as const };

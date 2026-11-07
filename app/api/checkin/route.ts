@@ -116,7 +116,7 @@ export async function POST(req: Request) {
     const [adminMember, permittedInstance] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
         tx.member.findFirst({
-          where: { id: memberId, tenantId },
+          where: { id: memberId, tenantId, archivedAt: null },
           select: { id: true, name: true },
         }),
         tx.classInstance.findFirst({
@@ -154,7 +154,7 @@ export async function POST(req: Request) {
     if (!parentMemberId) return NextResponse.json({ error: "Not a member account" }, { status: 403 });
     const kid = await withTenantContext(tenantId, (tx) =>
       tx.member.findFirst({
-        where: { id: onBehalfOfMemberId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
+        where: { id: onBehalfOfMemberId, tenantId, parentMemberId, archivedAt: null, ...CONFIRMED_GUARDIAN },
         select: { id: true, name: true },
       }),
     );
@@ -171,7 +171,7 @@ export async function POST(req: Request) {
     // Audit iter-5-database (sweep convergence): existence + id-only select.
     const member = await withTenantContext(tenantId, (tx) =>
       tx.member.findFirst({
-        where: { tenantId, email: session.user.email! },
+        where: { tenantId, email: session.user.email!, archivedAt: null },
         select: { id: true },
       }),
     );

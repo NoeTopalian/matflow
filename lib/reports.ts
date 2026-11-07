@@ -2,7 +2,7 @@ import { unstable_cache } from "next/cache";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
-import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
+import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER_EVER, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
 import { clubMonthKey, clubMonthWindow, clubMonthWindowForKey, type ClubMonthWindow } from "@/lib/club-month";
 import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport } from "@/lib/membership-report";
@@ -677,9 +677,10 @@ export async function getReportsData(
         select: { memberId: true },
         distinct: ["memberId"],
       }),
-      // Net-new chart: members cancelled in the chart's months (D1: by cancelledAt)
+      // Net-new chart: members cancelled in the chart's months (D1: by cancelledAt).
+      // History, so archived members still count (PR 3).
       tx.member.findMany({
-        where: { tenantId, ...LEFT_MEMBER, cancelledAt: { gte: chartStart } },
+        where: { tenantId, ...LEFT_MEMBER_EVER, cancelledAt: { gte: chartStart } },
         select: { cancelledAt: true },
       }),
       // Q4 A-1: members on hold stay inside "Active members" and are marked there.
@@ -946,6 +947,7 @@ export async function getReportsData(
           where: {
             tenantId,
             status: "active",
+            archivedAt: null,
             accountType: { in: ageGroup === "adult" ? ADULT_ACCOUNT_TYPES : KIDS_ACCOUNT_TYPES },
           },
         }),

@@ -153,7 +153,10 @@ const digestRecorded = async (club: Club, email: string) => {
 
 // ── The five release paths, each driven through its REAL route ────────────────────────────────────────────────
 type Released = { club: Club; email: string; name: string; status: number; subjectGone: () => Promise<boolean> };
-const paths: Record<string, (label: string) => Promise<Released>> = {
+// PR 3 (6 Nov 2026): member Remove ARCHIVES, the family child removal ARCHIVES and staff Remove DEACTIVATES. None of
+// the three releases the address any more — the row keeps it, so it is never free for someone else to take and an
+// import still binds history to the same person. They are checked apart below; the release paths are the other two.
+const keepers: Record<string, (label: string) => Promise<Released>> = {
   "member DELETE": async (label) => {
     const club = await mkClub(label);
     const name = N("Rel Member"), email = E(`${label}-addr`);
@@ -179,6 +182,8 @@ const paths: Record<string, (label: string) => Promise<Released>> = {
     const res = (await staffDelete(new Request(`https://test.local/api/staff/${staff}`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id: staff }) })) as unknown as { status: number };
     return { club, email, name, status: res.status, subjectGone: async () => !(await userExists(club, staff)) };
   },
+};
+const paths: Record<string, (label: string) => Promise<Released>> = {
   "DSAR erase": async (label) => {
     const club = await mkClub(label);
     const name = N("Rel Dsar"), email = E(`${label}-addr`);
@@ -257,6 +262,16 @@ describe.skipIf(!HAS_DB)("SF-54 / SF-74 — every release path records the relea
     const b = await importOne(club, N("Rel Never"), E("ctl-addr"));
     expect(b.memberId).toBe(planted);
   });
+
+  for (const [path, run] of Object.entries(keepers)) {
+    it(`${path}: keeps the row and its address — nothing is released, so no release digest is written`, async () => {
+      crash.action = null;
+      const r = await run(`${path.replace(/[^a-z]+/gi, "").toLowerCase()}-keep`);
+      expect(r.status).toBe(200);
+      expect(await r.subjectGone(), "PR 3: the row must stay").toBe(false);
+      expect(await digestRecorded(r.club, r.email)).toBe(false);
+    });
+  }
 
   for (const [path, run] of Object.entries(paths)) {
     const slug = path.replace(/[^a-z]+/gi, "").toLowerCase();

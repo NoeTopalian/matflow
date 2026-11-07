@@ -214,7 +214,7 @@ describe("POST /api/member/class-subscriptions/[classId]", () => {
     // full by their own booking. The count excludes the caller for exactly this.
     expect(res!.status).toBe(201);
     expect(mockSubCount).toHaveBeenCalledWith({
-      where: { classId: "cls-1", memberId: { not: "mem-1" } },
+      where: { classId: "cls-1", memberId: { not: "mem-1" }, member: { archivedAt: null } },
     });
   });
 

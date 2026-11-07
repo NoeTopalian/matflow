@@ -62,11 +62,13 @@ describe("staff/[id] — a club can never lose its last owner through this route
     expect(updateManyMock).not.toHaveBeenCalled();
   });
 
-  it("an owner row cannot be deleted, and the miss reads as not found", async () => {
+  it("an owner row cannot be removed (deactivated), and the miss reads as not found", async () => {
     const { DELETE } = await import("@/app/api/staff/[id]/route");
     const res = await DELETE(req("DELETE"), params("user-owner-2"));
     expect(res.status).toBe(404);
-    expect(deleteManyMock).toHaveBeenCalledWith({ where: { id: "user-owner-2", tenantId: "tenant-A", role: { not: "owner" } } });
+    // PR 3: Remove deactivates; the WHERE still excludes owners, and nothing is deleted.
+    expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "user-owner-2", tenantId: "tenant-A", role: { not: "owner" }, deactivatedAt: null } }));
+    expect(deleteManyMock).not.toHaveBeenCalled();
     expect(logAuditMock).not.toHaveBeenCalled();
   });
 

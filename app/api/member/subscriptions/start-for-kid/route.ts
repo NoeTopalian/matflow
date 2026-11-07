@@ -123,6 +123,7 @@ export async function POST(req: Request) {
         id: kidMemberId,
         tenantId: session.user.tenantId,
         parentMemberId,
+        archivedAt: null,
         // Only a CONFIRMED guardian acts for a child (lib/guardianship.ts).
         ...CONFIRMED_GUARDIAN,
       },

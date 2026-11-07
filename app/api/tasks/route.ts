@@ -146,7 +146,7 @@ export async function POST(req: Request) {
     try {
       const result = await withTenantContext(tenantId, async (tx) => {
         const member = await tx.member.findFirst({
-          where: { id: payload.assigneeMemberId, tenantId },
+          where: { id: payload.assigneeMemberId, tenantId, archivedAt: null },
           select: { id: true, name: true },
         });
         if (!member) return { kind: "no-member" as const };
@@ -256,7 +256,7 @@ export async function POST(req: Request) {
   try {
     const created = await withTenantContext(tenantId, async (tx) => {
       const assignee = await tx.user.findFirst({
-        where: { id: assignedToId, tenantId, role: { in: [...STAFF_ROLES] } },
+        where: { id: assignedToId, tenantId, role: { in: [...STAFF_ROLES] }, deactivatedAt: null },
         select: { id: true },
       });
       if (!assignee) return null;

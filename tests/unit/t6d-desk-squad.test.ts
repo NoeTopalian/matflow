@@ -162,6 +162,6 @@ describe("/api/coach/today — the squad flag on the session list", () => {
     const body = (await (await todayGET()).json()) as Array<{ id: string; rosterOnly: boolean }>;
     expect(Object.fromEntries(body.map((s) => [s.id, s.rosterOnly]))).toEqual({ "i-squad": true, "i-open": false });
     const select = m.instanceFindMany.mock.calls[0][0].include.class.select;
-    expect(select._count).toEqual({ select: { rosterMembers: true } });
+    expect(select._count).toEqual({ select: { rosterMembers: { where: { member: { archivedAt: null } } } } }); // PR 3: archived places count for nothing
   });
 });

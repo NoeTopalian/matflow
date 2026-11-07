@@ -147,7 +147,7 @@ export async function POST(req: Request) {
   const isProbe = searchParams.get("probe") === "1";
   const activeChildren = await withTenantContext(tenantId, (tx) =>
     tx.member.count({
-      where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+      where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" }, archivedAt: null }, // PR 3: an archived child stays archived, history kept
     }),
   );
 
@@ -195,7 +195,7 @@ export async function POST(req: Request) {
       }
       const target = await withTenantContext(tenantId, (tx) =>
         tx.member.findFirst({
-          where: { id: to, tenantId },
+          where: { id: to, tenantId, archivedAt: null },
           select: { id: true, parentMemberId: true, accountType: true, status: true },
         }),
       );
@@ -437,7 +437,7 @@ export async function POST(req: Request) {
       const childRows: SubjectRow[] =
         activeChildren > 0 && childStrategyParam === "cascade"
           ? await tx.member.findMany({
-              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" }, archivedAt: null }, // PR 3: an archived child stays archived, history kept
               select: { id: true, name: true, email: true, externalRef: true, unverifiedEmail: true },
             })
           : [];
@@ -610,7 +610,7 @@ export async function POST(req: Request) {
     // the child's own erasure.
     if (activeChildren > 0) {
       const children = await tx.member.findMany({
-        where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+        where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" }, archivedAt: null }, // PR 3: an archived child stays archived, history kept
         select: { id: true },
       });
       if (reassignToParentId) {

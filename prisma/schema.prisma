@@ -165,6 +165,12 @@ model User {
   // P1.6 Login Notifications: opt-out per User. Owners cannot disable
   // (server-side guard in lib/login-event.ts). Default true.
   notifyOnNewLogin  Boolean   @default(true)
+  // Staff removal deactivates (6 Nov 2026, PR 3): "Remove" on Settings → Staff
+  // stamps this instead of deleting the row, so every Activity row the person
+  // wrote keeps its author. Non-null = cannot sign in by any door, every live
+  // session is refused (lib/session-revocation.ts), hidden from staff lists.
+  // Cleared by reactivation. Who did it is on the staff.deactivate audit row.
+  deactivatedAt     DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -189,6 +195,7 @@ model User {
   membersTrialRun    Member[]           @relation("MemberTrialRunBy")
   membersCredited    Member[]           @relation("MemberCreditedToUser")
   memberStatusEvents MemberStatusEvent[] @relation("MemberStatusEventChangedBy")
+  membersArchived    Member[]           @relation("MemberArchivedBy")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -339,6 +346,15 @@ model Member {
   creditedToMemberId       String?
   creditedToMember         Member?   @relation("MemberCreditedTo", fields: [creditedToMemberId], references: [id], onDelete: SetNull)
   creditedToLabel          String?
+  // Archive (6 Nov 2026, PR 3; Noe: "Save all past user data"). "Remove
+  // member" stamps archivedAt instead of deleting: every record stays
+  // (attendance, status events, photos, plan history, roster places) and the
+  // member drops out of every list, count and door through NOT_ARCHIVED in
+  // lib/member-population.ts. Restore clears both columns. Erasure on a
+  // formal request (Settings → Data requests) is the only true delete.
+  archivedAt               DateTime?
+  archivedById             String?
+  archivedBy               User?     @relation("MemberArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
   joinedAt                 DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
@@ -394,6 +410,8 @@ model Member {
   // C1: Postgres does not index a foreign key automatically, and the SetNull
   // on tier delete scans Member without one.
   @@index([membershipTierId])
+  // The Archived members list (newest first) and the archive filter.
+  @@index([tenantId, archivedAt])
 }
 
 // ─── Member status events (M1: the conversion funnel's spine) ────────────────

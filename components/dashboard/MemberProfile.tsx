@@ -73,6 +73,9 @@ export interface MemberDetail {
   billedBy?: string | null;
   /** Export time of the TeamUp file the standing came from. */
   billingStatusAsOf?: string | null;
+  /** PR 3: set while the member is archived (Remove member); the page shows Restore. */
+  archivedAt?: string | null;
+  archivedByName?: string | null;
   notes: string | null;
   // feat/member-profile-pictures Track A: rendered by the header AvatarUploader.
   // Null falls back to deterministic initials. Set by staff or by the member
@@ -972,7 +975,7 @@ export default function MemberProfile({
               - Read-only staff (coach) just see the picture or initials.
               - Picture falls back to deterministic initials seeded by member.id. */}
           <div className="shrink-0">
-            {canEdit ? (
+            {canEdit && !member.archivedAt ? (
               <AvatarUploader
                 memberId={member.id}
                 name={member.name}
@@ -1071,7 +1074,7 @@ export default function MemberProfile({
               primaryColor={primaryColor}
             />
           )}
-          {canEdit && !editing && (
+          {canEdit && !editing && !member.archivedAt && (
             <Button variant="secondary" onClick={() => setEditing(true)}>
               <Edit2 className="size-4" />
               Edit
@@ -1081,6 +1084,8 @@ export default function MemberProfile({
             <Button
               variant="secondary"
               onClick={() => setShowActionsMenu((v) => !v)}
+              // PR 3: an archived profile is read-only; Restore is in the notice above.
+              disabled={!!member.archivedAt}
               className="size-9 px-0"
               aria-label="More actions"
               aria-expanded={showActionsMenu}
@@ -1198,16 +1203,6 @@ export default function MemberProfile({
                 >
                   Cancel ID card
                 </Button>
-                {role === "owner" && (
-                  <a
-                    href={`/dashboard/members/${member.id}/dsar`}
-                    onClick={() => setShowActionsMenu(false)}
-                    className="w-full text-left block px-4 py-2 text-sm hover:bg-sf-2 hover:text-tx-1 transition-colors"
-                    style={{ color: "var(--tx-2)" }}
-                  >
-                    Data &amp; privacy (DSAR)
-                  </a>
-                )}
                 {/*
                   A member with no address of their own holds a synthesised
                   placeholder, so the invite would mint a token for an inbox
@@ -1266,7 +1261,7 @@ export default function MemberProfile({
                 {/* F5 — deletion gateway. Owner-only at the API layer; surface
                     the menu entry to owner only too so the role-mismatch
                     case can't even be tried. */}
-                {role === "owner" && (
+                {role === "owner" && !member.archivedAt && (
                   <>
                     <div className="my-1 h-px" style={{ background: "var(--bd-default)" }} />
                     <button

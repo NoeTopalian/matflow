@@ -77,7 +77,7 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     roles: BOTH,
     defaultOn: true,
   }),
-  type({ key: "member_removed", label: "Member removed", group: "Members", icon: "UserMinus", actions: ["member.delete", "member.child.delete"], roles: BOTH, defaultOn: true }),
+  type({ key: "member_removed", label: "Member removed or restored", group: "Members", icon: "UserMinus", actions: ["member.delete", "member.child.delete", "member.archive", "member.child.archive", "member.restore"], roles: BOTH, defaultOn: true }),
   type({
     key: "member_updated",
     label: "Member details",

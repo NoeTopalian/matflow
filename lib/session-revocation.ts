@@ -105,17 +105,20 @@ export async function checkSessionVersion(
   if (!isVersion(tokenVersion)) return "revoked";
 
   try {
-    const row: unknown = await withRlsBypass((tx) =>
+    const row: unknown = await withRlsBypass((tx): Promise<unknown> =>
       memberId
-        ? tx.member.findUnique({ where: { id: memberId }, select: { sessionVersion: true, name: true, tenantId: true } })
-        : tx.user.findUnique({ where: { id: userId as string }, select: { sessionVersion: true, name: true, tenantId: true } }),
+        ? tx.member.findUnique({ where: { id: memberId }, select: { sessionVersion: true, name: true, tenantId: true, archivedAt: true } })
+        : tx.user.findUnique({ where: { id: userId as string }, select: { sessionVersion: true, name: true, tenantId: true, deactivatedAt: true } }),
     );
 
     // THE FIX. `row === null` used to be indistinguishable from a match.
     if (row === null) return "revoked";
     // A result we cannot read proves nothing (SEC-012: malformed results).
     if (typeof row !== "object") return unknownVerdict(memberId, new Error("malformed revocation row"));
-    const r = row as { sessionVersion?: unknown; name?: unknown; tenantId?: unknown };
+    const r = row as { sessionVersion?: unknown; name?: unknown; tenantId?: unknown; archivedAt?: unknown; deactivatedAt?: unknown };
+    // PR 3 (6 Nov 2026): an archived member or a deactivated staff account has
+    // no session, whatever its version says (archive and deactivate also bump it).
+    if (r.archivedAt != null || r.deactivatedAt != null) return "revoked";
     if (!isVersion(r.sessionVersion)) return unknownVerdict(memberId, new Error("malformed revocation row"));
     if (r.sessionVersion !== tokenVersion) return "revoked";
     if (tenantId && typeof r.tenantId === "string" && r.tenantId !== tenantId) return "revoked";
