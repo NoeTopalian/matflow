@@ -437,7 +437,7 @@ export async function POST(req: Request) {
       const childRows: SubjectRow[] =
         activeChildren > 0 && childStrategyParam === "cascade"
           ? await tx.member.findMany({
-              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" } },
+              where: { tenantId, parentMemberId: memberId, status: { not: "cancelled" }, archivedAt: null }, // PR 3: an archived child stays archived, history kept
               select: { id: true, name: true, email: true, externalRef: true, unverifiedEmail: true },
             })
           : [];

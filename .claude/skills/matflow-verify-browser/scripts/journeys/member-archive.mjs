@@ -127,7 +127,10 @@ try {
   }
   const focusVisible = reached && await archiveBtn.evaluate((e) => { const s = getComputedStyle(e); return e.matches(":focus-visible") && (!s.outlineStyle.startsWith("none") || s.boxShadow !== "none"); });
   L.check("keyboard", "K1 the Archive member button takes keyboard focus with a visible indicator", focusVisible, { reachedByTab: reached, tabs: tabbed });
-  await page.keyboard.press("Enter");
+  // Enter only on the button itself; if Tab never reached it (K1 already failed), click it so the rest of the
+  // journey still tests the archive rather than whatever else has focus.
+  if (reached) await page.keyboard.press("Enter");
+  else await archiveBtn.click();
   await page.waitForURL(/\/dashboard\/members(\?|$)/, { timeout: 60000 });
   const row1 = await memberRow(sam.id);
   L.check("journey", "A2 Remove archives: archivedAt and who are stamped, the row stays", !!row1?.archivedAt && row1.archivedById === club.owner.id, { archived: !!row1?.archivedAt });
