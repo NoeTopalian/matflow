@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { matNameKey, placeSuggestions } from "@/lib/mats";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
   X, Edit2, RefreshCw, Tag, Pause, Archive, ArchiveRestore, Play,
@@ -54,6 +56,8 @@ interface Props {
   matsLoadFailed?: boolean;
   /** A MatFlow support session: mats and the split are the club's to change, so neither control is shown. */
   supportSession?: boolean;
+  /** When the server began reading this page's mats (ISO time): tells a list read after a save from one read before it. */
+  matsReadAt?: string;
   primaryColor: string;
   role: string;
   // Session F: drives the "My classes" filter. When null (e.g. no
@@ -62,6 +66,42 @@ interface Props {
 }
 
 const NO_MATS: MatOption[] = [];
+
+/** A place typed on the club's classes that is not one of its mats yet. */
+type PlaceOption = { key: string; name: string };
+const NO_PLACES: PlaceOption[] = [];
+
+/**
+ * The places the Location select offers besides the mats: typed on the club's
+ * classes that are on the timetable or paused and on no mat, one per name
+ * whatever its capitals and spacing (lib/mats.ts placeSuggestions, the Mats
+ * sheet's own list), less the ones that already name a mat or are too long to.
+ */
+export function locationPlaces(classes: readonly Pick<ClassRow, "location" | "matId">[], mats: readonly MatOption[]): PlaceOption[] {
+  const offMat = classes.filter((c) => !c.matId);
+  return placeSuggestions(offMat, mats.map((m) => ({ id: m.id, nameKey: matNameKey(m.name) })))
+    .suggestions.filter((s) => s.matId === null && !s.tooLong)
+    .map((s) => ({ key: s.key, name: s.name }));
+}
+
+/**
+ * Where the Location select starts: the class's mat; else its typed place,
+ * as a place option when the list offers it, or as "keep" (its own text,
+ * kept as it is) when it does not: too long for a mat, or the name of a mat
+ * the class is not on. A class is never moved onto a mat by a save that did
+ * not change its Location (review, 7 Nov 2026). A class with no place, or a
+ * new class, starts on "No location".
+ */
+function locationChoiceOf(initial: Partial<ClassRow> | null, mats: readonly MatOption[], places: readonly PlaceOption[]): string {
+  if (initial?.matId) {
+    if (mats.some((m) => m.id === initial.matId)) return `mat:${initial.matId}`;
+    return initial.location ? "keep" : "none";
+  }
+  const key = matNameKey(initial?.location ?? "");
+  if (!key) return "none";
+  const place = places.find((p) => p.key === key);
+  return place ? `place:${place.name}` : "keep";
+}
 
 interface ScheduleInput {
   dayOfWeek: number;
@@ -79,6 +119,16 @@ interface ScheduleChange {
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What a save that added a Location reports: the mat, the club's other classes it took, and when it was saved. */
+type LocationAdded = MatOption & { classIds?: string[]; savedAt?: string };
+
+/**
+ * Said when a save turned a typed Location into one of the club's saved locations (a mat): how many classes on the
+ * timetable are now on it, and how many paused or archived ones went with them.
+ */
+const savedAsLocation = (name: string, live: number, notLive: number) =>
+  `“${name}” is saved as a location. ${plural(live, "class is", "classes are")} now on it${notLive > 0 ? ` (and ${notLive} not on the timetable)` : ""}.`;
 
 /**
  * The save message, in the interface's voice: state what happened.
@@ -737,6 +787,8 @@ function ClassForm({
   coachUsers,
   membershipTiers = [],
   mats = NO_MATS,
+  places = NO_PLACES,
+  supportSession = false,
   primaryColor,
   onSave,
   onCancel,
@@ -747,8 +799,12 @@ function ClassForm({
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
   membershipTiers?: TierOption[];
-  /** The club's mats. None: the form is exactly as it was, with its typed Location. */
+  /** The club's mats (its saved locations), in the club's order. */
   mats?: MatOption[];
+  /** Places typed on the club's classes that are not mats yet, in name order. */
+  places?: PlaceOption[];
+  /** A MatFlow support session: it cannot add saved locations, so a new name is typed as this class's place. */
+  supportSession?: boolean;
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -759,20 +815,48 @@ function ClassForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [coachName, setCoachName] = useState(initial?.coachName ?? "");
   const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
-  const [location, setLocation] = useState(initial?.location ?? "");
-  // The mat the class runs on ("" = no mat). A club with mats chooses one here
-  // instead of typing a Location; on a mat, the class's place is the mat's
-  // name and the server writes it (lib/mats.ts, the write-through rule).
-  const initialMatId = initial?.matId && mats.some((m) => m.id === initial.matId) ? initial.matId : "";
-  const [matId, setMatId] = useState(initialMatId);
-  function chooseMat(next: string) {
-    if (next === "") {
-      // Leaving a mat: the place box must not carry a mat's name (the one just left, or one passed through on the
-      // way: Mat 1, then Mat 2, then No mat would otherwise leave "Mat 1" typed).
-      const typed = location.trim().toLowerCase();
-      if (typed && mats.some((m) => m.name.trim().toLowerCase() === typed)) setLocation("");
+  // Location (Noe, 7 Nov 2026): one select of the club's saved locations (its
+  // mats), then the places typed on its classes that are not mats yet, "No
+  // location" and "Add a new location…". A typed place or a new name is sent
+  // by name and the server puts the class on the mat of that name, adding it
+  // when there is none (lib/mats-store.ts matForLocation). Values:
+  // "mat:<id>", "place:<name>" (one name per place, so unique), "none",
+  // "new", and "keep" for the class's own place when the list cannot offer
+  // it (see locationChoiceOf).
+  const [initialChoice] = useState(() => locationChoiceOf(initial, mats, places));
+  const [locationChoice, setLocationChoice] = useState(initialChoice);
+  const [newLocation, setNewLocation] = useState("");
+  const locationSelect = useRef<HTMLSelectElement>(null);
+  const newLocationInput = useRef<HTMLInputElement>(null);
+  // A refusal is said until the Location is changed: the select or the box. The next refused save says it again.
+  const [locationErrorDismissed, setLocationErrorDismissed] = useState<SaveError | null>(null);
+  const locationError = error?.reason === "location" && error !== locationErrorDismissed ? error.message : null;
+  // The box's visible label (and its accessible name).
+  const newLocationLabel = supportSession ? "Place for this class" : "Name of the new location";
+  // The class's own place when the list cannot offer it. Never the same text as another option: a typed place that
+  // is a saved location's name (older data, on no mat) says it is only typed here.
+  const keepLabel = !initial?.matId && initial?.location && mats.some((m) => matNameKey(m.name) === matNameKey(initial.location ?? ""))
+    ? `${initial.location} (typed on this class only)`
+    : (initial?.location ?? "");
+  // A refused Location is said beside the field; focus goes there so it is on screen, with what was typed kept.
+  useEffect(() => {
+    if (error?.reason !== "location") return;
+    (newLocationInput.current ?? locationSelect.current)?.focus();
+    // Focus brings the field on screen; the sentence under it comes too (on a phone the field can land at the edge).
+    document.getElementById("class-form-location-error")?.scrollIntoView?.({ block: "nearest" });
+  }, [error]);
+  function locationFields(): Record<string, unknown> {
+    const editing = Boolean(initial?.id);
+    if (locationChoice.startsWith("mat:")) {
+      const id = locationChoice.slice(4);
+      // An edit that leaves the class on its mat names no mat, so the server takes no mats lock.
+      return editing && id === initial?.matId ? {} : { matId: id };
     }
-    setMatId(next);
+    if (editing && locationChoice === initialChoice) return {};
+    if (locationChoice === "new") return { matName: newLocation.trim() };
+    if (locationChoice.startsWith("place:")) return { matName: locationChoice.slice(6) };
+    if (locationChoice === "keep") return {};
+    return { matId: null, location: null };
   }
   // ADR-001 D2: the venue. The picker only appears once the club has more
   // than one location; a single-venue club never sees it.
@@ -879,6 +963,7 @@ function ClassForm({
   if (!durationOk) missing.push("Duration (1–480 minutes)");
   if (schedules.length === 0) missing.push("at least one day");
   else if (schedules.some((s) => !s.startTime || !s.endTime)) missing.push("a start and end time on every day");
+  if (locationChoice === "new" && !newLocation.trim()) missing.push("a name for the new location");
   // The same day and start twice in one class: a session is class + day +
   // start everywhere downstream (one ClassInstance per start, cancel keys,
   // the member view), so a second row at the same start would be quietly
@@ -904,15 +989,8 @@ function ClassForm({
       // free-text fallback for clubs that haven't put their coaches in Users yet.
       coachName: coachName.trim() || null,
       coachUserId: coachUserId || null,
-      ...(mats.length > 0
-        ? {
-            // The mat is sent on create, and on edit only when it changed, so an edit that
-            // does not move the class takes no mats lock on the server.
-            ...(!initial?.id || matId !== initialMatId ? { matId: matId || null } : {}),
-            // On a mat the server writes the mat's name as the place; a typed place is sent only for a class on no mat.
-            ...(matId ? {} : { location: location.trim() || null }),
-          }
-        : { location: location.trim() || null }),
+      // Sent on create, and on edit only when it changed. On a mat the server writes the mat's name as the place.
+      ...locationFields(),
       locationId: locationId || null,
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
@@ -1103,40 +1181,63 @@ function ClassForm({
             {...focusHandlers}
           />
         </div>
-        {mats.length === 0 ? (
-          <div>
-            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Location</label>
-            <input aria-label="Location"
-              className={inputCls}
-              style={inputStyle}
-              placeholder="Mat 1"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              {...focusHandlers}
-            />
-          </div>
-        ) : (
-          <div>
-            <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Mat</label>
-            <Select aria-label="Mat" value={matId} onChange={(e) => chooseMat(e.target.value)} className="w-full" data-testid="class-form-mat">
-              <option value="">No mat</option>
-              {mats.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </Select>
-            {/* Off a mat, a typed place still works (a hall down the road, the beach). */}
-            {matId === "" && (
-              <input aria-label="Place (not on a mat)"
-                className={inputCls + " mt-2"}
-                style={inputStyle}
-                placeholder="Place (not on a mat)"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                {...focusHandlers}
+        <div>
+          <label htmlFor="class-form-location" className="text-xs font-medium block mb-1.5 text-tx-3">Location</label>
+          <Select
+            ref={locationSelect}
+            id="class-form-location"
+            aria-label="Location"
+            value={locationChoice}
+            onChange={(e) => {
+              setLocationChoice(e.target.value);
+              setLocationErrorDismissed(error);
+            }}
+            className="w-full"
+            data-testid="class-form-location"
+            aria-invalid={locationError && locationChoice !== "new" ? true : undefined}
+            aria-describedby={locationError ? "class-form-location-error" : undefined}
+          >
+            {mats.map((m) => (
+              <option key={m.id} value={`mat:${m.id}`}>{m.name}</option>
+            ))}
+            {places.map((p) => (
+              <option key={p.key} value={`place:${p.name}`}>{p.name}</option>
+            ))}
+            {initialChoice === "keep" && <option value="keep">{keepLabel}</option>}
+            <option value="none">No location</option>
+            <option value="new">{supportSession ? "Type a place" : "Add a new location…"}</option>
+          </Select>
+          {locationChoice === "new" && (
+            <>
+              <label htmlFor="class-form-new-location" className="text-xs font-medium block mt-2 mb-1.5 text-tx-3">
+                {newLocationLabel}
+              </label>
+              <Input
+                ref={newLocationInput}
+                id="class-form-new-location"
+                aria-label={newLocationLabel}
+                value={newLocation}
+                onChange={(e) => {
+                  setNewLocation(e.target.value);
+                  setLocationErrorDismissed(error);
+                }}
+                data-testid="class-form-new-location"
+                aria-invalid={locationError ? true : undefined}
+                aria-describedby={[supportSession ? "class-form-new-location-hint" : null, locationError ? "class-form-location-error" : null].filter(Boolean).join(" ") || undefined}
               />
-            )}
-          </div>
-        )}
+              {supportSession && (
+                <p id="class-form-new-location-hint" className="mt-1 text-[11px] text-tx-3" data-testid="class-form-new-location-hint">
+                  Support access can&rsquo;t add saved locations. If this name is one of them, the class goes on it; otherwise it stays a place typed on this class only.
+                </p>
+              )}
+            </>
+          )}
+          {locationError && (
+            <p id="class-form-location-error" role="alert" data-testid="class-form-location-error" className="mt-1 text-xs text-[var(--hue-danger-ink)]">
+              {locationError}
+            </p>
+          )}
+        </div>
       </div>
 
       {venuesError && (
@@ -1480,7 +1581,8 @@ function ClassForm({
 
       {/* Actions — a disabled button always says why (UI-RULES §7). */}
       <div className="pt-2 space-y-2">
-        {error && (
+        {/* A refused Location is said beside its field instead (above). */}
+        {error && error.reason !== "location" && (
           // A refused save stays with the form, above the buttons it belongs
           // to: on a phone a toast sat over Cancel / Save and the class
           // status controls. A stale-days refusal offers the way out, since
@@ -1533,9 +1635,24 @@ const NO_CLASSES: ClassRow[] = [];
 
 export default function TimetableManager({
   initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [],
-  mats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportSession = false,
+  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportSession = false, matsReadAt,
   primaryColor, role, currentUserId,
 }: Props) {
+  // A class saved with a new Location adds a mat: it is used at once, before the refresh brings the server's list.
+  // It is kept until a server list has it, or until a list read AFTER the save lacks it (the mat was removed since,
+  // in the Mats sheet or another tab). A list read before the save (a refresh that was already in flight) is not
+  // the truth about it, so it does not drop it.
+  const [added, setAdded] = useState<LocationAdded[]>([]);
+  const readAt = matsReadAt ? Date.parse(matsReadAt) : Number.NaN;
+  const addedMats = useMemo(
+    () => added.filter((a) => !serverMats.some((m) => m.id === a.id) && !(readAt > Date.parse(a.savedAt ?? ""))),
+    [added, serverMats, readAt],
+  );
+  const addMat = (mat: LocationAdded) => setAdded((a) => [...a, mat]);
+  const mats = useMemo(() => {
+    const extra = addedMats.filter((a) => !serverMats.some((m) => m.id === a.id));
+    return extra.length > 0 ? [...serverMats, ...extra] : serverMats;
+  }, [serverMats, addedMats]);
   const searchParams = useSearchParams();
   const router = useRouter();
   const openedFromQuery = useRef(false);
@@ -1553,8 +1670,16 @@ export default function TimetableManager({
   const [snapshot, setSnapshot] = useState({ active: initialClasses, inactive: initialInactiveClasses });
   if (snapshot.active !== initialClasses || snapshot.inactive !== initialInactiveClasses) {
     setSnapshot({ active: initialClasses, inactive: initialInactiveClasses });
-    setClasses(initialClasses);
-    setInactiveClasses(initialInactiveClasses);
+    // A snapshot read before a save that added a Location does not know the classes it put on the new mat: keep
+    // them on it until one read after the save comes (as the mat itself is kept), so the split does not flicker.
+    const pending = added.filter((a) => !(readAt > Date.parse(a.savedAt ?? "")));
+    const onPending = (rows: ClassRow[]) =>
+      pending.length === 0 ? rows : rows.map((c) => {
+        const a = pending.find((p) => p.classIds?.includes(c.id));
+        return a ? { ...c, matId: a.id, location: a.name } : c;
+      });
+    setClasses(onPending(initialClasses));
+    setInactiveClasses(onPending(initialInactiveClasses));
   }
   // Which class has a lifecycle action in flight, and which action — so the
   // right button shows it (Archive is busy from its history read onwards).
@@ -1615,6 +1740,11 @@ export default function TimetableManager({
   const [savingLayout, setSavingLayout] = useState(false);
   // Mats with a live class on them, over the whole club (not the filtered view).
   const inUse = matsInUse(classes, mats);
+  // The class form's Location list after the mats: places typed on live and paused classes, not mats yet.
+  const places = useMemo(
+    () => locationPlaces([...classes, ...inactiveClasses.filter((c) => c.lifecycle === "paused")], mats),
+    [classes, inactiveClasses, mats],
+  );
   // Until someone chooses, the timetable follows the mats (lib/timetable-layout.ts).
   const layout: TimetableLayout = matsLoadFailed ? "time" : effectiveLayout(choice.stored, inUse);
   const canChangeMats = canManage && !supportSession;
@@ -1868,6 +1998,23 @@ export default function TimetableManager({
     setDrawerOpen(true);
   }
 
+  // A save that added a Location: the new mat is used at once, and the club's other classes it took are shown on it.
+  // Returns what to say: classes on the timetable now on it, and the paused or archived ones that went too.
+  function takeLocation(loc: LocationAdded, savedId: string, savedIsLive: boolean): string {
+    const others = loc.classIds ?? [];
+    // Remembered with the saved class too, so a snapshot read before the save cannot put any of them back.
+    addMat({ ...loc, classIds: [savedId, ...others] });
+    const liveIds = new Set(classes.map((c) => c.id));
+    const live = (savedIsLive ? 1 : 0) + others.filter((id) => liveIds.has(id)).length;
+    const said = savedAsLocation(loc.name, live, 1 + others.length - live);
+    if (others.length === 0) return said;
+    const moved = new Set(others);
+    const onIt = (c: ClassRow) => (moved.has(c.id) ? { ...c, matId: loc.id, location: loc.name } : c);
+    setClasses((prev) => prev.map(onIt));
+    setInactiveClasses((prev) => prev.map(onIt));
+    return said;
+  }
+
   async function handleSave(data: Record<string, unknown>) {
     setSaving(true);
     setSaveError(null);
@@ -1909,10 +2056,12 @@ export default function TimetableManager({
         }
         // `scheduleChange` is a report about the save, not a field of the
         // class — destructured out so it never lands on the row.
-        const { scheduleChange, bookingsKeptIneligible, ...updated } = (await res.json()) as {
+        const { scheduleChange, bookingsKeptIneligible, locationAdded, ...updated } = (await res.json()) as {
           scheduleChange: ScheduleChange | null;
           bookingsKeptIneligible?: Partial<Record<"squad" | "rank" | "membership", string[]>>;
+          locationAdded?: LocationAdded | null;
         } & Partial<ClassRow>;
+        const locationSaid = locationAdded ? takeLocation(locationAdded, editTarget.id, classes.some((c) => c.id === editTarget.id)) : "";
         setClasses((prev) =>
           prev.map((c) =>
             c.id === editTarget.id
@@ -1927,9 +2076,9 @@ export default function TimetableManager({
         const kept = scheduleChange?.instancesKept.length ?? 0;
         const turnedAway = new Set(Object.values(bookingsKeptIneligible ?? {}).flat()).size;
         showToast(
-          turnedAway > 0
+          (turnedAway > 0
             ? `${describeSave(scheduleChange).replace(/\.?$/, ".")} ${turnedAway} booked ${turnedAway === 1 ? "member is" : "members are"} now turned away at the door; ${turnedAway === 1 ? "the booking is" : "their bookings are"} kept.`
-            : describeSave(scheduleChange),
+            : describeSave(scheduleChange)) + (locationSaid ? ` ${locationSaid}` : ""),
           kept > 0 || turnedAway > 0 ? "warning" : "success",
         );
       } else {
@@ -1940,14 +2089,16 @@ export default function TimetableManager({
         });
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          throw new Error(describeApiError(body));
+          // With its reason, so a refused Location is said beside its field.
+          throw new ApiRefusal(describeApiError(body), body?.reason);
         }
         // `instancesCreated` is a report about the save (the sessions minted
         // for the next eight weeks), not a field of the class — kept off the row
         // and put in the toast, so "created" also says it is on the timetable.
-        const { instancesCreated, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[] } & ClassRow;
+        const { instancesCreated, locationAdded, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[]; locationAdded?: LocationAdded | null } & ClassRow;
+        const locationSaid = locationAdded ? takeLocation(locationAdded, created.id, true) : "";
         setClasses((prev) => [...prev, createdClassRow(created, membershipTiers)]);
-        showToast(`Class created · ${instancesCreated} sessions added to the timetable`, "success");
+        showToast(`Class created · ${instancesCreated} sessions added to the timetable${locationSaid ? `. ${locationSaid}` : ""}`, "success");
       }
       // The page's cached copy predates this save; without a refresh, browser
       // Back re-mounts the timetable from it and the change is not shown.
@@ -2732,6 +2883,8 @@ export default function TimetableManager({
           coachUsers={coachUsers}
           membershipTiers={membershipTiers}
           mats={mats}
+          places={places}
+          supportSession={supportSession}
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}

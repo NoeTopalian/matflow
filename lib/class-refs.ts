@@ -50,6 +50,28 @@ export function isMatForeignKeyError(e: unknown): boolean {
 }
 
 /**
+ * A write refused by the Mat (club, name key) unique index (Prisma P2002
+ * naming the Mat model or its `nameKey` column): a mat of that name was added
+ * in the instant before. The mats lock makes it unreachable in practice; it is
+ * the backstop. Any other unique refusal is not a Location's to explain.
+ */
+export function isMatNameClash(e: unknown): boolean {
+  const err = e as { code?: unknown; meta?: unknown } | null;
+  if (!err || err.code !== "P2002") return false;
+  const meta = (err.meta ?? {}) as { modelName?: unknown; target?: unknown; driverAdapterError?: { cause?: { constraint?: { fields?: unknown } } } };
+  if (meta.modelName === "Mat") return true;
+  // The pg driver adapter's shape (Prisma 7 with @prisma/adapter-pg) names the index's fields here.
+  const fields = meta.driverAdapterError?.cause?.constraint?.fields;
+  if (Array.isArray(fields) && fields.some((f) => String(f).includes("nameKey"))) return true;
+  if (Array.isArray(meta.target) && meta.target.some((f) => String(f).includes("nameKey"))) return true;
+  try {
+    return JSON.stringify(meta).includes("nameKey");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns the refusal message for the first id that is not the caller's, or
  * null when every supplied id belongs to `tenantId`. Null and undefined mean
  * "clear" / "leave alone" and are not looked up.

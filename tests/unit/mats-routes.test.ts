@@ -44,6 +44,15 @@ const tx = {
     db.ops.push(`lock:${strings.join("?").includes("pg_advisory_xact_lock") ? "mats" : "?"}:${String(values[1])}`);
     return 1;
   },
+  // lib/mats.ts lockTypedClasses: the club's classes on no mat that type a place, imported history excepted, in id
+  // order (FOR UPDATE). Its one bind value is the club. Copies, as a database read is.
+  $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!strings.join("?").includes('"sourceImportJobId" IS NULL')) throw new Error(`unexpected raw read: ${strings.join("?")}`);
+    return db.classes
+      .filter((c) => c.tenantId === values[0] && c.matId == null && c.sourceImportJobId == null && c.location != null)
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      .map((c) => ({ id: c.id, location: c.location, deletedAt: c.deletedAt ?? null }));
+  },
   mat: {
     findMany: async ({ where }: { where: Row }) => {
       db.ops.push("mat.findMany");
