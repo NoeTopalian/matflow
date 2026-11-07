@@ -137,6 +137,11 @@ acts on is worse than an error they can see.
   that has not follows the rule below. A support session cannot add mats: the list says "Type
   a place"; a name that is one of the club's mats puts the class on it, and any other stays
   that class's typed place.
+- **Same name, same mat, whatever invisible characters it carries (7 Nov 2026).** Two names are the
+  same mat when they match ignoring capitals, spacing and default-ignorable characters (a soft
+  hyphen, a zero-width joiner), which stay in the name shown. Mats saved before then were keyed
+  without that last step: `scripts/check-mat-name-keys.mjs` (read-only) lists any whose stored key
+  differs, and renaming one in the Mats sheet puts it right. Noe runs it on production.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and
   never saved. Once an owner or manager presses a choice it is saved for the club and stays

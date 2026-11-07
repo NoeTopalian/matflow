@@ -9,7 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { liveClassWhere } from "@/lib/class-live";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
-import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, commonestSpelling, compareMatNames, matNameKey } from "@/lib/mats";
+import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, commonestSpelling, compareMatNames, lockTypedClasses, matNameKey } from "@/lib/mats";
 import { effectiveLayout, isTimetableLayout, type TimetableLayout } from "@/lib/timetable-layout";
 
 type Tx = Prisma.TransactionClient;
@@ -83,7 +83,10 @@ export async function readMatsForTimetable(
 export interface AdoptedMat {
   id: string;
   name: string;
-  /** False when the mat was already there and only gained classes. */
+  /**
+   * False when the mat was already there and only gained classes. A `mat.adopt` row with `via: "class-location"`
+   * also says false for a mat its own save created: that creation is the `mat.create` row beside it.
+   */
   created: boolean;
   classIds: string[];
 }
@@ -109,16 +112,13 @@ export async function adoptPlaces(tx: Tx, tenantId: string, keys: readonly strin
   const result: AdoptResult = { mats: [], skipped: [] };
   if (wanted.size === 0) return result;
 
-  const classes = await tx.class.findMany({
-    where: { tenantId, matId: null, sourceImportJobId: null, location: { not: null } },
-    select: { id: true, location: true, deletedAt: true },
-    orderBy: { id: "asc" },
-  });
+  // Locked, so a class cleared or retyped meanwhile is read as it now is (lockTypedClasses).
+  const classes = await lockTypedClasses(tx, tenantId);
   // key → its classes, and how often each spelling is typed on a class that is not archived.
   const byKey = new Map<string, { ids: string[]; spellings: Map<string, number>; anySpelling: string }>();
   for (const c of classes) {
     const name = cleanMatName(c.location ?? "");
-    const key = name.toLowerCase();
+    const key = matNameKey(name);
     if (!name || !wanted.has(key)) continue;
     const entry = byKey.get(key) ?? { ids: [], spellings: new Map<string, number>(), anySpelling: name };
     entry.ids.push(c.id);
@@ -216,18 +216,15 @@ export async function matForLocation(
   const sortOrder = mats.reduce((max, m) => Math.max(max, m.sortOrder), -1) + 1;
   const row = await tx.mat.create({ data: { tenantId, name, nameKey: key, sortOrder }, select: { id: true, name: true } });
   await logAudit({ tenantId, userId: opts.userId, action: "mat.create", entityType: "Mat", entityId: row.id, metadata: { name: row.name }, req: opts.req, tx });
-  // The club's other classes that type this name and are on no mat (adoptPlaces' match: imported history excepted).
-  const typed = await tx.class.findMany({
-    where: { tenantId, matId: null, sourceImportJobId: null, location: { not: null } },
-    select: { id: true, location: true },
-    orderBy: { id: "asc" },
-  });
+  // The club's other classes that type this name and are on no mat (adoptPlaces' match: imported history excepted),
+  // locked and read as they now are, so a class cleared or retyped meanwhile is not taken.
+  const typed = await lockTypedClasses(tx, tenantId);
   const classIds = typed.filter((c) => c.id !== opts.exceptClassId && matNameKey(c.location ?? "") === key).map((c) => c.id);
   if (classIds.length > 0) {
     await tx.class.updateMany({ where: { tenantId, id: { in: classIds }, matId: null }, data: { matId: row.id, location: row.name } });
     await logAudit({
       tenantId, userId: opts.userId, action: "mat.adopt", entityType: "Tenant", entityId: tenantId,
-      metadata: { mats: [{ id: row.id, name: row.name, created: false, classIds }] }, req: opts.req, tx,
+      metadata: { via: "class-location", mats: [{ id: row.id, name: row.name, created: false, classIds }] }, req: opts.req, tx,
     });
   }
   return { kind: "mat", id: row.id, name: row.name, created: true, classIds };

@@ -123,11 +123,12 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** What a save that added a Location reports: the mat, the club's other classes it took, and when it was saved. */
 type LocationAdded = MatOption & { classIds?: string[]; savedAt?: string };
 
-/** Said when a save turned a typed Location into one of the club's saved locations (a mat), with every class now on it. */
-const savedAsLocation = (added: LocationAdded) => {
-  const n = 1 + (added.classIds?.length ?? 0);
-  return `“${added.name}” is saved as a location. ${plural(n, "class is", "classes are")} now on it.`;
-};
+/**
+ * Said when a save turned a typed Location into one of the club's saved locations (a mat): how many classes on the
+ * timetable are now on it, and how many paused or archived ones went with them.
+ */
+const savedAsLocation = (name: string, live: number, notLive: number) =>
+  `“${name}” is saved as a location. ${plural(live, "class is", "classes are")} now on it${notLive > 0 ? ` (and ${notLive} not on the timetable)` : ""}.`;
 
 /**
  * The save message, in the interface's voice: state what happened.
@@ -1669,8 +1670,16 @@ export default function TimetableManager({
   const [snapshot, setSnapshot] = useState({ active: initialClasses, inactive: initialInactiveClasses });
   if (snapshot.active !== initialClasses || snapshot.inactive !== initialInactiveClasses) {
     setSnapshot({ active: initialClasses, inactive: initialInactiveClasses });
-    setClasses(initialClasses);
-    setInactiveClasses(initialInactiveClasses);
+    // A snapshot read before a save that added a Location does not know the classes it put on the new mat: keep
+    // them on it until one read after the save comes (as the mat itself is kept), so the split does not flicker.
+    const pending = added.filter((a) => !(readAt > Date.parse(a.savedAt ?? "")));
+    const onPending = (rows: ClassRow[]) =>
+      pending.length === 0 ? rows : rows.map((c) => {
+        const a = pending.find((p) => p.classIds?.includes(c.id));
+        return a ? { ...c, matId: a.id, location: a.name } : c;
+      });
+    setClasses(onPending(initialClasses));
+    setInactiveClasses(onPending(initialInactiveClasses));
   }
   // Which class has a lifecycle action in flight, and which action — so the
   // right button shows it (Archive is busy from its history read onwards).
@@ -1990,13 +1999,20 @@ export default function TimetableManager({
   }
 
   // A save that added a Location: the new mat is used at once, and the club's other classes it took are shown on it.
-  function takeLocation(loc: LocationAdded) {
-    addMat(loc);
-    const moved = new Set(loc.classIds ?? []);
-    if (moved.size === 0) return;
+  // Returns what to say: classes on the timetable now on it, and the paused or archived ones that went too.
+  function takeLocation(loc: LocationAdded, savedId: string, savedIsLive: boolean): string {
+    const others = loc.classIds ?? [];
+    // Remembered with the saved class too, so a snapshot read before the save cannot put any of them back.
+    addMat({ ...loc, classIds: [savedId, ...others] });
+    const liveIds = new Set(classes.map((c) => c.id));
+    const live = (savedIsLive ? 1 : 0) + others.filter((id) => liveIds.has(id)).length;
+    const said = savedAsLocation(loc.name, live, 1 + others.length - live);
+    if (others.length === 0) return said;
+    const moved = new Set(others);
     const onIt = (c: ClassRow) => (moved.has(c.id) ? { ...c, matId: loc.id, location: loc.name } : c);
     setClasses((prev) => prev.map(onIt));
     setInactiveClasses((prev) => prev.map(onIt));
+    return said;
   }
 
   async function handleSave(data: Record<string, unknown>) {
@@ -2045,7 +2061,7 @@ export default function TimetableManager({
           bookingsKeptIneligible?: Partial<Record<"squad" | "rank" | "membership", string[]>>;
           locationAdded?: LocationAdded | null;
         } & Partial<ClassRow>;
-        if (locationAdded) takeLocation(locationAdded);
+        const locationSaid = locationAdded ? takeLocation(locationAdded, editTarget.id, classes.some((c) => c.id === editTarget.id)) : "";
         setClasses((prev) =>
           prev.map((c) =>
             c.id === editTarget.id
@@ -2062,7 +2078,7 @@ export default function TimetableManager({
         showToast(
           (turnedAway > 0
             ? `${describeSave(scheduleChange).replace(/\.?$/, ".")} ${turnedAway} booked ${turnedAway === 1 ? "member is" : "members are"} now turned away at the door; ${turnedAway === 1 ? "the booking is" : "their bookings are"} kept.`
-            : describeSave(scheduleChange)) + (locationAdded ? ` ${savedAsLocation(locationAdded)}` : ""),
+            : describeSave(scheduleChange)) + (locationSaid ? ` ${locationSaid}` : ""),
           kept > 0 || turnedAway > 0 ? "warning" : "success",
         );
       } else {
@@ -2080,9 +2096,9 @@ export default function TimetableManager({
         // for the next eight weeks), not a field of the class — kept off the row
         // and put in the toast, so "created" also says it is on the timetable.
         const { instancesCreated, locationAdded, ...created } = (await res.json()) as { instancesCreated: number; allowedTierIds?: string[]; locationAdded?: LocationAdded | null } & ClassRow;
-        if (locationAdded) takeLocation(locationAdded);
+        const locationSaid = locationAdded ? takeLocation(locationAdded, created.id, true) : "";
         setClasses((prev) => [...prev, createdClassRow(created, membershipTiers)]);
-        showToast(`Class created · ${instancesCreated} sessions added to the timetable${locationAdded ? `. ${savedAsLocation(locationAdded)}` : ""}`, "success");
+        showToast(`Class created · ${instancesCreated} sessions added to the timetable${locationSaid ? `. ${locationSaid}` : ""}`, "success");
       }
       // The page's cached copy predates this save; without a refresh, browser
       // Back re-mounts the timetable from it and the change is not shown.

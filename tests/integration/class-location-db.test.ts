@@ -154,6 +154,40 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
       .toEqual([expect.objectContaining({ id: mat.id, created: false, classIds: [b.id, c.id].sort() })]);
   });
 
+  it("a new mat takes archived and paused classes that type its name, as adopt does, and never imported history", async () => {
+    const T = await club("archived-imported");
+    const live = await classRow(T, "Live", "Garage");
+    const paused = await classRow(T, "Paused", "garage", { isActive: false });
+    const archived = await classRow(T, "Archived", "GARAGE", { isActive: false, deletedAt: new Date("2026-10-01T00:00:00Z") });
+    const imported = await classRow(T, "Imported", "Garage", { isActive: false, sourceImportJobId: `job-${randomUUID()}` });
+    as(T);
+    const res = await create({ name: "New", matName: "Garage" });
+    expect(res.status).toBe(201);
+    const [mat] = await mats(T);
+    const body = (await res.json()) as { locationAdded: { classIds: string[] } };
+    expect([...body.locationAdded.classIds].sort()).toEqual([live.id, paused.id, archived.id].sort());
+    const rows = await classes(T);
+    for (const id of [live.id, paused.id, archived.id]) expect(rows.find((r) => r.id === id)).toMatchObject({ matId: mat.id, location: "Garage" });
+    expect(rows.find((r) => r.id === imported.id)).toMatchObject({ matId: null, location: "Garage" });
+    const [adopt] = await matAudits(T, "mat.adopt");
+    expect(adopt.metadata).toMatchObject({ via: "class-location" });
+  });
+
+  it("an edit clearing a class's place while a new mat is being made from that name is not overwritten", async () => {
+    const T = await club("clear-race");
+    const saving = await classRow(T, "Saving", null);
+    const clearing = await classRow(T, "Clearing", "Loft");
+    as(T);
+    const [made, cleared] = await Promise.all([edit(saving.id, { matName: "Loft" }), edit(clearing.id, { matId: null, location: null })]);
+    expect([made.status, cleared.status]).toEqual([200, 200]);
+    const [mat] = await mats(T);
+    const rows = await classes(T);
+    expect(rows.find((r) => r.id === saving.id)).toMatchObject({ matId: mat.id, location: "Loft" });
+    // Whichever committed first, "No location" stands. Cleared first: the attach's locked read sees no place and
+    // leaves it alone. Attached first: the clearing edit, which waited on the row lock, takes it off again.
+    expect(rows.find((r) => r.id === clearing.id)).toMatchObject({ matId: null, location: null });
+  });
+
   it("create: a new mat from a typed name takes the classes that type it too", async () => {
     const T = await club("create-takes");
     const typed = await classRow(T, "Typed", "cage");

@@ -57,7 +57,8 @@ const updateSchema = z.object({
   matId: z.string().min(1).max(64).optional().nullable(),
   // The class form's Location by name (lib/schemas/class.ts matNameSchema):
   // this class goes on the club's mat of that name, added in the same
-  // transaction when there is none. Only this class moves. Not with `matId`.
+  // transaction when there is none (taking the club's other classes that type
+  // that name with it). Not with `matId`.
   matName: matNameSchema.optional(),
   duration: z.number().int().min(1).max(480).optional(),
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),

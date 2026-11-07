@@ -227,6 +227,57 @@ describe("a location added from the form", () => {
     expect((await listed()).filter((v) => v === "mat:m3")).toHaveLength(1);
   });
 
+  /** A save of Wrestling picking "Upstairs": the server's answer, with the classes it took. */
+  const answerUpstairs = (classIds: string[]) =>
+    stubFetch((call) => {
+      if (call.url !== "/api/classes" || call.method !== "POST") return undefined;
+      return { ok: true, status: 201, json: async () => ({ ...cls("Wrestling", "Upstairs", [[1, "18:00", "19:00"]], { matId: "m9" }), instancesCreated: 8, locationAdded: { id: "m9", name: "Upstairs", classIds, savedAt: SAVED_AT } }) };
+    });
+  const upstairsOf = (classes: ReturnType<typeof CLUB>) => classes.filter((c) => c.location?.toLowerCase().trim() === "upstairs").map((c) => c.id);
+
+  it("counts only the classes on the timetable, and says how many paused or archived ones went with them", async () => {
+    const classes = CLUB();
+    const paused = cls("Summer upstairs", "Upstairs", [[1, "09:00", "10:00"]], { lifecycle: "paused" });
+    const archived = cls("Old upstairs", "upstairs", [[1, "09:00", "10:00"]], { lifecycle: "archived", archivedAt: "2026-10-01T00:00:00.000Z" });
+    calls = answerUpstairs([...upstairsOf(classes), paused.id, archived.id]);
+    render(<TimetableManager initialClasses={classes} initialInactiveClasses={[paused, archived]} mats={MATS} {...PROPS} />);
+    await createClass("Wrestling");
+    choose("place:Upstairs");
+    submit("Create class");
+    // Wrestling plus the three live classes typing it: 4; the paused and the archived one: 2 more.
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringContaining("“Upstairs” is saved as a location. 4 classes are now on it (and 2 not on the timetable)."), "success"));
+  });
+
+  it("says the split changed when the classes it took put a second mat in use", async () => {
+    const classes = CLUB(); // Gi on Mat 1: one mat in use, so by time until someone chooses.
+    calls = answerUpstairs(upstairsOf(classes));
+    render(<TimetableManager initialClasses={classes} mats={MATS} {...PROPS} />);
+    expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBeNull();
+    await createClass("Wrestling");
+    choose("place:Upstairs");
+    submit("Create class");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("The timetable is now split by mat.", "info"));
+    expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
+  });
+
+  it("keeps the classes it took on the new mat through a refresh read before the save, so the split does not flicker", async () => {
+    const classes = CLUB();
+    const typed = upstairsOf(classes);
+    calls = answerUpstairs(typed);
+    const view = render(<TimetableManager initialClasses={classes} mats={MATS} matsReadAt="2026-11-05T09:59:00.000Z" {...PROPS} />);
+    await createClass("Wrestling");
+    choose("place:Upstairs");
+    submit("Create class");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("The timetable is now split by mat.", "info"));
+    // A refresh that was in flight: read before the save, so its classes still type "Upstairs" on no mat.
+    view.rerender(<TimetableManager initialClasses={CLUB().map((c, i) => ({ ...c, id: classes[i].id }))} mats={[...MATS]} matsReadAt="2026-11-05T10:00:04.000Z" {...PROPS} />);
+    expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
+    edit("Open mat");
+    expect(select().value).toBe("mat:m9");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(toast.mock.calls.filter(([t]) => /now split by/.test(String(t)))).toEqual([["The timetable is now split by mat.", "info"]]);
+  });
+
   it("takes the club's other classes that type its name with it, says how many, and lists the name once", async () => {
     // Yoga and two Upstairs classes: the server put Open mat and Upstairs drills (typed "Upstairs") on the new mat.
     const classes = CLUB();

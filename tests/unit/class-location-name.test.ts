@@ -60,7 +60,7 @@ import { LOCATION_ERRORS, MAT_LIMIT } from "@/lib/mats";
 type MatRow = { id: string; tenantId: string; name: string; nameKey: string; sortOrder: number };
 let clubMats: MatRow[] = [];
 /** Classes of both clubs on no mat, with what they type (what the attach step reads). */
-let typedClasses: { id: string; tenantId: string; location: string | null; matId: string | null; sourceImportJobId: string | null }[] = [];
+let typedClasses: { id: string; tenantId: string; location: string | null; matId: string | null; sourceImportJobId: string | null; deletedAt?: Date | null; isActive?: boolean }[] = [];
 const mat = (id: string, name: string, sortOrder: number, tenantId = "t1"): MatRow => ({ id, tenantId, name, nameKey: name.toLowerCase(), sortOrder });
 
 const SLOT = { dayOfWeek: 1, startTime: "18:00", endTime: "19:00" };
@@ -105,12 +105,20 @@ beforeEach(() => {
   const row = { id: "c1", tenantId: "t1", name: "Gi", location: "Sports hall", matId: null, isActive: true, deletedAt: null, sourceImportJobId: null, schedules: [], allowedTiers: [], rosterMembers: [] };
   tx.class.findFirst.mockResolvedValue(row);
   typedClasses = [];
-  tx.class.findMany.mockImplementation(async ({ where }: { where: { tenantId: string; matId: null; sourceImportJobId: null } }) => {
-    ops.push("typed-read");
-    return typedClasses
-      .filter((c) => c.tenantId === where.tenantId && c.matId === null && c.sourceImportJobId === null && c.location !== null)
-      .map(({ id, location }) => ({ id, location }));
-  });
+  // Two raw reads: the edit's own Class row lock, and the locked read of the club's typed classes (lib/mats.ts
+  // lockTypedClasses), whose one bind value is the club.
+  tx.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (strings.join("?").includes('"sourceImportJobId" IS NULL')) {
+      ops.push("typed-read");
+      expect(strings.join("?")).toMatch(/ORDER BY "id" FOR UPDATE$/);
+      return typedClasses
+        .filter((c) => c.tenantId === values[0] && c.matId === null && c.sourceImportJobId === null && c.location !== null)
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .map(({ id, location, deletedAt }) => ({ id, location, deletedAt: deletedAt ?? null }));
+    }
+    ops.push("class-lock");
+    return [{ id: "c1", isActive: true, deletedAt: null, requiredRankId: null, maxRankId: null, matId: null }];
+  }) as never);
 });
 
 describe("POST /api/classes with a Location by name", () => {
@@ -146,16 +154,46 @@ describe("POST /api/classes with a Location by name", () => {
     expect(lastTx().slice(0, 8)).toEqual(["mats-lock", "mats-read", "mat-create", "audit:mat.create:in-tx", "typed-read", "class-update", "audit:mat.adopt:in-tx", "class-create"]);
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: "t1", action: "mat.adopt", entityType: "Tenant", entityId: "t1",
-      metadata: { mats: [{ id: "m-new", name: "Upstairs", created: false, classIds: ["k1", "k2"] }] },
+      metadata: { via: "class-location", mats: [{ id: "m-new", name: "Upstairs", created: false, classIds: ["k1", "k2"] }] },
     }));
     expect(created()).toMatchObject({ matId: "m-new", location: "Upstairs" });
     expect((await res.json()).locationAdded).toMatchObject({ id: "m-new", name: "Upstairs", classIds: ["k1", "k2"] });
   });
 
+  it("archived and paused classes that type the name go on the new mat too (as adopt takes them)", async () => {
+    typedClasses = [
+      { id: "k1", tenantId: "t1", location: "Cage", matId: null, sourceImportJobId: null },
+      { id: "k2", tenantId: "t1", location: "cage", matId: null, sourceImportJobId: null, isActive: false },
+      { id: "k3", tenantId: "t1", location: "CAGE", matId: null, sourceImportJobId: null, isActive: false, deletedAt: new Date("2026-10-01") },
+    ];
+    const res = await post({ matName: "Cage" });
+    expect(res.status).toBe(201);
+    expect((await res.json()).locationAdded.classIds).toEqual(["k1", "k2", "k3"]);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "mat.adopt",
+      metadata: { via: "class-location", mats: [{ id: "m-new", name: "Cage", created: false, classIds: ["k1", "k2", "k3"] }] },
+    }));
+  });
+
+  it("a name longer than a location can be is refused beside the field: 24 when a mat is added, 100 for a support place", async () => {
+    const long = "x".repeat(120);
+    const owner = await post({ matName: long });
+    expect(owner.status).toBe(400);
+    expect(await owner.json()).toEqual({ error: LOCATION_ERRORS.tooLong, reason: "location" });
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
+    const support = await post({ matName: long });
+    expect(support.status).toBe(400);
+    expect(await support.json()).toEqual({ error: LOCATION_ERRORS.placeTooLong, reason: "location" });
+    expect(LOCATION_ERRORS.placeTooLong).toBe("A place can be up to 100 characters. Use a shorter name.");
+    expect(ops).toEqual([]);
+    // Over the schema's own bound is still a 400, never a 500.
+    expect((await post({ matName: "x".repeat(501) })).status).toBe(400);
+  });
+
   it("a mat that is already there takes only the class being saved", async () => {
     typedClasses = [{ id: "k1", tenantId: "t1", location: "Mat 1", matId: null, sourceImportJobId: null }];
     expect((await post({ matName: "mat 1" })).status).toBe(201);
-    expect(tx.class.findMany).not.toHaveBeenCalled();
+    expect(ops).not.toContain("typed-read");
     expect(tx.class.updateMany).not.toHaveBeenCalled();
   });
 

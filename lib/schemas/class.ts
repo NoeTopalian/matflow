@@ -33,12 +33,12 @@ export const allowedTierIdsSchema = z
   .transform((ids) => [...new Set(ids)]);
 
 /**
- * The class form's Location by name. Shared by POST and PATCH. As long as a
- * typed place may be (a caller that may not add mats keeps it as one); the
- * routes refuse a blank or, where a mat would be added, an over-long name
- * (lib/mats.ts checkLocationName).
+ * The class form's Location by name. Shared by POST and PATCH. Generous on
+ * purpose: the routes refuse a blank or over-long name with a sentence the
+ * form shows beside the field (lib/mats.ts checkLocationName), never the
+ * validator's "Invalid data".
  */
-export const matNameSchema = z.string().max(100);
+export const matNameSchema = z.string().max(500);
 
 /** One ticked member on a comp-class allow-list. Mirrors the PATCH route's shape. */
 export const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
