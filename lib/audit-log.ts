@@ -293,45 +293,7 @@ export function logAuditStrict(tx: Prisma.TransactionClient, args: Omit<LogArgs,
   return logAudit({ ...args, tx });
 }
 
-// ─── Retention ───────────────────────────────────────────────────────────────
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Ordinary audit rows: the published 12 months (app/legal/privacy/page.tsx §6). */
-export const AUDIT_LOG_RETENTION_MS = 365 * DAY_MS;
-/**
- * Platform evidence: six years, the UK limitation period for a claim. Operator
- * actions, support sessions, erasure records and club hard-deletes are what an
- * incident review or a restore (docs/runbooks/db-restore.md) needs long after
- * the year is up (operator audit 5 Oct 2026, Q9).
- */
-export const AUDIT_EVIDENCE_RETENTION_MS = 6 * 365 * DAY_MS;
-
-/**
- * Action prefixes kept for AUDIT_EVIDENCE_RETENTION_MS. `admin.` covers every
- * operator action (Danger Zone, impersonation start/end, operator sign-in,
- * TOTP enrolment, step-up, hard-delete evidence); `member.dsar_erase` covers
- * the erasure record and its request row.
- */
-export const AUDIT_EVIDENCE_ACTION_PREFIXES = ["admin.", "member.dsar_erase"] as const;
-
-/**
- * The retention cron's delete predicate for AuditLog. Rows written during a
- * support session (metadata.actingAs set) are evidence too, whatever their
- * action. `action` is NOT NULL, so the NOT below cannot be defeated by a NULL;
- * the actingAs test is phrased positively (key absent) for the same reason.
- */
-export function auditLogRetentionWhere(now: Date): Prisma.AuditLogWhereInput {
-  const ordinaryCutoff = new Date(now.getTime() - AUDIT_LOG_RETENTION_MS);
-  const evidenceCutoff = new Date(now.getTime() - AUDIT_EVIDENCE_RETENTION_MS);
-  return {
-    OR: [
-      {
-        createdAt: { lt: ordinaryCutoff },
-        NOT: { OR: AUDIT_EVIDENCE_ACTION_PREFIXES.map((p) => ({ action: { startsWith: p } })) },
-        OR: [{ metadata: { equals: Prisma.DbNull } }, { metadata: { path: ["actingAs"], equals: Prisma.AnyNull } }],
-      },
-      { createdAt: { lt: evidenceCutoff } },
-    ],
-  };
-}
+// Retention: none. The Activity log is kept permanently (product rule, Noe,
+// 6 Nov 2026, docs/RULES.md: "nothing should be automatically deleted"). The
+// retention cron no longer touches AuditLog, and no route updates or deletes
+// a row (tests/unit/audit-actor-columns-immutability.test.ts).

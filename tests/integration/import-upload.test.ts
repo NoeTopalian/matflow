@@ -56,7 +56,7 @@ describe.skipIf(!HAS_DB)("chunked import upload — real database", () => {
     // to the database exceeded the 15 s default in rehearsal, 3 Oct 2026).
     const BUDGET = { timeout: 45_000, maxWait: 10_000 };
     const up = await import("@/lib/import-upload");
-    const { readImportFile, deleteImportFile, DB_UPLOAD_PREFIX } = await import("@/lib/import-storage");
+    const { readImportFile, DB_UPLOAD_PREFIX } = await import("@/lib/import-storage");
 
     const size = Math.floor(2.3 * 1024 * 1024);
     const file = Buffer.alloc(size);
@@ -139,9 +139,9 @@ describe.skipIf(!HAS_DB)("chunked import upload — real database", () => {
     );
     expect(chunkTenants.map((c) => c.tenantId)).toEqual([tenantA, tenantA, tenantA]);
 
-    await deleteImportFile(url, tenantA);
-    expect(await readImportFile(url, tenantA)).toBeNull();
+    // Claimed and read, the upload is the import file and is kept (nothing is deleted automatically, 6 Nov 2026).
+    expect(await readImportFile(url, tenantA)).toBe(file.toString("utf8"));
     const left = await withRlsBypass((tx) => tx.importUploadChunk.count({ where: { uploadId: created.id } }));
-    expect(left).toBe(0);
+    expect(left).toBe(3);
   }, 180_000);
 });

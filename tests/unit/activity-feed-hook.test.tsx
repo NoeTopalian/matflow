@@ -11,7 +11,7 @@ const page = (ids: string[], nextCursor: string | null = null): ActivityResponse
   entries: ids.map(entry),
   nextCursor,
   enriched: true,
-  clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2025-11-05", clamped: false },
+  clock: { timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2024-06-01" },
   filters: { types: { view: "club", keys: [] }, member: null, class: null, payment: null, tier: null, staff: null, dayKey: null },
   ignoredTypes: [],
   droppedTypes: [],

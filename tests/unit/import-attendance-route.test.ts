@@ -466,14 +466,14 @@ describe("preview: a valid attendance file", () => {
     expect(job(r.json.jobId).status).toBe("preview");
   });
 
-  it("deletes the superseded preview's stored upload and its chunks", async () => {
+  it("keeps the superseded preview's stored upload and its chunks (nothing is deleted automatically)", async () => {
     const oldUpload = seedUpload(SMALL_CSV);
     const older = seedJob({ status: "preview", fileBlobUrl: `db-upload://${oldUpload}` });
     const r = await post(previewBody(seedUpload(SMALL_CSV)));
     expect(r.status).toBe(201);
     expect(job(older.id).status).toBe("superseded");
-    expect(h.db.tables.importUpload.some((u) => u.id === oldUpload)).toBe(false);
-    expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === oldUpload)).toBe(false);
+    expect(h.db.tables.importUpload.some((u) => u.id === oldUpload)).toBe(true);
+    expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === oldUpload)).toBe(true);
   });
 
   it("keeps the new preview's own upload and chunks when it supersedes an earlier one", async () => {
@@ -690,6 +690,21 @@ describe("step", () => {
     expect(h.db.tables.importedBooking).toHaveLength(4);
     expect(h.db.tables.importedBooking.every((b) => b.tenantId === "t1" && b.source === LEDGER_SOURCE)).toBe(true);
   });
+
+  it("a successful import keeps its file: the upload and its chunks stay with the completed job", async () => {
+    const { jobId, planHash } = await previewAndDecideAll();
+    const uploadId = String(job(jobId).fileBlobUrl).replace("db-upload://", "");
+    expect((await post({ action: "commit", jobId, planHash })).status).toBe(202);
+    expect((await post({ action: "step", jobId })).json.done).toBe(true);
+    expect(job(jobId).status).toBe("complete");
+    // Product rule (Noe, 6 Nov 2026): nothing is deleted automatically.
+    expect(h.db.tables.importUpload.some((u) => u.id === uploadId)).toBe(true);
+    expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === uploadId)).toBe(true);
+    // …and after a rollback too: the rollback undoes what the import wrote, not the file.
+    expect((await del(`?jobId=${jobId}`)).status).toBe(200);
+    expect(job(jobId).rolledBackAt).not.toBeNull();
+    expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === uploadId)).toBe(true);
+  });
 });
 
 // ── 8. Decide ────────────────────────────────────────────────────────────────
@@ -761,13 +776,13 @@ describe("POST discard", () => {
     expect(job(jobId).status).toBe("superseded");
   });
 
-  it("deletes the discarded preview's db-upload file and its chunks", async () => {
+  it("keeps the discarded preview's db-upload file and its chunks with its job", async () => {
     const id = seedUpload(SMALL_CSV);
     const p = await post(previewBody(id));
     expect(p.status).toBe(201);
     await post({ action: "discard", jobId: p.json.jobId });
-    expect(h.db.tables.importUpload.some((u) => u.id === id)).toBe(false);
-    expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === id)).toBe(false);
+    expect(h.db.tables.importUpload.some((u) => u.id === id)).toBe(true);
+    expect(h.db.tables.importUploadChunk.some((c) => c.uploadId === id)).toBe(true);
   });
 
   it("a discarded preview can no longer be committed", async () => {

@@ -10,11 +10,7 @@ import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { membershipTierWrite } from "@/lib/membership-tier";
 import { recordStatusEventsBulk } from "@/lib/member-status";
-// Audit iter-1-operator-admin A6I1-S-1: del() removes the publicly-readable
-// CSV from Vercel Blob storage after we've finished importing it. Combined
-// with `addRandomSuffix: true` on upload + response-sanitisation, this
-// closes the persistence window for member PII outside the tenant DB.
-import { deleteImportFile, readImportFile } from "@/lib/import-storage";
+import { readImportFile } from "@/lib/import-storage";
 import { assertSameOrigin } from "@/lib/csrf";
 import { claimLoginIdentities, type LoginIdentityClaim } from "@/lib/login-email";
 import { normaliseEmail } from "@/lib/email-normalise";
@@ -191,10 +187,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         metadata: { source: job.source, fileName: job.fileName, mappingVersion: job.mappingVersion ?? null, sourceExportedAt: job.sourceExportedAt ? job.sourceExportedAt.toISOString() : null, sourceExportedAtProvenance: job.sourceExportedAtProvenance ?? null, changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, reconciles: out.manifest.reconciles, resumed },
         req,
       });
-      if (job.fileBlobUrl) {
-        try { await deleteImportFile(job.fileBlobUrl, tenantId); }
-        catch (e) { console.warn("[import-commit] blob del failed", e); }
-      }
+      // The uploaded file is kept with its ImportJob (nothing is deleted automatically, 6 Nov 2026).
       // No completion email, no invitations, no Stripe, and (25 Oct 2026) no member writes: a refresh lists differences.
       return NextResponse.json({ ok: true, mode: "refresh", changed: out.changed, unchanged: out.unchanged, toReview: out.toReview, exceptions: out.exceptionCount, manifest: withoutConflictDetail(out.manifest) });
     }
@@ -686,23 +679,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       req,
     });
 
-    // Audit iter-1-operator-admin A6I1-S-1: best-effort delete the publicly-
-    // readable CSV from blob storage. Defence-in-depth: we've already
-    // sanitised the URL out of API responses (see upload + job-detail
-    // routes) and the path carries 128 bits of random-suffix entropy, but
-    // shrinking the persistence window further means the URL can't leak
-    // months later via DB dump or operator screenshot. Errors are swallowed
-    // — the import already succeeded, blob cleanup must not roll back.
-    // Only once the run is COMPLETE. A run that ends "failed" tells the owner
-    // to run it again (gap 12), which re-reads this file: deleting it here made
-    // every such retry fail with "Import file is no longer in storage"
-    // (attendance rehearsal, 3 Oct 2026: 28 slice timeouts on a slow link left a
-    // members import unrecoverable). Retention removes a failed run's file
-    // after its window (rule f).
-    if (job.fileBlobUrl && systemFailedRows === 0) {
-      try { await deleteImportFile(job.fileBlobUrl, tenantId); }
-      catch (e) { console.warn("[import-commit] blob del failed", e); }
-    }
+    // The uploaded file is KEPT with its ImportJob (product rule, Noe, 6 Nov
+    // 2026: "nothing should be automatically deleted"). It used to be deleted
+    // here once the run completed (audit A6I1-S-1). It stays private: a private
+    // Blob or private Postgres chunks (lib/import-storage.ts), and its URL is
+    // never in an API response (see upload + job-detail routes).
 
     // Best-effort completion email to the owner
     const owner = await withTenantContext(tenantId, (tx) =>

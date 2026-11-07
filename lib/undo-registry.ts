@@ -729,6 +729,10 @@ const IRREVERSIBLE: [RegExp, string][] = [
 
 export function decideUndo(row: AuditRowLike, alreadyUndone: boolean): UndoDecision {
   if (alreadyUndone) return { ok: false, reason: REASON.alreadyUndone };
+  // A row a member's erasure redacted (lib/audit-redact.ts) holds null where the previous values were: putting
+  // them "back" would write nulls over live data. Refused whatever the action.
+  const meta = row.metadata as { redactedForErasure?: unknown } | null | undefined;
+  if (meta && typeof meta === "object" && meta.redactedForErasure === true) return { ok: false, reason: REASON.erased };
   const handler = UNDO_HANDLERS[row.action];
   if (handler) return handler.decide(row);
   for (const [re, reason] of IRREVERSIBLE) if (re.test(row.action)) return { ok: false, reason };

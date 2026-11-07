@@ -173,9 +173,9 @@ changes; a waiver link is kept, and the same address in another club is untouche
 ## Audit history
 
 The application never updates or deletes an `AuditLog` row: no route edits history, and
-`tests/unit/audit-actor-columns-immutability.test.ts` fails the build if an `auditLog` update or delete appears anywhere
-except the retention cron. Retention is by age only: 12 months for ordinary rows, 6 years for `admin.*`, DSAR and
-support rows (`auditLogRetentionWhere`). Operator rows carry `operatorId` and `requestId` columns (the step-up grant's
+`tests/unit/audit-actor-columns-immutability.test.ts` fails the build if an `auditLog` update or delete appears anywhere,
+the retention cron included. Activity is kept permanently: nothing deletes it by age (product rule, Noe 6 Nov 2026,
+"nothing should be automatically deleted"; `docs/RULES.md`). Operator rows carry `operatorId` and `requestId` columns (the step-up grant's
 request id for a step-up action; the platform request id or a UUID otherwise). The database reality is different: the
 database owner role and anyone with Neon console access can edit or delete history, and deleting a User or Operator sets
 its attribution columns to null (`ON DELETE SET NULL`) while `metadata.actingAs` keeps the id. The log is therefore

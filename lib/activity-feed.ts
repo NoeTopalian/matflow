@@ -40,6 +40,7 @@ import { UNDO_PREFIX, auditEntryLabel, classLifecycleOf, isUndoAction } from "@/
 import type { ActorKind } from "@/lib/activity-url";
 import { clubDayKey } from "@/lib/club-month";
 import { formatDate } from "@/lib/date";
+import { ERASED_ENTITY_ID } from "@/lib/audit-redact";
 import { parseIdParam } from "@/lib/id-param";
 import { ERASED_EMAIL } from "@/lib/login-email";
 import { formatMoney } from "@/lib/payment-totals";
@@ -305,7 +306,7 @@ type PaymentInfo = { id: string; memberId: string | null; amountPence: number; c
 /** Names for the ids a page of rows carries. Built once per page by `loadLookups`. */
 export type ActivityLookups = {
   members: Map<string, { name: string; erased: boolean }>;
-  /** A hard-deleted member's name, from their own "deleted" row (kept for the year the log lives). */
+  /** A hard-deleted member's name, from their own "deleted" row (kept permanently, like the rest of the log). */
   deletedMemberNames: Map<string, string>;
   classes: Map<string, { name: string }>;
   sessions: Map<string, { classId: string; className: string; date: Date; startTime: string }>;
@@ -431,10 +432,13 @@ const ID_FIELD_KIND: Record<string, "tier" | "venue" | "staff" | "rank"> = {
 };
 
 /**
- * `member.waiver.signed_via_kiosk` stores the signer's EMAIL as its entity id.
- * It is never looked up and never returned.
+ * `member.waiver.signed_via_kiosk` stored the signer's EMAIL as its entity id until 6 Nov 2026; it now stores the
+ * member's id, and a member's erasure repoints their old rows to it, or (when another member also held that
+ * address) sets the neutral "erased" (lib/audit-redact.ts). An address or "erased" is never looked up and never
+ * returned; a member id is the member, linked like any other.
  */
-const ENTITY_IS_NOT_AN_ID = new Set(["member.waiver.signed_via_kiosk"]);
+const entityIsNotAnId = (row: Pick<FeedRow, "action" | "entityId">): boolean =>
+  row.action === "member.waiver.signed_via_kiosk" && (row.entityId.includes("@") || row.entityId === ERASED_ENTITY_ID);
 
 /** Members named per card-scan row: the sentence shows three. */
 const SCAN_MEMBERS_RESOLVED = 5;
@@ -453,7 +457,7 @@ export function subjectRefs(rows: FeedRow[], focusMemberId?: string | null): Sub
   if (rows.length) add("member", focusMemberId);
   for (const row of rows) {
     const m = metaOf(row);
-    if (!ENTITY_IS_NOT_AN_ID.has(row.action)) add(ENTITY_KIND[row.entityType], row.entityId);
+    if (!entityIsNotAnId(row)) add(ENTITY_KIND[row.entityType], row.entityId);
     if (row.userId) add("staff", row.userId);
     for (const [key, kind] of Object.entries(RESOLVED_ID_KEYS)) add(kind, m[key]);
     if (Array.isArray(m.memberIds)) for (const id of m.memberIds.slice(0, SCAN_MEMBERS_RESOLVED)) add("member", id);
@@ -728,7 +732,7 @@ function reader(row: FeedRow, ctx: FeedContext) {
 
   /** What the row is about, for a sentence that has no template of its own. */
   function entity(): Part | null {
-    if (ENTITY_IS_NOT_AN_ID.has(row.action)) return null;
+    if (entityIsNotAnId(row)) return null;
     switch (row.entityType) {
       case "Member":
         return member(row.entityId);
@@ -861,7 +865,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return by ? sentence(by, " added ", child) : sentence(child, " was added");
     }
     case "member.delete": {
-      // From PR C the deleted person's name is recorded on this row, and only this row, for the year the log is kept.
+      // From PR C the deleted person's name is recorded on this row, and only this row; the log is kept permanently.
       const name = str(m.name)?.trim() || null;
       return who ? sentence(who, " deleted ", name ?? "a member") : sentence(name ?? "A member", " was deleted");
     }
@@ -1111,6 +1115,11 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const person = r.member(subjectMember);
       return person ? sentence(person, " signed the waiver at the desk") : null;
     }
+    case "member.waiver.signed_via_kiosk": {
+      // Rows since 6 Nov 2026 name the member by id; an older row's address (or "erased") names no one.
+      const person = entityIsNotAnId(row) ? null : r.member(subjectMember);
+      return person ? sentence(person, " signed the waiver at the kiosk") : null;
+    }
     case "waiver.sign-for-child": {
       const child = r.member(subjectMember, true);
       if (!child) return null;
@@ -1241,7 +1250,7 @@ const REASON_FOR_EVERYONE = new Set(["class.instance_cancelled", "member.payment
 function detailOf(row: FeedRow, r: Reader, ctx: FeedContext, changes: FeedChange[] | null): Part[] | null {
   const { m } = r;
   /** Text someone typed about this row's member is shown to nobody once that member is erased or deleted. */
-  const memberGone = row.entityType === "Member" && !ENTITY_IS_NOT_AN_ID.has(row.action) && !r.memberIsLive(row.entityId);
+  const memberGone = row.entityType === "Member" && !entityIsNotAnId(row) && !r.memberIsLive(row.entityId);
   const bits: (Part | string)[][] = [];
   const add = (...bit: (Part | string | null)[]) => {
     const kept = bit.filter((b): b is Part | string => b != null && b !== "");

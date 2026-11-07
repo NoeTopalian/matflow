@@ -72,6 +72,14 @@ describe("decideUndo — what the owner is told", () => {
     expect(decideUndo(row("undo.member.update", {}), false)).toEqual({ ok: false, reason: REASON.undoOfUndo });
   });
 
+  it("a row a member's erasure redacted is refused whatever its action: its previous values are nulls", () => {
+    const redacted = { fields: ["phone"], source: "staff", changes: { phone: { from: null, to: null } }, redactedForErasure: true };
+    expect(decideUndo(row("member.update", redacted), false)).toEqual({ ok: false, reason: REASON.erased });
+    expect(decideUndo(row("class.update", { before: { name: null }, memberId: "m1", redactedForErasure: true }, { entityType: "Class", entityId: "c1" }), false)).toEqual({ ok: false, reason: REASON.erased });
+    // The same row unredacted is not refused for that reason.
+    expect(decideUndo(row("member.update", { fields: ["phone"], source: "staff", changes: { phone: { from: "07700 900111", to: "07700 900222" } } }), false)).not.toEqual({ ok: false, reason: REASON.erased });
+  });
+
   it("a removed check-in and a card-scan batch are refused with honest reasons (not 'before snapshots')", () => {
     expect(decideUndo(row("attendance.override", { classInstanceId: "ci", memberId: "m1" }), false)).toEqual({ ok: false, reason: REASON.reMark });
     expect(decideUndo(row("attendance.card_scan", {}, { entityType: "ClassInstance", entityId: "ci" }), false)).toEqual({ ok: false, reason: REASON.batchScan });

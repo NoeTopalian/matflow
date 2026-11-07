@@ -61,7 +61,7 @@ function log(action: string, over: Partial<Audit> = {}): Audit {
 }
 
 const records: Record<string, Rec[]> = {
-  tenant: [{ id: CLUB, timezone: "Europe/London", currency: "GBP" }],
+  tenant: [{ id: CLUB, timezone: "Europe/London", currency: "GBP", createdAt: at("2024-06-01T09:00:00Z") }],
   member: [
     { id: "m_mel", tenantId: CLUB, name: "Melody Orekoya", email: "melody@example.test" },
     { id: "m_a", tenantId: CLUB, name: "Ada Obi", email: "ada@example.test" },
@@ -201,7 +201,8 @@ describe("the owner's feed", () => {
     expect(body.entries[0].plain).toBe("Melody Orekoya checked in to Advanced No-Gi · Wed 4 Nov, 19:00");
     expect(body.entries[1].plain).toBe("Jack Streeter updated Melody Orekoya's details");
     expect(JSON.stringify(body)).not.toContain("Other Club");
-    expect(body.clock).toEqual({ timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2025-11-05", clamped: false });
+    // The earliest day offered is the club's first day: activity is kept permanently (docs/RULES.md).
+    expect(body.clock).toEqual({ timeZone: "Europe/London", todayKey: "2026-11-05", minDayKey: "2024-06-01" });
     expect(body.nextCursor).toBeNull();
   });
 
@@ -436,12 +437,12 @@ describe("parameters never break the page", () => {
     expect(body.entries.length).toBeGreaterThan(4);
   });
 
-  it("clamps a future day to today and a day before the log began to its first day; ignores a malformed one", async () => {
+  it("clamps a future day to today, keeps a day before the club began as asked (nothing is older), ignores a malformed one", async () => {
     expect((await get("?day=2027-01-01")).body.filters.dayKey).toBe("2026-11-05");
-    expect((await get("?day=2027-01-01")).body.clock.clamped).toBe(false);
-    const old = (await get("?day=2020-01-01")).body;
-    expect(old.filters.dayKey).toBe("2025-11-05");
-    expect(old.clock.clamped).toBe(true);
+    const old = (await get("?types=all&day=2020-01-01")).body;
+    expect(old.filters.dayKey).toBe("2020-01-01");
+    expect(old.entries).toEqual([]);
+    expect(old.clock).not.toHaveProperty("clamped");
     for (const bad of ["2026-02-30", "yesterday", "2026-11-5", ""]) expect((await get(`?day=${bad}`)).body.filters.dayKey, bad).toBeNull();
   });
 
@@ -501,12 +502,20 @@ describe("bounds on what one request can cost", () => {
     }
   });
 
-  it("never reads further back than the year the log is kept for", async () => {
-    log("member.update", { userId: JACK.id, metadata: { changes: { phone: { from: "1", to: "2" } } }, createdAt: at("2025-09-01T10:00:00Z") });
-    log("admin.tenant.create", { entityType: "Tenant", entityId: CLUB, operatorId: "op_1", createdAt: at("2024-01-01T10:00:00Z") });
+  it("has no age floor: a row 400 days old is returned, and Jump to date accepts that day", async () => {
+    // Activity is kept permanently (Noe, 6 Nov 2026). 400 days before 5 Nov 2026 is 1 Oct 2025.
+    const old = log("member.update", { userId: JACK.id, metadata: { changes: { phone: { from: "1", to: "2" } } }, createdAt: at("2025-10-01T10:00:00Z") });
     const { body } = await get("?types=all");
-    expect(body.entries).toHaveLength(16);
-    expect(body.entries.every((e) => e.dayKey >= body.clock.minDayKey)).toBe(true);
+    expect(body.entries).toHaveLength(17);
+    expect(body.entries[16].id).toBe(old.id);
+    expect(body.entries[16].dayKey).toBe("2025-10-01");
+    // No createdAt floor is ANDed into the page query.
+    expect(JSON.stringify((tx.auditLog.findMany.mock.calls[0][0] as { where: unknown }).where)).not.toContain("gte");
+
+    const jumped = (await get("?types=all&day=2025-10-01")).body;
+    expect(jumped.filters.dayKey).toBe("2025-10-01");
+    expect(jumped.entries.map((e) => e.id)).toEqual([old.id]);
+    expect(jumped.clock.minDayKey <= "2025-10-01").toBe(true);
   });
 
   it("caps the already-undone lookup", async () => {

@@ -39,15 +39,12 @@
  * ## What this file DOES mutate
  *
  * `cron/class-instances` genuinely inserts ClassInstance rows for the 56-day
- * rolling horizon, and `cron/retention` genuinely deletes rows past their
- * published retention windows. Both are the product's own nightly behaviour
- * and both are idempotent. Before writing this file the test branch was
- * checked for the one irreversible case — tenants soft-deleted more than 30
- * days ago, which `purgeSoftDeletedTenants` hard-deletes — and there were
- * zero (and zero soft-deleted tenants at all, and zero AuditLog rows older
- * than 365 days). If that ever stops being true, this file will hard-delete a
- * tenant on the test branch. The guard below asserts the count is still zero
- * BEFORE the retention call, and fails loudly rather than purging.
+ * rolling horizon, and `cron/retention` genuinely prunes sign-in rate-limit
+ * counters older than a day. Both are the product's own nightly behaviour and
+ * both are idempotent. Nothing else is deleted by the sweep: nothing of a
+ * club's is deleted automatically (product rule, Noe, 6 Nov 2026), and the
+ * retention test below writes a synthetic club with rows of every age in every
+ * table the sweep used to purge, runs the live sweep, and proves they survive.
  *
  * Run it the way the other real-DB files are run:
  *   TEST_DATABASE_URL="$(grep TEST_DATABASE_URL .env.test | cut -d= -f2-)" \
@@ -77,6 +74,7 @@ vi.mock("@/lib/stripe/reconcile", () => ({
 
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 
+import { Prisma } from "@prisma/client";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { GET as classInstancesCron } from "@/app/api/cron/class-instances/route";
 import { GET as retentionCron } from "@/app/api/cron/retention/route";
@@ -200,56 +198,81 @@ describe.skipIf(!HAS_DB)("Vercel cron entrypoints", () => {
   );
 
   it(
-    "retention sweeps every rule without a single one erroring",
+    "retention, with the gate ON, deletes nothing of a club's: rows of every age in every table it used to purge survive",
     async () => {
-      // Fail closed before anything irreversible. purgeSoftDeletedTenants
-      // hard-deletes up to 2 tenants per run, and nothing brings one back.
-      const purgeable = await withRlsBypass((tx) =>
-        tx.tenant.count({ where: { deletedAt: { not: null, lt: new Date(Date.now() - 30 * DAY_MS) } } }),
-      );
-      expect(
-        purgeable,
-        "The test branch now holds tenant(s) soft-deleted over 30 days ago. Running the " +
-          "retention cron here would HARD-DELETE them. Clear or re-date them deliberately " +
-          "before running this test.",
-      ).toBe(0);
+      // Product rule (Noe, 6 Nov 2026; docs/RULES.md): "nothing should be
+      // automatically deleted". A synthetic club, closed two years ago, owns a
+      // row a day, a year, two years and ten years old in each table the sweep
+      // used to purge. The live sweep runs; every one of them must still exist.
+      const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const T = `mfv-keep-${stamp}`;
+      const ago = (days: number) => new Date(Date.now() - days * DAY_MS);
+      const AGES = [1, 365, 730, 3650];
+      const ids = (kind: string) => AGES.map((d) => `mfv-keep-${stamp}-${kind}-${d}`);
+      const kept = { auditLog: ids("audit"), emailLog: ids("email"), loginEvent: ids("login"), magicLinkToken: ids("magic"), passwordResetToken: ids("reset"), stripeEvent: ids("stripe"), importUpload: ids("upload"), importJob: ids("job") };
+      try {
+        await withRlsBypass(async (tx) => {
+          await tx.tenant.create({ data: { id: T, name: `Synthetic kept club ${stamp}`, slug: `mfv-keep-${stamp}`, createdAt: ago(4000), deletedAt: ago(730) } });
+          // A sign-in record names exactly one user or member (LoginEvent_subject_xor_chk).
+          await tx.user.create({ data: { id: `${T}-owner`, tenantId: T, email: `keep-${stamp}-owner@example.test`, name: "Owner", role: "owner", passwordHash: "x" } });
+          await tx.auditLog.createMany({ data: AGES.map((d, i) => ({ id: kept.auditLog[i], tenantId: T, action: "member.update", entityType: "Member", entityId: "x", createdAt: ago(d) })) });
+          await tx.emailLog.createMany({ data: AGES.map((d, i) => ({ id: kept.emailLog[i], tenantId: T, templateId: "t", recipient: `keep-${stamp}@example.test`, subject: "s", createdAt: ago(d) })) });
+          await tx.loginEvent.createMany({ data: AGES.map((d, i) => ({ id: kept.loginEvent[i], tenantId: T, userId: `${T}-owner`, deviceHash: `${stamp}-${d}`, firstSeenAt: ago(d), lastSeenAt: ago(d), createdAt: ago(d) })) });
+          await tx.magicLinkToken.createMany({ data: AGES.map((d, i) => ({ id: kept.magicLinkToken[i], tenantId: T, email: `keep-${stamp}@example.test`, tokenHash: `${kept.magicLinkToken[i]}-hash`, expiresAt: ago(d) })) });
+          await tx.passwordResetToken.createMany({ data: AGES.map((d, i) => ({ id: kept.passwordResetToken[i], tenantId: T, email: `keep-${stamp}@example.test`, tokenHash: `${kept.passwordResetToken[i]}-hash`, expiresAt: ago(d) })) });
+          await tx.stripeEvent.createMany({ data: AGES.map((d, i) => ({ id: kept.stripeEvent[i], eventId: `evt_${kept.stripeEvent[i]}`, type: "invoice.paid", processedAt: ago(d) })) });
+          await tx.importUpload.createMany({ data: AGES.map((d, i) => ({ id: kept.importUpload[i], tenantId: T, createdById: "x", purpose: "attendance", fileName: "a.csv", expectedBytes: 1, expectedSha256: "0", chunkSize: 1, chunkCount: 1, tokenHash: `${kept.importUpload[i]}-hash`, expiresAt: ago(d), status: "open" })) });
+          await tx.importJob.createMany({ data: AGES.map((d, i) => ({ id: kept.importJob[i], tenantId: T, createdById: "x", source: "generic", fileName: "a.csv", fileBlobUrl: "", status: "preview", dryRunSummary: { rows: 1 }, createdAt: ago(d) })) });
+        });
 
-      const res = await retentionCron(cronReq("/api/cron/retention", `Bearer ${SECRET}`));
-      const body = (await res.json()) as {
-        ok: boolean;
-        elapsedMs: number;
-        reconcile: unknown;
-        results: Array<{ rule: string; deleted?: number; error?: string; skipped?: boolean; partial?: boolean }>;
-      };
-      console.log("[cron-smoke] retention →", res.status, JSON.stringify({
-        ok: body.ok,
-        elapsedMs: body.elapsedMs,
-        reconcile: body.reconcile,
-        results: body.results,
-      }));
+        const res = await retentionCron(cronReq("/api/cron/retention", `Bearer ${SECRET}`));
+        const body = (await res.json()) as {
+          ok: boolean;
+          elapsedMs: number;
+          reconcile: unknown;
+          results: Array<{ rule: string; deleted?: number; error?: string; skipped?: boolean; partial?: boolean }>;
+        };
+        console.log("[cron-smoke] retention →", res.status, JSON.stringify({
+          ok: body.ok,
+          elapsedMs: body.elapsedMs,
+          reconcile: body.reconcile,
+          results: body.results,
+        }));
 
-      expect(res.status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(body.results.filter((r) => r.error)).toEqual([]);
-      // Every rule declared in the route must have reported. Silence from a
-      // rule is the failure mode this test exists to catch.
-      // Inventory updated 13 Oct 2026: loginEvent was added by 2203087 (operator
-      // audit remediation) and importUpload by 499d40f (chunked private uploads);
-      // each is swept by the same sweep() helper this assertion guards.
-      expect(body.results.map((r) => r.rule)).toEqual([
-        "auditLog",
-        "emailLog",
-        "loginEvent",
-        "magicLinkToken",
-        "passwordResetToken",
-        "rateLimitHit",
-        "stripeEvent",
-        "importUpload",
-        "importJob",
-        "importJobDiagnostics",
-        "tenantHardDelete",
-      ]);
-      expect(body.results.filter((r) => r.skipped)).toEqual([]);
+        expect(res.status).toBe(200);
+        expect(body.ok).toBe(true);
+        // The only rule left is the sign-in rate-limit counters.
+        expect(body.results.map((r) => r.rule)).toEqual(["rateLimitHit"]);
+        expect(body.results.filter((r) => r.error || r.skipped)).toEqual([]);
+
+        // The consequence, in Postgres: every synthetic row of every age is still there, and so is the closed club.
+        await withRlsBypass(async (tx) => {
+          expect(await tx.tenant.findUnique({ where: { id: T }, select: { id: true, deletedAt: true, purgeStartedAt: true } })).toMatchObject({ id: T, purgeStartedAt: null });
+          expect(await tx.auditLog.count({ where: { id: { in: kept.auditLog } } })).toBe(AGES.length);
+          expect(await tx.emailLog.count({ where: { id: { in: kept.emailLog } } })).toBe(AGES.length);
+          expect(await tx.loginEvent.count({ where: { id: { in: kept.loginEvent } } })).toBe(AGES.length);
+          expect(await tx.magicLinkToken.count({ where: { id: { in: kept.magicLinkToken } } })).toBe(AGES.length);
+          expect(await tx.passwordResetToken.count({ where: { id: { in: kept.passwordResetToken } } })).toBe(AGES.length);
+          expect(await tx.stripeEvent.count({ where: { id: { in: kept.stripeEvent } } })).toBe(AGES.length);
+          expect(await tx.importUpload.count({ where: { id: { in: kept.importUpload } } })).toBe(AGES.length);
+          // Import jobs are kept with their diagnostics: nothing scrubbed by age either.
+          expect(await tx.importJob.count({ where: { id: { in: kept.importJob }, NOT: { dryRunSummary: { equals: Prisma.DbNull } } } })).toBe(AGES.length);
+        });
+      } finally {
+        // Synthetic fixture only: removed by this test, never by the product.
+        await withRlsBypass(async (tx) => {
+          await tx.auditLog.deleteMany({ where: { tenantId: T } });
+          await tx.emailLog.deleteMany({ where: { tenantId: T } });
+          await tx.loginEvent.deleteMany({ where: { tenantId: T } });
+          await tx.magicLinkToken.deleteMany({ where: { tenantId: T } });
+          await tx.passwordResetToken.deleteMany({ where: { tenantId: T } });
+          await tx.stripeEvent.deleteMany({ where: { id: { in: kept.stripeEvent } } });
+          await tx.importUpload.deleteMany({ where: { tenantId: T } });
+          await tx.importJob.deleteMany({ where: { tenantId: T } });
+          await tx.user.deleteMany({ where: { tenantId: T } });
+          await tx.tenant.deleteMany({ where: { id: T } });
+        });
+      }
     },
     240_000,
   );

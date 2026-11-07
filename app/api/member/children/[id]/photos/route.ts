@@ -56,7 +56,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       if (!kid) return { kind: "not-found" } as const;
 
       const rows = await tx.memberPhoto.findMany({
-        where: { memberId: childId, tenantId },
+        where: { memberId: childId, tenantId, replacedAt: null },
         orderBy: { uploadedAt: "desc" },
         select: {
           id: true,

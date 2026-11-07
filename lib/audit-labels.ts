@@ -50,6 +50,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "member.dsar_export": "Exported a member's data (subject access)",
   "member.dsar_erase": "Erased a member's data (right to erasure)",
   "member.dsar_erase.requested": "Started erasing a member's data (right to erasure)",
+  "member.dsar_erase.import_files": "Removed an erased member's rows from stored import files",
   "member.payment.failed": "A member's payment failed",
   "member.payment.succeeded": "A member's payment succeeded",
   "member.subscription.cancel": "Member cancelled their subscription",

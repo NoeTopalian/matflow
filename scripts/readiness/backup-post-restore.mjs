@@ -27,8 +27,8 @@ export const TEST_ENDPOINT_PREFIX = "ep-hidden-salad";
 export async function restoredHazards(client) {
   const one = async (sql) => Number(Object.values((await client.query(sql)).rows[0])[0]);
   return {
+    // Informational only: closed clubs are kept (16 Oct 2026) — nothing in the app or a cron acts on deletedAt.
     tenantsSoftDeleted: await one(`select count(*) from "Tenant" where "deletedAt" is not null`),
-    tenantsPastPurgeGrace: await one(`select count(*) from "Tenant" where "deletedAt" < now() - interval '30 days'`),
     importJobsRunningOrLeased: await one(`select count(*) from "ImportJob" where status = 'running' or "leaseToken" is not null`),
     googleDriveConnections: await one(`select count(*) from "GoogleDriveConnection"`),
     usersWithTotp: await one(`select count(*) from "User" where "totpEnabled"`),
@@ -69,12 +69,13 @@ export async function revokeAllAfterRestore(client, { reason = "post-restore con
 
 // ── Restored-copy NEUTRALISATION (security lane D2, iteration 2, 9 Oct 2026; SF-80) ─────────────────────────────
 // Separate from lane F2's revocation above, which it does not change. A restored copy carries state that ACTS the
-// moment it is attached to an app or a scheduler: clubs already past the 30-day soft-delete grace (the first retention
-// cron run hard-deletes them — lib/tenant-purge.ts picks deletedAt < now() - 30 days), kiosk and leaderboard tokens
-// (anyone holding an old kiosk URL checks people in), and Stripe connected-account ids (the copy would act on real
-// accounts). It must be neutralised BEFORE any app, cron or webhook can reach it:
-//   - purge clocks: every soft-deleted club gets deletedAt = now() (a fresh 30-day grace), the original kept in the
-//     audit row, so nothing is purged before an operator decides;
+// moment it is attached to an app or a scheduler: kiosk and leaderboard tokens (anyone holding an old kiosk URL checks
+// people in), and Stripe connected-account ids (the copy would act on real accounts). It must be neutralised BEFORE
+// any app, cron or webhook can reach it:
+//   - closed clubs (deletedAt set) are LEFT ALONE. Until 16 Oct 2026 this step reset every closed club's deletedAt to
+//     now() so the retention cron's 30-day purge could not fire on the copy; closed clubs are now kept indefinitely
+//     and no cron deletes a club (lib/tenant-purge.ts erases one club only on its written request, operator-run), so
+//     there is no clock to reset and rewriting deletedAt would only falsify each club's real closing date;
 //   - kiosk and leaderboard token hashes revoked (owners re-issue);
 //   - Stripe connected-account ids detached (stripeConnected false), the originals kept in the audit row for a
 //     deliberate re-attach;
@@ -92,14 +93,13 @@ export async function neutralisationCheck(client) {
   const one = async (sql) => Number(Object.values((await client.query(sql)).rows[0])[0]);
   const totp = (await client.query(TOTP_DIGEST_SQL)).rows[0];
   const out = {
-    tenantsPastPurgeGrace: await one(`select count(*) from "Tenant" where "deletedAt" < now() - interval '30 days'`),
     tenantsWithKioskToken: await one(`select count(*) from "Tenant" where "kioskTokenHash" is not null`),
     tenantsWithDisplayToken: await one(`select count(*) from "Tenant" where "displayTokenHash" is not null`),
     tenantsWithStripeAccount: await one(`select count(*) from "Tenant" where "stripeAccountId" is not null`),
     totpSecretsKept: totp.n,
     totpDigest: totp.d,
   };
-  return { ...out, ok: out.tenantsPastPurgeGrace + out.tenantsWithKioskToken + out.tenantsWithDisplayToken + out.tenantsWithStripeAccount === 0 };
+  return { ...out, ok: out.tenantsWithKioskToken + out.tenantsWithDisplayToken + out.tenantsWithStripeAccount === 0 };
 }
 
 /** Neutralise a restored copy (see above). Returns counts; the originals it replaces go into the audit row only. */
@@ -108,9 +108,6 @@ export async function neutraliseRestoredCopy(client, { reason = "post-restore ne
   try {
     await client.query("SELECT set_config('app.bypass_rls','on',true)");
     const totpBefore = (await client.query(TOTP_DIGEST_SQL)).rows[0];
-    const clocks = (await client.query(
-      `update "Tenant" t set "deletedAt" = now() from (select id, "deletedAt" as was, "purgeStartedAt" from "Tenant" where "deletedAt" is not null) o
-       where t.id = o.id returning t.id as "tenantId", o.was as "deletedAt", o."purgeStartedAt"`)).rows;
     const kiosk = (await client.query(`update "Tenant" set "kioskTokenHash" = null, "kioskTokenIssuedAt" = null where "kioskTokenHash" is not null`)).rowCount;
     const display = (await client.query(`update "Tenant" set "displayTokenHash" = null, "displayTokenIssuedAt" = null where "displayTokenHash" is not null`)).rowCount;
     const stripe = (await client.query(
@@ -118,11 +115,11 @@ export async function neutraliseRestoredCopy(client, { reason = "post-restore ne
        where t.id = o.id returning t.id as "tenantId", o.was as "stripeAccountId"`)).rows;
     const totpAfter = (await client.query(TOTP_DIGEST_SQL)).rows[0];
     if (totpAfter.d !== totpBefore.d || totpAfter.n !== totpBefore.n) throw new Error("REFUSED: TOTP secrets changed during neutralisation");
-    const out = { purgeClocksReset: clocks.length, kioskTokensRevoked: kiosk, displayTokensRevoked: display, stripeAccountsDetached: stripe.length, totpSecretsKept: totpAfter.n };
+    const out = { kioskTokensRevoked: kiosk, displayTokensRevoked: display, stripeAccountsDetached: stripe.length, totpSecretsKept: totpAfter.n };
     await client.query(
       `insert into "AuditLog"(id, "tenantId", action, "entityType", "entityId", metadata, "createdAt")
        values ($1, null, 'admin.restore.neutralise', 'Platform', 'restore', $2::jsonb, now())`,
-      [`restore-neutralise-${Date.now()}`, JSON.stringify({ reason, ...out, originals: { purgeClocks: clocks, stripeAccounts: stripe } })],
+      [`restore-neutralise-${Date.now()}`, JSON.stringify({ reason, ...out, originals: { stripeAccounts: stripe } })],
     );
     await client.query("COMMIT");
     return out;

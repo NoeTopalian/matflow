@@ -6,8 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
-import { del } from "@vercel/blob";
-import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
@@ -30,8 +29,7 @@ const PHOTO_URL_SCHEMA = z
       // the `.public.` host label. Blob uploads have been private since Bug 3
       // (efebb33), so the upload route now returns
       // https://<id>.blob.vercel-storage.com/… and every staff promotion with
-      // a photo 400'd with "Invalid data". The `del()` filter 150 lines below
-      // was already migrated to isVercelBlobUrl; this validator was missed.
+      // a photo 400'd with "Invalid data".
       isVercelBlobUrl(s),
     {
       message:
@@ -200,38 +198,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     if (parsed.data.photoUrl && result.kind === "updated") {
-      // R10-1 (lane L2): the blob delete is a network call with the SDK's own
-      // retries and no request timeout, so it must not run while a tenant
-      // transaction (and its pooled connection) is open. The transaction only
-      // removes the rows and hands back the blob URLs; the delete runs after it
-      // has committed — the Stripe webhook's post-commit pattern.
-      const blobUrls = await withTenantContext(session.user.tenantId, async (tx) => {
-        const oldPhotos = await tx.memberPhoto.findMany({
-          where: { memberRankId: result.value.id, kind: "promotion" },
-          select: { id: true, url: true },
-        });
-        if (oldPhotos.length === 0) return [];
-        await tx.memberPhoto.deleteMany({
-          where: { id: { in: oldPhotos.map((p) => p.id) } },
-        });
-        // Blob uploads are private since Bug 3, so their host carries no
-        // `.public.` label — the old regex matched nothing and every replaced
-        // promotion photo leaked as an orphaned blob. isVercelBlobUrl also
-        // skips the inline `data:` URLs the upload route falls back to.
-        // Only this club's own store files are ever deleted; anything else
-        // stored under this row is left in place (an orphan at worst).
-        return oldPhotos.map((p) => p.url).filter((u) => isTenantBlobUrl(u, session.user.tenantId));
-      });
-      if (blobUrls.length > 0) {
-        // Best-effort and after commit: a failure is logged, never fails the
-        // request, and never re-enters the transaction (the rows are gone; an
-        // orphaned blob is the only cost).
-        try {
-          await del(blobUrls);
-        } catch (e) {
-          console.warn("[rank/route] orphan blob delete failed after commit (best-effort):", e);
-        }
-      }
+      // The new promotion photo replaces the old one on the page. The old rows and
+      // their files are KEPT (product rule, Noe, 6 Nov 2026: "nothing should be
+      // automatically deleted"), marked replaced and hidden from every photo list.
+      // Keeping the row keeps the file reachable: the member's erasure finds it by
+      // memberId, the club's erasure by tenantId.
+      await withTenantContext(session.user.tenantId, (tx) =>
+        tx.memberPhoto.updateMany({
+          where: { tenantId: session.user.tenantId, memberRankId: result.value.id, kind: "promotion", replacedAt: null },
+          data: { replacedAt: new Date() },
+        }),
+      );
     }
 
     if (parsed.data.photoUrl) {

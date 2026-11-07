@@ -27,13 +27,14 @@ const ALLOWED_SOURCES: ImportSource[] = ["generic", "mindbody", "glofox", "wodif
 export const runtime = "nodejs";
 
 // Audit iter-1-operator-admin A6I1-S-1: sanitise the job projection sent to
-// the client. The Vercel Blob URL (`fileBlobUrl`) is a publicly-readable URL
-// — anyone who sees it can download the raw member CSV (names, emails,
-// phones, dates of birth). We DO need to store the URL server-side (the
-// preview + commit routes fetch from it), but we must NOT leak it through
-// API responses. Combined with `addRandomSuffix: true` (128 bits of entropy
-// in the path) + `del()` on commit completion (defence-in-depth — see
-// commit route), this collapses the exposure window to "server-side only".
+// the client. The stored file's address (`fileBlobUrl`) leads to the raw member
+// CSV (names, emails, phones, dates of birth). We store it server-side (the
+// preview and commit routes read the file through it) and never send it in an
+// API response. The file is private (a private Blob with a random suffix, or
+// private Postgres chunks; lib/import-storage.ts) and is KEPT with its job:
+// since 6 Nov 2026 nothing deletes it on commit ("nothing should be
+// automatically deleted"). A member's erasure rewrites it without their rows
+// (lib/importers/import-erasure.ts); a club's erasure deletes it.
 function publicJobView(job: {
   id: string; tenantId: string; createdById: string; source: string;
   fileName: string; status: string; totalRows: number; processedRows: number;

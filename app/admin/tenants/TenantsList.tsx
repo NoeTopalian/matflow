@@ -174,8 +174,8 @@ export default function TenantsList({
 
         {closedView && (
           <p style={closedNote}>
-            Closed clubs were soft-deleted from their club page&apos;s Danger zone. Their owners, staff and members cannot
-            sign in. Opening a club only shows its details. Restoring, where the club page still offers it, is a separate action there.
+            Closed clubs were closed from their club page&apos;s Danger zone. Everything they hold is kept. Their owners, staff and members cannot
+            sign in. Opening a club only shows its details. Reopening is a separate action there.
           </p>
         )}
 

@@ -6,9 +6,13 @@
  * the same post-commit pattern as the Stripe webhook's pendingEmails. A failed delete after commit is logged, never
  * fails the request, and never re-enters the transaction.
  *
+ * Superseded 6 Nov 2026: nothing is deleted automatically (product rule, Noe), so the route no longer calls del() at
+ * all when a promotion photo is replaced: the old rows are marked replaced (hidden from photo lists) and their files
+ * stay in storage, still reachable by an erasure. These tests now pin that.
+ *
  * No database: withTenantContext is replaced by a fake that records whether a call happens inside a transaction.
- * The archived-member check (PR 3, lib/archived-member-guard) runs for real against the same fake; the photo
- * transaction is found by what it does (it deletes the rows), never by its position.
+ * The archived-member check (PR 3, lib/archived-member-guard) runs for real against the same fake; transactions are
+ * found by what they do, never by their position.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -59,6 +63,10 @@ const tx = {
   memberPhoto: {
     findMany: async () => h.oldPhotos,
     deleteMany: async () => { h.events.push("rows-deleted"); return { count: h.oldPhotos.length }; },
+    updateMany: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      h.events.push(args.where.replacedAt === null && args.data.replacedAt instanceof Date ? "rows-marked-replaced" : "rows-updated-otherwise");
+      return { count: h.oldPhotos.length };
+    },
     create: async () => { h.events.push("photo-created"); return { id: "ph-new" }; },
   },
 };
@@ -132,40 +140,33 @@ beforeEach(() => {
   }
 });
 
-describe("R10-1(a): the blob delete runs after the photo transaction has committed", () => {
-  it("del() is never called inside a transaction; it runs after the row delete committed, with only the blob URLs", async () => {
+describe("replacing a promotion photo keeps the old files (product rule, Noe, 6 Nov 2026)", () => {
+  it("del() is never called and no row is deleted: the old rows are marked replaced (hidden), the files stay", async () => {
     const res = await promote();
     expect(res.status).toBe(200);
+    expect(vi.mocked(del)).not.toHaveBeenCalled();
     expect(h.events).not.toContain("del-INSIDE-tx");
-    expect(h.events).toContain("del-after-commit");
-    // The photo-replacement transaction (the one that deleted the rows) committed, THEN the blob delete ran.
-    const photoTx = txThatDid("rows-deleted");
-    expect(photoTx.commit).toBeGreaterThan(h.events.indexOf("rows-deleted"));
-    expect(h.events.indexOf("del-after-commit")).toBeGreaterThan(photoTx.commit);
+    expect(h.events).not.toContain("del-after-commit");
+    expect(h.events).not.toContain("rows-deleted");
+    expect(h.events).toContain("rows-marked-replaced");
+    expect(h.events).toContain("photo-created");
     // The archived-member check ran for real, before any write.
     expect(h.events.indexOf("archive-check")).toBeGreaterThan(-1);
-    expect(h.events.indexOf("archive-check")).toBeLessThan(h.events.indexOf("rows-deleted"));
-    expect(vi.mocked(del)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(del)).toHaveBeenCalledWith([BLOB_A, BLOB_B]);
-    expect(h.events).toContain("photo-created");
+    expect(h.events.indexOf("archive-check")).toBeLessThan(h.events.indexOf("rows-marked-replaced"));
   });
 
-  it("a failed delete after commit is logged, does not fail the request, and does not re-enter the transaction", async () => {
-    h.delImpl = async () => { throw new Error("blob store unavailable"); };
+  it("no transaction is left open and none rolls back", async () => {
     const res = await promote();
     expect(res.status).toBe(200);
-    expect(h.events).toContain("del-after-commit");
+    expect(h.inTx).toBe(0);
     expect(h.events.filter((e) => e.endsWith("-rollback"))).toEqual([]);
-    // No transaction is opened BECAUSE of the failed delete: the only one that begins after it is the
-    // planned new-photo transaction (the one that creates the photo), exactly as on a successful run,
-    // and the photo-rows transaction's own commit stands (no rollback anywhere).
-    const delAt = h.events.indexOf("del-after-commit");
-    const beganAfter = h.events.slice(delAt + 1).filter((e) => /^tx\d+-begin$/.test(e));
-    expect(beganAfter).toHaveLength(1);
-    expect(txThatDid("photo-created").begin).toBeGreaterThan(delAt);
-    expect(txThatDid("rows-deleted").commit).toBeLessThan(delAt);
-    expect(logs.some((l) => /\[rank\/route\].*orphan blob delete failed/.test(l))).toBe(true);
-    expect(h.events).toContain("photo-created");
+    // Archive check, rank, old photo rows, new photo: four transactions, each committed, in that order.
+    expect(h.txCount).toBe(4);
+    const archiveTx = txThatDid("archive-check");
+    const rowsTx = txThatDid("rows-marked-replaced");
+    const photoTx = txThatDid("photo-created");
+    expect(archiveTx.commit).toBeLessThan(rowsTx.begin);
+    expect(rowsTx.commit).toBeLessThan(photoTx.begin);
   });
 
   it("PR 3: an ARCHIVED member is refused 409 before any write, and no blob is touched", async () => {
@@ -173,27 +174,18 @@ describe("R10-1(a): the blob delete runs after the photo transaction has committ
     const res = await promote();
     expect(res.status).toBe(409);
     expect(h.events).toContain("archive-check");
+    expect(h.events).not.toContain("rows-marked-replaced");
     expect(h.events).not.toContain("rows-deleted");
     expect(h.events).not.toContain("photo-created");
     expect(vi.mocked(del)).not.toHaveBeenCalled();
   });
 
-  it("a slow delete is not inside any transaction while it waits", async () => {
-    let inTxWhileWaiting = -1;
-    h.delImpl = async () => {
-      await new Promise((r) => setTimeout(r, 50));
-      inTxWhileWaiting = h.inTx;
-    };
-    const res = await promote();
-    expect(res.status).toBe(200);
-    expect(inTxWhileWaiting).toBe(0);
-  });
-
-  it("no old blob photos (inline only) → no delete call; rows still removed", async () => {
+  it("inline-only old photos: still no delete call; rows marked replaced, not removed", async () => {
     h.oldPhotos = [{ id: "ph-inline", url: "data:image/png;base64,AAAA" }];
     const res = await promote();
     expect(res.status).toBe(200);
     expect(vi.mocked(del)).not.toHaveBeenCalled();
-    expect(h.events).toContain("rows-deleted");
+    expect(h.events).toContain("rows-marked-replaced");
+    expect(h.events).not.toContain("rows-deleted");
   });
 });
