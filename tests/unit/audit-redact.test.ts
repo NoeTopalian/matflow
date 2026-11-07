@@ -103,6 +103,17 @@ describe("redactSubjectFromAuditLog", () => {
     });
   });
 
+  it("a row naming a guardian and a child erased together is counted once across both (shared seen)", async () => {
+    const row = { id: "both", metadata: { memberId: "m_parent", childId: "m_kid", childName: "Kid Obi" } };
+    const tx = { auditLog: { findMany: vi.fn(async () => [row]), updateMany: vi.fn() } };
+    const seen = new Set<string>();
+    const total = (await redactSubjectFromAuditLog(tx as never, "t1", "m_parent", { dryRun: true, seen })) + (await redactSubjectFromAuditLog(tx as never, "t1", "m_kid", { dryRun: true, seen }));
+    expect(total).toBe(1);
+    expect(tx.auditLog.updateMany).not.toHaveBeenCalled();
+    // Without a shared set each subject counts it.
+    expect((await redactSubjectFromAuditLog(tx as never, "t1", "m_parent", { dryRun: true })) + (await redactSubjectFromAuditLog(tx as never, "t1", "m_kid", { dryRun: true }))).toBe(2);
+  });
+
   it("without addressRow, no address-keyed rows are read", async () => {
     const tx = { auditLog: { findMany: vi.fn(async () => []), updateMany: vi.fn() } };
     await redactSubjectFromAuditLog(tx as never, "t1", "m1");

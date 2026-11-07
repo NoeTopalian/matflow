@@ -78,13 +78,15 @@ export type AddressRowDecision = "repoint" | "neutral" | null;
 /**
  * Redact the subject's rows in this club. `dryRun` counts without writing (the erasure's fulfilment record is
  * written before the redaction, in the same transaction). `addressRow` decides each address-valued `entityId`:
- * null when it is not an address the subject held. Returns how many rows were (or would be) changed.
+ * null when it is not an address the subject held. `seen` is shared across the subjects of one erasure (a guardian
+ * and the children erased with them), so a row naming several of them is counted once. Returns how many rows were
+ * (or would be) changed and not already in `seen`.
  */
 export async function redactSubjectFromAuditLog(
   tx: Tx,
   tenantId: string,
   memberId: string,
-  opts: { dryRun?: boolean; addressRow?: (address: string) => AddressRowDecision } = {},
+  opts: { dryRun?: boolean; addressRow?: (address: string) => AddressRowDecision; seen?: Set<string> } = {},
 ): Promise<number> {
   const byId = await tx.auditLog.findMany({
     where: { tenantId, OR: [{ entityId: memberId }, { metadata: { path: ["memberId"], equals: memberId } }, { metadata: { path: ["childId"], equals: memberId } }] },
@@ -106,6 +108,8 @@ export async function redactSubjectFromAuditLog(
   for (const [id, row] of rows) {
     const next = redactAuditMetadata(row.metadata);
     if (!next && !row.entityTo) continue;
+    if (opts.seen?.has(id)) continue;
+    opts.seen?.add(id);
     changed += 1;
     if (opts.dryRun) continue;
     // The metadata, and an address-valued entityId replaced by the member id or "erased": never an actor or

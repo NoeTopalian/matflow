@@ -49,7 +49,6 @@
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
  * evidence of fulfilment per GDPR fulfilment-record retention guidance.
  */
-import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { del } from "@vercel/blob";
@@ -63,8 +62,9 @@ import { isTenantBlobUrl } from "@/lib/blob-url";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
-import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, isSubjectsOwnAddress, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { eraseSubjectFromImportDiagnostics, eraseSubjectFromImportFiles, type ErasureSubject } from "@/lib/importers/import-erasure";
 import { redactSubjectFromAuditLog, type AddressRowDecision } from "@/lib/audit-redact";
+import { addressHolders, decideAddressRow } from "@/lib/erasure-address-holders";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
@@ -488,28 +488,9 @@ export async function POST(req: Request) {
             OR metadata->>'oldEmailDigest' IS NOT NULL OR metadata->'releasedEmailSha256' IS NOT NULL
             OR metadata->>'originalEmailHash' IS NOT NULL)`,
     ]);
-    const byAddress = new Map<string, Set<string>>();
-    const byDigest = new Map<string, Set<string>>();
-    const add = (map: Map<string, Set<string>>, key: unknown, id: string) => {
-      if (typeof key === "string" && key) (map.get(key) ?? map.set(key, new Set()).get(key)!).add(id);
-    };
-    for (const m of members) for (const a of [m.email, m.unverifiedEmail]) if (a) add(byAddress, a.trim().toLowerCase(), m.id);
-    for (const r of rows) {
-      const md = r.metadata ?? {};
-      const released = Array.isArray(md.releasedEmailSha256) ? md.releasedEmailSha256 : [md.releasedEmailSha256];
-      for (const d of [md.oldEmailSha256, md.newEmailSha256, md.oldEmailDigest, md.originalEmailHash, ...released]) add(byDigest, d, r.entityId);
-    }
-    return { byAddress, byDigest };
+    return addressHolders(members, rows);
   });
-  const addressRowFor = (subject: ErasureSubject) => (address: string): AddressRowDecision => {
-    const a = address.trim().toLowerCase();
-    const forms = [emailDigest(a), createHash("sha256").update(a).digest("hex"), hashToken(a)];
-    const ever = new Set([...(holders.byAddress.get(a) ?? []), ...forms.flatMap((f) => [...(holders.byDigest.get(f) ?? [])])]);
-    const theirs = ever.has(subject.memberId) || isSubjectsOwnAddress(subject, a) || (subject.pastSharedAddressDigests ?? []).includes(forms[0]);
-    if (!theirs) return null;
-    ever.delete(subject.memberId);
-    return ever.size === 0 ? "repoint" : "neutral";
-  };
+  const addressRowFor = (subject: ErasureSubject) => (address: string): AddressRowDecision => decideAddressRow(address, subject, holders);
   // The file rewrites cannot roll back with the transaction below, so they are
   // recorded on their own, durably, whether the walk finishes or stops part-way:
   // if the erasure then refuses, the record says files already lost the rows.
@@ -547,9 +528,11 @@ export async function POST(req: Request) {
   // Counted here, written in the transaction below (the fulfilment record goes first).
   let importDiagnosticsEntries = 0;
   let auditRowsRedacted = 0;
+  // One row naming both a guardian and a cascaded child is one row: counted once across the whole erasure.
+  const auditRowsSeen = new Set<string>();
   for (const subject of importSubjects) {
     importDiagnosticsEntries += await withTenantContext(tenantId, (tx) => eraseSubjectFromImportDiagnostics(tx, tenantId, subject, { dryRun: true }));
-    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true, addressRow: addressRowFor(subject) }));
+    auditRowsRedacted += await withTenantContext(tenantId, (tx) => redactSubjectFromAuditLog(tx, tenantId, subject.memberId, { dryRun: true, addressRow: addressRowFor(subject), seen: auditRowsSeen }));
   }
   const filesNote = importFiles.files > 0 ? `The member's rows were already removed from ${importFiles.files} stored import file(s). ` : "";
 
@@ -592,7 +575,9 @@ export async function POST(req: Request) {
       // Audit P3-6: HMAC-SHA256 (lib/token-hash), not the old 32-bit
       // hashSnippet — that one was brute-forceable over the email space,
       // i.e. weak pseudonymisation in the fulfilment record itself.
-      originalEmailHash: member.email ? hashToken(member.email) : null,
+      // Of the lower-cased address (7 Nov 2026), the form the attendance import compares; older rows hashed it as
+      // stored, and lib/erasure-address-holders.ts compares both.
+      originalEmailHash: member.email ? hashToken(member.email.trim().toLowerCase()) : null,
       // The address the erasure releases, in the keyed login-email digest every release path writes (the attendance
       // import refuses a released address — SF-54). A keyed digest, like originalEmailHash: no address is kept.
       releasedEmailSha256: member.email ? emailDigest(member.email) : null,

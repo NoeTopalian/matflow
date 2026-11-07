@@ -111,6 +111,8 @@ vi.mock("@/lib/api-authz", () => ({ refuseSupportSession: () => null,
 vi.mock("@/lib/authz", () => ({ requireRole: requireRoleMock }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: checkRateLimitMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
+// Reached only by the cascade case below (a child erased with its guardian); its own completeness is pinned elsewhere.
+vi.mock("@/lib/member-delete", () => ({ deleteMemberCascade: vi.fn(async () => undefined) }));
 vi.mock("@/lib/stripe/subscriptions", () => ({
   cancelSubscriptionAtPeriodEnd: cancelSubscriptionMock,
 }));
@@ -540,6 +542,31 @@ describe("POST /api/admin/dsar/erase — audit P0-3 erasure completeness", () =>
     expect(logAuditMock.mock.invocationCallOrder[0]).toBeLessThan(
       memberUpdateMock.mock.invocationCallOrder[0],
     );
+  });
+
+  it("an address with capitals: the fulfilment's originalEmailHash is the hashToken of the lower-cased address (the form the attendance import compares)", async () => {
+    const { hashToken } = await import("@/lib/token-hash");
+    const { emailDigest } = await import("@/lib/login-email");
+    memberFindFirstMock.mockResolvedValue({ id: MEMBER_ID, status: "active", email: "Alice.Smith@Example.com", stripeSubscriptionId: null, externalRef: null });
+    await erase();
+    const fulfilment = logAuditMock.mock.calls.map(([a]) => a as { action: string; metadata: Record<string, unknown> }).find((a) => a.action === "member.dsar_erase");
+    expect(fulfilment?.metadata.originalEmailHash).toBe(hashToken("alice.smith@example.com"));
+    expect(fulfilment?.metadata.originalEmailHash).not.toBe(hashToken("Alice.Smith@Example.com"));
+    expect(fulfilment?.metadata.releasedEmailSha256).toBe(emailDigest("alice.smith@example.com"));
+  });
+
+  it("a guardian erased with a cascaded child: an Activity row naming both is counted once in auditRowsRedacted", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    memberCountMock.mockResolvedValue(1);
+    memberFindManyMock.mockResolvedValue([{ id: "kid-1", name: "Kid Smith", email: "kid-1@kids.matflow.invalid", externalRef: null, unverifiedEmail: null }]);
+    const both = { id: "row-both", metadata: { memberId: MEMBER_ID, childId: "kid-1", childName: "Kid Smith" } };
+    vi.mocked(prisma.auditLog.findMany).mockImplementation((async (args: { where: { OR?: unknown; entityId?: unknown } }) =>
+      Array.isArray(args.where.OR) && (args.where.OR as { entityId?: unknown }[]).some((o) => "entityId" in o) ? [both] : []) as never);
+    const { POST } = await import("@/app/api/admin/dsar/erase/route");
+    const res = await POST(new Request(`http://localhost/api/admin/dsar/erase?memberId=${MEMBER_ID}&strategy=cascade`, { method: "POST", headers: { origin: "http://localhost:3000" } }));
+    expect(res.status).toBe(200);
+    const fulfilment = logAuditMock.mock.calls.map(([a]) => a as { action: string; metadata: { erasedCounts: Record<string, number> } }).find((a) => a.action === "member.dsar_erase");
+    expect(fulfilment?.metadata.erasedCounts.auditRowsRedacted).toBe(1);
   });
 });
 
