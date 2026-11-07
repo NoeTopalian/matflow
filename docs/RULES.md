@@ -122,6 +122,14 @@ acts on is worse than an error they can see.
   flagged nor blocked: that is the club's own set-up.
 - **Mats are set up from what the club already typed.** The places typed on classes are offered
   as mats; nothing is turned into a mat without a press, and no migration writes one.
+- **The class form's Location saves what is typed (Noe, 7 Nov 2026).** It is one list: the
+  club's mats, then the places typed on its classes that are not mats yet, "No location" and
+  "Add a new location…". Choosing a typed place or a new name puts that one class on the mat
+  of that name, adding the mat if there is none (up to twelve; past that it says so beside the
+  field and keeps the text). The club's other classes that type the name stay as they are: the
+  Mats sheet turns them all into mats in one press. It never saves a split: a club that chose
+  one keeps it, and one that has not follows the rule below. A support session's new name
+  stays a typed place.
 - **The split: by mat or by time.** Until someone chooses, a timetable is split by mat while
   two or more mats have a class on them, otherwise by time; that is worked out each time and
   never saved. Once an owner or manager presses a choice it is saved for the club and stays

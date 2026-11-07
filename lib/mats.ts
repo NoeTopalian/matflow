@@ -120,3 +120,28 @@ export function placeSuggestions(
   suggestions.sort((a, b) => compareMatNames(a.name, b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return { suggestions, noPlaceCount };
 }
+
+/**
+ * The class form's Location (Noe, 7 Nov 2026). Every refusal carries
+ * `reason: "location"` so the form shows it beside the field, with what was
+ * typed kept.
+ */
+export const LOCATION_ERRORS = {
+  empty: "Give the new location a name.",
+  tooLong: `A location name can be up to ${MAT_NAME_MAX} characters.`,
+  limit: `You already have ${MAT_LIMIT} locations, the most a club can have. Choose one from the list, or remove one under Mats.`,
+  both: "Choose a location from the list or add a new one, not both.",
+} as const;
+
+/**
+ * A Location name sent by the class form (`matName`), checked before any
+ * transaction: the clean name, or the sentence that refuses it. Too long is a
+ * refusal only for a caller that may add mats; anyone else keeps it as a
+ * typed place (lib/mats-store.ts `matForLocation`).
+ */
+export function checkLocationName(raw: string, mayAddMat: boolean): { ok: true; name: string } | { ok: false; error: string } {
+  const name = cleanMatName(raw);
+  if (!name) return { ok: false, error: LOCATION_ERRORS.empty };
+  if (mayAddMat && name.length > MAT_NAME_MAX) return { ok: false, error: LOCATION_ERRORS.tooLong };
+  return { ok: true, name };
+}

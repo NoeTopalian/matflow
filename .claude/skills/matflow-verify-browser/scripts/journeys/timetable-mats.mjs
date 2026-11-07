@@ -4,8 +4,8 @@
 // then walks what an owner does: adds a mat by hand and sees nothing change; turns the typed places into mats in one
 // press (with a forced failure first); reads the week by mat at 1440 with scrollbars on show; the choice, saved for the
 // club, by a manager and read by a coach, with forced failed saves; renames, moves, removes and re-adds a mat; the
-// class form's Mat select with a forced failed save; classes sharing a mat; and the Mats sheet by keyboard and on a
-// phone. The clock is frozen at Thursday 5 November 2026 18:45 for the geometry.
+// class form's Location select with a forced failed save; classes sharing a mat; and the Mats sheet by keyboard and on
+// a phone. Typing a new location in the class form is timetable-location.mjs. The clock is frozen at Thursday 5 November 2026 18:45 for the geometry.
 import { createRequire } from "node:module";
 import {
   state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn, launchWithScrollbars,
@@ -437,7 +437,7 @@ try {
     return { noMatMonday: under.length };
   });
 
-  await section("class-form", `the class form offers a Mat instead of a typed Location; No mat reveals a place box; a forced failed save keeps the chosen mat and one retry saves; with a third mat ("${LONG}") in use on Monday the box scrolls with the gutter and both header rows pinned`, async () => {
+  await section("class-form", `the class form's one Location field lists the mats in the club's order and ends with No location and Add a new location…; a forced failed save keeps the chosen mat and one retry saves; with a third mat ("${LONG}") in use on Monday the box scrolls with the gutter and both header rows pinned`, async () => {
     const sheet = await openMats(main);
     await sheet.getByRole("button", { name: "Add a mat" }).click();
     await sheet.getByLabel("New mat name").fill(LONG);
@@ -447,15 +447,18 @@ try {
     await main.getByRole("button", { name: "Add class", exact: true }).first().click();
     await main.getByLabel("Class Name", { exact: true }).fill("Wrestling");
     await main.getByRole("button", { name: "Add day", exact: true }).click();
-    const mat = main.getByLabel("Mat", { exact: true });
-    await expect(main.getByLabel("Location", { exact: true })).toHaveCount(0);
+    const mat = main.getByLabel("Location", { exact: true });
+    await expect(main.getByLabel("Mat", { exact: true })).toHaveCount(0);
     // The page learns of the new mat through a refresh after the sheet closes; on a slow link it can land a few
-    // seconds after the form opens, and the select then gains the mat in place.
-    await expect.poll(() => mat.locator("option").allTextContents()).toEqual(["No mat", "Mat 1", "Cage", LONG]);
-    await expect(mat).toHaveValue("");
-    await expect(main.getByLabel("Place (not on a mat)")).toBeVisible();
+    // seconds after the form opens, and the select then gains the mat in place. Typed places that are not mats
+    // (if the week has any) sit between the mats and "No location".
+    await expect.poll(async () => {
+      const o = await mat.locator("option").allTextContents();
+      return [o.slice(0, 3), o.slice(-2)];
+    }).toEqual([["Mat 1", "Cage", LONG], ["No location", "Add a new location…"]]);
+    await expect(mat).toHaveValue("none");
+    await expect(main.getByLabel("New location name")).toHaveCount(0);
     await mat.selectOption({ label: LONG });
-    await expect(main.getByLabel("Place (not on a mat)")).toHaveCount(0);
     const posts = count(main, (r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/classes" && !r.url().includes("dryRun"));
     await main.route("**/api/classes", (r) => (r.request().method() === "POST" ? r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Failed to create class" }) }) : r.fallback()), { times: 1 });
     await main.getByRole("button", { name: "Create class", exact: true }).click();

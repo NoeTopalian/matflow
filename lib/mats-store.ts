@@ -8,6 +8,7 @@
 import type { Prisma } from "@prisma/client";
 import { liveClassWhere } from "@/lib/class-live";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { logAudit } from "@/lib/audit-log";
 import { MAT_LIMIT, MAT_NAME_MAX, cleanMatName, commonestSpelling, compareMatNames, matNameKey } from "@/lib/mats";
 import { effectiveLayout, isTimetableLayout, type TimetableLayout } from "@/lib/timetable-layout";
 
@@ -159,4 +160,49 @@ export async function adoptPlaces(tx: Tx, tenantId: string, keys: readonly strin
     result.mats.push({ id: mat.id, name: mat.name, created, classIds: ids });
   }
   return result;
+}
+
+/** The class form's Location, as the class routes resolve it (`matForLocation`). */
+export type LocationResult =
+  /** The class goes on this mat; `created` when this call added it. */
+  | { kind: "mat"; id: string; name: string; created: boolean }
+  /** No mat: the class keeps the name as its typed place (a caller that may not add mats). */
+  | { kind: "place"; name: string }
+  /** No mat of that name and the club already has MAT_LIMIT: nothing was written. */
+  | { kind: "limit" };
+
+/**
+ * The class form's Location field (Noe, 7 Nov 2026: "save whats written into
+ * it as a Location"): the club's mat of this name, whatever its capitals and
+ * spacing; when there is none, a new mat of that name, added in the caller's
+ * transaction and recorded exactly as POST /api/mats records one
+ * (`mat.create`, in the same transaction), so Activity and redaction treat it
+ * the same. Only this one class is put on it: the club's other classes that
+ * type the name stay as they are (the Mats sheet's "Add these as mats" is the
+ * bulk conversion).
+ *
+ * `mayAddMat: false` (a MatFlow support session, which may edit a class but
+ * not set up mats — RULES §5b): an existing mat is still used, and a new
+ * name stays the class's typed place with no mat and no refusal.
+ *
+ * Call with the club's mats lock held (lockClubMats), so the cap and the next
+ * position cannot be raced. `name` is already clean (cleanMatName), non-empty
+ * and, when a mat may be added, at most MAT_NAME_MAX characters.
+ */
+export async function matForLocation(
+  tx: Tx,
+  tenantId: string,
+  name: string,
+  opts: { mayAddMat: boolean; userId: string; req?: Request },
+): Promise<LocationResult> {
+  const key = matNameKey(name);
+  const mats = await listMats(tx, tenantId);
+  const found = mats.find((m) => m.nameKey === key);
+  if (found) return { kind: "mat", id: found.id, name: found.name, created: false };
+  if (!opts.mayAddMat || name.length > MAT_NAME_MAX) return { kind: "place", name };
+  if (mats.length >= MAT_LIMIT) return { kind: "limit" };
+  const sortOrder = mats.reduce((max, m) => Math.max(max, m.sortOrder), -1) + 1;
+  const row = await tx.mat.create({ data: { tenantId, name, nameKey: key, sortOrder }, select: { id: true, name: true } });
+  await logAudit({ tenantId, userId: opts.userId, action: "mat.create", entityType: "Mat", entityId: row.id, metadata: { name: row.name }, req: opts.req, tx });
+  return { kind: "mat", id: row.id, name: row.name, created: true };
 }
