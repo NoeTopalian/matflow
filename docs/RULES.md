@@ -217,12 +217,16 @@ acts on is worse than an error they can see.
   their photos, replaced ones included, and the personal values recorded on their own Activity
   rows (`lib/audit-redact.ts`; field names and who acted are kept). A club's
   erasure deletes every file under its store prefix.
-- **Known limit: a guardian's address stays in a kept child's import keys.** TeamUp keys a junior
-  under the payer's address (`teamup:<guardian email>|<child name>`). When a guardian is erased,
-  a child the erasure keeps (archived, cancelled or re-linked to another guardian) still carries
-  the guardian's address inside that key: in its record key (`Member.externalRef`), its saved
-  import decisions (person mappings) and its imported bookings (the ledger's person and booking
-  keys). The fix is tracked separately (branch `fix/erase-guardian-keys`), because rewriting
+- **Known limit: a guardian's address stays on a kept child's imported records.** TeamUp keys a
+  junior under the payer's address (`teamup:<guardian email>|<child name>`). When a guardian is
+  erased, a child still keyed under that address (archived, cancelled, or re-linked to another
+  guardian, by the erasure or earlier) keeps it: in its record key (`Member.externalRef`), its
+  saved import decisions (person mappings) and its imported bookings. On those bookings it is in
+  plain text in the source email column, which the owner's attendance export shows, and in the
+  person key; the booking key and row fingerprint are one-way digests of it, including their
+  copies in the ledger's earlier-state snapshots. An adult who shares that address keeps it in
+  their own key too, pending Noe's decision on shared addresses. The fix is tracked separately
+  (branch `fix/erase-guardian-keys`), because rewriting
   those keys changes how a later re-import and a TeamUp status refresh match the child.
 - **Two automatic exceptions, both security records, not club data:** sign-in rate-limit
   counters (`RateLimitHit`, and a bucket cleared after a successful sign-in), which the lockout
