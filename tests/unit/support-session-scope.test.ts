@@ -70,6 +70,10 @@ const NEVER_UNDER_SUPPORT: Array<[string, string, string]> = [
   ["DELETE", "/api/checkin", "destructive"],
   ["DELETE", "/api/mats/m1/extra", "destructive (only removing a mat itself is allowed)"],
   ["DELETE", "/api/mats", "destructive (no such collection delete)"],
+  // The mat-id rules must not reach the sibling routes (security review L-1).
+  ["DELETE", "/api/mats/order", "not a mat id: the order route"],
+  ["PATCH", "/api/mats/adopt", "not a mat id: the adopt route"],
+  ["DELETE", "/api/mats/suggestions", "not a mat id: the suggestions route"],
   ["POST", "/dashboard/members", "a page POST (Server Action)"],
   ["POST", "/dashboard/settings", "a page POST (Server Action)"],
 ];

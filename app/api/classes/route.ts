@@ -13,6 +13,7 @@ import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
 import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
 import { matForLocation } from "@/lib/mats-store";
+import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 
 /** A tier vanished between the club check and the write: roll the class back. */
 class TierRefError extends Error {}
@@ -70,6 +71,7 @@ export async function POST(req: Request) {
 
   const canManage = ["owner", "manager"].includes(session.user.role);
   if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const support = refuseSupportSessionUnlessEdit(session); if (support) return support; // view refused; an EDIT session may create and edit classes (SUPPORT_EDIT_MUTATION_ALLOWLIST)
 
   let body: unknown;
   try {

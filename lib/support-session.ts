@@ -52,6 +52,13 @@ export function isSupportSession(session: unknown): boolean {
 type RouteRule = { method: string; path: RegExp; why: string };
 
 /**
+ * One mat's id in /api/mats/[id]: any segment but the sibling routes' names, so
+ * a PATCH or DELETE rule for a mat never also matches /api/mats/order, /adopt
+ * or /suggestions (security review of PR feat/support-mats, L-1).
+ */
+const MAT_ID = String.raw`(?!(?:order|adopt|suggestions)\/?$)[^/]+`;
+
+/**
  * Non-GET requests a VIEW support session may make. EMPTY on purpose.
  * Add an entry only for a request that genuinely only reads, with the proof.
  */
@@ -76,8 +83,8 @@ export const SUPPORT_EDIT_MUTATION_ALLOWLIST: readonly RouteRule[] = [
   // "Yes, allow support"; RULES §5b). Removing a mat is the one DELETE here:
   // it never removes a class (its classes keep the mat's name as their place).
   { method: "POST", path: /^\/api\/mats\/?$/, why: "Add a mat (timetable set-up)." },
-  { method: "PATCH", path: /^\/api\/mats\/[^/]+\/?$/, why: "Rename a mat; its classes' place follows." },
-  { method: "DELETE", path: /^\/api\/mats\/[^/]+\/?$/, why: "Remove a mat; its classes stay, keeping the mat's name as their place." },
+  { method: "PATCH", path: new RegExp(String.raw`^\/api\/mats\/${MAT_ID}\/?$`), why: "Rename a mat; its classes' place follows." },
+  { method: "DELETE", path: new RegExp(String.raw`^\/api\/mats\/${MAT_ID}\/?$`), why: "Remove a mat; its classes stay, keeping the mat's name as their place." },
   { method: "PUT", path: /^\/api\/mats\/order\/?$/, why: "Reorder the mats (the order of the columns)." },
   { method: "POST", path: /^\/api\/mats\/adopt\/?$/, why: "Add these as mats: make mats from places typed on classes." },
   { method: "PATCH", path: /^\/api\/timetable\/layout\/?$/, why: "Choose By mat or By time for the club's timetable." },

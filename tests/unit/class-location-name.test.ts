@@ -394,3 +394,26 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
     expect(ops).toEqual([]);
   });
 });
+
+describe("the class routes refuse a read-only support session themselves (security review L-2)", () => {
+  for (const scope of ["view", undefined, "EDIT"] as const) {
+    it(`a support session with scope ${String(scope)} is refused create and edit: 403, nothing read or written`, async () => {
+      session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", ...(scope ? { supportScope: scope } : {}) };
+      for (const res of [await post({ matName: "Mat 2" }), await patch({ name: "Renamed", matName: "Mat 2" })]) {
+        expect(res.status).toBe(403);
+        expect(await res.json()).toMatchObject({ ok: false, supportReadOnly: true });
+      }
+      expect(ops).toEqual([]);
+      expect(tx.class.create).not.toHaveBeenCalled();
+      expect(tx.class.updateMany).not.toHaveBeenCalled();
+      expect(tx.mat.create).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    });
+  }
+
+  it("an edit support session is let through to the handler", async () => {
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", supportScope: "edit" };
+    expect((await post({ matName: "Mat 1" })).status).toBe(201);
+    expect((await patch({ matName: "Mat 1" })).status).toBe(200);
+  });
+});

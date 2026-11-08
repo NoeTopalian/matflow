@@ -22,6 +22,7 @@ import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
 import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError, isMatNameClash } from "@/lib/class-refs";
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
 import { matForLocation } from "@/lib/mats-store";
+import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 
@@ -418,6 +419,7 @@ export async function PATCH(req: Request, { params }: Params) {
 
   const canManage = ["owner", "manager"].includes(session.user.role);
   if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const support = refuseSupportSessionUnlessEdit(session); if (support) return support; // view refused; an EDIT session may create and edit classes (SUPPORT_EDIT_MUTATION_ALLOWLIST)
 
   const { id } = await params;
   const tenantId = session.user.tenantId;

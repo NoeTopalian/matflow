@@ -8,7 +8,8 @@
 // answered 200 and unlocked the member at the handler level).
 //
 // Static: every exported POST/PUT/PATCH/DELETE in app/api/members/**,
-// app/api/staff/**, app/api/account/** calls refuseSupportSession( in its own
+// app/api/staff/**, app/api/account/**, app/api/mats/**, app/api/timetable/**
+// calls refuseSupportSession( in its own
 // body or through the named helper listed below. Behaviour (I level) is pinned
 // by the `support` row of tests/integration/sec-b-role-matrix-db.test.ts.
 
@@ -17,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const DIRS = ["app/api/members", "app/api/staff", "app/api/account"];
+const DIRS = ["app/api/members", "app/api/staff", "app/api/account", "app/api/mats", "app/api/timetable"];
 
 /**
  * Handlers allowed the scope-aware backstop (refuseSupportSessionUnlessEdit):
@@ -32,6 +33,13 @@ const RELAXED_ALLOWED = new Set([
   "app/api/members/[id]/route.ts#PATCH",
   "app/api/members/[id]/rank/route.ts#POST",
   "app/api/members/[id]/rank/demote/route.ts#POST",
+  // Mats and the split (Noe, 7 Nov 2026: "Yes, allow support"; RULES §5b).
+  "app/api/mats/route.ts#POST",
+  "app/api/mats/[id]/route.ts#PATCH",
+  "app/api/mats/[id]/route.ts#DELETE",
+  "app/api/mats/order/route.ts#PUT",
+  "app/api/mats/adopt/route.ts#POST",
+  "app/api/timetable/layout/route.ts#PATCH",
 ]);
 
 /** Handlers that legitimately have no session, or refuse through a helper. */
