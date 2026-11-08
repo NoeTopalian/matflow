@@ -51,6 +51,7 @@ import {
   type PopulationKey,
 } from "@/lib/member-population";
 import { defaultClubMonthWindow, inMonthWindow, type ClubMonthWindow } from "@/lib/club-month";
+import { formatDate } from "@/lib/date";
 import {
   QUIET_THRESHOLD_DAYS,
   addCounts,
@@ -110,6 +111,13 @@ export interface MemberRow {
    * same replay as Reports. Drives the four movement drill-throughs.
    */
   moved?: MovementBucket[];
+  /**
+   * PR 3: set on an ARCHIVED member the server adds only because the month's
+   * movement counted them (a join before they were removed). Listed in the
+   * movement drill-throughs alone, with an "Archived" tag; every other view
+   * and count leaves them out.
+   */
+  archivedAt?: string | null;
   /**
    * D10: why a member on a plan is behind — never paid past the first payment
    * date, a failed charge, or an outstanding due date — with the badge label
@@ -528,8 +536,8 @@ export function memberStatusLabel(m: { status: string; paymentStatus?: string | 
   return null;
 }
 
-function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null } }) {
-  const label = memberStatusLabel(m);
+function StatusTag({ m }: { m: { status: string; paymentStatus?: string | null; archivedAt?: string | null } }) {
+  const label = m.archivedAt ? "Archived" : memberStatusLabel(m);
   if (!label) return null;
   return (
     <span className="shrink-0 rounded-full border border-bd-default bg-sf-2 px-1.5 py-0.5 text-[10px] font-semibold text-tx-2">
@@ -561,7 +569,7 @@ const MOVEMENT_FILTERS: Partial<Record<StatusFilter, MovementBucket>> = {
   "churned-this-month": "cancelled",
 };
 
-type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved">>;
+type ViewRow = Pick<MemberRow, "status"> & Partial<Pick<MemberRow, "accountType" | "paymentStatus" | "waiverAccepted" | "phone" | "lastVisitAt" | "joinedAt" | "parentMemberId" | "cancelledAt" | "otherOwing" | "failedToReconcile" | "moved" | "archivedAt">>;
 
 /**
  * Whether a member belongs under a chip when nobody is searching. The single
@@ -574,6 +582,13 @@ export function inStatusView(
   f: StatusFilter,
   month: Pick<ClubMonthWindow, "monthStart" | "nextMonthStart"> = defaultClubMonthWindow(),
 ): boolean {
+  // PR 3: an archived member is listed only where a count includes them: the
+  // movement drill-throughs and the two debt chips (a debt is never hidden).
+  if (m.archivedAt) {
+    if (f === "other-owing") return !!m.otherOwing;
+    if (f === "failed-to-reconcile") return !!m.failedToReconcile;
+    return !!MOVEMENT_FILTERS[f] && !!m.moved?.includes(MOVEMENT_FILTERS[f]!);
+  }
   // Payers overdue (review L2): active and taster accounts that owe, of ANY
   // account type — a guardian who pays is a debt, never dropped — so this
   // view is decided before the guardian and cancelled rules below.
@@ -748,7 +763,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const filtered = useMemo(() => {
     // Everyone matching the search, whatever their standing; otherwise the
     // rows under a chip are exactly the ones its count counts.
-    let list = searchingAll ? members : members.filter((m) => inStatusView(m, statusFilter, month));
+    let list = searchingAll ? members.filter((m) => !m.archivedAt) : members.filter((m) => inStatusView(m, statusFilter, month));
     if (membershipFilter !== "all") list = list.filter((m) => m.membershipType === membershipFilter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -827,7 +842,7 @@ export default function MembersList({ members: initial, primaryColor, role, guar
   const counts: MemberListCounts & { guardianReview: number } = {
     ...(serverCounts
       ? addCounts(serverCounts, countMemberRows(addedSinceLoad, new Date(), month))
-      : countMemberRows(members, new Date(), month)),
+      : countMemberRows(members.filter((m) => !m.archivedAt), new Date(), month)),
     guardianReview: reviewCount ?? 0,
   };
 
@@ -1451,11 +1466,16 @@ function AddMemberModal({
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
 
-  async function submit(e: React.FormEvent) {
+  // PR 3 / security review L1: an archived member with this email and name
+  // but no date of birth to compare. Staff decide; nothing is restored blind.
+  const [archivedMatch, setArchivedMatch] = useState<{ id: string; name: string; archivedAt: string | null } | null>(null);
+
+  async function submit(e: React.FormEvent, confirmRestoreId?: string) {
     e.preventDefault();
     if (!form.name.trim()) return;
     setLoading(true);
     setFormError(null);
+    setArchivedMatch(null);
     // One request id per distinct Add member: a retry of the same form (after
     // a lost response) reuses it and the server returns the member it already
     // created; any edit to the form starts a new one (verifier lane 7).
@@ -1493,15 +1513,24 @@ function AddMemberModal({
           ...(credit.creditedToMemberId ? { creditedToMemberId: credit.creditedToMemberId } : {}),
           ...(credit.creditedToLabel ? { creditedToLabel: credit.creditedToLabel } : {}),
           requestId,
+          ...(confirmRestoreId ? { confirmRestoreId } : {}),
         }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) {
+      if (res.status === 409 && data?.archivedMatch?.id) {
+        setArchivedMatch(data.archivedMatch);
+      } else if (!res.ok) {
         const failure = describeSaveFailure(res.status, data, "Add Member", { idempotent: true });
         setFormError(failure.message);
         toast(failure.kind === "invalid" ? failure.message : "Member not added", "error");
       } else {
-        toast(`${form.name} added`, "success");
+        // PR 3: the same individual as an archived member is restored, not duplicated (lib/member-same-individual.ts).
+        toast(
+          data.restored === true
+            ? `Restored ${data.name}${typeof data.restoredFromArchivedAt === "string" ? ` (archived ${formatDate(data.restoredFromArchivedAt)})` : ""} with all their history${data.subscriptionEnding === true ? ". Their card subscription is still set to end, so set billing up again." : ""}`
+            : `${form.name} added`,
+          "success",
+        );
         onAdded({
           ...data,
           joinedAt: data.joinedAt ?? new Date().toISOString(),
@@ -1572,6 +1601,30 @@ function AddMemberModal({
             <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
               {formError}
             </p>
+          )}
+          {archivedMatch && (
+            <div role="alert" data-testid="archived-match" className="space-y-2 rounded-[var(--r-md)] border border-bd-default bg-sf-2 px-3 py-2">
+              <p className="text-sm text-tx-1">
+                Is this the same {archivedMatch.name}{archivedMatch.archivedAt ? `, archived on ${formatDate(archivedMatch.archivedAt)}` : ""}?
+              </p>
+              <p className="text-xs text-tx-3">Restoring brings back their record with all its history. A new person needs a different email address.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="compact" loading={loading} onClick={(ev) => void submit(ev as unknown as React.FormEvent, archivedMatch.id)}>
+                  Restore their record
+                </Button>
+                <Button
+                  type="button"
+                  size="compact"
+                  variant="secondary"
+                  onClick={() => {
+                    setArchivedMatch(null);
+                    setFormError("This email belongs to the archived record. Enter a different address for the new person, or leave it blank.");
+                  }}
+                >
+                  Add as a new person
+                </Button>
+              </div>
+            </div>
           )}
           {/* Name */}
           <div>

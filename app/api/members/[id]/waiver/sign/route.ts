@@ -25,6 +25,7 @@ import { buildDefaultWaiverTitle, buildDefaultWaiverContent } from "@/lib/defaul
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseSupportSession } from "@/lib/support-session";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 const schema = z.object({
   signatureDataUrl: z.string().min(50).max(300_000),
@@ -64,6 +65,7 @@ export async function POST(req: Request, { params }: Params) {
 
   const { id: memberId } = await params;
   const tenantId = session.user.tenantId;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   // Tenant-scope enforcement (Sprint 2 gate B-5 mitigation)
   const member = await withTenantContext(tenantId, (tx) =>

@@ -20,6 +20,7 @@ import { apiError } from "@/lib/api-error";
 import { parseHoldUntil, pauseCollectionParams } from "@/lib/member-hold";
 import { refuseSupportSession } from "@/lib/support-session";
 import { z } from "zod";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 // Lane C2 (9 Oct 2026): a JSON object with at most { until } — an ISO date, or null/absent for an
 // open-ended hold (tests/unit/member-hold.test.ts pins `{}` as open-ended). A body that is missing,
@@ -37,6 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   const { tenantId, userId } = gate;
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "Invalid request" }, { status: 400 }); }

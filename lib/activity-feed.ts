@@ -384,6 +384,12 @@ export const RESOLVED_ID_KEYS: Record<string, RefKind> = {
  */
 export const IGNORED_ID_KEYS = new Set([
   "allowedTierIds",
+  // PR 3: the kids archived or restored with a parent; the sentence names the parent only.
+  "kidIds",
+  "restoredKidIds",
+  // PR 3: whose card subscriptions a removal set to end — read by Restore's
+  // billing warning, never shown; the sentence names the member removed.
+  "stripeCancelledMemberIds",
   "bookingsKeptIneligibleClassIds",
   "classIds",
   "folderId",
@@ -868,6 +874,22 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const child = str(m.childName)?.trim() || "a child";
       return parent ? sentence(parent, " removed ", child) : null;
     }
+    // PR 3: Remove archives. The row is still there, so the member is linked.
+    case "member.archive": {
+      const person = r.member(subjectMember);
+      if (!person) return null;
+      return who ? sentence(who, " removed ", person, " (archived)") : sentence(person, " was removed (archived)");
+    }
+    case "member.restore": {
+      const person = r.member(subjectMember);
+      if (!person) return null;
+      return who ? sentence(who, " restored ", person) : sentence(person, " was restored");
+    }
+    case "member.child.archive": {
+      const parent = r.member(m.parentMemberId);
+      const child = r.member(subjectMember);
+      return parent && child ? sentence(parent, " removed ", child, " (archived)") : null;
+    }
     case "member.guardian.confirmed":
     case "member.guardian.rejected": {
       const child = r.member(subjectMember, true);
@@ -1347,7 +1369,7 @@ const MEMBER_APP_ACTIONS = new Set(["billing.portal.open", "waiver.sign", "waive
  */
 const STAFF_ONLY_ACTIONS = new Set([
   "attendance.mark", "attendance.override", "attendance.unmark", "attendance.card_scan",
-  "member.update", "member.delete", "member.rank.promote", "member.rank.demote", "member.hold.start", "member.link.child", "member.unlink.child",
+  "member.update", "member.delete", "member.archive", "member.restore", "member.rank.promote", "member.rank.demote", "member.hold.start", "member.link.child", "member.unlink.child",
   "member.guardian.confirmed", "member.guardian.rejected",
   "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
   "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",

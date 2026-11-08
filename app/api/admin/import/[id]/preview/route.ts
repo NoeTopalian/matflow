@@ -246,6 +246,7 @@ async function previewRefresh(
         // F9, 30 Sep 2026: they only appeared after it).
         holdKept: ex.holdKept ?? [],
         decisions: ex.decisions ?? [],
+        archivedInMatFlow: ex.archivedInMatFlow ?? [],
       },
       ...(sourceSummary ? { source: sourceSummary as unknown as Prisma.InputJsonObject } : {}),
     };

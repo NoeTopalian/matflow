@@ -27,6 +27,8 @@ import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, isSupportSessi
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 import { TRAINING_MEMBER } from "@/lib/member-population";
 import { requireApiStaff } from "@/lib/api-authz";
+import { classifyIdentity } from "@/lib/member-same-individual";
+import { restoreMember } from "@/lib/member-delete";
 
 // Lane 1 iter-1 S-02 [Critical] fix: per-(tenant, user) rate-limit envelope
 // on member creation. The route mints a MagicLinkToken + sends an invite
@@ -90,9 +92,17 @@ export async function GET(req: Request) {
     parentMemberId?: { not: null };
     accountType?: { not: "parent" };
     OR?: Array<{ name?: { contains: string; mode: "insensitive" }; email?: { contains: string; mode: "insensitive" } }>;
+    archivedAt?: null;
   } = {
     tenantId: session.user.tenantId,
+    // PR 3: archived members are in no member list or search (lib/member-population NOT_ARCHIVED).
+    archivedAt: null,
   };
+  // ?includeArchived=1 (owner and manager): the pickers that look at HISTORY —
+  // the Activity member filter and the attendance import's "pick a member" —
+  // also find archived members, each row marked with its archivedAt.
+  const includeArchived = searchParams.get("includeArchived") === "1" && ["owner", "manager"].includes(session.user.role);
+  if (includeArchived) delete where.archivedAt;
   if (filter === "kids") where.parentMemberId = { not: null };
   // T6d: ?population=training — training members only (lib/member-population).
   // The class roster picker asks for this, so a guardian account, including
@@ -131,6 +141,7 @@ export async function GET(req: Request) {
           dateOfBirth: true,
           parentMemberId: true,
           hasKidsHint: true,
+          archivedAt: true,
           memberRanks: {
             take: 1,
             orderBy: { achievedAt: "desc" },
@@ -166,8 +177,10 @@ export async function GET(req: Request) {
     // nextDueAt, stripeSubscriptionId and membershipTierId are read only to
     // derive the shown payment status; none is a list field (the staff
     // allow-list in tests/e2e/campaign/assess/lc-1-members.spec.ts J22).
-    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, membershipTierId, ...rest }) => ({
+    const flattened = members.map(({ photos, nextDueAt, stripeSubscriptionId, membershipTierId, archivedAt, ...rest }) => ({
       ...rest,
+      // Only on an includeArchived search: the ordinary list's fields are unchanged.
+      ...(includeArchived ? { archivedAt: archivedAt ? archivedAt.toISOString() : null } : {}),
       // Derived like the dashboard and Outstanding tab (lib/overdue.ts).
       paymentStatus: shownPaymentStatus({ paymentStatus: rest.paymentStatus, nextDueAt, stripeSubscriptionId, billedBy: rest.billedBy, membershipTierId }, now),
       profilePictureUrl: photos[0]?.url ?? null,
@@ -210,7 +223,7 @@ async function guardianReviewList(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const tenantId = user.tenantId;
-  const where = { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null };
+  const where = { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null, archivedAt: null };
   try {
     const { rows, total } = await withTenantContext(tenantId, async (tx) => {
       const rows = await tx.member.findMany({
@@ -332,7 +345,7 @@ export async function POST(req: Request) {
     }
     const parent = await withTenantContext(session.user.tenantId, (tx) =>
       tx.member.findFirst({
-        where: { id: parsed.data.parentMemberId, tenantId: session.user.tenantId },
+        where: { id: parsed.data.parentMemberId, tenantId: session.user.tenantId, archivedAt: null },
         select: { id: true, parentMemberId: true },
       }),
     );
@@ -345,7 +358,8 @@ export async function POST(req: Request) {
     // sanity cap so an owner can't create more kids than a parent can self-add.
     const kidCount = await withTenantContext(session.user.tenantId, (tx) =>
       tx.member.count({
-        where: { parentMemberId: parent.id, tenantId: session.user.tenantId },
+        // PR 3: an archived child frees its slot.
+        where: { parentMemberId: parent.id, tenantId: session.user.tenantId, archivedAt: null },
       }),
     );
     if (kidCount >= MAX_KIDS_PER_PARENT) {
@@ -459,7 +473,117 @@ export async function POST(req: Request) {
   const already = await replay();
   if (already) return already;
 
+  // PR 3 (Noe, 6 Nov 2026: "it should just restore, if they are the same
+  // individual"): an adult added with the address AND full name of an
+  // ARCHIVED member of this club (lib/member-same-individual.ts) is that
+  // member coming back. Their record is restored with all its history instead
+  // of a second one being created, and the details typed now are applied on
+  // top: a phone number, a plan, and a date of birth the old record lacked.
+  // Same address with a different name is not the same person (families share
+  // addresses): the ordinary uniqueness rule below answers, as before.
+  const MEMBER_SELECT = {
+    id: true, tenantId: true, name: true, email: true, phone: true,
+    membershipType: true, membershipTierId: true, status: true, paymentStatus: true,
+    accountType: true, dateOfBirth: true, parentMemberId: true,
+    hasKidsHint: true, onboardingCompleted: true,
+    waiverAccepted: true, joinedAt: true, updatedAt: true,
+  } as const;
+
   try {
+    // Only the roles that may restore (POST /api/members/[id]/restore: owner
+    // and manager, never a support session) restore through Add member; for
+    // anyone else the ordinary uniqueness answer stands.
+    const mayRestore = ["owner", "manager"].includes(session.user.role) && !isSupportSession(session);
+    // Security review L1: restored WITHOUT asking only when certain (email,
+    // name AND both dates of birth equal). Email and name with a date of birth
+    // missing on either side is answered 409 { archivedMatch } and staff
+    // decide; their "Restore their record" resends with confirmRestoreId.
+    const rawConfirm = (body as { confirmRestoreId?: unknown } | null)?.confirmRestoreId;
+    const confirmRestoreId = typeof rawConfirm === "string" && rawConfirm.length <= 64 ? rawConfirm : null;
+    const ask: { match: { id: string; name: string; archivedAt: string | null } | null } = { match: null };
+    const restoredOutcome = !isKid && hasRealEmail && mayRestore
+      ? await withTenantContext(session.user.tenantId, async (tx) => {
+          const archived = await tx.member.findFirst({
+            where: { tenantId: session.user.tenantId, archivedAt: { not: null }, email: { equals: email.trim(), mode: "insensitive" } },
+            select: { id: true, name: true, email: true, phone: true, dateOfBirth: true, archivedAt: true, status: true, membershipTierId: true },
+          });
+          if (!archived) return null;
+          const match = classifyIdentity({ email, name: parsed.data.name, dateOfBirth: dob }, archived);
+          if (match === "different") return null;
+          if (match === "possible" && confirmRestoreId !== archived.id) {
+            ask.match = { id: archived.id, name: archived.name, archivedAt: archived.archivedAt?.toISOString() ?? null };
+            return null;
+          }
+          const r = await restoreMember(tx, { id: archived.id, tenantId: session.user.tenantId });
+          if (r.kind !== "ok") return null;
+          // The details typed now, on top: a phone number, a date of birth the
+          // old record lacked, a plan, and the status the desk chose. The
+          // request id lets a retry after a lost response find this row.
+          const extra: Record<string, unknown> = { ...(requestId ? { createRequestId: requestId } : {}) };
+          if (parsed.data.phone?.trim()) extra.phone = parsed.data.phone;
+          if (dob && !archived.dateOfBirth) extra.dateOfBirth = dob;
+          if (tier) Object.assign(extra, membershipTierWrite(tier));
+          const wantStatus = parsed.data.status;
+          if (wantStatus && wantStatus !== archived.status) {
+            extra.status = wantStatus;
+            extra.cancelledAt = wantStatus === "cancelled" ? new Date() : null;
+          }
+          await tx.member.updateMany({ where: { id: archived.id, tenantId: session.user.tenantId }, data: extra });
+          if (wantStatus && wantStatus !== archived.status) {
+            await recordStatusEvent(tx, {
+              tenantId: session.user.tenantId,
+              memberId: archived.id,
+              fromStatus: archived.status,
+              toStatus: wantStatus,
+              reason: "staff_edit",
+              changedById: session.user.id,
+            });
+          }
+          const row = await tx.member.findFirst({ where: { id: archived.id, tenantId: session.user.tenantId }, select: MEMBER_SELECT });
+          const applied = Object.keys(extra).filter((k) => k !== "createRequestId" && k !== "cancelledAt");
+          await logAudit({
+            tx,
+            tenantId: session.user.tenantId,
+            userId: session.user.id,
+            action: "member.restore",
+            entityType: "Member",
+            entityId: archived.id,
+            metadata: {
+              name: archived.name,
+              via: "add_member",
+              restoredKidIds: r.restoredKidIds,
+              subscriptionEnding: r.subscriptionEnding,
+              appliedFields: applied,
+              // What the typed details replaced, so the change can be read back.
+              before: { phone: archived.phone, dateOfBirth: archived.dateOfBirth?.toISOString() ?? null, membershipTierId: archived.membershipTierId, status: archived.status },
+            },
+            req,
+          });
+          return row ? { row, archivedAt: archived.archivedAt, subscriptionEnding: r.subscriptionEnding } : null;
+        })
+      : null;
+    if (ask.match) {
+      return NextResponse.json(
+        { error: "An archived member has this email address and name. Is this the same person?", archivedMatch: ask.match },
+        { status: 409 },
+      );
+    }
+    if (restoredOutcome) {
+      return NextResponse.json(
+        {
+          ...restoredOutcome.row,
+          restored: true,
+          restoredFromArchivedAt: restoredOutcome.archivedAt?.toISOString() ?? null,
+          subscriptionEnding: restoredOutcome.subscriptionEnding,
+          inviteUrl: null,
+          inviteEmailSent: false,
+          inviteEmailNote: null,
+          noEmail: false,
+        },
+        { status: 200 },
+      );
+    }
+
     const member = await withTenantContext(session.user.tenantId, async (tx) => {
       // One login identity per club across staff AND members (AH-01, 9 Oct
       // 2026; was gap #11 in docs/readiness/MAIL-DARK-SEND-PATHS.md — a member
@@ -630,6 +754,20 @@ export async function POST(req: Request) {
       // Two copies of one request racing: the other one landed — return it.
       const raced = await replay();
       if (raced) return raced;
+      // An ARCHIVED member who is not the same individual (another name or date
+      // of birth) still holds the address. The owner and managers, who can
+      // restore, are told where to look; for anyone else it stays opaque.
+      if (hasRealEmail && ["owner", "manager"].includes(session.user.role)) {
+        const heldByArchived = await withTenantContext(session.user.tenantId, (tx) =>
+          tx.member.count({ where: { tenantId: session.user.tenantId, archivedAt: { not: null }, email: { equals: email.trim(), mode: "insensitive" } } }),
+        ).catch(() => 0);
+        if (heldByArchived > 0) {
+          return NextResponse.json(
+            { error: "An archived member has this email address. Find them under Members → archived members and restore them, or use another address.", archived: true },
+            { status: 409 },
+          );
+        }
+      }
       // Opaque: whose address it is (staff or member) is not said.
       return NextResponse.json({ error: "That email address is already in use at this club." }, { status: 409 });
     }

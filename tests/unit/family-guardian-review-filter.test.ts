@@ -79,7 +79,7 @@ describe("GET /api/members?guardianReview=1", () => {
     const res = await GET(req());
     expect(res.status).toBe(200);
     const where = findManyMock.mock.calls[0][0].where;
-    expect(where).toEqual({ tenantId: "t-A", parentMemberId: { not: null }, guardianConfirmedAt: null });
+    expect(where).toEqual({ tenantId: "t-A", parentMemberId: { not: null }, guardianConfirmedAt: null, archivedAt: null });
     expect(countMock.mock.calls[0][0].where).toEqual(where);
     const body = await res.json();
     expect(body.total).toBe(37);
@@ -157,7 +157,8 @@ describe("GET /api/members?guardianReview=1", () => {
   it("without the flag the ordinary list is unchanged (no guardian predicate)", async () => {
     findManyMock.mockResolvedValueOnce([]);
     await GET(req(""));
-    expect(findManyMock.mock.calls[0][0].where).toEqual({ tenantId: "t-A" });
+    // PR 3: the ordinary list leaves archived members out, and nothing else.
+    expect(findManyMock.mock.calls[0][0].where).toEqual({ tenantId: "t-A", archivedAt: null });
     expect(countMock).not.toHaveBeenCalled();
   });
 });

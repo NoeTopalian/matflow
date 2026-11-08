@@ -672,3 +672,47 @@ describe("refresh and rollback provenance (T8d)", () => {
     expect(forwardEventDates([move("a")], [ev("a", OTHER, "job_other", "import_refresh"), ev("a", OWN, "job_mine", "import_refresh")]).get("a")).toEqual(OTHER);
   });
 });
+
+// PR 3 (Noe, 6 Nov 2026): a TeamUp status refresh never changes or restores an ARCHIVED member. One the file shows
+// as active is listed under "Archived in MatFlow, active in TeamUp" for the owner to restore by hand; the rollback of
+// an older refresh leaves an archived member's standing untouched too.
+describe("a refresh never touches an archived member (PR 3)", () => {
+  it("an archived member the file shows active is not matched, is listed for the owner, and the file still reconciles", async () => {
+    const { planRefresh: plan } = await import("@/lib/importers/teamup-refresh");
+    seed();
+    const archivedAt = new Date("2026-10-01T09:00:00Z");
+    const members = db.members.map((m) => (m.id === "m_uma" ? { ...m, archivedAt } : m)) as unknown as Parameters<typeof planRefresh>[0]["members"];
+    const p = plan({ drafts: parsed.drafts, errors: parsed.errors, members, tiers: [], job: { id: "j", sourceExportedAt: EXPORT_2 } });
+    expect(p.matched.map((c) => c.memberId)).not.toContain("m_uma");
+    expect(p.exceptions.archivedInMatFlow).toEqual([{ memberId: "m_uma", name: "Uma Same", teamUpSays: "active" }]);
+    expect(p.exceptions.notInFile.map((e) => e.memberId)).not.toContain("m_uma");
+    expect(p.reconciles).toBe(true);
+  });
+
+  it("an archived member the file shows cancelled is left alone and not listed as active", async () => {
+    const { planRefresh: plan } = await import("@/lib/importers/teamup-refresh");
+    seed();
+    const members = db.members.map((m) => (m.id === "m_tom" ? { ...m, archivedAt: new Date() } : m)) as unknown as Parameters<typeof planRefresh>[0]["members"];
+    const p = plan({ drafts: parsed.drafts, errors: parsed.errors, members, tiers: [], job: { id: "j", sourceExportedAt: EXPORT_2 } });
+    expect(p.matched.map((c) => c.memberId)).not.toContain("m_tom");
+    expect(p.exceptions.archivedInMatFlow ?? []).toEqual([]);
+  });
+
+  it("an archived member absent from the file is not reported as missing from it", async () => {
+    const { planRefresh: plan } = await import("@/lib/importers/teamup-refresh");
+    seed();
+    const members = db.members.map((m) => (m.id === "m_gone" ? { ...m, archivedAt: new Date() } : m)) as unknown as Parameters<typeof planRefresh>[0]["members"];
+    const p = plan({ drafts: parsed.drafts, errors: parsed.errors, members, tiers: [], job: { id: "j", sourceExportedAt: EXPORT_2 } });
+    expect(p.exceptions.notInFile.map((e) => e.memberId)).not.toContain("m_gone");
+  });
+
+  it("a refresh rollback keeps an archived member's standing, with the reason", async () => {
+    const { planRefreshRollback } = await import("@/lib/importers/teamup-refresh");
+    const standing = { status: "cancelled", paymentStatus: "cancelled", cancelledAt: null, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: "j" };
+    const change = { memberId: "m1", name: "Archie", sourceKey: "k", fields: ["status" as const], before: { ...standing, status: "active", paymentStatus: "paid" }, after: standing };
+    const current = [{ id: "m1", name: "Archie", externalRef: "k", billedBy: "teamup", status: "cancelled", paymentStatus: "cancelled", cancelledAt: null, membershipType: null, membershipTierId: null, billingStatusAsOf: null, billingStatusSource: "j", archivedAt: new Date() }];
+    const out = planRefreshRollback([change], current);
+    expect(out.restore).toEqual([]);
+    expect(out.kept).toEqual([{ memberId: "m1", name: "Archie", reasons: [expect.stringContaining("archived")] }]);
+  });
+});

@@ -167,7 +167,7 @@ describe("getReportsData — attendanceRateMode", () => {
     expect(data.attendanceRate.denominator).toBe(3);
     // The exclusion is the query's: distinct attendees are counted in the database over ACTIVE_MEMBER.
     const call = vi.mocked(prisma.attendanceRecord.groupBy).mock.calls.find((c) => (c[0] as { by: string[] }).by[0] === "memberId");
-    expect((call?.[0] as { where: { member: unknown } }).where.member).toEqual({ accountType: { not: "parent" }, status: "active" });
+    expect((call?.[0] as { where: { member: unknown } }).where.member).toEqual({ archivedAt: null, accountType: { not: "parent" }, status: "active" });
   });
 
   it("fill-rate: only capacity-bearing classes count on both sides (3 ÷ 10 = 30%, i2 excluded — no capacity)", async () => {

@@ -457,7 +457,7 @@ const nextAuth = NextAuth({
           // members, so the previous "find user, then maybe find member" was always
           // a 2-roundtrip path for the common case. One extra read when staff logs in
           // is a worthwhile trade for ~30-80ms saved on every member login.
-          const [user, memberRowRaw] = await withTenantContext(tenant.id, (tx) =>
+          const [userRaw, memberRowRaw] = await withTenantContext(tenant.id, (tx) =>
             Promise.all([
               tx.user.findUnique({
                 where: { tenantId_email: { tenantId: tenant.id, email } },
@@ -467,7 +467,12 @@ const nextAuth = NextAuth({
               }),
             ]),
           );
-          const memberRow = !user ? memberRowRaw : null;
+          // PR 3 (6 Nov 2026): a deactivated staff account and an archived
+          // member have no account at this door — the same answer as an
+          // address with no account. A staff row still shadows a member row
+          // with the same address, deactivated or not.
+          const user = userRaw && !userRaw.deactivatedAt ? userRaw : null;
+          const memberRow = !userRaw && memberRowRaw && !memberRowRaw.archivedAt ? memberRowRaw : null;
 
           const subject: { id: string; lockedUntil: Date | null; failedLoginCount: number } | null =
             user
@@ -873,7 +878,7 @@ const nextAuth = NextAuth({
         return `/login?error=${admissionErrorCode(googleAdmission.reason)}`;
       }
 
-      const [dbUser, memberRow] = await withTenantContext(tenant.id, (tx) =>
+      const [dbUserRaw, memberRowRaw] = await withTenantContext(tenant.id, (tx) =>
         Promise.all([
           tx.user.findUnique({
             where: { tenantId_email: { tenantId: tenant.id, email } },
@@ -883,6 +888,9 @@ const nextAuth = NextAuth({
           }),
         ]),
       );
+      // PR 3: deactivated staff and archived members have no account here either.
+      const dbUser = dbUserRaw && !dbUserRaw.deactivatedAt ? dbUserRaw : null;
+      const memberRow = !dbUserRaw && memberRowRaw && !memberRowRaw.archivedAt ? memberRowRaw : null;
       // No auto-provisioning. Only existing accounts can use Google login.
       // ONE code with the no-link refusal below (lane A3, review R3 §5): this
       // answered NoAccountForGym, so the door told the mailbox owner whether

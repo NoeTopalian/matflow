@@ -80,7 +80,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
       // it, here as at every check-in door; a member who is not on it is
       // refused with the check-in's own sentence. Being on it does not excuse
       // the membership list below (owner decision, 20 Oct 2026: both hold).
-      const rosterCount = await tx.classRoster.count({ where: { classId, tenantId: r.tenantId } });
+      const rosterCount = await tx.classRoster.count({ where: { classId, tenantId: r.tenantId, member: { archivedAt: null } } });
       if (rosterCount > 0) {
         const onRoster = await tx.classRoster.findFirst({
           where: { classId, memberId: r.memberId, tenantId: r.tenantId },
@@ -125,7 +125,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
         // already holds the only place must not be told the class is full by
         // their own request. The duplicate then falls to P2002 below, as before.
         const taken = await tx.classSubscription.count({
-          where: { classId, memberId: { not: r.memberId } },
+          where: { classId, memberId: { not: r.memberId }, member: { archivedAt: null } },
         });
         if (taken >= maxCapacity) return "full" as const;
       }

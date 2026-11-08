@@ -101,7 +101,7 @@ export async function POST(req: Request) {
       });
 
       const member = await tx.member.findFirst({
-        where: { tenantId: tokenRow.tenantId, email: tokenRow.email },
+        where: { tenantId: tokenRow.tenantId, email: tokenRow.email, archivedAt: null },
         select: { id: true },
       });
       if (!member) throw new Error("member_not_found");

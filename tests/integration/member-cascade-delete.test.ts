@@ -36,6 +36,7 @@ vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => {}) }));
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { DELETE as deleteMember } from "@/app/api/members/[id]/route";
+import { deleteMemberCascade } from "@/lib/member-delete";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -57,7 +58,10 @@ function deleteReq(): Request {
   });
 }
 
-describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
+// PR 3 (6 Nov 2026): the staff DELETE route ARCHIVES and keeps every row; the cascade walk below it now runs only for
+// a formal erasure (DSAR) and the operator's tenant purge. The first case proves the route keeps everything; the
+// later cases run the walk itself, as the erasure does, over the same FK-RESTRICTed history.
+describe.skipIf(!HAS_DB)("Staff Member.DELETE archives; the erasure cascade walk still clears FK-RESTRICTed history", () => {
   let tenantId: string;
   let ownerUserId: string;
   let memberWithHistoryId: string;
@@ -202,7 +206,7 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
     });
   });
 
-  it("owner can delete a member with full FK-RESTRICTed history", async () => {
+  it("owner Remove (?strategy=orphan) archives: the row and every dependent stay; the kid is orphaned as a junior", async () => {
     mockAuth.mockResolvedValue({
       user: { id: ownerUserId, tenantId, role: "owner", email: "owner" },
     } as never);
@@ -211,6 +215,26 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
       params: Promise.resolve({ id: memberWithHistoryId }),
     });
     expect(res.status).toBe(200);
+
+    const kept = await withRlsBypass(async (tx) => ({
+      member: await tx.member.findUnique({ where: { id: memberWithHistoryId }, select: { archivedAt: true } }),
+      attendance: await tx.attendanceRecord.count({ where: { memberId: memberWithHistoryId } }),
+      events: await tx.loginEvent.count({ where: { memberId: memberWithHistoryId } }),
+      pack: await tx.memberClassPack.findUnique({ where: { id: packId } }),
+      waiver: await tx.signedWaiver.findUnique({ where: { id: signedWaiverId }, select: { memberId: true } }),
+      kid: await tx.member.findUnique({ where: { id: kidOrphanId }, select: { parentMemberId: true, archivedAt: true } }),
+    }));
+    expect(kept.member?.archivedAt).toBeInstanceOf(Date);
+    expect(kept.attendance).toBeGreaterThan(0);
+    expect(kept.events).toBeGreaterThan(0);
+    expect(kept.pack).not.toBeNull();
+    expect(kept.waiver?.memberId).toBe(memberWithHistoryId);
+    expect(kept.kid).toEqual({ parentMemberId: null, archivedAt: null });
+  });
+
+  it("the erasure cascade walk removes a member with full FK-RESTRICTed history", async () => {
+    const out = await withRlsBypass((tx) => deleteMemberCascade(tx, { id: memberWithHistoryId, tenantId }));
+    expect(out.kind).toBe("ok");
 
     const stillThere = await withRlsBypass((tx) =>
       tx.member.findUnique({ where: { id: memberWithHistoryId } }),
@@ -250,7 +274,7 @@ describe.skipIf(!HAS_DB)("Staff Member.DELETE cascade", () => {
     expect(waiver?.tenantId).toBe(tenantId);
   });
 
-  it("kid of deleted parent survives as orphan (parentMemberId = NULL)", async () => {
+  it("kid of the removed parent survives as an orphan (parentMemberId = NULL)", async () => {
     const kidAfter = await withRlsBypass((tx) =>
       tx.member.findUnique({
         where: { id: kidOrphanId },

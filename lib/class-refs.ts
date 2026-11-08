@@ -95,7 +95,8 @@ export async function classRefError(
     if (!rank) return CLASS_REF_ERRORS.rank;
   }
   if (refs.coachUserId) {
-    const coach = await tx.user.findFirst({ where: { id: refs.coachUserId, tenantId }, select: { id: true } });
+    // PR 3: a deactivated account cannot be made a class's coach.
+    const coach = await tx.user.findFirst({ where: { id: refs.coachUserId, tenantId, deactivatedAt: null }, select: { id: true } });
     if (!coach) return CLASS_REF_ERRORS.coach;
   }
   if (refs.allowedTierIds && refs.allowedTierIds.length > 0) {

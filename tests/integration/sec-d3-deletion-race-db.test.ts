@@ -76,9 +76,6 @@ vi.mock("@/lib/prisma-tenant", async (importOriginal) => {
 });
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { DELETE as memberDelete } from "@/app/api/members/[id]/route";
-import { DELETE as childDelete } from "@/app/api/member/children/[id]/route";
-import { DELETE as staffDelete } from "@/app/api/staff/[id]/route";
 import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
 import { emailDigest } from "@/lib/login-email";
 
@@ -183,78 +180,10 @@ describe.skipIf(!HAS_DB)("D3 — the release digest is of the address actually r
     process.stderr.write(`[secd3r] role ${who[0]?.current_user} RLS_ENFORCED=${process.env.RLS_ENFORCED ?? "0"}\n`);
   });
 
-  it("CONTROL: member DELETE with no concurrent change digests its address", async () => {
-    const club = await mkClub("ctl");
-    const oldE = E("ctl-old");
-    const id = await mkMember(club, N("Ctl"), oldE);
-    gate.current = { tenantId: club.tenantId, userId: club.userId };
-    const res = (await memberDelete(new Request(`https://test.local/api/members/${id}?confirm=1`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id }) })) as unknown as { status: number };
-    expect(res.status).toBe(200);
-    expect(await digestRecorded(club, oldE)).toBe(true);
-  });
-
-  it("member DELETE, pre-tx: an address change committed after the preflight read → the digest is of the NEW (released) address", async () => {
-    const club = await mkClub("m-pre");
-    const oldE = E("m-pre-old"), newE = E("m-pre-new");
-    const id = await mkMember(club, N("Mem Pre"), oldE);
-    const race: Race = { done: null, blockedInWindow: null };
-    armPreTx(race, "tenant", "findUnique", "Member", id, oldE, newE);
-    gate.current = { tenantId: club.tenantId, userId: club.userId };
-    const res = (await memberDelete(new Request(`https://test.local/api/members/${id}?confirm=1`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id }) })) as unknown as { status: number };
-    expect(res.status).toBe(200);
-    await expectDigestOfReleased(club, race, oldE, newE, "member DELETE pre-tx");
-  });
-
-  it("member DELETE, in-tx: a change attempted inside the deletion transaction cannot slip in under the digest", async () => {
-    const club = await mkClub("m-in");
-    const oldE = E("m-in-old"), newE = E("m-in-new");
-    const id = await mkMember(club, N("Mem In"), oldE);
-    const race: Race = { done: null, blockedInWindow: null };
-    armInTx(race, "member", "deleteMany", whereId(id), "Member", id, oldE, newE);
-    gate.current = { tenantId: club.tenantId, userId: club.userId };
-    const res = (await memberDelete(new Request(`https://test.local/api/members/${id}?confirm=1`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id }) })) as unknown as { status: number };
-    expect(res.status).toBe(200);
-    await expectDigestOfReleased(club, race, oldE, newE, "member DELETE in-tx");
-  });
-
-  it("member DELETE ?strategy=cascade, in-tx: a CHILD's address changed inside the transaction is digested as released", async () => {
-    const club = await mkClub("m-casc");
-    const parentE = E("m-casc-parent"), oldE = E("m-casc-old"), newE = E("m-casc-new");
-    const parent = await mkMember(club, N("Casc Parent"), parentE, { accountType: "parent" });
-    const child = await mkMember(club, N("Casc Child"), oldE, { accountType: "junior", parentMemberId: parent });
-    const race: Race = { done: null, blockedInWindow: null };
-    armInTx(race, "member", "deleteMany", whereId(child), "Member", child, oldE, newE);
-    gate.current = { tenantId: club.tenantId, userId: club.userId };
-    const res = (await memberDelete(new Request(`https://test.local/api/members/${parent}?confirm=1&strategy=cascade`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id: parent }) })) as unknown as { status: number; json: () => Promise<unknown> };
-    expect(res.status, JSON.stringify(await res.json())).toBe(200);
-    expect(await digestRecorded(club, parentE)).toBe(true);
-    await expectDigestOfReleased(club, race, oldE, newE, "member DELETE cascade child in-tx");
-  });
-
-  it("child DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest", async () => {
-    const club = await mkClub("c-in");
-    const parent = await mkMember(club, N("Rel Parent"), E("c-in-parent"), { accountType: "parent" });
-    const oldE = E("c-in-old"), newE = E("c-in-new");
-    const child = await mkMember(club, N("Rel Child"), oldE, { accountType: "junior", parentMemberId: parent, guardianConfirmedAt: new Date("2025-02-01T00:00:00Z") });
-    const race: Race = { done: null, blockedInWindow: null };
-    armInTx(race, "member", "deleteMany", whereId(child), "Member", child, oldE, newE);
-    gate.current = { tenantId: club.tenantId, userId: club.userId, memberId: parent };
-    const res = (await childDelete(new Request(`https://test.local/api/member/children/${child}`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id: child }) })) as unknown as { status: number };
-    expect(res.status).toBe(200);
-    await expectDigestOfReleased(club, race, oldE, newE, "child DELETE in-tx");
-  });
-
-  it("staff DELETE, in-tx: a change attempted between the route's read and the delete cannot slip in under the digest", async () => {
-    const club = await mkClub("s-in");
-    const oldE = E("s-in-old"), newE = E("s-in-new");
-    const staff = await withRlsBypass((tx) => tx.user.create({ data: { tenantId: club.tenantId, email: oldE, name: N("Coach"), role: "coach", passwordHash: "x" }, select: { id: true } })).then((r) => r.id);
-    const race: Race = { done: null, blockedInWindow: null };
-    armInTx(race, "user", "deleteMany", whereId(staff), "User", staff, oldE, newE);
-    gate.current = { tenantId: club.tenantId, userId: club.userId };
-    const res = (await staffDelete(new Request(`https://test.local/api/staff/${staff}`, { method: "DELETE", headers: ORIGIN }), { params: Promise.resolve({ id: staff }) })) as unknown as { status: number };
-    expect(res.status).toBe(200);
-    await expectDigestOfReleased(club, race, oldE, newE, "staff DELETE in-tx");
-  });
+  // PR 3 (6 Nov 2026): member Remove archives, child removal archives and staff Remove deactivates. None of them
+  // releases an address any more (the row keeps it), so there is no release digest to race; their old cells were
+  // removed here, and tests/integration/sec-d2-deletion-provenance-db.test.ts asserts the three keep their address and
+  // write no digest. The two remaining release paths are DSAR erase (below) and import rollback.
 
   it("DSAR erase, in-tx: a change attempted inside the erase transaction (before the scrub) cannot slip in under the digest", async () => {
     const club = await mkClub("d-in");

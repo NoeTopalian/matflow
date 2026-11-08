@@ -16,23 +16,27 @@ const audit = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }))
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async (a: Record<string, unknown>) => { audit.rows.push(a); }) }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>) =>
-    fn({ $queryRaw: async () => [{ email: "secd-coach@example.test" }], user: { deleteMany: async () => ({ count: 1 }) } }),
+    fn({ $queryRaw: async () => [{ email: "secd-coach@example.test" }], user: { updateMany: async () => ({ count: 1 }), findFirst: async () => ({ name: "Coach", role: "coach" }) } }),
 }));
 
 import { DELETE as deleteStaff } from "@/app/api/staff/[id]/route";
 import { emailDigest } from "@/lib/login-email";
 
 describe("SF-54 release paths record the released address", () => {
-  it("staff DELETE: the audit row carries releasedEmailSha256 = emailDigest(address)", async () => {
+  // PR 3 (6 Nov 2026): staff Remove DEACTIVATES and member Remove ARCHIVES. Neither releases the address — the row
+  // keeps it, so an import still binds history to the same person — and so neither writes a release digest. The
+  // two remaining release paths (DSAR erasure, import rollback) are asserted below.
+  it("staff DELETE deactivates: staff.deactivate is written and no address is released", async () => {
     const res = (await deleteStaff(new Request("https://test.local/api/staff/u_coach", { method: "DELETE" }), { params: Promise.resolve({ id: "u_coach" }) } as never)) as unknown as { status: number };
     expect(res.status).toBe(200);
-    const row = audit.rows.find((r) => r.action === "staff.delete");
-    expect((row?.metadata as Record<string, unknown>)?.releasedEmailSha256).toBe(emailDigest("secd-coach@example.test"));
+    expect(audit.rows.find((r) => r.action === "staff.delete")).toBeUndefined();
+    const row = audit.rows.find((r) => r.action === "staff.deactivate");
+    expect(row).toBeDefined();
+    expect((row?.metadata as Record<string, unknown>)?.releasedEmailSha256).toBeUndefined();
   });
 
   const ROOT = path.resolve(__dirname, "../..");
   for (const [route, action] of [
-    ["app/api/members/[id]/route.ts", "member.delete"],
     ["app/api/admin/dsar/erase/route.ts", "member.dsar_erase"],
     ["app/api/admin/import/[id]/rollback/route.ts", "import.rollback"],
   ] as const) {

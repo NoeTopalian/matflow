@@ -54,6 +54,7 @@ export async function loadOtherAccountsOwing(tx: MemberReader, tenantId: string)
       paymentStatus: true,
       membershipType: true,
       accountType: true,
+      archivedAt: true,
       // The latest SETTLED payment decides (lib/overdue otherOwingEvidence):
       // a successful payment after a failed one clears it.
       payments: {

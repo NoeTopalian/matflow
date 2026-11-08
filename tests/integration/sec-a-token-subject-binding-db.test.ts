@@ -57,7 +57,7 @@ import { NextRequest } from "next/server";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { hashToken } from "@/lib/token-hash";
 import { mintSubjectBoundToken } from "@/lib/auth-token-binding";
-import { deleteMemberCascade } from "@/lib/member-delete";
+import { deleteMemberCascade, archiveMember } from "@/lib/member-delete";
 import { SESSION_COOKIE_NAME } from "@/lib/auth-cookie";
 import { POST as requestLink } from "@/app/api/magic-link/request/route";
 import { GET as verifyLink } from "@/app/api/magic-link/verify/route";
@@ -141,9 +141,12 @@ describe.skipIf(!HAS_DB)("sign-in credentials are bound to the person they were 
     const oldToken = linkToken(lastMail("magic_link", X).link);
     expect(oldToken, "the link carries a subject tag").toMatch(/^[a-f0-9]{64}\.[a-f0-9]{32}$/);
 
-    // The real staff-removal route (retires nothing), then a new person at X.
+    // The real staff-removal route (retires nothing). Since PR 3 it DEACTIVATES and the row keeps the address, so the
+    // address passing to a different person is modelled by removing the row outright (as a tenant purge would).
     const del = await staffDelete(new Request(`${ORIGIN}/api/staff/${c1}`, { method: "DELETE", headers: { origin: ORIGIN, host: "localhost:3847" } }), { params: Promise.resolve({ id: c1 }) });
     expect(del.status).toBe(200);
+    expect((await withRlsBypass((tx) => tx.user.findUnique({ where: { id: c1 }, select: { deactivatedAt: true } })))?.deactivatedAt).toBeInstanceOf(Date);
+    await withRlsBypass((tx) => tx.user.delete({ where: { id: c1 } }));
     const c2 = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: X, name: "secA Coach Two", role: "coach", passwordHash: "synthetic-not-a-hash" } })).id);
 
     const stolen = await verify(oldToken);
@@ -162,6 +165,54 @@ describe.skipIf(!HAS_DB)("sign-in credentials are bound to the person they were 
     const own = await verify(linkToken(lastMail("magic_link", X).link));
     expect(own.location).toContain("/dashboard");
     expect(own.cookie).toBeTruthy();
+  }, 120_000);
+
+  // PR 3 (6 Nov 2026): Remove deactivates a staff account and archives a member. A sign-in link minted BEFORE that
+  // must sign nobody in afterwards — the row (and its address) is still there, so binding alone does not refuse it.
+  it("PR 3: a login link minted before a staff account is deactivated signs nobody in", async () => {
+    const X = E("coach-deact");
+    const c = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: X, name: "secA Coach Deact", role: "coach", passwordHash: "synthetic-not-a-hash" } })).id);
+    expect((await requestLink(post("/api/magic-link/request", { email: X, tenantSlug: ids.slug }))).status).toBe(200);
+    const token = linkToken(lastMail("magic_link", X).link);
+    const del = await staffDelete(new Request(`${ORIGIN}/api/staff/${c}`, { method: "DELETE", headers: { origin: ORIGIN, host: "localhost:3847" } }), { params: Promise.resolve({ id: c }) });
+    expect(del.status).toBe(200);
+    const after = await verify(token);
+    expect(after.cookie, "no session for a deactivated account").toBeNull();
+    expect(after.location).toContain("/login");
+  }, 120_000);
+
+  // Security review L3: a DEACTIVATED staff account's address must not fall through to a member row that shares it,
+  // at any door (link request, link verify, reset request, reset consume) — staff precedence, as auth.ts.
+  it("PR 3 / L3: a deactivated staff address falls through to no member at the link and reset doors", async () => {
+    const Z = E("shared-deact");
+    const c = await withRlsBypass(async (tx) => (await tx.user.create({ data: { tenantId: ids.tenant, email: Z, name: "secA Coach Shared", role: "coach", passwordHash: "synthetic-not-a-hash" } })).id);
+    expect((await requestLink(post("/api/magic-link/request", { email: Z, tenantSlug: ids.slug }))).status).toBe(200);
+    const linkBefore = linkToken(lastMail("magic_link", Z).link);
+    const del = await staffDelete(new Request(`${ORIGIN}/api/staff/${c}`, { method: "DELETE", headers: { origin: ORIGIN, host: "localhost:3847" } }), { params: Promise.resolve({ id: c }) });
+    expect(del.status).toBe(200);
+    // A member row at the same address (the database allows it; the routes never create one).
+    const m = await mkMember(Z, "secA Member Shared", "synthetic-not-a-hash");
+    const sent = () => h.mail.filter((x) => x.to === Z).length;
+    const before = sent();
+    expect((await requestLink(post("/api/magic-link/request", { email: Z, tenantSlug: ids.slug }))).status).toBe(200);
+    await forgotPassword(post("/api/auth/forgot-password", { email: Z, tenantSlug: ids.slug }));
+    expect(sent(), "no link or reset code is sent for a deactivated staff address").toBe(before);
+    const after = await verify(linkBefore);
+    expect(after.cookie, "the old link signs in neither the coach nor the member").toBeNull();
+    const memberRow = await member(m);
+    expect(memberRow?.sessionVersion).toBe(0);
+  }, 120_000);
+
+  it("PR 3: a login link minted before a member is archived signs nobody in", async () => {
+    const Y = E("member-arch");
+    const m = await mkMember(Y, "secA Member Arch", "synthetic-not-a-hash");
+    expect((await requestLink(post("/api/magic-link/request", { email: Y, tenantSlug: ids.slug }))).status).toBe(200);
+    const token = linkToken(lastMail("magic_link", Y).link);
+    const out = await withRlsBypass((tx) => archiveMember(tx, { id: m, tenantId: ids.tenant }, { userId: ids.owner, at: new Date() }));
+    expect(out.kind).toBe("ok");
+    const after = await verify(token);
+    expect(after.cookie, "no session for an archived member").toBeNull();
+    expect(after.location).toContain("/login");
   }, 120_000);
 
   it("SEC-003 reset code: a member is deleted and a different person gets the address — the old code resets nobody", async () => {

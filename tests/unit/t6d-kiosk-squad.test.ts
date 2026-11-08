@@ -106,7 +106,7 @@ describe("GET /api/kiosk/[token]/classes — the squad badge", () => {
   it("acceptance 4: asks for a COUNT of the roster, never the rows", async () => {
     await classesGET(new Request("https://x/api/kiosk/t/classes"), { params });
     const select = m.instanceFindMany.mock.calls[0][0].include.class.select;
-    expect(select._count).toEqual({ select: { rosterMembers: true } });
+    expect(select._count).toEqual({ select: { rosterMembers: { where: { member: { archivedAt: null } } } } }); // PR 3: archived places count for nothing
     expect(select.rosterMembers).toBeUndefined();
   });
 
@@ -145,7 +145,7 @@ describe("GET /api/kiosk/[token]/members — a squad class lists only its roster
     m.rosterFindMany.mockResolvedValue([{ memberId: "mem_on" }]);
     await search("q=al&classInstanceId=inst_squad");
     expect(m.instanceFindFirst.mock.calls[0][0].where).toEqual({ id: "inst_squad", class: { tenantId: TENANT } });
-    expect(m.rosterFindMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT, classId: "class_squad" });
+    expect(m.rosterFindMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT, classId: "class_squad", member: { archivedAt: null } }); // PR 3
   });
 
   it("a squad class restricts the search to rostered members or guardians of a rostered child", async () => {

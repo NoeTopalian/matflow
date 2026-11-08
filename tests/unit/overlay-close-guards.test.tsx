@@ -72,7 +72,7 @@ describe("RemoveMemberModal close guard", () => {
 
     // Let the probe settle so the confirm phase renders.
     await act(async () => {});
-    const confirm = screen.getByRole("button", { name: /remove permanently/i });
+    const confirm = screen.getByRole("button", { name: /archive member/i });
 
     await act(async () => {
       fireEvent.click(confirm);
@@ -100,7 +100,7 @@ describe("RemoveMemberModal close guard", () => {
     await act(async () => {});
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /remove permanently/i }));
+      fireEvent.click(screen.getByRole("button", { name: /archive member/i }));
     });
 
     // A 200 means the member IS gone, so this is the success path — the modal
@@ -116,7 +116,7 @@ describe("RemoveMemberModal close guard", () => {
     await act(async () => {});
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /remove permanently/i }));
+      fireEvent.click(screen.getByRole("button", { name: /archive member/i }));
     });
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -134,7 +134,7 @@ describe("RemoveMemberModal close guard", () => {
     expect(screen.getByText(/couldn't check for linked kids/i)).toBeTruthy();
     // The destructive action is withheld — we never learned whether this
     // member has kids, so ?confirm=1 would be a blind request.
-    expect(screen.queryByRole("button", { name: /remove permanently/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /archive member/i })).toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
   });

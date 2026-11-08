@@ -28,7 +28,8 @@ export async function GET() {
   // a future schema change that would put non-staff users in the same table.
   const staff = await withTenantContext(tenantId, (tx) =>
     tx.user.findMany({
-      where: { tenantId, role: { in: [...STAFF_ROLES] } },
+      // PR 3: a deactivated account takes no new tasks or sign-up credit.
+      where: { tenantId, role: { in: [...STAFF_ROLES] }, deactivatedAt: null },
       select: { id: true, name: true, role: true },
       orderBy: [{ role: "asc" }, { name: "asc" }],
     }),

@@ -69,11 +69,12 @@ export function MemberSearchPicker({
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/members?search=${encodeURIComponent(term)}&take=${MAX_RESULTS}`, { signal: controller.signal });
+        // includeArchived: the Activity log is history, and archived members are in it (PR 3).
+        const res = await fetch(`/api/members?search=${encodeURIComponent(term)}&take=${MAX_RESULTS}&includeArchived=1`, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { members?: Option[] };
         if (controller.signal.aborted) return;
-        setState({ kind: "results", options: (data.members ?? []).slice(0, MAX_RESULTS).map((m) => ({ id: m.id, name: m.name, email: m.email, status: m.status })) });
+        setState({ kind: "results", options: (data.members ?? []).slice(0, MAX_RESULTS).map((m) => ({ id: m.id, name: (m as { archivedAt?: string | null }).archivedAt ? `${m.name} (archived)` : m.name, email: m.email, status: m.status })) });
         setActive(0);
       } catch {
         // A failed search is said to be one — never shown as "no member matches".

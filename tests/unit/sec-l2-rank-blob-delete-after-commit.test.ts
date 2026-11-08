@@ -11,6 +11,8 @@
  * stay in storage, still reachable by an erasure. These tests now pin that.
  *
  * No database: withTenantContext is replaced by a fake that records whether a call happens inside a transaction.
+ * The archived-member check (PR 3, lib/archived-member-guard) runs for real against the same fake; transactions are
+ * found by what they do, never by their position.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -20,6 +22,7 @@ const h = vi.hoisted(() => ({
   events: [] as string[],
   delImpl: null as null | (() => Promise<void>),
   oldPhotos: [] as Array<{ id: string; url: string }>,
+  archivedAt: null as Date | null,
 }));
 
 vi.mock("next/server", () => ({
@@ -41,7 +44,16 @@ vi.mock("@vercel/blob", () => ({
 
 const rankSystem = { id: "rank-blue", name: "Blue", discipline: "BJJ", tenantId: "tenant-L2" };
 const tx = {
-  member: { findFirst: async () => ({ id: "member-1" }) },
+  member: {
+    // The archived-member check selects only archivedAt; the route's own read gets the member.
+    findFirst: async (args?: { select?: Record<string, unknown> }) => {
+      if (args?.select && Object.keys(args.select).length === 1 && args.select.archivedAt === true) {
+        h.events.push("archive-check");
+        return { archivedAt: h.archivedAt };
+      }
+      return { id: "member-1" };
+    },
+  },
   rankSystem: { findFirst: async () => rankSystem },
   memberRank: {
     findFirst: async () => ({ id: "mr-1", rankSystemId: "rank-white", stripes: 2, rankSystem }),
@@ -97,12 +109,25 @@ function req(body: unknown): Request {
 }
 const promote = () => POST(req({ rankSystemId: "rank-blue", stripes: 0, photoUrl: NEW_PHOTO }), { params: Promise.resolve({ id: "member-1" }) });
 
+/** The transaction that did `marker` (by its events, not its number): its begin and commit indexes. */
+function txThatDid(marker: string): { begin: number; commit: number } {
+  const at = h.events.indexOf(marker);
+  expect(at, `no ${marker} event`).toBeGreaterThan(-1);
+  for (let n = 1; n <= h.txCount; n++) {
+    const begin = h.events.indexOf(`tx${n}-begin`);
+    const end = h.events.findIndex((e) => e === `tx${n}-commit` || e === `tx${n}-rollback`);
+    if (begin < at && at < end) return { begin, commit: h.events.indexOf(`tx${n}-commit`) };
+  }
+  throw new Error(`${marker} happened outside every transaction`);
+}
+
 let logs: string[] = [];
 beforeEach(() => {
   h.inTx = 0;
   h.txCount = 0;
   h.events = [];
   h.delImpl = null;
+  h.archivedAt = null;
   h.oldPhotos = [
     { id: "ph-a", url: BLOB_A },
     { id: "ph-b", url: BLOB_B },
@@ -125,6 +150,9 @@ describe("replacing a promotion photo keeps the old files (product rule, Noe, 6 
     expect(h.events).not.toContain("rows-deleted");
     expect(h.events).toContain("rows-marked-replaced");
     expect(h.events).toContain("photo-created");
+    // The archived-member check ran for real, before any write.
+    expect(h.events.indexOf("archive-check")).toBeGreaterThan(-1);
+    expect(h.events.indexOf("archive-check")).toBeLessThan(h.events.indexOf("rows-marked-replaced"));
   });
 
   it("no transaction is left open and none rolls back", async () => {
@@ -132,8 +160,24 @@ describe("replacing a promotion photo keeps the old files (product rule, Noe, 6 
     expect(res.status).toBe(200);
     expect(h.inTx).toBe(0);
     expect(h.events.filter((e) => e.endsWith("-rollback"))).toEqual([]);
-    // tx1 rank, tx2 old photo rows, tx3 new photo.
-    expect(h.txCount).toBe(3);
+    // Archive check, rank, old photo rows, new photo: four transactions, each committed, in that order.
+    expect(h.txCount).toBe(4);
+    const archiveTx = txThatDid("archive-check");
+    const rowsTx = txThatDid("rows-marked-replaced");
+    const photoTx = txThatDid("photo-created");
+    expect(archiveTx.commit).toBeLessThan(rowsTx.begin);
+    expect(rowsTx.commit).toBeLessThan(photoTx.begin);
+  });
+
+  it("PR 3: an ARCHIVED member is refused 409 before any write, and no blob is touched", async () => {
+    h.archivedAt = new Date();
+    const res = await promote();
+    expect(res.status).toBe(409);
+    expect(h.events).toContain("archive-check");
+    expect(h.events).not.toContain("rows-marked-replaced");
+    expect(h.events).not.toContain("rows-deleted");
+    expect(h.events).not.toContain("photo-created");
+    expect(vi.mocked(del)).not.toHaveBeenCalled();
   });
 
   it("inline-only old photos: still no delete call; rows marked replaced, not removed", async () => {

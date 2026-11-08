@@ -35,7 +35,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string; 
         SELECT "id" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (cls.length === 0) return { count: 0, bookingKept: false };
-      const rosterSize = await tx.classRoster.count({ where: { classId: id, tenantId } });
+      const rosterSize = await tx.classRoster.count({ where: { classId: id, tenantId, member: { archivedAt: null } } });
       const result = await tx.classRoster.deleteMany({
         where: { classId: id, memberId, tenantId },
       });

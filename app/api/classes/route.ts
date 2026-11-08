@@ -137,7 +137,7 @@ export async function POST(req: Request) {
     const tenantId = session.user.tenantId;
     const restriction = await withTenantContext(tenantId, async (tx) => {
       const rosterIds = roster && roster.length > 0
-        ? (await tx.member.findMany({ where: { id: { in: roster.map((r) => r.memberId) }, tenantId }, select: { id: true } })).map((m) => m.id)
+        ? (await tx.member.findMany({ where: { id: { in: roster.map((r) => r.memberId) }, tenantId, archivedAt: null }, select: { id: true } })).map((m) => m.id)
         : [];
       const orders = await readRankOrders(tx, tenantId, [classData.requiredRankId, classData.maxRankId]);
       const after = rulesAfterEdit(OPEN_RULES, {
@@ -238,7 +238,7 @@ export async function POST(req: Request) {
       // simply absent, exactly as the roster POST route refuses one.
       if (roster && roster.length > 0) {
         const ours = await tx.member.findMany({
-          where: { id: { in: roster.map((r) => r.memberId) }, tenantId: session.user.tenantId },
+          where: { id: { in: roster.map((r) => r.memberId) }, tenantId: session.user.tenantId, archivedAt: null },
           select: { id: true, name: true },
         });
         // Reported back in the timetable page's shape, so the new class

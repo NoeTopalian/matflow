@@ -514,8 +514,8 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
       const { classId, memberId } = meta(row) as { classId: string; memberId: string };
       const tenantId = row.tenantId ?? "";
       const cls = await tx.class.findFirst({ where: { id: classId, tenantId }, select: { id: true, requiredRankId: true, maxRankId: true } });
-      const mem = await tx.member.findFirst({ where: { id: memberId, tenantId }, select: { id: true } });
-      if (!cls || !mem) throw new UndoStale("The class or member no longer exists.");
+      const mem = await tx.member.findFirst({ where: { id: memberId, tenantId, archivedAt: null }, select: { id: true } });
+      if (!cls || !mem) throw new UndoStale("The class or member no longer exists, or the member is archived.");
       if (cls.requiredRankId || cls.maxRankId) throw new UndoStale(REASON.rankGated);
       const exists = await tx.classRoster.findFirst({ where: { classId, memberId } });
       if (exists) throw new UndoStale("They are already back on that roster.");
@@ -605,8 +605,8 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     decide: (row) => (stripeTouched(row) ? { ok: false, reason: REASON.stripe } : { ok: true }),
     async apply(tx, row) {
       const holdUntil = meta(row).holdUntil as string | null | undefined;
-      const current = await tx.member.findFirst({ where: { id: row.entityId, tenantId: row.tenantId ?? undefined }, select: { paymentStatus: true } });
-      if (!current) throw new UndoStale("This member no longer exists.");
+      const current = await tx.member.findFirst({ where: { id: row.entityId, tenantId: row.tenantId ?? undefined, archivedAt: null }, select: { paymentStatus: true } });
+      if (!current) throw new UndoStale("This member no longer exists or is archived.");
       if (current.paymentStatus === "paused") throw new UndoStale("They are already on hold.");
       await tx.member.update({
         where: { id: row.entityId },

@@ -58,7 +58,7 @@ export async function POST(req: Request) {
 
   const data = await withTenantContext(tenantId, async (tx) => {
     const member = await tx.member.findFirst({
-      where: { id: memberId, tenantId },
+      where: { id: memberId, tenantId, archivedAt: null },
       select: { id: true, name: true, email: true, billedBy: true, tenant: { select: { name: true } } },
     });
     if (!member) return null;

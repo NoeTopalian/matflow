@@ -50,7 +50,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id: tenantId } = await params;
   const users = await withRlsBypass((tx) =>
     tx.user.findMany({
-      where: { tenantId, role: { not: "owner" } },
+      where: { tenantId, role: { not: "owner" }, deactivatedAt: null },
       select: { id: true, email: true, name: true, role: true, totpEnabled: true },
       orderBy: { createdAt: "asc" },
     }),
@@ -123,7 +123,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         orderBy: { createdAt: "asc" },
       });
       const target = await tx.user.findFirst({
-        where: { id: parsed.data.targetUserId, tenantId },
+        where: { id: parsed.data.targetUserId, tenantId, deactivatedAt: null },
         select: { id: true, email: true, name: true, role: true },
       });
       // Thrown, not returned: a refusal here must roll back the grant's spend.

@@ -28,8 +28,10 @@ import {
   CURRENT_MEMBER,
   GUARDIAN_ACCOUNT,
   LEFT_MEMBER,
+  LEFT_MEMBER_EVER,
   ON_HOLD,
   TRAINING_MEMBER,
+  TRAINING_MEMBER_EVER,
   isActiveMember,
   isCanTrainMember,
   isChaseablePayer,
@@ -222,8 +224,9 @@ export function memberListCountWheres(tenantId: string, now: Date, month: Month)
     guardians: { tenantId, ...GUARDIAN_ACCOUNT, status: { not: "cancelled" } },
     taster: { tenantId, ...TRAINING_MEMBER, status: "taster" },
     kids: { tenantId, ...CURRENT_MEMBER, parentMemberId: { not: null } },
-    newThisMonth: { tenantId, ...TRAINING_MEMBER, joinedAt: monthRange(month) },
-    churnedThisMonth: { tenantId, ...LEFT_MEMBER, cancelledAt: monthRange(month) },
+    // History, as Reports counts it (PR 3): a member archived since still joined or left this month.
+    newThisMonth: { tenantId, ...TRAINING_MEMBER_EVER, joinedAt: monthRange(month) },
+    churnedThisMonth: { tenantId, ...LEFT_MEMBER_EVER, cancelledAt: monthRange(month) },
   };
 }
 

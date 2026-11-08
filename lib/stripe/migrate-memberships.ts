@@ -199,7 +199,8 @@ async function loadTiersAndMembers(tenantId: string): Promise<{ tiers: TierRow[]
     });
     const members = await tx.member.findMany({
       // Cancelled members are not migrated: there is nothing to keep billing.
-      where: { tenantId, status: { not: "cancelled" } },
+      // Archived (removed) members are not migrated either (PR 3): nobody to bill.
+      where: { tenantId, status: { not: "cancelled" }, archivedAt: null },
       select: {
         id: true, name: true, email: true, status: true, paymentStatus: true, billedBy: true,
         stripeCustomerId: true, stripeSubscriptionId: true, membershipTierId: true, nextDueAt: true,
