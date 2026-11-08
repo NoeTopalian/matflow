@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { requireStaff } from "@/lib/authz";
+import { NOT_ARCHIVED } from "@/lib/member-population";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import MembersList, { MemberRow, type MonthWindowProp } from "@/components/dashboard/MembersList";
 import { clubMonthWindow, clubMonthWindowForKey } from "@/lib/club-month";
@@ -34,7 +36,8 @@ const MEMBERS_SSR_TAKE = 1500;
 async function getMembers(tenantId: string, now: Date, timeZone: string): Promise<{ rows: MemberRow[]; truncated: boolean }> {
   const rows = await withTenantContext(tenantId, (tx) =>
     tx.member.findMany({
-      where: { tenantId },
+      // PR 3: archived members are listed only under Members → Archived.
+      where: { tenantId, ...NOT_ARCHIVED },
       // Explicit select to skip the wide columns (passwordHash, sessionVersion,
       // totpSecret, medicalConditions, etc.) that this page never renders.
       // Cuts the row payload from Postgres -> Node by ~60-80% on this hot path.
@@ -215,7 +218,36 @@ export default async function MembersPage({ searchParams }: Props) {
   for (const bucket of Object.keys(movers) as MovementBucket[]) {
     for (const id of movers[bucket]) movedBy.set(id, [...(movedBy.get(id) ?? []), bucket]);
   }
-  const listed = members.map((m) => {
+  // PR 3: a member archived after being counted in this month's movement (a
+  // join, then removed) is still in the figure, as Reports counts them. Their
+  // rows are added for the drill-throughs alone, tagged Archived and linked to
+  // the profile, so a count and its list always agree.
+  const listedIds = new Set(members.map((m) => m.id));
+  // The same for the two debt chips: an archived member who still owes is in
+  // their counts (lib/overdue otherOwingCandidateWhere), so they are listed too.
+  const archivedMoverIds = [...new Set([...movedBy.keys(), ...otherOwingIds, ...toReconcileIds])].filter((id) => !listedIds.has(id));
+  const archivedMovers: MemberRow[] = archivedMoverIds.length === 0
+    ? []
+    : (await withTenantContext(session!.user.tenantId, (tx) =>
+        tx.member.findMany({
+          where: { tenantId: session!.user.tenantId, id: { in: archivedMoverIds }, archivedAt: { not: null } },
+          select: { id: true, name: true, email: true, status: true, paymentStatus: true, accountType: true, parentMemberId: true, joinedAt: true, cancelledAt: true, archivedAt: true },
+        }),
+      )).map((m) => ({
+        id: m.id,
+        name: m.name,
+        email: m.email,
+        status: m.status,
+        paymentStatus: m.paymentStatus,
+        accountType: m.accountType,
+        parentMemberId: m.parentMemberId,
+        joinedAt: m.joinedAt.toISOString(),
+        cancelledAt: m.cancelledAt ? m.cancelledAt.toISOString() : null,
+        archivedAt: m.archivedAt ? m.archivedAt.toISOString() : null,
+        moved: movedBy.get(m.id),
+        ...(otherOwingIds.has(m.id) ? { otherOwing: true } : toReconcileIds.has(m.id) ? { failedToReconcile: true } : {}),
+      }));
+  const listed = [...members.map((m) => {
     const flagged = otherOwingIds.has(m.id)
       ? { ...m, otherOwing: true }
       : toReconcileIds.has(m.id)
@@ -223,7 +255,7 @@ export default async function MembersPage({ searchParams }: Props) {
         : m;
     const moved = movedBy.get(m.id);
     return moved ? { ...flagged, moved } : flagged;
-  });
+  }), ...archivedMovers];
 
   // Guardian links an import suggested and nobody has confirmed — counted
   // across the whole club for the header badge. Owner and manager only: the
@@ -235,9 +267,14 @@ export default async function MembersPage({ searchParams }: Props) {
   const guardianReviewCount =
     role === "owner" || role === "manager"
       ? await withTenantContext(tenantId, (tx) =>
-          tx.member.count({ where: { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null } }),
+          tx.member.count({ where: { tenantId, parentMemberId: { not: null }, guardianConfirmedAt: null, ...NOT_ARCHIVED } }),
         )
       : null;
+  // The way to an archived member's profile, where Restore lives (owner and manager).
+  const archivedCount =
+    role === "owner" || role === "manager"
+      ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, archivedAt: { not: null } } }))
+      : 0;
 
   return (
     <>
@@ -266,6 +303,14 @@ export default async function MembersPage({ searchParams }: Props) {
         moversBasis={{ basis: moversBasis, caption: moversCaption }}
         supportScope={(session!.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
       />
+      {archivedCount > 0 && (
+        <p className="mt-4 text-[13px] text-tx-3">
+          <Link href="/dashboard/members/archived" className="font-medium text-tx-2 underline underline-offset-2">
+            {archivedCount.toLocaleString("en-GB")} archived {archivedCount === 1 ? "member" : "members"}
+          </Link>{" "}
+          · removed members are kept and can be restored.
+        </p>
+      )}
     </>
   );
 }

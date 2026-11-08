@@ -28,7 +28,30 @@
  */
 import type { Prisma } from "@prisma/client";
 
-export const TRAINING_MEMBER = { accountType: { not: "parent" } } as const;
+/**
+ * ARCHIVED MEMBERS (6 Nov 2026, PR 3; Noe: "Save all past user data").
+ * "Remove member" stamps `archivedAt` and deletes nothing. An archived member
+ * is out of every list, count, door, kiosk, search and payer total, and every
+ * record they made stays. This is the ONE condition that says so: every
+ * population below carries it, and every other member list, count, door and
+ * sign-in predicate spreads it (or `archivedAt: null`, the same fragment).
+ *
+ * The one deliberate exception is HISTORY. Reports' movement replay (joins,
+ * leavers, churn, headcount over time) and the net-new chart's past
+ * cancellations count everyone who was ever a training member, archived or
+ * not, so archiving someone never rewrites a past month: those callers use
+ * the `_EVER` populations below. Past attendance is counted from attendance
+ * rows, which archiving never touches.
+ */
+export const NOT_ARCHIVED = { archivedAt: null } as const satisfies Prisma.MemberWhereInput;
+
+/** History only: every training member who ever was, archived included. */
+export const TRAINING_MEMBER_EVER = { accountType: { not: "parent" } } as const satisfies Prisma.MemberWhereInput;
+
+/** History only: training members who have left, archived included. */
+export const LEFT_MEMBER_EVER = { ...TRAINING_MEMBER_EVER, status: "cancelled" } as const satisfies Prisma.MemberWhereInput;
+
+export const TRAINING_MEMBER = { ...NOT_ARCHIVED, accountType: { not: "parent" } } as const;
 
 /** The headline population: active training members, holds included. */
 export const ACTIVE_MEMBER = { ...TRAINING_MEMBER, status: "active" } as const satisfies Prisma.MemberWhereInput;
@@ -46,7 +69,7 @@ export const CAN_TRAIN_MEMBER = {
 export const LEFT_MEMBER = { ...TRAINING_MEMBER, status: "cancelled" } as const satisfies Prisma.MemberWhereInput;
 
 /** Parent/guardian accounts — held for a child, never a people count. */
-export const GUARDIAN_ACCOUNT = { accountType: "parent" } as const satisfies Prisma.MemberWhereInput;
+export const GUARDIAN_ACCOUNT = { ...NOT_ARCHIVED, accountType: "parent" } as const satisfies Prisma.MemberWhereInput;
 
 /**
  * On hold: the billing axis only. Combine it with a status population
@@ -71,10 +94,10 @@ export const ON_HOLD = { paymentStatus: "paused" } as const satisfies Prisma.Mem
  * Kids' own plans are billed on the kid's row (start-for-kid creates the
  * kid's Stripe customer), so a family is never counted twice.
  */
-export const CHASEABLE_PAYER = { status: { in: ["active", "taster"] } } satisfies Prisma.MemberWhereInput;
+export const CHASEABLE_PAYER = { ...NOT_ARCHIVED, status: { in: ["active", "taster"] } } satisfies Prisma.MemberWhereInput;
 
-export function isChaseablePayer(m: Pick<PopulationRow, "status">): boolean {
-  return m.status === "active" || m.status === "taster";
+export function isChaseablePayer(m: Pick<PopulationRow, "status" | "archivedAt">): boolean {
+  return !isArchived(m) && (m.status === "active" || m.status === "taster");
 }
 
 export const PAYER_COPY = {
@@ -144,12 +167,18 @@ export type PopulationRow = {
   status: string;
   accountType?: string | null;
   paymentStatus?: string | null;
+  /** Absent reads as not archived (server lists already leave archived rows out). */
+  archivedAt?: Date | string | null;
 };
+
+export function isArchived(m: Pick<PopulationRow, "archivedAt">): boolean {
+  return m.archivedAt != null;
+}
 
 // A missing accountType reads as the column default ("adult"), as the
 // database would store it, so a row without the field is a training member.
-export function isTrainingMember(m: Pick<PopulationRow, "accountType">): boolean {
-  return m.accountType !== "parent";
+export function isTrainingMember(m: Pick<PopulationRow, "accountType" | "archivedAt">): boolean {
+  return !isArchived(m) && m.accountType !== "parent";
 }
 export function isActiveMember(m: PopulationRow): boolean {
   return isTrainingMember(m) && m.status === "active";
@@ -163,8 +192,8 @@ export function isCanTrainMember(m: PopulationRow): boolean {
 export function isLeftMember(m: PopulationRow): boolean {
   return isTrainingMember(m) && m.status === "cancelled";
 }
-export function isGuardianAccount(m: Pick<PopulationRow, "accountType">): boolean {
-  return m.accountType === "parent";
+export function isGuardianAccount(m: Pick<PopulationRow, "accountType" | "archivedAt">): boolean {
+  return !isArchived(m) && m.accountType === "parent";
 }
 export function isOnHold(m: Pick<PopulationRow, "paymentStatus">): boolean {
   return m.paymentStatus === "paused";

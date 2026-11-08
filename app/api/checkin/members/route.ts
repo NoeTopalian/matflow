@@ -47,7 +47,7 @@ export async function GET(req: Request) {
     if (!instance) return null;
     const [members, attendances] = await Promise.all([
       tx.member.findMany({
-        where: { tenantId: session.user.tenantId, status: { in: statuses } },
+        where: { tenantId: session.user.tenantId, status: { in: statuses }, archivedAt: null },
         select: {
           id: true, name: true, status: true, membershipType: true, waiverAccepted: true, paymentStatus: true, holdUntil: true, accountType: true,
           membershipTierId: true, membershipTier: { select: { name: true } },

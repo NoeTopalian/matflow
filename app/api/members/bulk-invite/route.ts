@@ -91,6 +91,7 @@ export async function POST(req: Request) {
         ...(parsed.data.memberIds ? { id: { in: parsed.data.memberIds } } : {}),
         accountType: { not: "kids" },
         passwordHash: null,
+        archivedAt: null,
         ...NOT_SYNTHESISED_EMAIL,
       },
       select: { id: true, name: true, email: true },

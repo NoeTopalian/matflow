@@ -7,7 +7,7 @@ import {
   Edit2, X, Loader2, Check, ExternalLink,
   Crown, User, ChevronRight, UploadCloud, ShoppingBag,
   DollarSign, TrendingUp, Package, LayoutDashboard, Bell,
-  Home, Calendar, FileText, Cable,
+  Home, Calendar, FileText, Cable, FileLock2,
 } from "lucide-react";
 import IntegrationsTab from "@/components/dashboard/IntegrationsTab";
 import PaymentsTable from "@/components/dashboard/PaymentsTable";
@@ -31,6 +31,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/ui/ErrorState";
+import DataRequests from "@/components/dashboard/DataRequests";
+import { formatDate } from "@/lib/date";
 import type { TenantSettings, StaffMember, SettingsPopulationCounts } from "@/app/dashboard/settings/page";
 import { POPULATION_COPY } from "@/lib/member-population";
 import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
@@ -55,9 +57,9 @@ interface Props {
   supportScope?: "view" | "edit" | null;
 }
 
-type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "import" | "integrations";
+type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "import" | "integrations" | "requests";
 
-const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver", "import", "integrations"];
+const TAB_IDS: Tab[] = ["overview", "branding", "revenue", "store", "staff", "account", "waiver", "import", "integrations", "requests"];
 
 function isTab(value: string | null): value is Tab {
   return !!value && TAB_IDS.includes(value as Tab);
@@ -670,7 +672,12 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const pathname = usePathname();
   // N-4: in a support edit session a ?tab= deep link must not open a tab the
   // rail does not offer (their saves are refused).
-  const tabOffered = useCallback((t: Tab) => !supportEdit || t === "overview" || t === "branding", [supportEdit]);
+  const tabOffered = useCallback(
+    (t: Tab) =>
+      // Data requests (PR 3): the owner's own, never offered in any support session.
+      (t !== "requests" || (role === "owner" && supportScope === null)) && (!supportEdit || t === "overview" || t === "branding"),
+    [supportEdit, role, supportScope],
+  );
   const [tab, setTabState] = useState<Tab>(() => {
     const requested = searchParams.get("tab");
     return isTab(requested) && tabOffered(requested) ? requested : "overview";
@@ -687,6 +694,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
   const [staff, setStaff] = useState<StaffMember[]>(initialStaff);
+  // PR 3: a removed account is deactivated; it is listed apart, with Reactivate.
+  const activeStaff = staff.filter((s) => !s.deactivatedAt);
+  const deactivatedStaff = staff.filter((s) => !!s.deactivatedAt);
+  const [reactivating, setReactivating] = useState<string | null>(null);
 
   // Branding state
   const [gymName, setGymName]           = useState(settings?.name ?? "");
@@ -950,8 +961,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     // the routes behind it are requireApiOwner.
     { id: "import",    label: "Import",    icon: UploadCloud },
     { id: "integrations", label: "Integrations", icon: Cable },
+    // PR 3 (6 Nov 2026; Noe: "only the owner can delete specific user data
+    // under request and this should appear under settings of owner").
+    { id: "requests", label: "Data requests", icon: FileLock2 },
   ];
-  const TABS = supportEdit ? ALL_TABS.filter((t) => t.id === "overview" || t.id === "branding") : ALL_TABS;
+  const TABS = ALL_TABS.filter((t) => tabOffered(t.id));
 
   const inputCls = "w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none placeholder:text-[var(--tx-3)]";
   const inputStyle = { background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" } as const;
@@ -1305,18 +1319,34 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     const member = staff.find((s) => s.id === id);
     const confirmed = await ask({
       title: member ? `Remove ${member.name}?` : "Remove this staff member?",
-      body: "They will lose access to this gym's dashboard immediately.",
-      confirmLabel: "Remove staff member",
+      body: "They will lose access to this gym's dashboard immediately. Their account is deactivated, not deleted: everything they did keeps their name, and you can reactivate them later.",
+      confirmLabel: "Deactivate account",
       destructive: true,
     });
     if (!confirmed) return;
     try {
       const res = await fetch(`/api/staff/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json()).error);
-      setStaff((prev) => prev.filter((s) => s.id !== id));
-      toast("Staff member removed", "success");
+      const at = new Date().toISOString();
+      setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, deactivatedAt: at } : s)));
+      toast("Staff account deactivated", "success");
     } catch (e: unknown) {
       toast((e as Error).message || "Could not remove staff", "error");
+    }
+  }
+
+  async function handleStaffReactivate(id: string) {
+    if (reactivating) return;
+    setReactivating(id);
+    try {
+      const res = await fetch(`/api/staff/${id}/reactivate`, { method: "POST" });
+      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error);
+      setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, deactivatedAt: null } : s)));
+      toast("Staff account reactivated", "success");
+    } catch (e: unknown) {
+      toast((e as Error).message || "Couldn't reactivate this account. Try again.", "error");
+    } finally {
+      setReactivating(null);
     }
   }
 
@@ -2407,7 +2437,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       {tab === "staff" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-tx-2 text-sm">{staff.length} team member{staff.length !== 1 ? "s" : ""}</p>
+            <p className="text-tx-2 text-sm">{activeStaff.length} team member{activeStaff.length !== 1 ? "s" : ""}</p>
             {isOwner && (
               <button onClick={openAddStaff} className="flex items-center gap-2 px-4 py-2 rounded-xl text-[var(--tx-on-accent)] text-sm font-semibold" style={{ background: primaryColor }}>
                 <Plus className="w-4 h-4" /> Add Staff
@@ -2415,11 +2445,30 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             )}
           </div>
           <div className="space-y-2">
-            {staff.map((m) => (
+            {activeStaff.map((m) => (
               <StaffCard key={m.id} member={m} canEdit={isOwner} onEdit={openEditStaff} onDelete={handleStaffDelete} onTransfer={isOwner ? (t) => { setTransferPassword(""); setTransferTarget(t); } : undefined} onUnlocked={isOwner ? handleStaffUnlocked : undefined} onTotpReset={isOwner ? handleStaffTotpReset : undefined} isSelf={m.id === currentUserId} />
             ))}
           </div>
-          {staff.length === 0 && <div className="text-center py-12"><p className="text-tx-3 text-sm">No staff members yet</p></div>}
+          {activeStaff.length === 0 && <div className="text-center py-12"><p className="text-tx-3 text-sm">No staff members yet</p></div>}
+          {isOwner && deactivatedStaff.length > 0 && (
+            <section aria-label="Deactivated accounts" className="space-y-2 pt-2">
+              <h3 className="text-[13px] font-semibold text-tx-2">Deactivated accounts</h3>
+              <p className="text-xs text-tx-3">They can&rsquo;t sign in. Everything they did keeps their name.</p>
+              {deactivatedStaff.map((m) => (
+                <div key={m.id} className="flex items-center gap-3 rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-tx-1">{m.name}</p>
+                    <p className="truncate text-xs text-tx-3">
+                      {m.email} · deactivated {m.deactivatedAt ? formatDate(m.deactivatedAt) : ""}
+                    </p>
+                  </div>
+                  <Button variant="secondary" size="compact" loading={reactivating === m.id} disabled={reactivating !== null} onClick={() => handleStaffReactivate(m.id)} aria-label={`Reactivate ${m.name}`}>
+                    Reactivate
+                  </Button>
+                </div>
+              ))}
+            </section>
+          )}
           <ConfirmDialog
             open={transferTarget !== null}
             onClose={() => { if (!transferSaving) setTransferTarget(null); }}
@@ -3166,6 +3215,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         <ImportPanel primaryColor={primaryColor} />
       )}
       {tab === "import" && <ImportReconciliation />}
+
+      {tab === "requests" && isOwner && supportScope === null && <DataRequests initialMemberId={searchParams.get("member")} />}
 
       {/* ── Integrations ── */}
       {tab === "integrations" && (

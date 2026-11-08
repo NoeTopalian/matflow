@@ -15,18 +15,33 @@ vi.mock("@/lib/api-error", () => ({
   apiError: (message: string, status: number) => ({ status, json: async () => ({ ok: false, error: message }), headers: new Headers() }),
 }));
 
-const { logAuditMock, gateMock, memberFindFirst, memberUpdate, memberUpdateMany } = vi.hoisted(() => ({
+const { logAuditMock, gateMock, memberFindFirst, memberUpdate, memberUpdateMany, archiveGuardLookup } = vi.hoisted(() => ({
   logAuditMock: vi.fn(async () => {}),
   gateMock: vi.fn(),
   memberFindFirst: vi.fn(),
+  archiveGuardLookup: vi.fn(async (_args?: unknown) => ({ archivedAt: null as Date | null })),
   memberUpdate: vi.fn().mockResolvedValue({}),
   memberUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
 }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: gateMock }));
+/**
+ * PR 3: the route first asks lib/archived-member-guard whether the member is
+ * archived — a findFirst selecting only archivedAt. That lookup is answered
+ * here (a current member unless a case says otherwise), so the route's own
+ * queued lookups below stay in order. The guard itself runs for real.
+ */
+const isArchiveGuardLookup = (args: { select?: Record<string, unknown> } | undefined) =>
+  !!args?.select && Object.keys(args.select).length === 1 && args.select.archivedAt === true;
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_t: string, fn: (tx: unknown) => unknown) =>
-    Promise.resolve(fn(addLoginClaimSql({ member: { findFirst: memberFindFirst, update: memberUpdate, updateMany: memberUpdateMany } }))),
+    Promise.resolve(fn(addLoginClaimSql({
+      member: {
+        findFirst: (args?: { select?: Record<string, unknown> }) => (isArchiveGuardLookup(args) ? archiveGuardLookup(args) : memberFindFirst(args)),
+        update: memberUpdate,
+        updateMany: memberUpdateMany,
+      },
+    }))),
 }));
 
 const req = (body: unknown) =>
@@ -87,6 +102,18 @@ describe("guardian confirm / reject", () => {
       data: { parentMemberId: null, guardianConfirmedAt: null, guardianSuggestedBy: null },
     });
     expect(logAuditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "member.guardian.rejected" }));
+  });
+
+  it("PR 3: confirming or rejecting a guardian on an ARCHIVED child is refused 409 and writes nothing", async () => {
+    archiveGuardLookup.mockResolvedValueOnce({ archivedAt: new Date() }).mockResolvedValueOnce({ archivedAt: new Date() });
+    const { POST } = await import("@/app/api/members/[id]/guardian/route");
+    expect((await POST(req({ action: "confirm" }) as never, params)).status).toBe(409);
+    expect((await POST(req({ action: "reject" }) as never, params)).status).toBe(409);
+    expect(archiveGuardLookup).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "k1", tenantId: "t1" } }));
+    expect(memberFindFirst).not.toHaveBeenCalled();
+    expect(memberUpdate).not.toHaveBeenCalled();
+    expect(memberUpdateMany).not.toHaveBeenCalled();
+    expect(logAuditMock).not.toHaveBeenCalled();
   });
 
   it("a coach is refused; a child with no link is 404", async () => {

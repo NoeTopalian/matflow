@@ -49,7 +49,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: (_tenantId: string, fn: (tx: unknown) => unknown) => Promise.resolve(fn(fakeTx)),
 }));
 vi.mock("@/lib/stripe/subscriptions", () => ({ cancelSubscriptionAtPeriodEnd: cancelSubMock }));
-vi.mock("@/lib/member-delete", () => ({ deleteParentMemberWithKidsResolution: deleteHelperMock }));
+vi.mock("@/lib/member-delete", () => ({ archiveParentMemberWithKidsResolution: deleteHelperMock }));
 
 import { auth } from "@/auth";
 const mockAuth = vi.mocked(auth);
@@ -92,7 +92,7 @@ describe("DELETE /api/members/[id] — Stripe cancellation gate (P1-8)", () => {
 
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("Cannot delete");
+    expect(body.error).toContain("Cannot remove");
     expect(body.error).toContain("Sam Fighter");
     expect(body.error).toContain("card_declined");
     // Fail-closed: the cascade must never have run.

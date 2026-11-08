@@ -61,7 +61,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // every other door answers (lib/checkin.ts). Unticking stays possible.
       if (parsed.data.attended && (instance.sourceImportJobId || instance.class.sourceImportJobId)) return "no-instance" as const;
       const member = await tx.member.findFirst({
-        where: { id: parsed.data.memberId, tenantId },
+        // An archived member (PR 3) cannot be ticked in; unticking a past mistake stays possible.
+        where: { id: parsed.data.memberId, tenantId, ...(parsed.data.attended ? { archivedAt: null } : {}) },
         select: { id: true, name: true },
       });
       if (!member) return "no-member" as const;

@@ -153,7 +153,7 @@ async function computeLeaderboard(tenantId: string, timeZoneRaw: string | null):
         where: {
           tenantId,
           checkInTime: { gte: currentStart, lt: nextStart },
-          member: { leaderboardOptOut: false },
+          member: { leaderboardOptOut: false, archivedAt: null },
           checkInMethod: { not: "import" },
         },
         _count: { _all: true },
@@ -163,7 +163,7 @@ async function computeLeaderboard(tenantId: string, timeZoneRaw: string | null):
         where: {
           tenantId,
           checkInTime: { gte: priorStart, lt: currentStart },
-          member: { leaderboardOptOut: false },
+          member: { leaderboardOptOut: false, archivedAt: null },
           checkInMethod: { not: "import" },
         },
         _count: { _all: true },

@@ -58,6 +58,8 @@ export type StaffMember = {
   lockedUntil?: string | null;
   /** Whether they have enrolled an authenticator — the owner can reset it (1 Oct 2026). */
   totpEnabled?: boolean;
+  /** PR 3: set while the account is deactivated (Remove); listed apart with Reactivate. */
+  deactivatedAt?: string | null;
 };
 
 /**
@@ -80,7 +82,7 @@ async function getData(tenantId: string, userId: string) {
           _count: {
             select: {
               members: { where: { ...ACTIVE_MEMBER } },
-              users: true,
+              users: { where: { deactivatedAt: null } },
               // The timetable's classes, as Reports counts them (lib/class-live).
               classes: { where: liveClassWhere(tenantId) },
             },
@@ -89,7 +91,7 @@ async function getData(tenantId: string, userId: string) {
       }),
       tx.user.findMany({
         where: { tenantId },
-        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true },
+        select: { id: true, name: true, email: true, role: true, createdAt: true, lockedUntil: true, totpEnabled: true, deactivatedAt: true },
         orderBy: [{ role: "asc" }, { name: "asc" }],
       }),
       tx.member.groupBy({
@@ -177,6 +179,7 @@ export default async function Settings() {
     createdAt: s.createdAt.toISOString(),
     // Only a live lockout reaches the client; an expired one is not a state.
     lockedUntil: s.lockedUntil && s.lockedUntil > now ? s.lockedUntil.toISOString() : null,
+    deactivatedAt: s.deactivatedAt ? s.deactivatedAt.toISOString() : null,
   }));
 
   return (

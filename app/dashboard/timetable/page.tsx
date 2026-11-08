@@ -75,7 +75,7 @@ async function getClasses(tenantId: string, which: "live" | "inactive" = "live")
         // the PATCH route read those present-but-null keys as "set a rank gate"
         // and deleted the roster. Renaming a comp class converted it into an
         // open class. Both ends are fixed; this is the read end.
-        rosterMembers: { select: { memberId: true, member: { select: { name: true } } } },
+        rosterMembers: { where: { member: { archivedAt: null } }, select: { memberId: true, member: { select: { name: true } } } },
         allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
       },
       orderBy: { name: "asc" },
@@ -145,7 +145,8 @@ async function getRankSystems(tenantId: string) {
 async function getCoachUsers(tenantId: string): Promise<CoachUserOption[]> {
   return withTenantContext(tenantId, (tx) =>
     tx.user.findMany({
-      where: { tenantId, role: { in: ["owner", "manager", "coach", "admin"] } },
+      // PR 3: a deactivated account is offered as nobody's coach.
+      where: { tenantId, role: { in: ["owner", "manager", "coach", "admin"] }, deactivatedAt: null },
       select: { id: true, name: true, role: true },
       orderBy: [{ role: "asc" }, { name: "asc" }],
     }),

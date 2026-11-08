@@ -26,7 +26,7 @@ const ROOTS = ["app/member", "app/api/member", "app/api/waiver", "app/api/checki
 // Also allowed: reading the PARENT's own row (id: parentMemberId), a signed-waiver
 // audit keyed on who collected it, and the per-parent child-count cap (a count,
 // not a read of any child).
-const ALLOWED = [/createRequestId:\s*requestId/, /\bid:\s*parentMemberId\b/, /collectedBy:\s*parentMemberId/, /^where:\s*\{\s*parentMemberId,\s*tenantId\s*\}$/];
+const ALLOWED = [/createRequestId:\s*requestId/, /\bid:\s*parentMemberId\b/, /collectedBy:\s*parentMemberId/, /^where:\s*\{\s*parentMemberId,\s*tenantId(,\s*archivedAt:\s*null)?\s*\}$/]  // PR 3: the kid cap counts current children only;
 const allowed = (block: string) => ALLOWED.some((a) => a.test(block.replace(/\s+/g, " ")));
 
 describe("guardianship gate scan", () => {

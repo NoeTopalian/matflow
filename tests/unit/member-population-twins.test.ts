@@ -46,6 +46,7 @@ function matches(where: Record<string, unknown>, row: Row): boolean {
   return Object.entries(where).every(([field, cond]) => {
     const value = (row as Record<string, string>)[field];
     if (typeof cond === "string") return value === cond;
+    if (cond === null) return value == null; // archivedAt: null (PR 3)
     const c = cond as { not?: string; in?: readonly string[] };
     if ("not" in c) return value !== c.not;
     if ("in" in c) return (c.in ?? []).includes(value);

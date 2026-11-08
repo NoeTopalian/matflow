@@ -75,7 +75,7 @@ export async function POST(req: Request) {
 
   const member = await withTenantContext(tenant.id, (tx) =>
     tx.member.findFirst({
-      where: { id: memberId, tenantId: tenant.id, status: { in: ["active", "taster"] } },
+      where: { id: memberId, tenantId: tenant.id, status: { in: ["active", "taster"] }, archivedAt: null },
       select: { id: true, email: true },
     }),
   );

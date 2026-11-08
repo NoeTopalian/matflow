@@ -45,6 +45,8 @@ export type RefreshMember = {
   membershipTierId: string | null;
   billingStatusAsOf: Date | null;
   billingStatusSource: string | null;
+  /** PR 3: set while the member is archived in MatFlow. A refresh never touches them. Absent reads as current. */
+  archivedAt?: Date | null;
 };
 
 export const REFRESH_MEMBER_SELECT = {
@@ -59,6 +61,7 @@ export const REFRESH_MEMBER_SELECT = {
   membershipTierId: true,
   billingStatusAsOf: true,
   billingStatusSource: true,
+  archivedAt: true,
 } as const;
 
 /** One person's recorded change: enough to show it and to undo it. */
@@ -93,6 +96,13 @@ export type RefreshExceptions = {
    * here so the owner decides on the profile.
    */
   decisions?: { memberId: string; name: string; options: string[] }[];
+  /**
+   * PR 3 (Noe, 6 Nov 2026): archived in MatFlow, but the file shows them
+   * ACTIVE at TeamUp. A refresh never changes or restores an archived member:
+   * their standing is left untouched and they are listed here, with a link to
+   * their profile, so the owner can restore them by hand.
+   */
+  archivedInMatFlow?: { memberId: string; name: string; teamUpSays: string }[];
 };
 
 export type RefreshPlan = {
@@ -187,7 +197,8 @@ export function planRefresh(input: {
 
   const keysInFile = new Set<string>();
   const matched: RefreshChange[] = [];
-  const exceptions: RefreshExceptions = { notInMatFlow: [], notInFile: [], billedByMatFlow: [], refused: input.errors, holdKept: [], decisions: [] };
+  const exceptions: RefreshExceptions = { notInMatFlow: [], notInFile: [], billedByMatFlow: [], refused: input.errors, holdKept: [], decisions: [], archivedInMatFlow: [] };
+  let archived = 0;
   const fileExportedAt = input.job.sourceExportedAt ? new Date(input.job.sourceExportedAt) : null;
   let newestRecorded: Date | null = null;
   let newerMembers = 0;
@@ -202,6 +213,14 @@ export function planRefresh(input: {
     const m = byKey.get(d.sourceKey);
     if (!m) {
       exceptions.notInMatFlow.push({ name: d.name, email: d.nonContactable ? null : d.email, sourceKey: d.sourceKey, rows: d.sourceRows ?? [] });
+      continue;
+    }
+    // PR 3: an archived member is never changed or restored by a refresh. One
+    // the file shows as active is listed for the owner to restore by hand.
+    if (m.archivedAt) {
+      archived += 1;
+      const teamUpSays = standingFromDraft(d, tierByName, input.job).status;
+      if (teamUpSays === "active") exceptions.archivedInMatFlow!.push({ memberId: m.id, name: m.name, teamUpSays });
       continue;
     }
     if (m.billedBy !== "teamup") {
@@ -238,6 +257,8 @@ export function planRefresh(input: {
 
   for (const m of input.members) {
     if (m.billedBy !== "teamup") continue;
+    // An archived member's absence from the file says nothing new (PR 3).
+    if (m.archivedAt) continue;
     if (m.externalRef && keysInFile.has(m.externalRef)) continue;
     // A payer record made from an emergency contact is not a TeamUp row; its
     // absence from a later export says nothing.
@@ -252,7 +273,7 @@ export function planRefresh(input: {
     unchanged: matched.length - changed,
     exceptions,
     payerRecords,
-    reconciles: matched.length + exceptions.notInMatFlow.length + exceptions.billedByMatFlow.length + payerRecords === people,
+    reconciles: matched.length + exceptions.notInMatFlow.length + exceptions.billedByMatFlow.length + archived + payerRecords === people,
     ...(newerMembers > 0 && fileExportedAt && newestRecorded
       ? { olderThanRecorded: { fileExportedAt: fileExportedAt.toISOString(), newestRecordedAt: newestRecorded.toISOString(), members: newerMembers } }
       : {}),
@@ -301,6 +322,8 @@ export function planRefreshRollback(
     if (alreadyRestored.has(c.memberId)) continue;
     const m = byId.get(c.memberId);
     if (!m) { kept.push({ memberId: c.memberId, name: c.name, reasons: ["no longer in MatFlow"] }); continue; }
+    // PR 3: a rollback leaves an archived member's standing untouched too.
+    if (m.archivedAt) { kept.push({ memberId: m.id, name: m.name, reasons: ["archived in MatFlow — restore them first if this should apply"] }); continue; }
     const now = standingOf(m);
     const moved = (Object.keys(c.after) as (keyof Standing)[]).filter((k) => now[k] !== c.after[k]);
     if (moved.length === 0) { restore.push(c); continue; }

@@ -54,7 +54,7 @@ function factsOf(memberId: string, m: FactsRow | null | undefined): BookedFacts 
 /** The members booked on a class, with what the doors judge them on. ClassSubscription has no tenantId: scoped through the member. */
 export async function readBookedFacts(tx: Tx, tenantId: string, classId: string): Promise<BookedFacts[]> {
   const subs = await tx.classSubscription.findMany({
-    where: { classId, member: { tenantId } },
+    where: { classId, member: { tenantId, archivedAt: null } },
     select: { memberId: true, member: { select: FACTS_SELECT } },
   });
   return subs.map((s) => factsOf(s.memberId, s.member as FactsRow));
@@ -70,7 +70,7 @@ export async function readRankOrders(tx: Tx, tenantId: string, ids: ReadonlyArra
 
 /** The squad list of a class (member ids). */
 export async function readRosterIds(tx: Tx, tenantId: string, classId: string): Promise<string[]> {
-  const rows = await tx.classRoster.findMany({ where: { tenantId, classId }, select: { memberId: true } });
+  const rows = await tx.classRoster.findMany({ where: { tenantId, classId, member: { archivedAt: null } }, select: { memberId: true } });
   return rows.map((r) => r.memberId).sort();
 }
 
@@ -123,7 +123,7 @@ export async function restrictionPreview(
   let notBookedTotal = 0;
   if (restrictive) {
     const members = await tx.member.findMany({
-      where: { tenantId },
+      where: { tenantId, archivedAt: null },
       select: { id: true, accountType: true, status: true, externalRef: true, ...FACTS_SELECT },
     });
     const since = new Date(Date.now() - RECENT_DAYS * 86_400_000);

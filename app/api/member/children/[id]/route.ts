@@ -4,10 +4,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
-import { deleteMemberCascade } from "@/lib/member-delete";
-import { emailDigest } from "@/lib/login-email";
-import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
-import { isTenantBlobUrl } from "@/lib/blob-url";
+import { archiveMember } from "@/lib/member-delete";
 import { computeMemberStats } from "@/lib/member-stats";
 import { cancelSubscriptionAtPeriodEnd } from "@/lib/stripe/subscriptions";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
@@ -29,6 +26,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           id,
           parentMemberId: memberId,
           tenantId: session.user.tenantId,
+          archivedAt: null,
           ...CONFIRMED_GUARDIAN,
         },
         select: {
@@ -172,12 +170,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const result = await tx.member.updateMany({
-        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
+        where: { id: childId, tenantId, parentMemberId, archivedAt: null, ...CONFIRMED_GUARDIAN },
         data: updateData,
       });
       if (result.count === 0) return { kind: "not-found" } as const;
       const fresh = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
+        where: { id: childId, tenantId, parentMemberId, archivedAt: null, ...CONFIRMED_GUARDIAN },
         select: {
           id: true,
           name: true,
@@ -265,10 +263,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // Same fail-closed contract as app/api/members/[id]/route.ts, simplified to
   // the single-member case: a kid can never itself be a parent, so there is no
   // cascade fan-out to consider here. If Stripe refuses, we refuse the delete.
+  // Restore's billing warning reads this from the archive row (PR 3 review).
+  let stripeSubscriptionsCancelled = 0;
   try {
     const kid = await withTenantContext(tenantId, async (tx) => {
       const found = await tx.member.findFirst({
-        where: { id: childId, tenantId, parentMemberId, ...CONFIRMED_GUARDIAN },
+        where: { id: childId, tenantId, parentMemberId, archivedAt: null, ...CONFIRMED_GUARDIAN },
         select: { id: true, name: true, stripeSubscriptionId: true },
       });
       if (!found?.stripeSubscriptionId) return found ? { ...found, stripeAccountId: null } : null;
@@ -307,6 +307,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           cancelResult.status,
         );
       }
+      stripeSubscriptionsCancelled = 1;
     }
   } catch (e) {
     return apiError(
@@ -317,39 +318,25 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     );
   }
 
-  // Collect the child's photo blobs BEFORE the cascade deletes their rows, so
-  // the files can be removed after the DB commit. A minor's face photo must not
-  // orphan in storage on deletion (this path had no cleanup, unlike the two
-  // staff/DSAR delete paths — a residual-PII + storage leak).
-  const doomedPhotos = await withTenantContext(tenantId, (tx) =>
-    tx.memberPhoto.findMany({ where: { memberId: childId, tenantId }, select: { id: true, url: true } }),
-  );
-
+  // PR 3 (6 Nov 2026; Noe: "Save all past user data"): removing a child
+  // ARCHIVES them, as staff "Remove member" does. Nothing is deleted — the
+  // child's attendance, photos (and their files) and history stay, and staff
+  // can restore them from the child's profile.
   try {
-    // Composite predicate enforces parent-of-kid scoping at every step of
-    // the cleanup — a parent can never reach another adult member or
-    // someone else's kid through this endpoint.
+    // Composite predicate enforces parent-of-kid scoping — a parent can never
+    // reach another adult member or someone else's kid through this endpoint.
     const outcome = await withTenantContext(tenantId, async (tx) => {
       const where = { id: childId, tenantId, parentMemberId };
-      // Read under a row lock (lane D3, review R4 residual 1): the digest must be of the address this transaction
-      // deletes — an address change committed between a plain read and the delete used to be released undigested.
-      const [doomed] = await tx.$queryRaw<{ email: string | null }[]>`
-        SELECT email FROM "Member" WHERE id = ${childId} AND "tenantId" = ${tenantId} AND "parentMemberId" = ${parentMemberId} FOR UPDATE`;
-      const o = await deleteMemberCascade(tx, where);
-      // The release record commits WITH the deletion (security lane D2, SF-54 / SF-74). This path wrote no release
-      // digest at all, and its audit row came after the commit: a child with a real address left it free for a
-      // same-name record with nothing telling the attendance import it had been released. A failure here rolls the
-      // deletion back. Synthesised no-login addresses are never matched on, so they carry no digest.
+      const o = await archiveMember(tx, where, { userId: null, at: new Date() });
       if (o.kind === "ok") {
-        const real = doomed?.email && !isSynthesisedEmail(doomed.email) ? doomed.email : null;
         await logAudit({
           tx,
           tenantId,
           userId: session.user.id ?? null,
-          action: "member.child.delete",
+          action: "member.child.archive",
           entityType: "Member",
           entityId: childId,
-          metadata: { parentMemberId, childName: o.name, ...(real ? { releasedEmailSha256: emailDigest(real) } : {}) },
+          metadata: { parentMemberId, childName: o.name, stripeSubscriptionsCancelled },
           req,
         });
       }
@@ -358,25 +345,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     if (outcome.kind === "not-found") return apiError("Not found", 404);
     if (outcome.kind === "race") return apiError("Conflict — child already removed", 409);
-
-    // Best-effort blob cleanup AFTER the DB delete committed. Never throws: the
-    // child IS already deleted, so a cleanup failure only orphans a file (logged),
-    // it must not turn a successful delete into a reported failure.
-    if (doomedPhotos.length > 0) {
-      try {
-        const { del } = await import("@vercel/blob");
-        for (const p of doomedPhotos) {
-          if (!p.url || !isTenantBlobUrl(p.url, tenantId)) continue;
-          try {
-            await del(p.url);
-          } catch (e) {
-            console.warn(`[member/children/[id] DELETE] blob cleanup failed for MemberPhoto ${p.id}; file orphaned`, e);
-          }
-        }
-      } catch (e) {
-        console.warn("[member/children/[id] DELETE] blob cleanup skipped", e);
-      }
-    }
 
     return NextResponse.json({ ok: true });
   } catch (e) {

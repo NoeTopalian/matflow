@@ -202,7 +202,7 @@ describe("roster gate — under the Class lock, at every door", () => {
     setRoster(true);
     setMember("t-adv");
     await performCheckin(DESK);
-    expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "t-1", classId: "c-adv" } });
+    expect(h.rosterCount).toHaveBeenCalledWith({ where: { tenantId: "t-1", classId: "c-adv", member: { archivedAt: null } } }); // PR 3
     expect(h.rosterFindUnique).toHaveBeenCalledWith({
       where: { classId_memberId: { classId: "c-adv", memberId: "m-1" }, tenantId: "t-1" },
       select: { id: true },

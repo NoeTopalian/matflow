@@ -199,7 +199,7 @@ describe("Task 3d — write end: only a REAL rank gate clears the roster", () =>
     );
 
     expect(mockPrisma.classRoster.deleteMany).toHaveBeenCalledWith({
-      where: { classId: "c1", tenantId: "t1" },
+      where: { classId: "c1", tenantId: "t1", member: { archivedAt: null } }, // PR 3: an archived place survives the rewrite
     });
     expect(mockPrisma.classRoster.createMany).toHaveBeenCalledWith({
       data: [{ tenantId: "t1", classId: "c1", memberId: "m1", addedByUserId: "u1" }],

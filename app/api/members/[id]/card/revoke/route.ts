@@ -26,6 +26,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseSupportSession } from "@/lib/support-session";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   const { tenantId, userId } = gate;
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);

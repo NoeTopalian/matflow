@@ -10,6 +10,7 @@ import { isVercelBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 // Lane 1 iter-2 L1-I2-S-06 [High] fix: restrict photoUrl to safe origins.
 // Previous `z.string().min(1).max(3_500_000)` accepted ANY string including
@@ -65,6 +66,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!canPromote) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(session.user.tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   let body: unknown;
   try {

@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseSupportSession } from "@/lib/support-session";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 const bodySchema = z.object({
   childMemberId: z.string().min(1).max(50),
@@ -26,6 +27,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { tenantId, userId } = gate;
 
   const { id: parentId } = await params;
+  { const archived = await refuseArchivedMember(tenantId, parentId); if (archived) return archived; } // PR 3: an archived record is read-only
   let body: unknown;
   try {
     body = await req.json();
@@ -36,6 +38,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!parsed.success) return apiError("Invalid data", 400);
 
   const { childMemberId } = parsed.data;
+  { const archivedChild = await refuseArchivedMember(tenantId, childMemberId); if (archivedChild) return archivedChild; } // PR 3: an archived child is read-only too
 
   try {
     // A `kids` account may never be left without a guardian: the database CHECK

@@ -482,7 +482,8 @@ async function classEligibility(
   classId: string,
   className: string,
 ): Promise<ClassEligibilityRefusal | null> {
-  const rosterCount = await tx.classRoster.count({ where: { tenantId, classId } });
+  // An archived member's kept place (PR 3) makes no class squad-only.
+  const rosterCount = await tx.classRoster.count({ where: { tenantId, classId, member: { archivedAt: null } } });
   if (rosterCount > 0) {
     const onRoster = await tx.classRoster.findUnique({
       where: { classId_memberId: { classId, memberId }, tenantId },
@@ -631,13 +632,16 @@ export function memberChangedSince(pre: GateMemberView, locked: MemberLockRow): 
  * holding the Class row. The member-deletion cascade still waits (its lock
  * and its DELETE are FOR UPDATE).
  */
+// An ARCHIVED member (PR 3, 6 Nov 2026) has no lock row: every door that takes
+// this lock answers member_not_found, so removal shuts the kiosk, QR, card,
+// coach register and member-app doors at once.
 async function memberLock(tx: Prisma.TransactionClient, tenantId: string, memberId: string): Promise<MemberLockRow | null> {
   const rows = await tx.$queryRaw<MemberLockRow[]>`
     SELECT "id", "cardVersion", "membershipTierId", "paymentStatus", "stripeSubscriptionId",
            (EXTRACT(EPOCH FROM "nextDueAt") * 1000)::float8 AS "nextDueAtMs",
            (EXTRACT(EPOCH FROM "holdUntil") * 1000)::float8 AS "holdUntilMs",
            "waiverAccepted", "accountType"
-      FROM "Member" WHERE "id" = ${memberId} AND "tenantId" = ${tenantId} FOR NO KEY UPDATE
+      FROM "Member" WHERE "id" = ${memberId} AND "tenantId" = ${tenantId} AND "archivedAt" IS NULL FOR NO KEY UPDATE
   `;
   return rows[0] ?? null;
 }
@@ -940,7 +944,8 @@ async function performCheckinUnguarded(args: PerformCheckinArgs): Promise<Perfor
         // hold date, waiver or venue (W6, 28 Oct 2026; RLS was the only
         // backstop, and it is inert under a bypass-RLS role).
         tx.member.findUnique({
-          where: { id: memberId, tenantId },
+          // An archived member (PR 3) is not let in by any door: not found here and at the lock.
+          where: { id: memberId, tenantId, archivedAt: null },
           select: {
             paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,
             accountType: true, billedBy: true,

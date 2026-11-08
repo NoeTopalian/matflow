@@ -194,7 +194,7 @@ describe("check-in against Member.waiverAccepted", () => {
     expect(memberFindUniqueMock).toHaveBeenCalledTimes(1);
     expect(memberFindUniqueMock).toHaveBeenCalledWith({
       // Tenant-scoped (W6, 28 Oct 2026): a member id from another club reads as not found.
-      where: { id: "m-1", tenantId: "t-1" },
+      where: { id: "m-1", tenantId: "t-1", archivedAt: null },
       // The hold gate rides on the same read (holdUntil), still one query.
       select: {
         paymentStatus: true, stripeSubscriptionId: true, waiverAccepted: true, holdUntil: true, membershipTierId: true, nextDueAt: true,

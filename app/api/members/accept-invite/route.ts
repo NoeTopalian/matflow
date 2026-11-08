@@ -135,7 +135,8 @@ export async function POST(req: Request) {
   // From here we have tokenRow.tenantId — switch to tenant-scoped context.
   const member = await withTenantContext(tokenRow.tenantId, (tx) =>
     tx.member.findUnique({
-      where: { tenantId_email: { tenantId: tokenRow.tenantId, email: tokenRow.email } },
+      // PR 3: an invite for a member who has since been archived opens nothing.
+      where: { tenantId_email: { tenantId: tokenRow.tenantId, email: tokenRow.email }, archivedAt: null },
       select: { id: true, tenant: { select: { slug: true } } },
     }),
   );

@@ -9,6 +9,7 @@ import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_F
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 import { OPEN_RULES, accessRefusals, highestRankOrder } from "@/lib/booking-eligibility";
 import { recordKeptBookings } from "@/lib/booking-eligibility-db";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 const demoteSchema = z.object({
   toRankId: z.string().min(1),
@@ -29,6 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!canDemote) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(session.user.tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   let body: unknown;
   try {

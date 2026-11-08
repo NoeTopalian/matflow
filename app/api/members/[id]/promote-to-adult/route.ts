@@ -10,6 +10,7 @@ import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseSupportSession } from "@/lib/support-session";
+import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const csrfViolation = assertSameOrigin(req);
@@ -20,6 +21,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const support = refuseSupportSession(gate.session); if (support) return support; // read-only support session: in-route backstop to proxy.ts (security lane B, SEC-023)
   const { tenantId, userId } = gate;
   const { id: memberId } = await params;
+  { const archived = await refuseArchivedMember(tenantId, memberId); if (archived) return archived; } // PR 3: an archived record is read-only
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {

@@ -505,7 +505,7 @@ export async function PATCH(req: Request, { params }: Params) {
         const requested = Array.from(new Set((parsed.data.roster ?? []).map((m) => m.memberId)));
         if (requested.length > 0) {
           const ours = await tx.member.findMany({
-            where: { id: { in: requested }, tenantId },
+            where: { id: { in: requested }, tenantId, archivedAt: null },
             select: { id: true },
           });
           rosterIds = ours.map((m) => m.id);
@@ -694,7 +694,9 @@ export async function PATCH(req: Request, { params }: Params) {
           const alive = new Set(locked.map((r) => r.id));
           squadIds = rosterIds.filter((m) => alive.has(m));
         }
-        await tx.classRoster.deleteMany({ where: { classId: id, tenantId } });
+        // PR 3: an archived member's place is not on the form (they are in no
+        // list), so the rewrite leaves it alone; Restore brings it back intact.
+        await tx.classRoster.deleteMany({ where: { classId: id, tenantId, member: { archivedAt: null } } });
         const rows = squadIds.map((memberId) => ({
           tenantId,
           classId: id,
@@ -809,7 +811,7 @@ export async function PATCH(req: Request, { params }: Params) {
           // The squad, in the timetable page's shape: without it the client
           // kept the row's old roster, so a just-saved squad class reopened
           // showing no squad until the next page load.
-          rosterMembers: { select: { memberId: true, member: { select: { name: true } } } },
+          rosterMembers: { where: { member: { archivedAt: null } }, select: { memberId: true, member: { select: { name: true } } } },
         },
       });
       if (!found) return null;
@@ -974,9 +976,9 @@ export async function DELETE(req: Request, { params }: Params) {
     const [attendanceCount, rosterCount, bookingCount] = await withTenantContext(tenantId, (tx) =>
       Promise.all([
         tx.attendanceRecord.count({ where: { classInstance: { class: { id, tenantId } } } }),
-        tx.classRoster.count({ where: { classId: id, tenantId } }),
+        tx.classRoster.count({ where: { classId: id, tenantId, member: { archivedAt: null } } }),
         // ClassSubscription carries no tenantId column: scoped through the member.
-        tx.classSubscription.count({ where: { classId: id, member: { tenantId } } }),
+        tx.classSubscription.count({ where: { classId: id, member: { tenantId, archivedAt: null } } }),
       ]),
     );
 

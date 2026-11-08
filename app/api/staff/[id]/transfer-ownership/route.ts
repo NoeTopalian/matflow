@@ -74,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const ok = await bcrypt.compare(parsed.data.password, me.passwordHash);
       if (!ok) return { ok: false as const, status: 403, error: "Password incorrect" };
 
-      const target = await tx.user.findFirst({ where: { id: targetId, tenantId }, select: { id: true, email: true, name: true, role: true } });
+      const target = await tx.user.findFirst({ where: { id: targetId, tenantId, deactivatedAt: null }, select: { id: true, email: true, name: true, role: true } });
       if (!target) return { ok: false as const, status: 404, error: "Staff member not found" };
       if (target.role === "owner") return { ok: false as const, status: 400, error: "That person is already the owner" };
 

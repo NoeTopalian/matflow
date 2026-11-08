@@ -68,6 +68,7 @@ function rawDeleteReq(id: string, qs: string): Request {
 
 describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
   let tenantId: string;
+  let ownerId = "";
 
   // Each test seeds its own parent + kids so cases stay independent.
   async function seedParentWithKids(suffix: string, kidCount = 2) {
@@ -104,9 +105,11 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
         data: { name: "ParentDelGateway", slug: `pdg-${STAMP}-${Math.random().toString(36).slice(2, 8)}` },
       });
       tenantId = t.id;
+      // PR 3: the archive records WHO archived (Member.archivedById → User), so the session is a real owner row.
+      ownerId = (await tx.user.create({ data: { tenantId: t.id, email: `pdg-owner-${t.id}@example.test`, name: "PDG Owner", role: "owner", passwordHash: "x" } })).id;
     });
     mockAuth.mockResolvedValue({
-      user: { id: "u-owner", tenantId, role: "owner", email: "o@x" },
+      user: { id: ownerId, tenantId, role: "owner", email: "o@x" },
     } as never);
   });
 
@@ -117,9 +120,18 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
       tx.member.deleteMany({ where: { email: { contains: `-${STAMP}@` } } }),
     );
     await withRlsBypass((tx) =>
+      tx.member.deleteMany({ where: { tenant: { slug: { startsWith: `pdg-${STAMP}-` } } } }),
+    );
+    await withRlsBypass((tx) =>
+      tx.user.deleteMany({ where: { tenant: { slug: { startsWith: `pdg-${STAMP}-` } } } }),
+    );
+    await withRlsBypass((tx) =>
       tx.tenant.deleteMany({ where: { slug: { startsWith: `pdg-${STAMP}-` } } }),
     );
   });
+
+  // PR 3 (6 Nov 2026): Remove ARCHIVES. "Gone" below now means archived with the row kept; nothing is deleted.
+  const archivedAt = async (id: string) => (await withRlsBypass((tx) => tx.member.findUnique({ where: { id }, select: { archivedAt: true } })))?.archivedAt ?? null;
 
   it("?probe=1 on a parent with kids returns 200 + kid list and deletes nothing", async () => {
     const { parent, kids } = await seedParentWithKids("probe");
@@ -180,7 +192,7 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     expect(stillThere).not.toBeNull();
   });
 
-  it("?confirm=1 on a parent with NO kids deletes cleanly", async () => {
+  it("?confirm=1 on a parent with NO kids archives cleanly (the row stays)", async () => {
     const childlessParent = await withRlsBypass((tx) =>
       tx.member.create({
         data: {
@@ -195,13 +207,10 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
       params: Promise.resolve({ id: childlessParent.id }),
     } as never);
     expect(res.status).toBe(200);
-    const gone = await withRlsBypass((tx) =>
-      tx.member.findUnique({ where: { id: childlessParent.id } }),
-    );
-    expect(gone).toBeNull();
+    expect(await archivedAt(childlessParent.id)).toBeInstanceOf(Date);
   });
 
-  it("reassign strategy moves kids to the new parent and deletes the old one", async () => {
+  it("reassign strategy moves kids to the new parent and archives the old one", async () => {
     const { parent: oldParent } = await seedParentWithKids("reassign-old");
     const newParent = await withRlsBypass((tx) =>
       tx.member.create({
@@ -224,11 +233,8 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
       tx.member.findMany({ where: { parentMemberId: newParent.id, tenantId } }),
     );
     expect(movedKids).toHaveLength(2);
-
-    const gone = await withRlsBypass((tx) =>
-      tx.member.findUnique({ where: { id: oldParent.id } }),
-    );
-    expect(gone).toBeNull();
+    expect(movedKids.every((k) => k.archivedAt === null)).toBe(true);
+    expect(await archivedAt(oldParent.id)).toBeInstanceOf(Date);
   });
 
   it("reassign rejects when target is itself a kid", async () => {
@@ -243,14 +249,11 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     );
     expect(res.status).toBe(400);
 
-    // Parent still exists — invalid reassign must not partially apply.
-    const stillThere = await withRlsBypass((tx) =>
-      tx.member.findUnique({ where: { id: parent.id } }),
-    );
-    expect(stillThere).not.toBeNull();
+    // Parent still current — invalid reassign must not partially apply.
+    expect(await archivedAt(parent.id)).toBeNull();
   });
 
-  it("cascade strategy deletes every kid alongside the parent", async () => {
+  it("cascade strategy archives every kid alongside the parent, with the same instant; every row stays", async () => {
     const { parent, kids } = await seedParentWithKids("cascade", 3);
     const res = await deleteMember(deleteReq(parent.id, "cascade"), {
       params: Promise.resolve({ id: parent.id }),
@@ -260,9 +263,12 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     const survivors = await withRlsBypass((tx) =>
       tx.member.findMany({
         where: { id: { in: [parent.id, ...kids.map((k) => k.id)] }, tenantId },
+        select: { archivedAt: true },
       }),
     );
-    expect(survivors).toHaveLength(0);
+    expect(survivors).toHaveLength(4);
+    expect(new Set(survivors.map((m) => m.archivedAt?.getTime())).size).toBe(1);
+    expect(survivors[0].archivedAt).toBeInstanceOf(Date);
   });
 
   it("orphan strategy flips kid.accountType to junior + clears parentMemberId (CHECK passes)", async () => {
@@ -275,15 +281,17 @@ describe.skipIf(!HAS_DB)("Parent-deletion gateway (F5)", () => {
     const reloadedKids = await withRlsBypass((tx) =>
       tx.member.findMany({
         where: { id: { in: kids.map((k) => k.id) }, tenantId },
-        select: { accountType: true, parentMemberId: true },
+        select: { accountType: true, parentMemberId: true, archivedAt: true },
       }),
     );
     expect(reloadedKids).toHaveLength(2);
+    expect(await archivedAt(parent.id)).toBeInstanceOf(Date);
     for (const k of reloadedKids) {
       // Crucially: NOT 'kids' (would violate CHECK once parentMemberId is null).
       expect(k.accountType).toBe("junior");
-      // Cascaded onDelete SetNull from the parent drop.
+      // Cleared explicitly by the archive (the parent row stays, so no SET NULL fires).
       expect(k.parentMemberId).toBeNull();
+      expect(k.archivedAt).toBeNull();
     }
   });
 });

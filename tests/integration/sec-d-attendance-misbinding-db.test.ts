@@ -62,7 +62,6 @@ import { teamupPersonKey } from "@/lib/importers/teamup";
 import { JOB_SOURCE, LEDGER_SOURCE, MAPPING_VERSION, buildPlan, loadClubInputs, planHashOf, saveDecisions } from "@/lib/attendance-import";
 import { POST } from "@/app/api/admin/import/attendance/route";
 import { PATCH as patchMember, DELETE as deleteMember } from "@/app/api/members/[id]/route";
-import { emailDigest } from "@/lib/login-email";
 import { POST as guardianPost } from "@/app/api/members/[id]/guardian/route";
 import { synthesiseMemberEmail } from "@/lib/synthesise-kid-email";
 
@@ -430,15 +429,20 @@ describe.skipIf(!HAS_DB)("SEC-053 / AH-D1 — attendance identity binding is nev
     });
   });
 
-  it("VARIANT deleted: the original deleted through the REAL member DELETE, a different Bea Lane created at the address → not bound; the delete records the released address", async () => {
-    const { club, orig } = await unauditedReleaseCase("deleted", async (club, origId) => {
-      gate.current = { tenantId: club.tenantId, userId: club.userId };
-      const req = new Request(`https://test.local/api/members/${origId}?confirm=1`, { method: "DELETE", headers: { origin: "https://test.local", host: "test.local" } });
-      const res = (await deleteMember(req, { params: Promise.resolve({ id: origId }) })) as unknown as { status: number; json: () => Promise<unknown> };
-      expect(res.status, JSON.stringify(await res.json())).toBe(200);
-    });
-    const audit = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: club.tenantId, action: "member.delete", entityId: orig }, select: { metadata: true } }));
-    expect((audit?.metadata as Record<string, unknown> | null)?.releasedEmailSha256).toBe(emailDigest(E("deleted-old")));
+  it("VARIANT removed (PR 3): Remove ARCHIVES through the REAL member DELETE and keeps the address — no second Bea Lane can take it, and the import binds the history to the archived original", async () => {
+    const club = await mkClub("archived");
+    const orig = await mkOldMember(club, N("Bea Lane"), E("archived-old"));
+    gate.current = { tenantId: club.tenantId, userId: club.userId };
+    const req = new Request(`https://test.local/api/members/${orig}?confirm=1`, { method: "DELETE", headers: { origin: "https://test.local", host: "test.local" } });
+    const res = (await deleteMember(req, { params: Promise.resolve({ id: orig }) })) as unknown as { status: number; json: () => Promise<unknown> };
+    expect(res.status, JSON.stringify(await res.json())).toBe(200);
+    const audit = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: club.tenantId, action: "member.archive", entityId: orig }, select: { metadata: true } }));
+    expect((audit?.metadata as Record<string, unknown> | null)?.releasedEmailSha256).toBeUndefined();
+    await expect(mkMember(club, N("Bea Lane"), E("archived-old"), null)).rejects.toThrow();
+    const { jobId, planHash } = await mkPreview(club, csvOf([{ name: N("Bea Lane"), email: E("archived-old") }]));
+    await commitAndRun(club, jobId, planHash);
+    const rows = await ledger(club);
+    expect(rows[0].memberId).toBe(orig);
   });
 
   it("POSITIVE CONTROL (inverted rule): a member who has held the address since before the bookings still matches", async () => {
