@@ -484,8 +484,8 @@ describe("refusals and failures", () => {
 
 describe("who can use it", () => {
   // A MatFlow support session is signed in as the owner, and the page renders the owner's form for it (Noe, 7 Nov
-  // 2026: "Yes, allow support"; app/dashboard/timetable/page.tsx passes nothing about support any more).
-  it("an owner, and so a support session, sees 'Add a new location…', no support wording, and the saved-location toast", async () => {
+  // 2026: "Yes, allow support"; the class form takes nothing about support; supportReadOnly only governs mats and the split).
+  it("an owner, and so an edit support session, sees 'Add a new location…', no support wording, and the saved-location toast", async () => {
     calls = stubFetch((call) => {
       if (call.url !== "/api/classes" || call.method !== "POST") return undefined;
       return { ok: true, status: 201, json: async () => ({ ...cls("Wrestling", "The beach", [[1, "18:00", "19:00"]], { matId: "m9" }), instancesCreated: 8, locationAdded: { id: "m9", name: "The beach", classIds: [] } }) };

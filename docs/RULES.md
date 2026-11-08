@@ -160,8 +160,9 @@ acts on is worse than an error they can see.
   2026: "Yes, allow support"), which sees the Mats button and By mat / By time exactly as the
   owner does: it may add, rename, reorder and remove mats, "Add these as mats", choose the
   split, and add a location from the class form. Every one of those changes is recorded as made
-  by MatFlow support in the club's Activity. A read-only support session changes nothing. A
-  coach or an admin sees the split and the mat names and changes neither.
+  by MatFlow support in the club's Activity. A read-only support session changes nothing: it sees
+  the split as text, saying the session is read-only, and no Mats button. A coach or an admin
+  sees the split and the mat names and changes neither.
 - **Not undone from Activity.** Mats and the split are changed back where they were changed,
   on the Timetable page. Undoing a class edit re-derives the class's place from its mat and
   never copies an old name back.
