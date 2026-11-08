@@ -30,6 +30,13 @@ const ALLOWED_EDITS: Array<[string, string]> = [
   ["POST", "/api/ranks"],
   ["PATCH", "/api/ranks/r1"],
   ["PATCH", "/api/settings"],
+  // Mats and the By mat / By time split (Noe, 7 Nov 2026: "Yes, allow support").
+  ["POST", "/api/mats"],
+  ["PATCH", "/api/mats/m1"],
+  ["DELETE", "/api/mats/m1"],
+  ["PUT", "/api/mats/order"],
+  ["POST", "/api/mats/adopt"],
+  ["PATCH", "/api/timetable/layout"],
 ];
 
 // One representative per family that must never be reachable from an edit
@@ -61,6 +68,8 @@ const NEVER_UNDER_SUPPORT: Array<[string, string, string]> = [
   ["DELETE", "/api/ranks/r1", "destructive"],
   ["DELETE", "/api/classes/c1/roster/m1", "destructive"],
   ["DELETE", "/api/checkin", "destructive"],
+  ["DELETE", "/api/mats/m1/extra", "destructive (only removing a mat itself is allowed)"],
+  ["DELETE", "/api/mats", "destructive (no such collection delete)"],
   ["POST", "/dashboard/members", "a page POST (Server Action)"],
   ["POST", "/dashboard/settings", "a page POST (Server Action)"],
 ];

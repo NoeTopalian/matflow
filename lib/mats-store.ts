@@ -169,8 +169,6 @@ export type LocationResult =
    * typed the name and were put on the new mat with it (always empty for a mat that was already there).
    */
   | { kind: "mat"; id: string; name: string; created: boolean; classIds: string[] }
-  /** No mat: the class keeps the name as its typed place (a caller that may not add mats). */
-  | { kind: "place"; name: string }
   /** No mat of that name and the club already has MAT_LIMIT: nothing was written. */
   | { kind: "limit" };
 
@@ -192,26 +190,24 @@ export type LocationResult =
  * its name are left for the Mats sheet, and no save that does not change a
  * class's Location ever moves it.
  *
- * `mayAddMat: false` (a MatFlow support session, which may edit a class but
- * not set up mats — RULES §5b): an existing mat is still used, and a new
- * name stays the class's typed place with no mat and no refusal.
+ * A MatFlow edit support session adds a mat here exactly as an owner does
+ * (RULES §5b); logAudit marks its rows as MatFlow support.
  *
  * Call with the club's mats lock held (lockClubMats), so the cap and the next
  * position cannot be raced. `name` is already clean (cleanMatName), non-empty
- * and, when a mat may be added, at most MAT_NAME_MAX characters.
+ * and at most MAT_NAME_MAX characters (checkLocationName).
  * `exceptClassId`: the class being saved, which the caller writes itself.
  */
 export async function matForLocation(
   tx: Tx,
   tenantId: string,
   name: string,
-  opts: { mayAddMat: boolean; userId: string; req?: Request; exceptClassId?: string },
+  opts: { userId: string; req?: Request; exceptClassId?: string },
 ): Promise<LocationResult> {
   const key = matNameKey(name);
   const mats = await listMats(tx, tenantId);
   const found = mats.find((m) => m.nameKey === key);
   if (found) return { kind: "mat", id: found.id, name: found.name, created: false, classIds: [] };
-  if (!opts.mayAddMat || name.length > MAT_NAME_MAX) return { kind: "place", name };
   if (mats.length >= MAT_LIMIT) return { kind: "limit" };
   const sortOrder = mats.reduce((max, m) => Math.max(max, m.sortOrder), -1) + 1;
   const row = await tx.mat.create({ data: { tenantId, name, nameKey: key, sortOrder }, select: { id: true, name: true } });

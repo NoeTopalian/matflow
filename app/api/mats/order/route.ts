@@ -10,6 +10,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { logAudit } from "@/lib/audit-log";
 import { MAT_LIMIT, lockClubMats } from "@/lib/mats";
 import { listMats } from "@/lib/mats-store";
@@ -23,6 +24,7 @@ export async function PUT(req: Request) {
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSessionUnlessEdit(gate.session); if (support) return support; // view refused; an EDIT session may set up mats and the split (SUPPORT_EDIT_MUTATION_ALLOWLIST)
   const { tenantId, userId } = gate;
 
   let body: unknown = null;

@@ -186,8 +186,6 @@ export default async function TimetablePage() {
       storedLayout={matsAndLayout.storedLayout}
       matsLoadFailed={matsAndLayout.failed}
       matsReadAt={matsReadAt}
-      // A MatFlow support session can put a class on a mat, but cannot set up mats or change the split.
-      supportSession={typeof (session!.user as { impersonatedBy?: unknown }).impersonatedBy === "string"}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       currentUserId={session!.user.id}

@@ -13,7 +13,6 @@ import { OPEN_RULES, rulesAfterEdit } from "@/lib/booking-eligibility";
 import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db";
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
 import { matForLocation } from "@/lib/mats-store";
-import { isSupportSession } from "@/lib/support-session";
 
 /** A tier vanished between the club check and the write: roll the class back. */
 class TierRefError extends Error {}
@@ -90,14 +89,11 @@ export async function POST(req: Request) {
   // transaction, never written as a column.
   const { schedules, roster, allowedTierIds, matName, ...classData } = parsed.data;
 
-  // The class form's Location by name. A MatFlow support session may put a
-  // class on an existing mat but may not add one (RULES §5b): its new name
-  // stays a typed place.
-  const mayAddMat = !isSupportSession(session);
+  // The class form's Location by name.
   let locationName: string | null = null;
   if (matName !== undefined) {
     if (classData.matId) return NextResponse.json({ error: LOCATION_ERRORS.both, reason: "location" }, { status: 400 });
-    const checked = checkLocationName(matName, mayAddMat);
+    const checked = checkLocationName(matName);
     if (!checked.ok) return NextResponse.json({ error: checked.error, reason: "location" }, { status: 400 });
     locationName = checked.name;
   }
@@ -170,10 +166,10 @@ export async function POST(req: Request) {
         // A Location by name: the club's mat of that name, added here when
         // there is none (same lock, same transaction as the class).
         await lockClubMats(tx, session.user.tenantId);
-        const found = await matForLocation(tx, session.user.tenantId, locationName, { mayAddMat, userId: session.user.id, req });
+        const found = await matForLocation(tx, session.user.tenantId, locationName, { userId: session.user.id, req });
         if (found.kind === "limit") throw new MatLimitError();
-        place = found.kind === "mat" ? { matId: found.id, location: found.name } : { matId: null, location: found.name };
-        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
+        place = { matId: found.id, location: found.name };
+        if (found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
       }
       // The club's zone is needed BEFORE the write, not only for the window
       // below: `startDate` is a day marker and the club's calendar date is what

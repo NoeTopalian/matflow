@@ -60,10 +60,11 @@ export const SUPPORT_MUTATION_ALLOWLIST: readonly RouteRule[] = [];
 /**
  * Non-GET requests an EDIT support session may make (13 Oct 2026, hub club
  * edit access). Routine club operations only — the three families the owner
- * commissioned: timetable/classes, member details, ordinary settings. Default
- * deny: anything not matched here is refused, including every DELETE and every
- * page POST (a Server Action is a POST to a page, and no rule below matches a
- * page). Each entry names what it is; a reviewer diffs intent, not regexes.
+ * commissioned: timetable/classes (mats and the split included), member
+ * details, ordinary settings. Default deny: anything not matched here is
+ * refused, including every DELETE but removing a mat, and every page POST (a
+ * Server Action is a POST to a page, and no rule below matches a page). Each
+ * entry names what it is; a reviewer diffs intent, not regexes.
  */
 export const SUPPORT_EDIT_MUTATION_ALLOWLIST: readonly RouteRule[] = [
   { method: "POST", path: /^\/api\/classes\/?$/, why: "Create a class (mints its rolling instance window)." },
@@ -71,6 +72,15 @@ export const SUPPORT_EDIT_MUTATION_ALLOWLIST: readonly RouteRule[] = [
   { method: "POST", path: /^\/api\/classes\/[^/]+\/instances\/?$/, why: "Generate schedule instances for a class." },
   { method: "PATCH", path: /^\/api\/classes\/[^/]+\/instances\/[^/]+\/?$/, why: "Edit one timetable instance (time, cancel flag)." },
   { method: "POST", path: /^\/api\/classes\/[^/]+\/roster\/?$/, why: "Add a member to a class roster." },
+  // Mats and the By mat / By time split are timetable set-up (Noe, 7 Nov 2026,
+  // "Yes, allow support"; RULES §5b). Removing a mat is the one DELETE here:
+  // it never removes a class (its classes keep the mat's name as their place).
+  { method: "POST", path: /^\/api\/mats\/?$/, why: "Add a mat (timetable set-up)." },
+  { method: "PATCH", path: /^\/api\/mats\/[^/]+\/?$/, why: "Rename a mat; its classes' place follows." },
+  { method: "DELETE", path: /^\/api\/mats\/[^/]+\/?$/, why: "Remove a mat; its classes stay, keeping the mat's name as their place." },
+  { method: "PUT", path: /^\/api\/mats\/order\/?$/, why: "Reorder the mats (the order of the columns)." },
+  { method: "POST", path: /^\/api\/mats\/adopt\/?$/, why: "Add these as mats: make mats from places typed on classes." },
+  { method: "PATCH", path: /^\/api\/timetable\/layout\/?$/, why: "Choose By mat or By time for the club's timetable." },
   { method: "POST", path: /^\/api\/members\/?$/, why: "Create a member record." },
   { method: "PATCH", path: /^\/api\/members\/[^/]+\/?$/, why: "Edit a member's details (name, contact, notes fields)." },
   { method: "POST", path: /^\/api\/members\/[^/]+\/rank\/?$/, why: "Award a rank (routine promotion)." },
@@ -90,7 +100,8 @@ export const SUPPORT_EDIT_MUTATION_ALLOWLIST: readonly RouteRule[] = [
  * billing/subscription/charge route, /api/admin/import* and rollbacks,
  * exports, DSAR/erasure, invite/waiver/display/kiosk token minting,
  * guardian/link-child/unlink-child (family authority), promote-to-adult,
- * unlock, waiver signing, photo/picture uploads, and EVERY DELETE method.
+ * unlock, waiver signing, photo/picture uploads, and EVERY DELETE method but
+ * removing a mat (above).
  */
 
 /** Requests that only remove authority. Never refused, or support could not end. */

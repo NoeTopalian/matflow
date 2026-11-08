@@ -26,8 +26,8 @@ describe("cleanMatName / matNameKey", () => {
     expect(cleanMatName(" \u200B ")).toBe("");
     expect(cleanMatName("Mat\u200B 1")).toBe("Mat 1");
     expect(matNameKey("\u2066Mat 1\u2069")).toBe(matNameKey("Mat 1"));
-    expect(checkLocationName("\u200B\u200B", true)).toEqual({ ok: false, error: LOCATION_ERRORS.empty });
-    expect(checkLocationName("Cage\u200B", true)).toEqual({ ok: true, name: "Cage" });
+    expect(checkLocationName("\u200B\u200B")).toEqual({ ok: false, error: LOCATION_ERRORS.empty });
+    expect(checkLocationName("Cage\u200B")).toEqual({ ok: true, name: "Cage" });
   });
 
   it("keeps zero-width joiners and non-joiners, which emoji and several scripts need", () => {

@@ -22,7 +22,6 @@ import { dayMarkerUtc, usableTimezone } from "@/lib/class-time";
 import { classRefError, CLASS_REF_ERRORS, isMatForeignKeyError, isMatNameClash } from "@/lib/class-refs";
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
 import { matForLocation } from "@/lib/mats-store";
-import { isSupportSession } from "@/lib/support-session";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
 
@@ -448,14 +447,11 @@ export async function PATCH(req: Request, { params }: Params) {
   const nextTierIds = parsed.data.allowedTierIds ?? [];
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
 
-  // The class form's Location by name. A MatFlow support session may put a
-  // class on an existing mat but may not add one (RULES §5b): its new name
-  // stays a typed place. Checked before anything is read or written.
-  const mayAddMat = !isSupportSession(session);
+  // The class form's Location by name. Checked before anything is read or written.
   let locationName: string | null = null;
   if (parsed.data.matName !== undefined) {
     if (parsed.data.matId) return NextResponse.json({ error: LOCATION_ERRORS.both, reason: "location" }, { status: 400 });
-    const checked = checkLocationName(parsed.data.matName, mayAddMat);
+    const checked = checkLocationName(parsed.data.matName);
     if (!checked.ok) return NextResponse.json({ error: checked.error, reason: "location" }, { status: 400 });
     locationName = checked.name;
   }
@@ -603,13 +599,12 @@ export async function PATCH(req: Request, { params }: Params) {
       } else if (locationName !== null) {
         // A Location by name: the club's mat of that name, added here when
         // there is none (under the mats lock, in this transaction), taking the
-        // club's other classes that type the name with it. A caller that may
-        // not add mats keeps a new name as the class's typed place, off any mat.
-        const found = await matForLocation(tx, tenantId, locationName, { mayAddMat, userId: session.user.id, req, exceptClassId: id });
+        // club's other classes that type the name with it.
+        const found = await matForLocation(tx, tenantId, locationName, { userId: session.user.id, req, exceptClassId: id });
         if (found.kind === "limit") throw new MatLimitError();
         placeOverride = { location: found.name };
-        matIdWrite = found.kind === "mat" ? found.id : null;
-        if (found.kind === "mat" && found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
+        matIdWrite = found.id;
+        if (found.created) locationAdded = { id: found.id, name: found.name, classIds: found.classIds };
       } else if (parsed.data.matId === undefined && owned[0].matId != null) {
         placeOverride = { location: undefined };
       }
