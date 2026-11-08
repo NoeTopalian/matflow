@@ -226,8 +226,8 @@ acts on is worse than an error they can see.
   person key; the booking key and row fingerprint are one-way digests of it, including their
   copies in the ledger's earlier-state snapshots. An adult who shares that address keeps it in
   their own key too, pending Noe's decision on shared addresses. The fix is tracked separately
-  (branch `fix/erase-guardian-keys`), because rewriting
-  those keys changes how a later re-import and a TeamUp status refresh match the child.
+  (branch `fix/erase-guardian-keys`), because rewriting those keys changes how a later re-import
+  and a TeamUp status refresh match the child.
 - **Two automatic exceptions, both security records, not club data:** sign-in rate-limit
   counters (`RateLimitHit`, and a bucket cleared after a successful sign-in), which the lockout
   depends on clearing; and password history, trimmed to its limit when a password changes
