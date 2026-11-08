@@ -40,6 +40,17 @@ const PROFILE_PIC_SIZE_PX = 512;
 // Non-avatar images (member photos, branding, announcements) are downscaled so
 // the longest edge is ≤ this. Keeps the inline-data-URL fallback bounded.
 const MAX_IMAGE_EDGE_PX = 1600;
+// Club logos (purpose=logo, T9b) are stored inline as a data: URL on the
+// Tenant row and travel in every branding payload (login, kiosk, leaderboard,
+// public club page), so they are kept small. The largest logo renders at about
+// 160 CSS px tall = 480 device px at DPR 3; 512 covers it.
+const LOGO_MAX_EDGE_PX = 512;
+/**
+ * The club logo purpose. Owner-only (it is not member-scoped), and NEVER
+ * written to Vercel Blob: the store is private and /api/blob-image needs a
+ * session, so a blob logo is blank on every anonymous surface. Always inline.
+ */
+const LOGO_PURPOSE = "logo";
 
 const STAFF_ROLES = ["owner", "manager", "coach", "admin"] as const;
 
@@ -236,11 +247,17 @@ export async function POST(req: Request) {
       const resized =
         purpose === "profile-pic"
           ? pipeline.resize(PROFILE_PIC_SIZE_PX, PROFILE_PIC_SIZE_PX, { fit: "cover" })
-          : pipeline.resize(MAX_IMAGE_EDGE_PX, MAX_IMAGE_EDGE_PX, {
-              fit: "inside",
-              withoutEnlargement: true,
-            });
-      const out = await resized.webp({ quality: purpose === "profile-pic" ? 92 : 82 }).toBuffer();
+          : purpose === LOGO_PURPOSE
+            ? pipeline.resize(LOGO_MAX_EDGE_PX, LOGO_MAX_EDGE_PX, {
+                fit: "inside",
+                withoutEnlargement: true,
+              })
+            : pipeline.resize(MAX_IMAGE_EDGE_PX, MAX_IMAGE_EDGE_PX, {
+                fit: "inside",
+                withoutEnlargement: true,
+              });
+      const quality = purpose === "profile-pic" || purpose === LOGO_PURPOSE ? 92 : 82;
+      const out = await resized.webp({ quality }).toBuffer();
       const meta = await sharp(out).metadata();
       uploadBuffer = out;
       uploadContentType = "image/webp";
@@ -263,27 +280,36 @@ export async function POST(req: Request) {
     // never hard-fail. The resized WebP is small enough to inline, and every
     // consumer's URL validator accepts data:image/webp;base64 URLs.
     const filename = `tenants/${tenantId}/${id}.${uploadExt}`;
+    const inlineUrl = () => `data:${uploadContentType};base64,${uploadBuffer.toString("base64")}`;
     let finalUrl: string;
     let storage: "blob" | "inline";
-    try {
-      if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("BLOB_READ_WRITE_TOKEN not set");
-      const blob = await put(filename, uploadBuffer, {
-        // Private (Bug 3): member faces and gym assets must not sit on a
-        // public CDN URL. Rendering goes via /api/blob-image (auth-gated,
-        // resolves a signed downloadUrl through head()).
-        access: "private",
-        contentType: uploadContentType,
-        addRandomSuffix: true,
-      });
-      finalUrl = blob.url;
-      storage = "blob";
-    } catch (e) {
-      console.warn(
-        "[upload] Vercel Blob unavailable — storing inline data URL",
-        e instanceof Error ? e.message : e,
-      );
-      finalUrl = `data:${uploadContentType};base64,${uploadBuffer.toString("base64")}`;
+    if (purpose === LOGO_PURPOSE) {
+      // T9b: a logo is public by design (login, kiosk, leaderboard, public
+      // club page) and must render with no session, so it is never put() to
+      // the private store. The bytes are the bounded WebP above.
+      finalUrl = inlineUrl();
       storage = "inline";
+    } else {
+      try {
+        if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("BLOB_READ_WRITE_TOKEN not set");
+        const blob = await put(filename, uploadBuffer, {
+          // Private (Bug 3): member faces and gym assets must not sit on a
+          // public CDN URL. Rendering goes via /api/blob-image (auth-gated,
+          // resolves a signed downloadUrl through head()).
+          access: "private",
+          contentType: uploadContentType,
+          addRandomSuffix: true,
+        });
+        finalUrl = blob.url;
+        storage = "blob";
+      } catch (e) {
+        console.warn(
+          "[upload] Vercel Blob unavailable — storing inline data URL",
+          e instanceof Error ? e.message : e,
+        );
+        finalUrl = inlineUrl();
+        storage = "inline";
+      }
     }
 
     const isMemberScoped = MEMBER_SCOPED_PURPOSES.includes(purpose ?? "");

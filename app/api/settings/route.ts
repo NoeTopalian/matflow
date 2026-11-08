@@ -12,6 +12,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
+import { logoUrlVerdict } from "@/lib/logo-url";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -61,17 +62,16 @@ const updateSchema = z.object({
   // a 20 MB data URL slipped past the 3 MB bound the same way. The absolute
   // branch is now https-only, exactly as `httpsUrl()` above already is for
   // every other stored link on this route.
-  logoUrl: z.union([
-    z.string().url().max(2000).refine((u) => u.startsWith("https://"), {
-      message: "Must be https://",
-    }),
-    z.string().regex(/^\/[^\s]*$/),
-    // data: URL fallback when Vercel Blob isn't configured. The bytes are the
-    // sharp-resized WebP that /api/upload produced (longest edge ≤1600px), not
-    // the file the client sent, and the .max() below is the hard bound.
-    // Raster types only: SVG is a script-execution context, not an image.
-    z.string().regex(/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/).max(3_000_000),
-  ]).optional().nullable(),
+  //
+  // T9b (17 Oct 2026, Q9 E-9 (a)): narrowed again, to a raster `data:` URL
+  // inside the 3 MB bound or a blob URL under this club's own namespace. The
+  // general https:// and root-relative branches are gone: an external image
+  // is not ours to serve on the public page, and `/api/blob-image?url=…`
+  // renders blank to anonymous visitors. The shape check needs the caller's
+  // tenantId (own namespace) and the stored value (an unchanged legacy value
+  // is not refused), so it runs in PATCH via lib/logo-url.ts; the schema only
+  // admits a string or null here.
+  logoUrl: z.string().optional().nullable(),
   onboardingCompleted: z.boolean().optional(),
   onboardingAnswers: z.record(z.string(), z.unknown()).optional(),
   waiverTitle: z.string().max(200).optional().nullable(),
@@ -227,16 +227,32 @@ export async function PATCH(req: Request) {
     // Cast needed: Zod's Record<string,unknown> doesn't satisfy Prisma's InputJsonValue for Json fields
     const data = parsed.data as Parameters<typeof prisma.tenant.update>[0]["data"];
     const sentFields = Object.keys(parsed.data);
-    const { tenant, before } = await withTenantContext(session.user.tenantId, async (tx) => {
+    const outcome = await withTenantContext(session.user.tenantId, async (tx) => {
       // Before/after of exactly the fields sent, so the owner's Activity page
       // can put a settings change back (lib/undo-registry.ts).
       const before = await tx.tenant.findUnique({ where: { id: session.user.tenantId } });
+      // T9b logo policy. Validation applies to writes only: a value equal to
+      // the one already stored is not a new write (the branding form sends the
+      // current logo back with every save), so a club whose logo predates the
+      // policy can still change its colours. Any other value must pass.
+      const logoUrl = parsed.data.logoUrl;
+      if (typeof logoUrl === "string" && logoUrl !== (before?.logoUrl ?? null)) {
+        const verdict = logoUrlVerdict(logoUrl, session.user.tenantId);
+        if (!verdict.ok) return { refused: verdict.message } as const;
+      }
       const tenant = await tx.tenant.update({
         where: { id: session.user.tenantId },
         data,
       });
-      return { tenant, before };
+      return { tenant, before } as const;
     });
+    if ("refused" in outcome) {
+      return NextResponse.json(
+        { error: outcome.refused, details: { formErrors: [], fieldErrors: { logoUrl: [outcome.refused] } } },
+        { status: 400 },
+      );
+    }
+    const { tenant, before } = outcome;
     // Bust the 60s branding cache so a save shows up on the next member-app
     // open immediately (see app/api/me/gym/route.ts). Best-effort: outside a
     // Next request store (unit tests) revalidateTag throws — the cache then

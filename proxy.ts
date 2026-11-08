@@ -379,8 +379,11 @@ const authProxy = auth(async function proxy(req) {
   }
 
   // A BARE single non-reserved path segment (e.g. /totalbjj) is a club's short
-  // URL — app/[slug]/page.tsx, which redirects to that club's branded login
-  // (/login?club=<slug>) and 404s a reserved segment. This is only safe because every
+  // URL — app/[slug]/page.tsx. A club that opted in to a public page (T9c)
+  // renders it; every other non-reserved slug redirects to the branded login
+  // (/login?club=<slug>); a reserved segment 404s. The page applies its own
+  // second-factor and password-change checks to the owner-only ?preview=1,
+  // because this pass-through runs before the gates below. This is only safe because every
   // authenticated single-segment route (/dashboard, /member, /admin, …) is in
   // RESERVED_SLUGS and so falls through to the auth checks below; the reserved
   // list is pinned against the real app/ folders by a unit test. Only a bare

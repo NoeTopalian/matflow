@@ -29,9 +29,15 @@ const code = (f: string) => fs.readFileSync(path.join(ROOT, f), "utf8").replace(
 const PAYLOAD = `secC<script>alert(1)</script>"'><img src=x onerror=alert(2)>`;
 
 describe("SEC-041 raw-HTML and DOM-write sinks are the reviewed set", () => {
-  it("dangerouslySetInnerHTML appears only in app/member/layout.tsx (two <style> tags)", () => {
+  it("dangerouslySetInnerHTML appears only in app/member/layout.tsx (two <style> tags) and the T9c club page JSON-LD", () => {
     const sites = RUNTIME.filter((f) => /dangerouslySetInnerHTML/.test(code(f)));
-    expect(sites).toEqual(["app/member/layout.tsx"]);
+    expect(sites.sort()).toEqual(["app/[slug]/page.tsx", "app/member/layout.tsx"]);
+    // The club page's one sink is the ld+json data block, fed only by the escaping serialiser.
+    const club = code("app/[slug]/page.tsx");
+    expect([...club.matchAll(/dangerouslySetInnerHTML=\{\{\s*__html:\s*([^}]+?)\s*\}\}/g)].map((m) => m[1])).toEqual([
+      "serialiseJsonLd(clubJsonLd(page))",
+    ]);
+    expect(club).toMatch(/<script type="application\/ld\+json" dangerouslySetInnerHTML/);
     const src = code("app/member/layout.tsx");
     expect([...src.matchAll(/dangerouslySetInnerHTML=\{\{\s*__html:\s*([a-zA-Z]+)\s*\}\}/g)].map((m) => m[1])).toEqual(["lightModeCSS", "darkModeCSS"]);
   });
@@ -46,6 +52,13 @@ describe("SEC-041 raw-HTML and DOM-write sinks are the reviewed set", () => {
     }
     // textMain is one of two literals.
     expect(src).toMatch(/const textMain\s*=\s*isLight \? "#0f172a"\s*: "#ffffff";/);
+  });
+
+  it("the club page JSON-LD serialiser leaves no '<' for a hostile club name", async () => {
+    const { serialiseJsonLd } = await import("@/lib/public-club-page");
+    const out = serialiseJsonLd({ name: PAYLOAD, description: "</script><script>alert(3)</script>" });
+    expect(out).not.toContain("<");
+    expect(JSON.parse(out).name).toBe(PAYLOAD);
   });
 
   it("no innerHTML/outerHTML/insertAdjacentHTML/document.write/srcdoc in runtime code", () => {
