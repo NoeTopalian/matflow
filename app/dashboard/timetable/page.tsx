@@ -4,6 +4,7 @@ import TimetableManager from "@/components/dashboard/TimetableManager";
 import { classLifecycle, inactiveClassWhere, liveClassWhere, type ClassLifecycle } from "@/lib/class-live";
 import { legacyArchivedAt } from "@/lib/class-lifecycle";
 import { readMatsForTimetable } from "@/lib/mats-store";
+import { isSupportSession } from "@/lib/support-session";
 
 export type ClassRow = {
   id: string;
@@ -187,8 +188,9 @@ export default async function TimetablePage() {
       storedLayout={matsAndLayout.storedLayout}
       matsLoadFailed={matsAndLayout.failed}
       matsReadAt={matsReadAt}
-      // A MatFlow support session can put a class on a mat, but cannot set up mats or change the split.
-      supportSession={typeof (session!.user as { impersonatedBy?: unknown }).impersonatedBy === "string"}
+      // A read-only support session is refused mats and the split (lib/support-session.ts), so it is offered no
+      // control for them; an edit session sees the owner's (RULES §5b). Anything but the literal "edit" is read-only.
+      supportReadOnly={isSupportSession(session) && (session!.user as { supportScope?: unknown }).supportScope !== "edit"}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       currentUserId={session!.user.id}

@@ -8,8 +8,8 @@
  * takes every other class of the club that types the name, in the same
  * transaction, recorded as adopt records it. Past the twelfth mat the
  * save is refused in plain words and nothing is written. A MatFlow support
- * session (which may edit a class but not set up mats) keeps a new name as a
- * typed place. Another club's mat id is refused.
+ * session adds a location exactly as the owner does (Noe, 7 Nov 2026: "Yes,
+ * allow support"; logAudit marks its rows). Another club's mat id is refused.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -175,16 +175,15 @@ describe("POST /api/classes with a Location by name", () => {
     }));
   });
 
-  it("a name longer than a location can be is refused beside the field: 24 when a mat is added, 100 for a support place", async () => {
+  it("a name longer than a location can be is refused beside the field, for the owner and for a support session alike", async () => {
     const long = "x".repeat(120);
     const owner = await post({ matName: long });
     expect(owner.status).toBe(400);
     expect(await owner.json()).toEqual({ error: LOCATION_ERRORS.tooLong, reason: "location" });
-    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", supportScope: "edit" };
     const support = await post({ matName: long });
     expect(support.status).toBe(400);
-    expect(await support.json()).toEqual({ error: LOCATION_ERRORS.placeTooLong, reason: "location" });
-    expect(LOCATION_ERRORS.placeTooLong).toBe("A place can be up to 100 characters. Use a shorter name.");
+    expect(await support.json()).toEqual({ error: LOCATION_ERRORS.tooLong, reason: "location" });
     expect(ops).toEqual([]);
     // Over the schema's own bound is still a 400, never a 500.
     expect((await post({ matName: "x".repeat(501) })).status).toBe(400);
@@ -250,23 +249,25 @@ describe("POST /api/classes with a Location by name", () => {
     expect(ops).toEqual([]);
   });
 
-  it("a support session keeps a new name as the class's typed place, adds no mat and is not refused; a saved one it uses", async () => {
-    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
+  it("a support session adds a new name as a location, as the owner does, taking the club's classes that type it", async () => {
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", supportScope: "edit" };
+    typedClasses = [{ id: "k1", tenantId: "t1", location: "the beach", matId: null, sourceImportJobId: null }];
     const res = await post({ matName: "The beach" });
     expect(res.status).toBe(201);
-    expect(tx.mat.create).not.toHaveBeenCalled();
-    expect(created()).toMatchObject({ matId: null, location: "The beach" });
+    expect(tx.mat.create).toHaveBeenCalledTimes(1);
+    expect(created()).toMatchObject({ matId: "m-new", location: "The beach" });
+    expect(lastTx().slice(0, 4)).toEqual(["mats-lock", "mats-read", "mat-create", "audit:mat.create:in-tx"]);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "t1", userId: "u1", action: "mat.create", entityId: "m-new" }));
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "mat.adopt", metadata: { via: "class-location", mats: [{ id: "m-new", name: "The beach", created: false, classIds: ["k1"] }] },
+    }));
+    expect((await res.json()).locationAdded).toMatchObject({ id: "m-new", name: "The beach", classIds: ["k1"] });
+    // A saved one it uses, adding none.
     tx.class.create.mockClear();
+    tx.mat.create.mockClear();
     expect((await post({ matName: "mat 1" })).status).toBe(201);
     expect(created()).toMatchObject({ matId: "m1", location: "Mat 1" });
     expect(tx.mat.create).not.toHaveBeenCalled();
-  });
-
-  it("a support session may keep a typed place longer than a mat name", async () => {
-    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
-    const res = await post({ matName: "The sports hall down the road" });
-    expect(res.status).toBe(201);
-    expect(created()).toMatchObject({ matId: null, location: "The sports hall down the road" });
   });
 
   it("a mat-name clash on the unique index is a Location refusal; any other unique refusal is not", async () => {
@@ -309,7 +310,7 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
   });
 
   it("a support session naming an existing mat puts the class on it", async () => {
-    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", supportScope: "edit" };
     const res = await patch({ matName: "mat 1" });
     expect(res.status).toBe(200);
     expect(tx.mat.create).not.toHaveBeenCalled();
@@ -371,12 +372,14 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
     expect(ops).not.toContain("class-lock");
   });
 
-  it("a support session's new name is the class's typed place, off any mat, with no mat added", async () => {
-    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1" };
+  it("a support session's new name adds a location and puts the class on it, as the owner's does", async () => {
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", supportScope: "edit" };
     const res = await patch({ matName: "The beach" });
     expect(res.status).toBe(200);
-    expect(tx.mat.create).not.toHaveBeenCalled();
-    expect(written()).toMatchObject({ matId: null, location: "The beach" });
+    expect(tx.mat.create).toHaveBeenCalledTimes(1);
+    expect(written()).toMatchObject({ matId: "m-new", location: "The beach" });
+    expect(lastTx()).toContain("audit:mat.create:in-tx");
+    expect((await res.json()).locationAdded).toMatchObject({ id: "m-new", name: "The beach" });
   });
 
   it("records the Location as the columns it sets, so Activity names them", async () => {
@@ -389,5 +392,28 @@ describe("PATCH /api/classes/[id] with a Location by name", () => {
     session.user = { id: "u2", role: "coach", tenantId: "t1" };
     expect((await patch({ matName: "Mat 2" })).status).toBe(403);
     expect(ops).toEqual([]);
+  });
+});
+
+describe("the class routes refuse a read-only support session themselves (security review L-2)", () => {
+  for (const scope of ["view", undefined, "EDIT"] as const) {
+    it(`a support session with scope ${String(scope)} is refused create and edit: 403, nothing read or written`, async () => {
+      session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", ...(scope ? { supportScope: scope } : {}) };
+      for (const res of [await post({ matName: "Mat 2" }), await patch({ name: "Renamed", matName: "Mat 2" })]) {
+        expect(res.status).toBe(403);
+        expect(await res.json()).toMatchObject({ ok: false, supportReadOnly: true });
+      }
+      expect(ops).toEqual([]);
+      expect(tx.class.create).not.toHaveBeenCalled();
+      expect(tx.class.updateMany).not.toHaveBeenCalled();
+      expect(tx.mat.create).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    });
+  }
+
+  it("an edit support session is let through to the handler", async () => {
+    session.user = { id: "u1", role: "owner", tenantId: "t1", impersonatedBy: "op-1", supportScope: "edit" };
+    expect((await post({ matName: "Mat 1" })).status).toBe(201);
+    expect((await patch({ matName: "Mat 1" })).status).toBe(200);
   });
 });

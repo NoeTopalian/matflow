@@ -54,8 +54,8 @@ interface Props {
   storedLayout?: TimetableLayout | null;
   /** The mats could not be read: the timetable is drawn by time and says so. */
   matsLoadFailed?: boolean;
-  /** A MatFlow support session: mats and the split are the club's to change, so neither control is shown. */
-  supportSession?: boolean;
+  /** A read-only (view) MatFlow support session: the split is shown as text and there is no Mats button (UI-RULES §7). */
+  supportReadOnly?: boolean;
   /** When the server began reading this page's mats (ISO time): tells a list read after a save from one read before it. */
   matsReadAt?: string;
   primaryColor: string;
@@ -797,7 +797,6 @@ function ClassForm({
   membershipTiers = [],
   mats = NO_MATS,
   places = NO_PLACES,
-  supportSession = false,
   primaryColor,
   onSave,
   onCancel,
@@ -812,8 +811,6 @@ function ClassForm({
   mats?: MatOption[];
   /** Places typed on the club's classes that are not mats yet, in name order. */
   places?: PlaceOption[];
-  /** A MatFlow support session: it cannot add saved locations, so a new name is typed as this class's place. */
-  supportSession?: boolean;
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -841,7 +838,7 @@ function ClassForm({
   const [locationErrorDismissed, setLocationErrorDismissed] = useState<SaveError | null>(null);
   const locationError = error?.reason === "location" && error !== locationErrorDismissed ? error.message : null;
   // The box's visible label (and its accessible name).
-  const newLocationLabel = supportSession ? "Place for this class" : "Name of the new location";
+  const newLocationLabel = "Name of the new location";
   // The class's own place when the list cannot offer it. Never the same text as another option: a typed place that
   // is a saved location's name (older data, on no mat) says it is only typed here.
   const keepLabel = !initial?.matId && initial?.location && mats.some((m) => matNameKey(m.name) === matNameKey(initial.location ?? ""))
@@ -1214,7 +1211,7 @@ function ClassForm({
             ))}
             {initialChoice === "keep" && <option value="keep">{keepLabel}</option>}
             <option value="none">No location</option>
-            <option value="new">{supportSession ? "Type a place" : "Add a new location…"}</option>
+            <option value="new">Add a new location…</option>
           </Select>
           {locationChoice === "new" && (
             <>
@@ -1232,13 +1229,8 @@ function ClassForm({
                 }}
                 data-testid="class-form-new-location"
                 aria-invalid={locationError ? true : undefined}
-                aria-describedby={[supportSession ? "class-form-new-location-hint" : null, locationError ? "class-form-location-error" : null].filter(Boolean).join(" ") || undefined}
+                aria-describedby={locationError ? "class-form-location-error" : undefined}
               />
-              {supportSession && (
-                <p id="class-form-new-location-hint" className="mt-1 text-[11px] text-tx-3" data-testid="class-form-new-location-hint">
-                  Support access can&rsquo;t add saved locations. If this name is one of them, the class goes on it; otherwise it stays a place typed on this class only.
-                </p>
-              )}
             </>
           )}
           {locationError && (
@@ -1644,7 +1636,7 @@ const NO_CLASSES: ClassRow[] = [];
 
 export default function TimetableManager({
   initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [],
-  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportSession = false, matsReadAt,
+  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt,
   primaryColor, role, currentUserId,
 }: Props) {
   // A class saved with a new Location adds a mat: it is used at once, before the refresh brings the server's list.
@@ -1739,6 +1731,9 @@ export default function TimetableManager({
   const { ask, dialogProps } = useConfirmDialog();
 
   const canManage = ["owner", "manager"].includes(role);
+  // Mats and the split: owner and manager, and so an edit support session (RULES §5b). A read-only support session
+  // is refused them by the proxy, so it is offered no control for them.
+  const canSetUpMats = canManage && !supportReadOnly;
 
   // ── Mats and the same-time split ──────────────────────────────────────────
   // The choice somebody pressed follows the server's: a refresh brings a new
@@ -1756,7 +1751,6 @@ export default function TimetableManager({
   );
   // Until someone chooses, the timetable follows the mats (lib/timetable-layout.ts).
   const layout: TimetableLayout = matsLoadFailed ? "time" : effectiveLayout(choice.stored, inUse);
-  const canChangeMats = canManage && !supportSession;
   // When the split changes by itself (a class put on a second mat, a mat
   // removed), say so once. A change the reader has just been told about — the
   // control's own toast, the Mats sheet's own line — sets `quietSplit` first.
@@ -2387,7 +2381,7 @@ export default function TimetableManager({
       {classes.length === 0 ? (
         <>
           {/* Mats do not depend on classes: a club can name its mats before its first class. */}
-          {canChangeMats && !matsLoadFailed && (
+          {canSetUpMats && !matsLoadFailed && (
             <div className="mb-3 flex justify-end">
               <Button variant="secondary" size="compact" onClick={() => setMatsOpen(true)} data-testid="timetable-mats-empty">Mats</Button>
             </div>
@@ -2402,9 +2396,8 @@ export default function TimetableManager({
             const todayMidnight = new Date();
             todayMidnight.setHours(0, 0, 0, 0);
             // Every screen follows the split (the week, the Day view, the phone, the members' day), so its control is on all three here.
-            // In a MatFlow support session the split is read, never changed: it is the club's (RULES §5b).
+            // A MatFlow edit support session chooses it as the owner does; a read-only one reads it (RULES §5b).
             const showSplit = !matsLoadFailed;
-            const canChooseSplit = canManage && !supportSession;
             const todayPill = (
               <span className="rounded-full border border-[color-mix(in_srgb,var(--hue-info)_45%,var(--sf-1))] bg-[color-mix(in_srgb,var(--hue-info)_14%,var(--sf-1))] px-[3px] text-[9px] font-bold uppercase leading-4 tracking-wide text-[var(--hue-info-ink)]">
                 Today
@@ -2421,8 +2414,8 @@ export default function TimetableManager({
             const typedList = typed.length === 0 ? "" : typed.length <= 3 ? typed.join(typed.length === 2 ? " and " : ", ") : `${typed.slice(0, 2).join(", ")} and ${typed.length - 2} more`;
             const splitHint = !showSplit
               ? null
-              : supportSession
-                ? "Mats and the split are the club's to set: its owner or a manager does it here."
+              : supportReadOnly && canManage
+                ? "MatFlow support session, read-only: the split and the mats are shown, not changed."
                 : !canManage || inUse > 0
                   ? null
                   : mats.length === 0
@@ -2486,7 +2479,7 @@ export default function TimetableManager({
                         time. Owner and manager choose (saved for the club); a coach reads it. */}
                     {showSplit && (
                       <div className="flex min-w-0 flex-1 flex-col gap-1 md:flex-none md:flex-row md:items-center md:gap-2" data-testid="timetable-split">
-                        {canChooseSplit ? (
+                        {canSetUpMats ? (
                           <>
                             <span id="timetable-split-label" className="text-xs font-medium text-tx-2 md:whitespace-nowrap">Split same-time classes (whole club)</span>
                             <div className="flex items-center gap-1 rounded-lg bg-sf-2 p-0.5 [&>*]:flex-1 md:[&>*]:flex-none" role="group" aria-labelledby="timetable-split-label">
@@ -2516,7 +2509,7 @@ export default function TimetableManager({
                         )}
                       </div>
                     )}
-                    {canChangeMats && !matsLoadFailed && (
+                    {canSetUpMats && !matsLoadFailed && (
                       <>
                         <Button variant="secondary" size="compact" className="hidden md:inline-flex" onClick={() => setMatsOpen(true)} data-testid="timetable-mats">
                           Mats
@@ -2892,7 +2885,6 @@ export default function TimetableManager({
           membershipTiers={membershipTiers}
           mats={mats}
           places={places}
-          supportSession={supportSession}
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
@@ -2936,7 +2928,7 @@ export default function TimetableManager({
         )}
       </Sheet>
 
-      {canChangeMats && (
+      {canSetUpMats && (
         <MatsSheet
           open={matsOpen}
           onClose={() => { setMatsOpen(false); setWantByMat(false); }}

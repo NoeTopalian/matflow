@@ -21,7 +21,8 @@
 //    create and on edit;
 //  - Undo of an edit that put a class on a mat by name returns the class to
 //    its typed place and leaves the mat;
-//  - a support session uses an existing mat by name and adds none.
+//  - a support session uses an existing mat by name, and adds a new one as the
+//    owner does (support attribution: support-mats-db.test.ts).
 // Synthetic data only; skips without TEST_DATABASE_URL.
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -305,13 +306,19 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     expect(await classes(B)).toEqual([]);
   });
 
-  it("a support session keeps a new name as a typed place: no mat is added", async () => {
+  it("an edit support session adds a new name as a location, as the owner does, taking the club's classes that type it", async () => {
     const T = await club("support");
-    as(T, { impersonatedBy: "synthetic-operator" });
+    const typed = await classRow(T, "Typed", "the beach");
+    as(T, { impersonatedBy: "synthetic-operator", supportScope: "edit" });
     const res = await create({ name: "Beach", matName: "The beach" });
     expect(res.status).toBe(201);
-    expect(await mats(T)).toEqual([]);
-    expect((await classes(T)).find((c) => c.name === "Beach")).toMatchObject({ matId: null, location: "The beach" });
+    const [beach] = await mats(T);
+    expect(await mats(T)).toEqual([{ id: beach.id, name: "The beach", nameKey: "the beach", sortOrder: 0 }]);
+    const rows = await classes(T);
+    expect(rows.find((c) => c.name === "Beach")).toMatchObject({ matId: beach.id, location: "The beach" });
+    expect(rows.find((c) => c.id === typed.id)).toMatchObject({ matId: beach.id, location: "The beach" });
+    expect(await matAudits(T)).toHaveLength(1);
+    expect(await matAudits(T, "mat.adopt")).toHaveLength(1);
   });
 
   it("two saves naming the same new place at once make one mat, and both classes are on it", async () => {
@@ -375,18 +382,20 @@ describe.skipIf(!HAS_DB)("class Location by name — real database", () => {
     expect(await matAudits(T)).toHaveLength(1);
   }, 60_000);
 
-  it("a support session's edit naming an existing mat puts the class on it and adds none", async () => {
+  it("an edit support session's class edit naming an existing mat puts the class on it, and a new name adds a location", async () => {
     const T = await club("support-patch");
     const mat = await addMatRow(T, "Mat 1", 0);
     const cls = await classRow(T, "Gi", null);
-    as(T, { impersonatedBy: "synthetic-operator" });
+    as(T, { impersonatedBy: "synthetic-operator", supportScope: "edit" });
     expect((await edit(cls.id, { matName: "MAT 1" })).status).toBe(200);
     expect((await classes(T))[0]).toMatchObject({ matId: mat.id, location: "Mat 1" });
     expect(await mats(T)).toHaveLength(1);
-    // A new name stays the class's typed place.
-    expect((await edit(cls.id, { matName: "The beach" })).status).toBe(200);
-    expect((await classes(T))[0]).toMatchObject({ matId: null, location: "The beach" });
-    expect(await mats(T)).toHaveLength(1);
     expect(await matAudits(T)).toEqual([]);
+    // A new name is added as a location, as the owner's is.
+    expect((await edit(cls.id, { matName: "The beach" })).status).toBe(200);
+    const beach = (await mats(T)).find((m) => m.name === "The beach");
+    expect(beach).toBeTruthy();
+    expect((await classes(T))[0]).toMatchObject({ matId: beach!.id, location: "The beach" });
+    expect(await matAudits(T)).toEqual([{ entityId: beach!.id, metadata: expect.objectContaining({ name: "The beach" }) }]);
   });
 });

@@ -134,9 +134,8 @@ acts on is worse than an error they can see.
   new mat takes its typed name: a save that leaves the Location alone never moves it, and a
   class from before that still types a mat's name without being on it says so in its list
   ("typed on this class only"). It never saves a split: a club that chose one keeps it, and one
-  that has not follows the rule below. A support session cannot add mats: the list says "Type
-  a place"; a name that is one of the club's mats puts the class on it, and any other stays
-  that class's typed place.
+  that has not follows the rule below. A MatFlow support session's list is the owner's, and a
+  location it adds is added as the owner's would be.
 - **Same name, same mat, whatever invisible characters it carries (7 Nov 2026).** Two names are the
   same mat when they match ignoring capitals, spacing and default-ignorable characters (a soft
   hyphen, a zero-width joiner), which stay in the name shown. Mats saved before then were keyed
@@ -157,10 +156,13 @@ acts on is worse than an error they can see.
   in words. A phone, and the members' day, show mat columns while the day needs three
   side-by-side columns or fewer (six on a desktop); a busier day is drawn by time, every
   class names its mat, and the screen says so.
-- **Who may change them:** owner and manager. A coach or an admin sees the split and the mat
-  names and changes neither. In a MatFlow support session a class can be put on a mat (it is
-  a class edit) but mats cannot be set up and the split cannot be changed: those are the
-  club's. The split is still shown there, as text with that reason, never hidden.
+- **Who may change them:** owner and manager, and a MatFlow edit support session (Noe, 7 Nov
+  2026: "Yes, allow support"), which sees the Mats button and By mat / By time exactly as the
+  owner does: it may add, rename, reorder and remove mats, "Add these as mats", choose the
+  split, and add a location from the class form. Every one of those changes is recorded as made
+  by MatFlow support in the club's Activity. A read-only support session changes nothing: it sees
+  the split as text, saying the session is read-only, and no Mats button. A coach or an admin
+  sees the split and the mat names and changes neither.
 - **Not undone from Activity.** Mats and the split are changed back where they were changed,
   on the Timetable page. Undoing a class edit re-derives the class's place from its mat and
   never copies an old name back.

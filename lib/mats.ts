@@ -24,8 +24,6 @@ import type { Prisma } from "@prisma/client";
 
 /** Longest mat name: it has to fit a column header. */
 export const MAT_NAME_MAX = 24;
-/** Longest typed place (Class.location) a class may keep when no mat is added. */
-export const PLACE_NAME_MAX = 100;
 /** Most mats a club can have. */
 export const MAT_LIMIT = 12;
 
@@ -171,23 +169,19 @@ export function placeSuggestions(
 export const LOCATION_ERRORS = {
   empty: "Give the new location a name.",
   tooLong: `A location name can be up to ${MAT_NAME_MAX} characters. Use a shorter name.`,
-  placeTooLong: `A place can be up to ${PLACE_NAME_MAX} characters. Use a shorter name.`,
   limit: `You already have ${MAT_LIMIT} locations, the most a club can have, so this one can't be added. Remove a location under Mats, or choose one from the list.`,
   both: "Choose a location from the list or add a new one, not both.",
 } as const;
 
 /**
  * A Location name sent by the class form (`matName`), checked before any
- * transaction: the clean name, or the sentence that refuses it. Too long is a
- * refusal only for a caller that may add mats; anyone else keeps it as a
- * typed place (lib/mats-store.ts `matForLocation`).
+ * transaction: the clean name, or the sentence that refuses it.
  */
-export function checkLocationName(raw: string, mayAddMat: boolean): { ok: true; name: string } | { ok: false; error: string } {
+export function checkLocationName(raw: string): { ok: true; name: string } | { ok: false; error: string } {
   const name = cleanMatName(raw);
   // Blank by its key: a name of nothing but invisible characters is no name.
   if (!matNameKey(name)) return { ok: false, error: LOCATION_ERRORS.empty };
-  if (mayAddMat && name.length > MAT_NAME_MAX) return { ok: false, error: LOCATION_ERRORS.tooLong };
-  if (name.length > PLACE_NAME_MAX) return { ok: false, error: LOCATION_ERRORS.placeTooLong };
+  if (name.length > MAT_NAME_MAX) return { ok: false, error: LOCATION_ERRORS.tooLong };
   return { ok: true, name };
 }
 

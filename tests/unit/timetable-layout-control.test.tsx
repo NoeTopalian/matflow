@@ -8,6 +8,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import TimetableManager from "@/components/dashboard/TimetableManager";
 import { weekChips, weekDay, weekGrid } from "./helpers/week";
 import { PROPS, cls, stubFetch, type Call } from "./helpers/timetable-fixture";
@@ -120,17 +122,44 @@ describe("the control: Split same-time classes", () => {
     expect(screen.queryByTestId("timetable-mats-phone")).toBeNull();
   });
 
-  it("in a MatFlow support session the split is read as text with the reason, and nothing can be changed", () => {
-    render(<TimetableManager initialClasses={week()} mats={MATS} supportSession {...PROPS} />);
-    // Never invisible (Noe, 6 Nov 2026: "I don't see the option to view by mat"): what the club chose is said.
+  // Noe, 7 Nov 2026 ("Yes, allow support"): an EDIT support session is signed in as the owner and sees the owner's
+  // controls (the page passes supportReadOnly false). A read-only (view) session is refused them by the proxy, so it
+  // is offered none (UI-RULES §7).
+  it("in an EDIT support session By mat / By time and the Mats button are there, as the owner sees them, and pressing By mat sends it", async () => {
+    render(<TimetableManager initialClasses={week()} mats={MATS} storedLayout="time" {...PROPS} role="owner" supportReadOnly={false} />);
+    const group = screen.getByRole("group", { name: "Split same-time classes (whole club)" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["By mat", "By time"]);
+    expect(screen.queryByTestId("timetable-split-text")).toBeNull();
+    expect(screen.queryByText(/the club's to set/)).toBeNull();
+    expect(screen.queryByText(/read-only/)).toBeNull();
+    expect(screen.getByTestId("timetable-mats")).toBeTruthy();
+    expect(screen.getByTestId("timetable-mats-phone")).toBeTruthy();
+    fireEvent.click(byMat());
+    await waitFor(() => expect(sent(calls)).toHaveLength(1));
+    expect(sent(calls)[0].body).toEqual({ layout: "mat" });
+  });
+
+  it("in a read-only support session the split is text with the read-only line, and there is no Mats button or sheet", () => {
+    render(<TimetableManager initialClasses={week()} mats={MATS} {...PROPS} role="owner" supportReadOnly />);
     expect(screen.getByTestId("timetable-split-text").textContent).toBe("Split by mat");
-    expect(screen.getByTestId("timetable-split-hint").textContent).toBe("Mats and the split are the club's to set: its owner or a manager does it here.");
+    expect(screen.getByTestId("timetable-split-hint").textContent).toBe("MatFlow support session, read-only: the split and the mats are shown, not changed.");
     expect(screen.queryByTestId("timetable-split-mat")).toBeNull();
     expect(screen.queryByTestId("timetable-split-time")).toBeNull();
     expect(screen.queryByTestId("timetable-mats")).toBeNull();
     expect(screen.queryByTestId("timetable-mats-phone")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
     // The week itself still follows the club's mats.
     expect(screen.getByTestId("week-grid").getAttribute("data-mats")).toBe("true");
+  });
+
+  it("a read-only support session on a club with no classes has no Mats button either", () => {
+    render(<TimetableManager initialClasses={[]} mats={MATS} {...PROPS} role="owner" supportReadOnly />);
+    expect(screen.queryByTestId("timetable-mats-empty")).toBeNull();
+  });
+
+  it("the Timetable page marks read-only only a support session whose scope is not exactly edit", () => {
+    const page = readFileSync(resolve(__dirname, "../../app/dashboard/timetable/page.tsx"), "utf8");
+    expect(page).toMatch(/supportReadOnly=\{isSupportSession\(session\) && \(session!\.user as \{ supportScope\?: unknown \}\)\.supportScope !== "edit"\}/);
   });
 
   it("is on the Day view too, now every screen follows the split", () => {

@@ -13,6 +13,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
+import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { logAudit } from "@/lib/audit-log";
 import { MAT_NAME_MAX, cleanMatName, lockClubMats, matNameKey } from "@/lib/mats";
 
@@ -26,6 +27,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSessionUnlessEdit(gate.session); if (support) return support; // view refused; an EDIT session may set up mats and the split (SUPPORT_EDIT_MUTATION_ALLOWLIST)
   const { tenantId, userId } = gate;
   const { id } = await params;
 
@@ -73,6 +75,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
+  const support = refuseSupportSessionUnlessEdit(gate.session); if (support) return support; // view refused; an EDIT session may set up mats and the split (SUPPORT_EDIT_MUTATION_ALLOWLIST)
   const { tenantId, userId } = gate;
   const { id } = await params;
 

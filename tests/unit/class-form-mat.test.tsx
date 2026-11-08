@@ -423,17 +423,6 @@ describe("refusals and failures", () => {
     expect(newBox()!.value).toBe(thirty);
   });
 
-  it("in a support session a typed place of up to 100 characters is sent whole", async () => {
-    const place = "The sports hall at the community centre on the corner of the high street";
-    render(<TimetableManager initialClasses={CLUB()} mats={MATS} supportSession {...PROPS} />);
-    await createClass("Wrestling");
-    choose("new");
-    fireEvent.change(newBox("Place for this class")!, { target: { value: place } });
-    submit("Create class");
-    await waitFor(() => expect(saves(calls)).toHaveLength(1));
-    expect(locationPart(saves(calls)[0].body)).toEqual({ matName: place });
-  });
-
   it("a failed save keeps the typed name and the form; the retry sends it once", async () => {
     calls = answerSaves(500, { error: "Failed to create class" });
     render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
@@ -494,30 +483,24 @@ describe("refusals and failures", () => {
 });
 
 describe("who can use it", () => {
-  it("in a support session the last option is 'Type a place', and the box says it stays this class's place", async () => {
-    render(<TimetableManager initialClasses={CLUB()} mats={MATS} supportSession {...PROPS} />);
-    await createClass("Wrestling");
-    expect(options().at(-1)).toEqual(["new", "Type a place"]);
-    expect(options().map(([, t]) => t)).not.toContain("Add a new location…");
-    choose("new");
-    const box = newBox("Place for this class")!;
-    expect(box).not.toBeNull();
-    const hint = screen.getByTestId("class-form-new-location-hint");
-    expect(hint.textContent).toMatch(/can.t add saved locations\. If this name is one of them, the class goes on it/);
-    expect(box.getAttribute("aria-describedby")).toBe(hint.id);
-    fireEvent.change(box, { target: { value: "The beach" } });
-    submit("Create class");
-    await waitFor(() => expect(saves(calls)).toHaveLength(1));
-    // Sent by name as ever; the server keeps it as this class's typed place.
-    expect(locationPart(saves(calls)[0].body)).toEqual({ matName: "The beach" });
-  });
-
-  it("an owner sees 'Add a new location…' and no support hint", async () => {
+  // A MatFlow support session is signed in as the owner, and the page renders the owner's form for it (Noe, 7 Nov
+  // 2026: "Yes, allow support"; the class form takes nothing about support; supportReadOnly only governs mats and the split).
+  it("an owner, and so an edit support session, sees 'Add a new location…', no support wording, and the saved-location toast", async () => {
+    calls = stubFetch((call) => {
+      if (call.url !== "/api/classes" || call.method !== "POST") return undefined;
+      return { ok: true, status: 201, json: async () => ({ ...cls("Wrestling", "The beach", [[1, "18:00", "19:00"]], { matId: "m9" }), instancesCreated: 8, locationAdded: { id: "m9", name: "The beach", classIds: [] } }) };
+    });
     render(<TimetableManager initialClasses={CLUB()} mats={MATS} {...PROPS} />);
     await createClass("Wrestling");
     expect(options().at(-1)).toEqual(["new", "Add a new location…"]);
+    expect(options().map(([, t]) => t)).not.toContain("Type a place");
     choose("new");
     expect(screen.queryByTestId("class-form-new-location-hint")).toBeNull();
+    expect(screen.queryByLabelText("Place for this class")).toBeNull();
+    fireEvent.change(newBox()!, { target: { value: "The beach" } });
+    submit("Create class");
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringContaining("“The beach” is saved as a location."), "success"));
+    expect(locationPart(saves(calls)[0].body)).toEqual({ matName: "The beach" });
   });
 
   it("a coach has no class form, so a coach cannot type a new location or add one", () => {
