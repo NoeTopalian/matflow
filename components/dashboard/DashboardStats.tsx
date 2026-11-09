@@ -286,7 +286,8 @@ export default function DashboardStats({
   }
   const today = todayKey();
   const todayClasses = classes.filter((cls) => cls.date === today);
-  const bookedToday = todayClasses.reduce((sum, cls) => sum + cls.enrolled, 0);
+  // `enrolled` is the session's attendance count (app/dashboard/page.tsx: _count.attendances), so say so.
+  const checkedInToday = todayClasses.reduce((sum, cls) => sum + cls.enrolled, 0);
   const spacesLeft = todayClasses.reduce((sum, cls) => {
     if (!cls.capacity) return sum;
     return sum + Math.max(cls.capacity - cls.enrolled, 0);
@@ -437,7 +438,7 @@ export default function DashboardStats({
         <MetricCard
           label="Today's Classes"
           value={todayClasses.length}
-          detail={`${bookedToday} booked${spacesLeft > 0 ? ` · ${spacesLeftText(spacesLeft)}` : ""}`}
+          detail={`${checkedInToday} checked in${spacesLeft > 0 ? ` · ${spacesLeftText(spacesLeft)}` : ""}`}
           color={primaryColor}
           icon={CalendarCheck}
           href="/dashboard/coach"

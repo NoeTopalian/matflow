@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Megaphone, Plus, Trash2, Paperclip, Calendar, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -48,20 +48,44 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ type: "marketing", startDate: "", endDate: "", notes: "" });
+  // Three outcomes the list must tell apart (UI-RULES §7): loading, loaded and
+  // empty, and failed to load. A failed read is never shown as "No initiatives
+  // yet"; it is said, with a Retry that only re-reads.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Create and delete say when they fail and keep what was typed. Neither is
+  // retried automatically: a lost response may have committed, so the message
+  // says the outcome is unknown and offers a re-read of the list instead.
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const { ask, dialogProps } = useConfirmDialog();
 
-  useEffect(() => {
-    fetch("/api/initiatives")
-      .then((r) => r.json())
-      .then((d) => Array.isArray(d) && setItems(d))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/initiatives");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d: unknown = await res.json();
+      if (!Array.isArray(d)) throw new Error("Unexpected response");
+      setItems(d as Initiative[]);
+    } catch {
+      setLoadError("Couldn't load initiatives.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   async function createInitiative(e: React.FormEvent) {
     e.preventDefault();
     if (!form.startDate) return;
     setCreating(true);
+    setCreateError(null);
+    let outcomeKnown = false;
     try {
       const res = await fetch("/api/initiatives", {
         method: "POST",
@@ -73,12 +97,25 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
           notes: form.notes || null,
         }),
       });
+      outcomeKnown = true;
       if (res.ok) {
-        const created = await res.json();
+        const created = (await res.json()) as Initiative;
         setItems((prev) => [created, ...prev]);
         setDrawerOpen(false);
         setForm({ type: "marketing", startDate: "", endDate: "", notes: "" });
+      } else {
+        // The route answers { error } with a plain sentence; its `details` are never shown.
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        const reason = typeof body?.error === "string" ? body.error : null;
+        setCreateError(reason ? `Couldn't save: ${reason}. Your entries are kept.` : "Couldn't save the initiative. Your entries are kept.");
       }
+    } catch {
+      // No response: it may or may not have been saved. Never say "nothing changed".
+      setCreateError(
+        outcomeKnown
+          ? "Couldn't read the server's reply. Your entries are kept; check the list before saving again."
+          : "No reply from the server, so it isn't known whether this was saved. Your entries are kept; check the list before saving again.",
+      );
     } finally {
       setCreating(false);
     }
@@ -93,8 +130,24 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
       destructive: true,
     });
     if (!confirmed) return;
-    const res = await fetch(`/api/initiatives/${id}`, { method: "DELETE" });
-    if (res.ok) setItems((prev) => prev.filter((i) => i.id !== id));
+    setDeleteError(null);
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/initiatives/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setItems((prev) => prev.filter((i) => i.id !== id));
+      } else if (res.status === 404) {
+        // Already gone (another tab, or a repeat): re-read rather than guess.
+        setDeleteError({ id, message: "This initiative was no longer there. The list has been refreshed." });
+        void load();
+      } else {
+        setDeleteError({ id, message: "Couldn't delete this initiative. It is still here." });
+      }
+    } catch {
+      setDeleteError({ id, message: "No reply from the server, so it isn't known whether this was deleted. Refresh the list to check." });
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -127,6 +180,11 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Loading…</span>
         </div>
+      ) : loadError ? (
+        <div role="alert" className="flex items-center justify-between gap-3 py-4 px-3 rounded-xl border text-sm" style={{ borderColor: "var(--bd-default)", color: "var(--hue-danger-ink)" }} data-testid="initiatives-load-error">
+          <span>{loadError}</span>
+          <Button type="button" variant="secondary" size="compact" onClick={() => void load()}>Retry</Button>
+        </div>
       ) : items.length === 0 ? (
         <div className="py-8 text-center text-sm" style={{ color: "var(--tx-3)" }}>
           No initiatives yet. Click <span className="font-semibold" style={{ color: "var(--tx-2)" }}>Add</span> to record marketing, new classes, or other events.
@@ -154,14 +212,22 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={() => deleteInitiative(it.id)}
-                    className="p-1.5 rounded-lg transition-colors hover:bg-sf-2"
+                    disabled={deletingId === it.id}
+                    className="p-1.5 rounded-lg transition-colors hover:bg-sf-2 disabled:opacity-50"
                     style={{ color: "var(--tx-3)" }}
-                    aria-label="Delete"
+                    aria-label={`Delete ${meta.label} initiative from ${formatDate(it.startDate)}`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    {deletingId === it.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                   </button>
                 </div>
+                {deleteError?.id === it.id && (
+                  <div role="alert" className="flex items-center justify-between gap-3 text-xs" style={{ color: "var(--hue-danger-ink)" }} data-testid="initiative-delete-error">
+                    <span>{deleteError.message}</span>
+                    <Button type="button" variant="ghost" size="compact" onClick={() => void load()}>Refresh list</Button>
+                  </div>
+                )}
                 {it.attachments.length > 0 && <AttachmentsRow attachments={it.attachments} />}
                 <AttachmentUploader
                   initiativeId={it.id}
@@ -187,6 +253,11 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
           </Button>
         }
       >
+            {createError && (
+              <p role="alert" className="mb-3 text-sm" style={{ color: "var(--hue-danger-ink)" }} data-testid="initiative-create-error">
+                {createError}
+              </p>
+            )}
             <form id={formId} onSubmit={createInitiative} className="space-y-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "var(--tx-3)" }}>Type</label>

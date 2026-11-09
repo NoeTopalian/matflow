@@ -6,6 +6,9 @@ import { sessionLabel } from "@/lib/session-label";
 
 /** The most check-ins one session's view will list. */
 const SESSION_ATTENDANCE_LIMIT = 1000;
+// The recent list is the latest N check-ins, newest first. The page shows
+// only these; search and the method filter work within them.
+const RECENT_ATTENDANCE_LIMIT = 100;
 
 export type AttendanceRow = {
   id: string;
@@ -33,7 +36,7 @@ export type AttendanceSummary = {
 async function fetchRecentAttendance(
   tx: Parameters<Parameters<typeof withTenantContext>[1]>[0],
   tenantId: string,
-  limit = 100,
+  limit = RECENT_ATTENDANCE_LIMIT,
   // One session's check-ins instead of the recent list (?instance=).
   classInstanceId?: string,
 ): Promise<AttendanceRow[]> {
@@ -177,7 +180,7 @@ export default async function AttendancePage({
       const [recordRows, summaryData] = await Promise.all([
         focus
           ? fetchRecentAttendance(tx, session!.user.tenantId, SESSION_ATTENDANCE_LIMIT, focus.id)
-          : fetchRecentAttendance(tx, session!.user.tenantId),
+          : fetchRecentAttendance(tx, session!.user.tenantId, RECENT_ATTENDANCE_LIMIT),
         fetchSummary(tx, session!.user.tenantId),
       ]);
       return { recordRows, summaryData, focus };
@@ -195,6 +198,7 @@ export default async function AttendancePage({
           : null
       }
       sessionNotFound={instanceId !== null && !focus}
+      loadedLimit={focus ? SESSION_ATTENDANCE_LIMIT : RECENT_ATTENDANCE_LIMIT}
     />
   );
 }
