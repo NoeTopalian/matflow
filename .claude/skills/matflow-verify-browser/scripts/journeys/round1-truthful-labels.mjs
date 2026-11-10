@@ -240,7 +240,9 @@ try {
   await shot(mp, "round1-shop-phone");
   // Phone: record what pressing a visible class opens (a NOTE, with a screenshot), rather than assume it.
   await mp.goto("/member/schedule");
-  const pcell = mp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).filter({ visible: true }).first();
+  // The schedule is a three-pane carousel (previous / today / next); the side panes are `inert`. Take today's pane.
+  const pcell = mp.getByTestId("schedule-pane", { exact: true }).getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).first();
+  await pcell.waitFor({ timeout: 60000 }).catch(() => {});
   const pCount = await pcell.count();
   if (pCount) {
     await pcell.focus();
@@ -257,7 +259,7 @@ try {
   dp.on("pageerror", (e) => errors.push(String(e)));
   await memberSignIn(dp, club, member);
   await dp.goto("/member/schedule");
-  const cell = dp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).filter({ visible: true }).first();
+  const cell = dp.getByTestId("schedule-pane", { exact: true }).getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).first();
   await cell.waitFor({ timeout: 60000 });
   await cell.focus();
   await dp.keyboard.press("Enter");
