@@ -1,4 +1,6 @@
 import { auth } from "@/auth";
+import { createHash } from "node:crypto";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { parsePagination } from "@/lib/pagination";
@@ -135,6 +137,27 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+  }
+
+  // Round 4 (10 Nov 2026): the same notice posted twice within two minutes
+  // (a double click, or a retry after a lost reply) is posted once. The
+  // rate-limit store takes the hit under an advisory lock, so two requests at
+  // once are serial; the repeat gets the notice already posted.
+  const fingerprint = createHash("sha256").update(`${parsed.data.title}
+${parsed.data.body}`).digest("hex").slice(0, 32);
+  const once = await checkRateLimit(`announcement-once:${session.user.tenantId}:${fingerprint}`, 1, 2 * 60 * 1000);
+  if (!once.allowed) {
+    const existing = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.announcement.findFirst({
+        where: { tenantId: session.user.tenantId, title: parsed.data.title, body: parsed.data.body, createdAt: { gte: new Date(Date.now() - 2 * 60 * 1000) } },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    if (existing) return NextResponse.json(existing, { status: 200 });
+    return NextResponse.json(
+      { error: "This notice is already being posted. Check the announcements list before posting it again.", reason: "announcement_in_flight" },
+      { status: 409 },
+    );
   }
 
   try {
