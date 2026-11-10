@@ -160,6 +160,22 @@ type RevenueSummary = {
   recent: { name: string; action: string; tier: string; date: string }[];
 };
 
+/**
+ * The branding fields whose value differs from the server-confirmed one.
+ * Only these go in the PATCH: the API leaves an omitted field untouched, so
+ * nothing the owner did not change can be written back.
+ */
+export function brandingChanges(
+  saved: Record<string, string | null>,
+  next: Record<string, string | null>,
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(next)) {
+    if (saved[k] !== v) out[k] = v;
+  }
+  return out;
+}
+
 const EMPTY_REVENUE: RevenueSummary = {
   mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0,
   history: [], memberships: [], recent: [],
@@ -704,8 +720,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [primaryCol, setPrimaryCol]     = useState(settings?.primaryColor   ?? primaryColor);
   const [secondaryCol, setSecondaryCol] = useState(settings?.secondaryColor ?? "#2563eb");
   const [textCol, setTextCol]           = useState(settings?.textColor      ?? "#ffffff");
-  const [bgCol, setBgCol]               = useState("#111111");
-  const [fontFamily, setFontFamily]     = useState("Inter, sans-serif");
+  const [bgCol, setBgCol]               = useState(settings?.bgColor ?? "#111111");
+  const [fontFamily, setFontFamily]     = useState(settings?.fontFamily ?? "Inter, sans-serif");
+  // The club's branding as last confirmed by the server. Save sends only the
+  // fields that differ from this, so a field the owner did not touch is never
+  // written back (a fresh browser can no longer reset it).
+  const savedBranding = useRef<Record<string, string | null>>({
+    name: settings?.name ?? "",
+    primaryColor: settings?.primaryColor ?? null,
+    secondaryColor: settings?.secondaryColor ?? null,
+    textColor: settings?.textColor ?? null,
+    bgColor: settings?.bgColor ?? null,
+    fontFamily: settings?.fontFamily ?? null,
+    logoUrl: settings?.logoUrl ?? null,
+    logoSize: settings?.logoSize ?? null,
+  });
   const [logoPreview, setLogoPreview]   = useState<string | null>(settings?.logoUrl ?? null);
   const [logoFile, setLogoFile]         = useState<File | null>(null);
   const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">("none");
@@ -871,6 +900,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [stripeAccount, setStripeAccount]         = useState<string | null>(initStripeAccountId);
   const [plans, setPlans]                         = useState<{ id: string; name: string; amount: number; currency: string; interval: string }[]>([]);
   const [plansLoaded, setPlansLoaded]             = useState(false);
+  // A failed read is not "No plans yet" (UI-RULES §7): it is said, with a Retry.
+  const [plansError, setPlansError]               = useState(false);
   const [planDrawer, setPlanDrawer]               = useState(false);
   const [planName, setPlanName]                   = useState("");
   const [planPrice, setPlanPrice]                 = useState("");
@@ -897,19 +928,19 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }, [searchParams, tabOffered]);
 
   useEffect(() => {
+    // Round 2 (10 Nov 2026): the club's saved branding (server props) is what
+    // the editor shows. This browser's cache used to override colours, font,
+    // logo and size here, so a stale or fresh browser showed, and then saved,
+    // values the club never had. Only the two choices that exist nowhere but
+    // this browser are read back: the logo fill and the preset name.
     try {
       const localSettings = JSON.parse(localStorage.getItem("gym-settings") ?? "{}") as Record<string, unknown>;
-      if (typeof localSettings.primaryColor === "string") setPrimaryCol(localSettings.primaryColor);
-      if (typeof localSettings.secondaryColor === "string") setSecondaryCol(localSettings.secondaryColor);
-      if (typeof localSettings.textColor === "string") setTextCol(localSettings.textColor);
-      if (typeof localSettings.bgColor === "string") setBgCol(localSettings.bgColor);
-      if (typeof localSettings.fontFamily === "string") setFontFamily(localSettings.fontFamily);
-      if (typeof localSettings.logoUrl === "string") setLogoPreview(localSettings.logoUrl);
-      if (localSettings.logoBg === "none" || localSettings.logoBg === "black" || localSettings.logoBg === "white") setLogoBg(localSettings.logoBg);
-      if (localSettings.logoSize === "sm" || localSettings.logoSize === "md" || localSettings.logoSize === "lg") setLogoSize(localSettings.logoSize);
-      if (typeof localSettings.presetName === "string") setActivePreset(localSettings.presetName);
+      if (localSettings.slug === settings?.slug) {
+        if (localSettings.logoBg === "none" || localSettings.logoBg === "black" || localSettings.logoBg === "white") setLogoBg(localSettings.logoBg);
+        if (typeof localSettings.presetName === "string") setActivePreset(localSettings.presetName);
+      }
     } catch { /* ignore local preview state */ }
-  }, []);
+  }, [settings?.slug]);
 
   // Load Google Fonts when branding tab is open or font changes
   const FONT_IMPORTS_MAP: Record<string, string> = {
@@ -1081,14 +1112,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     setStripeDisconnecting(false);
   }
 
-  async function loadPlans() {
-    if (plansLoaded) return;
-    const res = await fetch("/api/stripe/subscription-plans");
-    if (res.ok) {
-      const { plans: data } = await res.json() as { plans: typeof plans };
-      setPlans(data);
+  async function loadPlans(force = false) {
+    if (plansLoaded && !force) return;
+    setPlansError(false);
+    setPlansLoaded(false);
+    try {
+      const res = await fetch("/api/stripe/subscription-plans");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { plans?: unknown };
+      if (!Array.isArray(body.plans)) throw new Error("Unexpected response");
+      setPlans(body.plans as typeof plans);
+    } catch {
+      setPlansError(true);
+    } finally {
+      setPlansLoaded(true);
     }
-    setPlansLoaded(true);
   }
 
   async function createPlan() {
@@ -1167,26 +1205,34 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           typeof finalLogoUrl === "string" && finalLogoUrl.length > 0
             ? finalLogoUrl
             : null;
-        const res = await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: gymName,
-            primaryColor: primaryCol,
-            secondaryColor: secondaryCol,
-            textColor: textCol,
-            bgColor: bgCol,
-            fontFamily,
-            logoUrl: persistedLogoUrl,
-            logoSize,
-          }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({} as { error?: string }));
-          saveError = body.error ?? `Couldn't save branding (HTTP ${res.status})`;
+        const next: Record<string, string | null> = {
+          name: gymName,
+          primaryColor: primaryCol,
+          secondaryColor: secondaryCol,
+          textColor: textCol,
+          bgColor: bgCol,
+          fontFamily,
+          logoUrl: persistedLogoUrl,
+          logoSize,
+        };
+        const changed = brandingChanges(savedBranding.current, next);
+        if (Object.keys(changed).length > 0) {
+          const res = await fetch("/api/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(changed),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({} as { error?: string }));
+            saveError = body.error ?? `Couldn't save branding (HTTP ${res.status})`;
+          } else {
+            savedBranding.current = { ...savedBranding.current, ...changed };
+          }
         }
       } catch {
-        saveError = "Couldn't reach MatFlow to save branding. Your members still see the previous look.";
+        // No reply: it may or may not have been saved. Say so instead of
+        // asserting either way; the editor keeps the owner's choices.
+        saveError = "No reply from MatFlow, so it isn't known whether your branding was saved. Your choices are kept here; reload to see what the club has now.";
       }
 
       setLogoFile(null);
@@ -2035,7 +2081,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {logoPreview && (
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Logo Background Fill</label>
-              <p className="text-tx-3 text-[10px] mb-2">If your logo has a coloured or transparent background, fill it so the text reads clearly.</p>
+              <p className="text-tx-3 text-[10px] mb-2">If your logo has a coloured or transparent background, fill it so the text reads clearly. Saved on this device only; members and other browsers don&apos;t see this choice.</p>
               <div className="flex gap-2">
                 {(["none", "black", "white"] as const).map((opt) => (
                   <button
@@ -2230,6 +2276,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </div>
               {!plansLoaded ? (
                 <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-tx-3" /></div>
+              ) : plansError ? (
+                <div role="alert" className="flex items-center justify-between gap-3 py-3 text-sm" style={{ color: "var(--hue-danger-ink)" }} data-testid="plans-load-error">
+                  <span>Couldn&apos;t load your plans. They haven&apos;t been changed.</span>
+                  <Button type="button" variant="secondary" size="compact" onClick={() => void loadPlans(true)}>Retry</Button>
+                </div>
               ) : plans.length === 0 ? (
                 <p className="text-tx-3 text-sm text-center py-4">No plans yet — add one to start selling memberships.</p>
               ) : (
