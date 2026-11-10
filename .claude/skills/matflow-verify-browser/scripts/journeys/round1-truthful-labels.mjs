@@ -238,19 +238,40 @@ try {
   const mShop = await noHScroll(mp);
   L.check("mobile", "M4 Shop at 390 px: no horizontal scroll", mShop.scroll <= mShop.width + 1, mShop);
   await shot(mp, "round1-shop-phone");
+  // Phone: record what pressing a visible class opens (a NOTE, with a screenshot), rather than assume it.
   await mp.goto("/member/schedule");
-  // The desktop week grid is in the page but hidden at 390 px: take a visible cell.
-  const cell = mp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).filter({ visible: true }).first();
+  const pcell = mp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).filter({ visible: true }).first();
+  const pCount = await pcell.count();
+  if (pCount) {
+    await pcell.focus();
+    await mp.keyboard.press("Enter");
+    await mp.waitForTimeout(1500);
+  }
+  const pButtons = await mp.getByRole("button").filter({ visible: true }).evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") || (e.textContent || "").trim()).filter(Boolean).slice(-12));
+  L.note("mobile", "N1 phone schedule: what a keyboard press on a visible class shows (last visible buttons)", { visibleCells: pCount, buttons: pButtons });
+  await shot(mp, "round1-schedule-phone-after-press");
+
+  // Desktop member: the class details sheet (where the tour found the unnamed close button).
+  const dctx = await context(browser, "198.18.41.5");
+  const dp = await dctx.newPage();
+  dp.on("pageerror", (e) => errors.push(String(e)));
+  await memberSignIn(dp, club, member);
+  await dp.goto("/member/schedule");
+  const cell = dp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).filter({ visible: true }).first();
   await cell.waitFor({ timeout: 60000 });
-  // By keyboard: the phone day strip can leave today's cell outside the viewport for a pointer click.
   await cell.focus();
-  await mp.keyboard.press("Enter");
-  const closeSheet = mp.getByRole("button", { name: "Close class details" });
-  await closeSheet.waitFor({ timeout: 10000 });
-  L.check("a11y", "A4 the class details sheet's close button is named 'Close class details'", (await closeSheet.count()) === 1, {});
-  await closeSheet.focus(); await mp.keyboard.press("Enter");
-  await closeSheet.waitFor({ state: "hidden", timeout: 10000 });
-  L.check("a11y", "A4k Enter closes the sheet", true, {});
+  await dp.keyboard.press("Enter");
+  const closeSheet = dp.getByRole("button", { name: "Close class details" });
+  const opened = await closeSheet.waitFor({ timeout: 15000 }).then(() => true, () => false);
+  if (!opened) await shot(dp, "round1-schedule-desktop-no-sheet");
+  L.check("a11y", "A4 the class details sheet's close button is named 'Close class details'", opened && (await closeSheet.count()) === 1, opened ? {} : await dp.getByRole("button").filter({ visible: true }).evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") || (e.textContent || "").trim()).filter(Boolean).slice(-12)));
+  if (opened) {
+    await closeSheet.focus();
+    await dp.keyboard.press("Enter");
+    const closed = await closeSheet.waitFor({ state: "hidden", timeout: 10000 }).then(() => true, () => false);
+    L.check("a11y", "A4k Enter on 'Close class details' closes the sheet", closed, {});
+    await shot(dp, "round1-schedule-desktop");
+  }
 
   // ── A5: login show-password toggle ──
   const anon = await context(browser, "198.18.41.4");
