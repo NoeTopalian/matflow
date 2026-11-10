@@ -107,4 +107,23 @@ describe.skipIf(!HAS_DB)("plan edits: no silent overwrite", () => {
     expect((await patch({ pricePence: 1, expected: { pricePence: 6500 } })).status).toBe(404);
     expect((await row()).pricePence).toBe(6500);
   });
+
+  // Review M: the allowance expects what the editor loaded too.
+  it("two tabs change the class limit from 4: one wins, the other is told", async () => {
+    as("A");
+    await withRlsBypass((tx) => tx.membershipTier.update({ where: { id: tierId }, data: { classLimit: 4, classLimitBasis: "week", maxClassesPerWeek: 4, classLimitWeeks: null, classLimitAnchor: null } }));
+    const base = { classLimit: 4, classLimitBasis: "week", classLimitWeeks: null, classLimitAnchor: null };
+    const tabA = await patch({ classLimit: 8, classLimitBasis: "week", classLimitWeeks: null, classLimitAnchor: null, expected: base });
+    const tabB = await patch({ classLimit: 6, classLimitBasis: "week", classLimitWeeks: null, classLimitAnchor: null, expected: base });
+    expect([tabA.status, tabB.status]).toEqual([200, 409]);
+    expect(tabB.body).toMatchObject({ reason: "stale_plan" });
+    expect((await withRlsBypass((tx) => tx.membershipTier.findUniqueOrThrow({ where: { id: tierId } }))).classLimit).toBe(8);
+  });
+
+  it("a weekly-run allowance with an anchor date expects it as the page shows it (YYYY-MM-DD)", async () => {
+    as("A");
+    await withRlsBypass((tx) => tx.membershipTier.update({ where: { id: tierId }, data: { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: new Date("2026-11-02T00:00:00.000Z"), maxClassesPerWeek: null } }));
+    const r = await patch({ classLimit: 6, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: "2026-11-02", expected: { classLimit: 4, classLimitBasis: "weeks", classLimitWeeks: 4, classLimitAnchor: "2026-11-02" } });
+    expect(r.status).toBe(200);
+  });
 });

@@ -440,7 +440,7 @@ export default function MemberProfile({
   const [notesSaving, setNotesSaving] = useState(false);
   // Round 4: a notes save refused because another admin changed the notes
   // since this page loaded them. The draft stays in the box.
-  const [notesConflict, setNotesConflict] = useState<{ current: string | null; updatedAt: string | null } | null>(null);
+  const [notesConflict, setNotesConflict] = useState<{ current: string | null } | null>(null);
   const [form, setForm] = useState({
     name: initial.name,
     email: initial.email,
@@ -796,10 +796,7 @@ export default function MemberProfile({
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { reason?: unknown; currentNotes?: unknown; currentUpdatedAt?: unknown } | null;
         if (res.status === 409 && body?.reason === "stale_notes") {
-          setNotesConflict({
-            current: typeof body.currentNotes === "string" ? body.currentNotes : null,
-            updatedAt: typeof body.currentUpdatedAt === "string" ? body.currentUpdatedAt : null,
-          });
+          setNotesConflict({ current: typeof body.currentNotes === "string" ? body.currentNotes : null });
           toast("Not saved: someone else changed these notes since you opened this member. Your text is still here.", "error");
           return;
         }
@@ -807,14 +804,14 @@ export default function MemberProfile({
         return;
       }
       setNotesConflict(null);
-      // D1: this PATCH bumps the row version too; carry it so the next
-      // profile save is not refused as a conflict with our own edit.
-      const saved = (await res.json().catch(() => null)) as { updatedAt?: unknown } | null;
-      setMember((m) => ({
-        ...m,
-        notes: notesDraft || null,
-        updatedAt: typeof saved?.updatedAt === "string" ? saved.updatedAt : m.updatedAt ?? null,
-      }));
+      // Round 4 review: a notes save no longer moves the row version, and the
+      // page never takes one from it, so a later profile save is still checked
+      // against the version its fields were loaded with. The notes kept are
+      // the stored (sanitised) text, so the next save expects exactly that.
+      const saved = (await res.json().catch(() => null)) as { notes?: unknown } | null;
+      const stored = saved && "notes" in saved ? (typeof saved.notes === "string" ? saved.notes : null) : notesDraft || null;
+      setMember((m) => ({ ...m, notes: stored }));
+      setNotesDraft(stored ?? "");
       toast("Notes saved", "success");
     } finally { setNotesSaving(false); }
   }
@@ -2017,13 +2014,14 @@ export default function MemberProfile({
               busy={notesSaving}
               onUseLatest={() => {
                 setNotesDraft(notesConflict.current ?? "");
-                setMember((m) => ({ ...m, notes: notesConflict.current, updatedAt: notesConflict.updatedAt ?? m.updatedAt ?? null }));
+                // The notes only: never another admin's row version (review H).
+                setMember((m) => ({ ...m, notes: notesConflict.current }));
                 setNotesConflict(null);
               }}
               onKeepMine={() => {
                 // A knowing overwrite: the save now expects the newer notes.
                 const latest = notesConflict.current;
-                setMember((m) => ({ ...m, notes: latest, updatedAt: notesConflict.updatedAt ?? m.updatedAt ?? null }));
+                setMember((m) => ({ ...m, notes: latest }));
                 setNotesConflict(null);
                 void saveNotes(latest);
               }}

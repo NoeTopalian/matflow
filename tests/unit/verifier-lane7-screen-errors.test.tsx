@@ -372,4 +372,25 @@ describe("staff profile notes (Round 4)", () => {
     await waitFor(() => expect(toastSpy.mock.calls.some((c) => /isn't known whether the notes were saved/.test(String(c[0])))).toBe(true));
     expect(box.value).toBe("Unsure note");
   });
+
+  // Review H: a notes conflict never hands the page another admin's row
+  // version, so the next profile save is still checked against the version
+  // its fields were loaded with (and is refused if someone changed them).
+  it("after 'Use the latest', a profile save still sends the version the page opened with", async () => {
+    let answer = () => json({ error: "changed", reason: "stale_notes", currentNotes: "Their note", currentUpdatedAt: "2026-09-30T09:06:00.000Z" }, 409); // a version the page must not adopt
+    profileFetch(() => answer());
+    const box = await openNotes("Old note");
+    fireEvent.change(box, { target: { value: "My note" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save notes/ }));
+    await screen.findByTestId("settings-conflict");
+    fireEvent.click(screen.getByRole("button", { name: "Use the latest" }));
+    answer = () => json({ ...MEMBER, updatedAt: "2026-09-30T09:09:00.000Z" });
+    fireEvent.click(screen.getByRole("tab", { name: /Overview/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByDisplayValue("Sam Carter"), { target: { value: "Sam C" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(patches()).toHaveLength(2));
+    expect(JSON.parse(String(patches()[1].init!.body)).updatedAt).toBe(OPENED_AT);
+  });
 });
+

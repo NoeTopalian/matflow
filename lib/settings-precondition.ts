@@ -18,8 +18,14 @@ export type SettingsConflict = { field: string; current: unknown };
 
 /** Stable JSON for comparing stored and sent values: key order and undefined never matter. */
 function canonical(value: unknown): string {
-  if (value === undefined || value === null) return "null";
+  // An empty text and no value are the same setting (a waiver never set may be stored either way).
+  if (value === undefined || value === null || value === "") return "null";
   if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (typeof value === "bigint") return JSON.stringify(value.toString());
+  // Prisma Decimal and similar: compare by their JSON form.
+  if (typeof value === "object" && typeof (value as { toJSON?: unknown }).toJSON === "function") {
+    return canonical((value as { toJSON: () => unknown }).toJSON());
+  }
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
@@ -31,6 +37,11 @@ function canonical(value: unknown): string {
 }
 
 export function sameSettingValue(a: unknown, b: unknown): boolean {
+  // A stored date column against the page's string for it ("YYYY-MM-DD" or
+  // ISO): the same day, or the same instant, is the same value.
+  const asDay = (d: Date, s: string) => d.toISOString() === s || (s.length === 10 && d.toISOString().slice(0, 10) === s);
+  if (a instanceof Date && typeof b === "string") return asDay(a, b);
+  if (b instanceof Date && typeof a === "string") return asDay(b, a);
   return canonical(a) === canonical(b);
 }
 

@@ -77,4 +77,30 @@ describe.skipIf(!HAS_DB)("payment chase: one reminder per click burst", () => {
     expect((await send()).status).toBe(409);
     expect(mail.calls).toHaveLength(0);
   });
+
+  // Review M: the once-a-minute hit is released when no reminder went, so a
+  // retry is not told one was just started.
+  it("a refused chase (no email on file) does not block the retry with 'just sent'", async () => {
+    as("A");
+    const noEmail = await withRlsBypass((tx) => tx.member.create({ data: { tenantId: club.A, name: `${STAMP} no email`, email: `${STAMP}-x@no-login.matflow.local` } }));
+    const sendFor = (id: string) => chase(new Request("https://test.local/api/payments/chase", {
+      method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify({ memberId: id }),
+    })) as unknown as Promise<{ status: number }>;
+    expect((await sendFor(noEmail.id)).status).toBe(422);
+    expect((await sendFor(noEmail.id)).status).toBe(422); // the same honest refusal, not a 409 'just sent'
+  });
+
+  it("a send that failed releases the minute, so the retry sends", async () => {
+    as("A");
+    const fresh = await withRlsBypass((tx) => tx.member.create({ data: { tenantId: club.A, name: `${STAMP} retry`, email: `${STAMP}-r@example.test` } }));
+    const { sendEmail } = await import("@/lib/email");
+    vi.mocked(sendEmail).mockImplementationOnce(async () => ({ ok: false } as never));
+    const sendFor = () => chase(new Request("https://test.local/api/payments/chase", {
+      method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify({ memberId: fresh.id }),
+    })) as unknown as Promise<{ status: number }>;
+    mail.calls.length = 0;
+    await sendFor();          // the send fails
+    expect((await sendFor()).status).toBe(200); // the retry is allowed and sends
+    expect(mail.calls.length).toBeGreaterThanOrEqual(1);
+  });
 });

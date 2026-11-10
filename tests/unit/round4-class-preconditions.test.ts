@@ -20,3 +20,10 @@ describe("withClassPreconditions", () => {
     expect(withClassPreconditions({ coachUserId: "u1" }, {})).toEqual({ coachUserId: "u1", expected: { coachUserId: null } });
   });
 });
+
+describe("withClassPreconditions with a squad (review)", () => {
+  it("a roster save keeps both rank fields with what was loaded, even unchanged, so a gate set elsewhere is a conflict", () => {
+    const out = withClassPreconditions({ ...loaded, roster: [{ memberId: "m1" }] }, loaded);
+    expect(out).toMatchObject({ requiredRankId: null, maxRankId: null, expected: { requiredRankId: null, maxRankId: null } });
+  });
+});

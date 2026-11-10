@@ -84,4 +84,15 @@ describe.skipIf(!HAS_DB)("announcements: posted once per click burst", () => {
     expect(await count("B", "Grading day")).toBe(1);
     expect(await count("A", "Grading day")).toBe(2);
   });
+
+  it("the same text posted again as pinned is a new notice, not a repeat (review M)", async () => {
+    as("A");
+    const plain = await post("Pinned or not");
+    const r = (await postAnnouncement(new Request("https://test.local/api/announcements", {
+      method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" },
+      body: JSON.stringify({ title: "Pinned or not", body: "Mats closed Saturday for the grading.", pinned: true }),
+    }))) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+    expect([plain.status, r.status]).toEqual([201, 201]);
+    expect(await count("A", "Pinned or not")).toBe(2);
+  });
 });

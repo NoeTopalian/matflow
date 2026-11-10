@@ -215,18 +215,22 @@ type FormState = typeof emptyForm;
 
 /** The plan fields a save compares against what the editor loaded (Round 4). */
 const PLAN_FIELDS = ["name", "pricePence", "currency", "billingCycle", "isKids", "stripePriceId", "stripeProductId", "locationId"] as const;
-type PlanFields = Record<(typeof PLAN_FIELDS)[number], unknown>;
+type PlanFields = Record<(typeof PLAN_FIELDS)[number] | "description" | "classLimit" | "classLimitBasis" | "classLimitWeeks" | "classLimitAnchor", unknown>;
 const PLAN_FIELD_LABELS: Record<string, string> = {
   name: "the name", pricePence: "the price", currency: "the currency", billingCycle: "the billing cycle",
   isKids: "whether it is a kids plan", stripePriceId: "the Stripe price", stripeProductId: "the Stripe product",
   locationId: "the venue", description: "the description",
+  classLimit: "the class limit", classLimitBasis: "the class limit", classLimitWeeks: "the class limit", classLimitAnchor: "the class limit",
 };
 
 /** A tier as the plan PATCH would send it, for comparing an edit with what was loaded. */
-export function planFieldsOf(t: Pick<MembershipTierRow, "name" | "pricePence" | "currency" | "billingCycle" | "isKids" | "stripePriceId" | "stripeProductId" | "locationId">): PlanFields {
+export function planFieldsOf(t: Pick<MembershipTierRow, "name" | "pricePence" | "currency" | "billingCycle" | "isKids" | "stripePriceId" | "stripeProductId" | "locationId" | "description" | "classLimit" | "classLimitBasis" | "classLimitWeeks" | "classLimitAnchor">): PlanFields {
   return {
     name: t.name, pricePence: t.pricePence, currency: t.currency, billingCycle: t.billingCycle, isKids: t.isKids,
     stripePriceId: t.stripePriceId ?? null, stripeProductId: t.stripeProductId ?? null, locationId: t.locationId ?? null,
+    // As stored: the description raw (not normalised) and the allowance columns, for `expected`.
+    description: t.description ?? null,
+    classLimit: t.classLimit ?? null, classLimitBasis: t.classLimitBasis ?? null, classLimitWeeks: t.classLimitWeeks ?? null, classLimitAnchor: t.classLimitAnchor ?? null,
   };
 }
 
@@ -314,6 +318,11 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
       if (field === "billingCycle") return { ...f, billingCycle: isBillingCycle(String(current)) ? (current as BillingCycle) : f.billingCycle };
       if (field === "name" || field === "currency") return { ...f, [field]: typeof current === "string" ? current : "" };
       if (field === "stripePriceId" || field === "stripeProductId" || field === "locationId") return { ...f, [field]: typeof current === "string" ? current : "" };
+      if (field === "description") return { ...f, description: typeof current === "string" ? current : "" };
+      if (field === "classLimit") return { ...f, classLimit: typeof current === "number" ? String(current) : "" };
+      if (field === "classLimitBasis") return { ...f, classLimitBasis: (typeof current === "string" ? current : "week") as FormState["classLimitBasis"] };
+      if (field === "classLimitWeeks") return { ...f, classLimitWeeks: typeof current === "number" ? String(current) : f.classLimitWeeks };
+      if (field === "classLimitAnchor") return { ...f, classLimitAnchor: typeof current === "string" ? current.slice(0, 10) : f.classLimitAnchor };
       return f;
     });
   }
@@ -384,9 +393,16 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
         // Round 4: only what changed from the loaded plan, each with the value
         // it replaces. The allowance and description keep their own
         // send-only-when-changed rule above.
-        const loaded = loadedPlan.current ?? {};
+        const loaded = (loadedPlan.current ?? {}) as Record<string, unknown>;
         const changedBody: Record<string, unknown> = { ...allowanceBody, ...(description !== undefined ? { description } : {}) };
+        // The description and the allowance keep their send-only-when-changed
+        // rules; when they are sent, they expect what this form loaded too
+        // (review), so two tabs changing the class limit cannot both win.
         const expected: Record<string, unknown> = {};
+        if (description !== undefined) expected.description = loaded.description ?? null;
+        for (const k of ["classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor"] as const) {
+          if (k in allowanceBody) expected[k] = loaded[k] ?? null;
+        }
         for (const k of PLAN_FIELDS) {
           if ((body as Record<string, unknown>)[k] !== (loaded as Record<string, unknown>)[k]) {
             changedBody[k] = (body as Record<string, unknown>)[k];
@@ -709,7 +725,7 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
         {planConflict && (
           <SettingsConflictNotice
             fields={planConflict.map((c) => c.field)}
-            changed={`Someone else changed ${planConflict.map((c) => PLAN_FIELD_LABELS[c.field] ?? c.field).join(", ")} since you opened this plan.`}
+            changed={`Someone else changed ${[...new Set(planConflict.map((c) => PLAN_FIELD_LABELS[c.field] ?? c.field))].join(", ")} since you opened this plan.`}
             busy={saving}
             onUseLatest={() => {
               rebasePlan(planConflict);

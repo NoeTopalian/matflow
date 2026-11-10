@@ -128,4 +128,54 @@ describe.skipIf(!HAS_DB)("member notes: a newer note is never silently overwritt
     expect((await patch({ notes: "Cross-club", expectedNotes: "Start" })).status).toBe(404);
     expect((await row()).notes).toBe("Start");
   });
+
+  // Review H (10 Nov 2026): a notes-only save does not move the row version,
+  // so a page can never take another admin's version from it and then pass a
+  // whole-form profile save carrying stale fields.
+  it("a notes-only save leaves the row version alone", async () => {
+    as("A");
+    await setNotes("Start");
+    const before = (await row()).updatedAt.getTime();
+    expect((await patch({ notes: "Journal entry", expectedNotes: "Start" })).status).toBe(200);
+    const after = await row();
+    expect(after.notes).toBe("Journal entry");
+    expect(after.updatedAt.getTime()).toBe(before);
+  });
+
+  it("Y changes the phone and the notes; X's profile save from before is still refused (no silent phone loss)", async () => {
+    as("A");
+    await setNotes("Start");
+    const opened = (await row()).updatedAt.toISOString(); // X and Y open the member
+    expect((await patch({ updatedAt: opened, name: `${STAMP} member`, phone: "07700900111" })).status).toBe(200); // Y: phone
+    expect((await patch({ notes: "Y's note", expectedNotes: "Start" })).status).toBe(200);                      // Y: notes
+    expect((await patch({ notes: "X's note", expectedNotes: "Start" })).status).toBe(409);                      // X: notes conflict
+    const xProfile = await patch({ updatedAt: opened, name: `${STAMP} member`, phone: "07700900999" });         // X: stale profile
+    expect(xProfile.status).toBe(409);
+    expect((await row()).phone).toBe("+447700900111");
+  });
+
+  it("expectedNotes without notes is refused", async () => {
+    as("A");
+    expect((await patch({ expectedNotes: "Start", name: `${STAMP} member` })).status).toBe(400);
+  });
+
+  // Found 10 Nov 2026 while testing Round 4 (pre-existing since 39385235,
+  // 1 Jun 2026, and on main): the notes field's transform turned an ABSENT
+  // key into null, so every member PATCH that did not send notes (a profile
+  // save, a plan change, a status change) erased the member's internal notes.
+  it("a profile save that does not send notes keeps them", async () => {
+    as("A");
+    await setNotes("Injured left knee — no takedowns until December");
+    const { updatedAt } = await row();
+    expect((await patch({ updatedAt: updatedAt.toISOString(), name: `${STAMP} member`, phone: "07700900222" })).status).toBe(200);
+    expect((await row()).notes).toBe("Injured left knee — no takedowns until December");
+  });
+
+  it("a plan or status change that does not send notes keeps them", async () => {
+    as("A");
+    await setNotes("Pays cash on Fridays");
+    expect((await patch({ status: "active" })).status).toBe(200);
+    expect((await row()).notes).toBe("Pays cash on Fridays");
+  });
 });
+

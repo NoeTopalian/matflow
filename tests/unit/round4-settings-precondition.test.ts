@@ -44,3 +44,14 @@ describe("resolveSettingsPreconditions", () => {
     expect(resolveSettingsPreconditions(stored, { waiverContent: "New" }, { waiverContent: null }).apply).toEqual({ waiverContent: "New" });
   });
 });
+
+describe("sameSettingValue, review additions", () => {
+  it("an empty stored text equals an expected null; a stored date equals the page's day or ISO string", () => {
+    expect(sameSettingValue("", null)).toBe(true);
+    expect(sameSettingValue(new Date("2026-11-09T00:00:00.000Z"), "2026-11-09")).toBe(true);
+    expect(sameSettingValue(new Date("2026-11-09T00:00:00.000Z"), "2026-11-09T00:00:00.000Z")).toBe(true);
+    expect(sameSettingValue(new Date("2026-11-09T00:00:00.000Z"), "2026-11-10")).toBe(false);
+    expect(sameSettingValue(BigInt(5), "5")).toBe(true);
+    expect(sameSettingValue({ toJSON: () => "12.50" }, "12.50")).toBe(true);
+  });
+});

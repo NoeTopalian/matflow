@@ -186,10 +186,14 @@ const CLASS_EDIT_FIELDS = ["name", "description", "coachName", "coachUserId", "d
 export function withClassPreconditions(payload: Record<string, unknown>, initial: Partial<Record<(typeof CLASS_EDIT_FIELDS)[number], unknown>>): Record<string, unknown> {
   const out = { ...payload };
   const expected: Record<string, unknown> = {};
+  // A squad save clears any rank gate on the server, so with a roster both
+  // rank fields always travel with what was loaded: a gate set elsewhere since
+  // is then a conflict, not silently cleared (Round 4 review).
+  const keep = new Set<string>(Array.isArray(out.roster) ? ["requiredRankId", "maxRankId"] : []);
   for (const k of CLASS_EDIT_FIELDS) {
     if (!(k in out)) continue;
     const loaded = initial[k] ?? null;
-    if ((out[k] ?? null) === loaded) delete out[k];
+    if ((out[k] ?? null) === loaded && !keep.has(k)) delete out[k];
     else expected[k] = loaded;
   }
   return Object.keys(expected).length > 0 ? { ...out, expected } : out;
@@ -1621,7 +1625,8 @@ function ClassForm({
             <p role="alert" data-testid="class-form-save-error" className="text-xs flex-1" style={{ color: "var(--hue-danger-ink)" }}>
               {error.message}
             </p>
-            {error.reason === "stale_schedules" && (
+            {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then). */}
+            {(error.reason === "stale_schedules" || error.reason === "stale_class") && (
               <Button variant="secondary" size="compact" onClick={() => window.location.reload()} className="shrink-0">
                 Reload
               </Button>

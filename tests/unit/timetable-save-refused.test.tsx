@@ -92,3 +92,41 @@ describe("a refused save stays with the form", () => {
     expect(post?.body).not.toHaveProperty("baseScheduleIds");
   });
 });
+
+// Round 4 (10 Nov 2026): an edit sends only the class fields that changed,
+// each with the value the form loaded, and a stale_class refusal offers Reload.
+describe("class edits carry what they replace (Round 4)", () => {
+  it("renaming sends the name and its loaded value, not the unchanged coach, capacity or duration", async () => {
+    render(<TimetableManager initialClasses={[GI]} {...PROPS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit Gi/ })[0]);
+    fireEvent.change(screen.getByLabelText("Class Name") as HTMLInputElement, { target: { value: "Gi Fundamentals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByRole("alert");
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.body?.name).toBe("Gi Fundamentals");
+    // (This fixture has no isKids, so it travels too, expecting null; the server
+    // accepts a field whose stored value already equals the one sent.)
+    expect(patch?.body?.expected).toMatchObject({ name: "Gi" });
+    for (const k of ["coachName", "coachUserId", "duration", "maxCapacity", "description", "requiredRankId", "maxRankId", "locationId"]) {
+      expect(patch?.body).not.toHaveProperty(k);
+    }
+  });
+
+  it("a stale_class refusal is shown in the form with Reload, and the typed name is kept", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
+      if (url === "/api/coach/today") return { ok: true, json: async () => [] };
+      if (method === "PATCH") return { ok: false, status: 409, json: async () => ({ error: "Someone changed this class since you opened it. Your changes have not been saved.", reason: "stale_class", conflicts: [{ field: "name", current: "Gi (Adults)" }] }) };
+      return { ok: false, json: async () => ({}) };
+    }));
+    render(<TimetableManager initialClasses={[GI]} {...PROPS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit Gi/ })[0]);
+    fireEvent.change(screen.getByLabelText("Class Name") as HTMLInputElement, { target: { value: "Gi Fundamentals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Someone changed this class since you opened it");
+    expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+    expect((screen.getByLabelText("Class Name") as HTMLInputElement).value).toBe("Gi Fundamentals");
+  });
+});

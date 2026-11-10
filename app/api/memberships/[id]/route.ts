@@ -69,7 +69,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
     }
-    if (expected && Object.keys(expected).some((k) => !(k in parsed.data) || (ALLOWANCE_FIELDS as readonly string[]).includes(k))) {
+    // The allowance is expected by its stored columns; `maxClassesPerWeek` is derived, so never expected.
+    if (expected && Object.keys(expected).some((k) => !(k in parsed.data) || k === "maxClassesPerWeek")) {
       return NextResponse.json({ error: "`expected` names a field this save does not change" }, { status: 400 });
     }
 
@@ -111,7 +112,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       });
       if (r.count === 0) return null;
       const fresh = await tx.membershipTier.findFirst({ where: { id, tenantId } });
-      return fresh ? { fresh, before } : null;
+      // The fields actually written, for the audit row (review L).
+      return fresh ? { fresh, before, written: Object.keys(toWrite) } : null;
     });
     if (outcome === "bad_location") return NextResponse.json({ error: "That venue is not one of this club's locations" }, { status: 400 });
     if (outcome === "billing_on_none") {
@@ -134,7 +136,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       entityType: "MembershipTier",
       entityId: id,
       metadata: updateMetadata(
-        Object.keys(data),
+        outcome.written,
         before as unknown as Record<string, unknown> | null,
         fresh as unknown as Record<string, unknown>,
         ["name", "description", "pricePence", "currency", "billingCycle", ...ALLOWANCE_FIELDS, "isKids", "isActive", "locationId"],

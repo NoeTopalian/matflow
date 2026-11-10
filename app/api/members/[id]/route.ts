@@ -249,6 +249,61 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Round 4 review (10 Nov 2026): `expectedNotes` is a precondition on the
+  // notes, so it is refused without them.
+  if (parsed.data.expectedNotes !== undefined && !("notes" in parsed.data)) {
+    return NextResponse.json({ error: "`expectedNotes` needs the notes being saved" }, { status: 400 });
+  }
+  // The notes box's own save (notes + expectedNotes, nothing else): one
+  // conditional UPDATE that does NOT bump the row version. Internal notes are
+  // the staff journal, not a profile field; if a notes save moved `updatedAt`,
+  // a page could adopt another admin's version and then pass a whole-form
+  // profile save carrying stale fields. The audit row is in the same
+  // transaction (AH-H1).
+  const sentKeys = Object.keys(parsed.data);
+  if (parsed.data.expectedNotes !== undefined && sentKeys.every((k) => k === "notes" || k === "expectedNotes")) {
+    const tenantId = session.user.tenantId;
+    const next = parsed.data.notes ?? null;
+    const expected = parsed.data.expectedNotes;
+    try {
+      const out = await withTenantContext(tenantId, async (tx) => {
+        const written = await tx.$executeRaw`
+          UPDATE "Member" SET "notes" = ${next}::text
+          WHERE "id" = ${id} AND "tenantId" = ${tenantId} AND "archivedAt" IS NULL AND "notes" IS NOT DISTINCT FROM ${expected}::text`;
+        const row = await tx.member.findFirst({ where: { id, tenantId }, select: { notes: true, updatedAt: true } });
+        if (!row) return { kind: "missing" as const };
+        if (written === 0) return { kind: "unwritten" as const, row };
+        await logAudit({
+          tx,
+          tenantId,
+          userId: session.user.id,
+          action: "member.update",
+          entityType: "Member",
+          entityId: id,
+          metadata: { fields: ["notes"], source: "staff", changes: { notes: { from: expected, to: next } } },
+          req,
+        });
+        return { kind: "written" as const, row };
+      });
+      if (out.kind === "missing") return NextResponse.json({ error: "Not found" }, { status: 404 });
+      // A retry whose text is already stored (the first try committed, its
+      // reply was lost) succeeded; anything else was changed by someone else.
+      if (out.kind === "written" || (out.row.notes ?? null) === next) {
+        return NextResponse.json({ notes: out.row.notes, updatedAt: out.row.updatedAt.toISOString() });
+      }
+      return NextResponse.json(
+        {
+          error: "Someone else changed these notes since you opened this member. Your text has not been saved.",
+          reason: "stale_notes",
+          currentNotes: out.row.notes ?? null,
+        },
+        { status: 409 },
+      );
+    } catch {
+      return NextResponse.json({ error: "Failed to update member" }, { status: 500 });
+    }
+  }
+
   try {
     // C1: `membershipTierId` is pulled OUT of the blind `...rest` spread on
     // purpose. Spreading a client-supplied foreign key straight into

@@ -15,7 +15,7 @@ import { suppressedMessage } from "@/lib/email-delivery";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { getBaseUrl } from "@/lib/env-url";
 import { isSynthesisedEmail } from "@/lib/synthesise-kid-email";
 import { isBilledElsewhere } from "@/lib/billing-source";
@@ -53,7 +53,11 @@ export async function POST(req: Request) {
   // store takes each hit under an advisory lock, so two requests at once are
   // decided one after the other. Checked before the daily allowance, so a
   // refused duplicate does not use it up.
-  const once = await checkRateLimit(`payment-chase-once:${tenantId}:${memberId}`, 1, 60 * 1000);
+  const onceBucket = `payment-chase-once:${tenantId}:${memberId}`;
+  const once = await checkRateLimit(onceBucket, 1, 60 * 1000);
+  // Released whenever no reminder went (refused below, or the send failed),
+  // so a retry is not told one was just started (review).
+  const release = () => resetRateLimit(onceBucket).catch(() => {});
   if (!once.allowed) {
     return NextResponse.json(
       {
@@ -67,6 +71,7 @@ export async function POST(req: Request) {
 
   const rl = await checkRateLimit(`payment-chase:${tenantId}:${memberId}`, 3, 24 * 60 * 60 * 1000);
   if (!rl.allowed) {
+    await release();
     return NextResponse.json(
       { ok: false, error: "This member was already reminded recently." },
       { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
@@ -87,10 +92,11 @@ export async function POST(req: Request) {
     return { member, lastFailed };
   });
 
-  if (!data?.member) return apiError("Member not found", 404);
+  if (!data?.member) { await release(); return apiError("Member not found", 404); }
   // TeamUp bridge (2 Oct 2026): TeamUp collects and reminds this member;
   // MatFlow holds no debt for them, so a reminder from here would invent one.
   if (isBilledElsewhere(data.member)) {
+    await release();
     return NextResponse.json(
       { ok: false, error: "TeamUp bills this member and sends its own reminders. MatFlow has no amount owing for them, so it will not send one.", reason: "billed_elsewhere" },
       { status: 409 },
@@ -105,6 +111,7 @@ export async function POST(req: Request) {
   // and a club believing it had reminded someone it had not. Skip it here, and
   // say so, so staff know to ring them instead.
   if (!data.member.email || isSynthesisedEmail(data.member.email)) {
+    await release();
     return apiError(
       "This member has no email address on file, so a reminder can't be sent. Add an address to their profile, or chase them in person.",
       422,
@@ -127,6 +134,8 @@ export async function POST(req: Request) {
       amount,
     },
   });
+
+  if (!result.ok) await release();
 
   await logAudit({
     tenantId,
