@@ -33,5 +33,25 @@ aggregation, amount, role, schema or business rule changed. Facts below hold as 
 - `/preview` (the static marketing preview) still shows a "Recent Activity" list with "Joined" rows. It is demo copy, outside this round.
 - Reports' "Top classes" tile is a different metric (per class, from `lib/reports.ts`) and is unchanged.
 
-## Verification
-See the PR body / completion report for the exact commit each check ran on. Unit: `tests/unit/round1-truthful-labels.test.tsx`, `tests/unit/initiatives-panel-failures.test.tsx`, `tests/unit/attendance-session-focus.test.tsx` (three exact-string assertions updated to the new wording; nothing loosened).
+## Found while verifying, and fixed in this round
+- After a refused save, focus fell to `<body>`, because the Save button is disabled while it loads. Focus now moves to the error message (`tabIndex=-1`, `role="alert"`), so it stays inside the dialog. Commit 47db5e01.
+- The login show/hide password toggle now has a name ("Show password"), so `getByLabel("Password")` matches both the field and the toggle. The harness and e2e Password locators are now exact. Commits aef239b9 and 38c674f6.
+
+## Revenue `status` field: consumers and permissions
+- `GET /api/revenue/summary` is gated by `requireApiOwner()` (owner only). That is unchanged.
+- **Consumers.** The only UI consumer is `components/dashboard/SettingsPage.tsx`, the Revenue tab. The e2e specs only call the route for access and navigation; none reads `recent`. The unit test is `tests/unit/revenue-summary.test.ts`.
+- **What is added.** Each `recent` row gains `status`. This is the Payment row's own status column, which the route already selects. No new query, no new personal data, and `action` is unchanged for any older consumer.
+
+## Verification (final branch head, by check)
+| Check | Commit | Result |
+|---|---|---|
+| Full unit suite, DB URLs unset | bd439a35 (same app code as the final head) | 658 files passed, 123 skipped; 9,353 tests passed, 901 skipped, 3 todo |
+| Focused unit tests: labels, footer, Initiatives failures, revenue status | 47db5e01 | 16 + 3 passed |
+| Production build | dbfab44d | exit 0, tree clean |
+| Browser journey `round1-truthful-labels`: owner and member, 1440 and 390 px, by keyboard, with forced failed reads and saves | dbfab44d, run rmwa1q2e530e5db | 32 PASS / 0 FAIL / 2 NOTE; teardown left 0 rows |
+
+NOTEs recorded:
+- **M2:** the Store row's Edit button is 28 × 44 px at 390 px. That size is pre-existing; this round changed only its name.
+- **N1:** what a keyboard press on today's class shows on the phone.
+
+The member schedule's side panes are `inert` by design. The journey opens a class from today's pane.
