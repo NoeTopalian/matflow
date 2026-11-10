@@ -299,7 +299,7 @@ describe("5. the CSV follows the same rule: — plus the note in the Detail colu
       "Weekly attendance,23 Feb,—,No records (MatFlow's records start 3 Mar 2026)",
       "Weekly attendance,2 Mar,5,Partly covered (records start 3 Mar 2026)",
       "Weekly attendance,9 Mar,35,",
-      "Top classes,Fundamentals,40,\"Feb – Apr 2026 · Records start 3 Mar 2026, 4/session, fill rate no capacity set\"",
+      "Top classes,Fundamentals,40,\"Feb – Apr 2026 · Records start 3 Mar 2026, 4 per attended session, fill rate no capacity set\"",
     ]) expect(csv).toContain(want);
 
     const COVERED: Coverage = { start: "2025-01-10T00:00:00.000Z", timeZone: LONDON, period: "covered", previous: "covered", thisWeek: "covered", lastWeek: "covered" };

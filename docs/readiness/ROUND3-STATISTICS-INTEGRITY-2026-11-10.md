@@ -103,3 +103,90 @@ A code-reviewer pass on `f534783a` found 1 high, 4 medium and 8 low findings. St
 - **Dashboard home queries:** `newThisMonth`, `attendanceThisWeek` and `attendanceThisMonth` are computed and never shown.
 - **Monthly report placeholder text:** it says "30 days of attendance", which the code does not check.
 - **Production cron rows:** the automatic report's `periodStart` is now club midnight. For a club with earlier automatic rows, a later run keys on the new instants. Production has `ANTHROPIC_API_KEY` unset (logs, 30 Oct), so no automatic rows are expected there. Confirm before enabling the key.
+
+## Close-out (10 Nov 2026, afternoon)
+
+Noe: "close Round 3's retention wording, denominator labels, precise test inventory and finding dispositions. Preserve existing calculations."
+
+### Wording and denominator labels (no calculation changed)
+
+| Surface | Before | After |
+|---|---|---|
+| Reports survival card | "6-month survival: 75% (15 of 20)" · "Of members who joined 6+ months ago, still active today." | "Survival: 75% (15 of 20)" · "Members who joined before 1 June 2026: how many are still active today." |
+| Reports CSV | `Health,6-month survival,…,"Members who joined 6+ months ago, still active…"` | `Health,Survival,…,"Members who joined before 1 June 2026, still active…"` |
+| Top classes, per class | "9/session · fill 45% (90 of 200 places)" | "9 per attended session · fill 45% (90 of 200 places in attended sessions)" |
+| Top classes, CSV detail | "4/session, fill rate …" | "4 per attended session, fill rate …" |
+| Attendance rate: fill rate formula | "Check-ins ÷ total class capacity, for classes with capacity set, this window." | "Check-ins ÷ the places in sessions that had at least one check-in, for classes with capacity set, this window." |
+
+**How the date is set.** `ReportsData.retention.joinedBefore` (ISO string) is new and additive. It is the instant the cohort query already used (`sixMonthsAgo`, the start of the club month five months back). It is formatted in the club's zone. A cached shape without the field reads "Members who joined at least five months ago". The page's best-class tile already said "avg per attended session".
+
+### Test inventory (all changes since the baseline `3eedd257`)
+
+**New test files**
+
+| File | Kind | Tests |
+|---|---|---|
+| `tests/unit/round3-club-weeks-and-sessions.test.ts` | unit | 7: BST Monday boundary; the clock-change week; half-open week boundary; far zones; Reports weeks for Auckland; London chart weeks across the clock change; 300 sessions over the old cap |
+| `tests/unit/round3-dashboard-club-time.test.ts` | unit (server component) | 3: Auckland week and month bounds; the club's today handed to the stats card and the calendar; London BST week |
+| `tests/unit/round3-report-periods.test.ts` | unit | 6: four `previousClubMonthPeriod` cases (London, Tokyo, Auckland on the 1st, bad zone); comparison month on a UTC server; initiative day window for an LA club |
+| `tests/unit/round3-report-routes.test.ts` | unit (routes) | 4: `vercel.json` schedule; the cron gives five clubs (London, LA, Auckland, Kiritimati, UTC-12) their own October; Generate now for LA on the evening of 31 Oct gets September, and the next morning October |
+| `tests/unit/round3-calendar-club-today.test.tsx` | unit (jsdom) | 2: calendar uses the club's today in a Los Angeles browser; report-list month in three reader zones |
+| `tests/integration/round3-reports-sessions-db.test.ts` | DB, both roles | 1: 300 sessions and 800 check-ins in one club. Top classes and the club fill rate cover all of them |
+| `journeys/round3-labels-today.mjs` | browser | 5 checks: club today on the dashboard; Revenue labels; Analysis rules-based; phone 390 px; no page errors |
+
+**Tests added to existing files**
+
+| File | Added |
+|---|---|
+| `revenue-summary.test.ts` | 3: London BST month and the 00:30 payment on the 1st; Tokyo; bad zone. The empty-shape test now expects `avgPerMember` null |
+| `attendance-page-session.test.ts` | 1: Auckland week and month bounds (plus the tenant read in the mock) |
+| `round2-settings-truth.test.tsx` | 1: revenue card labels and "—" for no active members |
+| `attendance-coverage-views.test.tsx` | 1: "rules-based, not AI" |
+| `reports-ratio-display.test.tsx` | 1: survival cohort named by date, never "6+ months" (and one test renamed) |
+| `journeys/reporting-truth.mjs` | 1 check (R6b: cohort named by date); R6 and the CSV row read "Survival" |
+
+**Assertions updated for the new wording or signatures (no test added)**
+- `reports-ratio-display` (fill wording ×2)
+- `attendance-coverage-views` (CSV detail)
+- `csv-export-fidelity` (metric name)
+- `reports-churn-counts` (`toMatchObject` with `joinedBefore`)
+- `at-risk-suppressed` and `payments-due-by-role` (the `getStats` call now ends `timeZone`)
+- `teamup-unknown-money` (tenant read in the mock)
+
+**Mutation proof:** 24 planted regressions in the scratchpad runner `mutations-r3.py`, 24 caught: the 22 in the Verification section, plus R3-23 (survival says "6+ months" again) and R3-24 (fill denominator unnamed again).
+
+### Finding dispositions
+
+| ID | Finding | Kind | Disposition | Commit |
+|---|---|---|---|---|
+| R3-1 | Top classes and fill rate over the 200 busiest sessions only | defect | Fixed | `f534783a` |
+| R3-2 | Reports weeks on the server clock | defect | Fixed | `f534783a` |
+| R3-3 | Revenue months on the server clock | defect | Fixed | `f534783a` |
+| R3-4 | "Annual Run Rate · projected" = month to date × 12 | presentation | Fixed (label) | `f534783a` |
+| R3-5 | Per active member £0 with no members | defect | Fixed ("—") | `f534783a` |
+| R3-6 | AI cost "£x.xxp" | presentation | Fixed | `f534783a` |
+| R3-7 | Analysis "MatFlow AI" and a fake delay | presentation | Fixed | `f534783a`, `72c504fb` |
+| R3-8 | Dashboard home and Attendance on the server clock | defect | Fixed | `f534783a` |
+| R3-9 | AI report period on the server clock | defect | Fixed | `f534783a` |
+| H-1 | Cron at 02:00 UTC ran the Americas a month late | defect | Fixed (14:00 UTC) | `72c504fb` |
+| M-1 | Dashboard Today and calendar on UTC or the browser clock | defect | Fixed | `72c504fb` |
+| M-2 | Analysis start copy "The AI will ask you", plus a dead stage | presentation | Fixed | `72c504fb` |
+| M-3 | Fill rate and averages exclude sessions nobody attended | product decision | Labelled ("attended sessions"); calculation unchanged; Noe to decide | close-out |
+| M-4 | Report routes untested | test gap | Fixed (route tests) | `72c504fb` |
+| L-1 | METRICS placeholder condition wrong | documentation | Fixed | `72c504fb` |
+| L-2 | Initiatives compared as instants | defect | Fixed | `72c504fb` |
+| L-3 | Report list month in the reader's zone | defect | Fixed | `72c504fb` |
+| L-4 | `weeksBack` +1 across a clock change | defect, no reader | Accepted: no screen reads it | — |
+| L-5 | Session lookup without a tenant predicate | defence in depth | Fixed | `72c504fb` |
+| L-6 | DB test fragile near the 1st | test | Fixed (last club month) | `72c504fb` |
+| L-7 | Outer `let` set inside a transaction callback | style | Accepted | — |
+| L-8 | Per active member over all payments | presentation | Accepted: the label already says so | — |
+| R3-W | Survival "6+ months" overstated the 5–6-month cohort | presentation | Fixed (date named); calculation unchanged; cohort length is Noe's decision | close-out |
+| R3-D | Fill and average denominators unnamed | presentation | Fixed ("attended sessions") | close-out |
+| R3-O1 | Member Progress on the server clock | defect | Deferred to Round 10 | — |
+| R3-O2 | Birthdays and anniversaries on the server's day | defect | Deferred to Round 10 | — |
+| R3-O3 | Timetable editor week on the browser clock | defect | Deferred to Round 6 | — |
+| R3-O4 | `/api/dashboard/stats`: no caller, server clock | dead code | Open: delete or fix | — |
+| R3-O5 | Dashboard computes three figures it never shows | performance | Open | — |
+| R3-O6 | Placeholder text "30 days of attendance" not checked | presentation | Open | — |
+| R3-O7 | `cron-smoke` class-instances times out (on the base too) | test infrastructure | Open, not caused by Round 3 | — |

@@ -244,7 +244,18 @@ export interface ReportsData {
   churn: ChurnFigures;
   retentionRate: number | null;
   /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
-  retention: { ratePct: number | null; survived: number; cohort: number };
+  retention: {
+    ratePct: number | null;
+    survived: number;
+    cohort: number;
+    /**
+     * Round 3 close-out (10 Nov 2026): the cohort is members who joined before
+     * this instant, the start of the club month five months back (so 5 to 6
+     * months ago). The page names this date instead of saying "6+ months".
+     * Optional so older cached shapes still render.
+     */
+    joinedBefore?: string | null;
+  };
   /**
    * @deprecated Joins by joinedAt against members currently cancelled, by
    * cancelledAt (a rejoin vanishes). Kept so the shape stays additive; the Net
@@ -338,7 +349,7 @@ const ATTENDANCE_RATE_MODES: AttendanceRateModeOption[] = [
   {
     mode: "fill-rate",
     label: "Class fill rate",
-    formula: "Check-ins ÷ total class capacity, for classes with capacity set, this window.",
+    formula: "Check-ins ÷ the places in sessions that had at least one check-in, for classes with capacity set, this window.",
   },
 ];
 
@@ -451,7 +462,7 @@ export function createEmptyReportsData(): ReportsData {
     topClasses: [],
     churn: { cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null },
     retentionRate: null,
-    retention: { ratePct: null, survived: 0, cohort: 0 },
+    retention: { ratePct: null, survived: 0, cohort: 0, joinedBefore: null },
     netNewByMonth: [],
     membership: emptyMembershipReport(),
     paymentHealth: {
@@ -1017,7 +1028,7 @@ export async function getReportsData(
     topClasses,
     churn,
     retentionRate,
-    retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase },
+    retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase, joinedBefore: sixMonthsAgo.toISOString() },
     netNewByMonth,
     membership,
     paymentHealth: {

@@ -29,14 +29,14 @@ What each figure MatFlow shows counts, and where it is computed. Written for Rou
 | Joined | New plus rejoined in the period, from the membership replay. Tasters and imports are not joins (D11) | — | status history (`lib/membership-movement.ts`) |
 | Churn | Every cancellation in the period, joiners who cancel included. A finished course is Left, not churn (owner, 27 Oct 2026) | cancelled ÷ (opening active + moves into active in the period) (owner, 31 Oct 2026) | status history |
 | Net new | new + rejoined − left, per club month | — | status history |
-| Retention | Of the training members who joined before the start of the club month five months back, how many are active now. The cohort runs from the 1st of a month, so it spans 5 to 6 months | survived ÷ cohort | `Member.joinedAt` |
+| Survival | Of the training members who joined before the start of the club month five months back, how many are active now. The cohort runs from the 1st of a month, so it spans 5 to 6 months; the page and CSV name that date ("Members who joined before 1 June 2026") instead of "6+ months" (Round 3 close-out). Calculation unchanged | survived ÷ cohort | `Member.joinedAt` |
 | Check-ins | Attendance records in the period | — | `AttendanceRecord.checkInTime` |
 | This week so far / last week | Check-ins since this club-week's Monday, and over the whole previous week (labelled as "so far") | — | `checkInTime` |
 | Attendance chart | One bar per club week, or per club month when the period is longer than 3 months. At least 8 weeks are shown; weeks before the period are context (`inPeriod: false`) | — | `checkInTime` |
 | Attendance rate: check-ins per member | — | check-ins ÷ active members | `checkInTime` |
 | Attendance rate: attendance percentage | — | active members with at least one check-in ÷ active members | `checkInTime` |
-| Attendance rate: fill rate | Classes with no capacity set count on neither side. Places are those of sessions with at least one check-in | check-ins ÷ class places, for classes with capacity set | `checkInTime` |
-| Top classes | The five classes with the most check-ins in the period. Counted over every session that had at least one check-in; the 200-session cap was removed in Round 3. Sessions nobody attended count in neither the average nor the fill rate (see Known gaps). Average = check-ins ÷ those sessions; fill rate = check-ins ÷ their places | — | `checkInTime` |
+| Attendance rate: fill rate | Classes with no capacity set count on neither side. Places are those of sessions with at least one check-in, and the formula shown says so | check-ins ÷ places in sessions that had at least one check-in, for classes with capacity set | `checkInTime` |
+| Top classes | The five classes with the most check-ins in the period. Counted over every session that had at least one check-in; the 200-session cap was removed in Round 3. Sessions nobody attended count in neither the average nor the fill rate (see Known gaps). Shown as "9 per attended session" and "45% (90 of 200 places in attended sessions)" | check-ins ÷ attended sessions; check-ins ÷ places in attended sessions | `checkInTime` |
 | Check-in methods | Each method's share | method count ÷ all check-ins in the period | `checkInTime` |
 | Payers overdue (Now) | Payers overdue by Stripe status or by a passed due date. Payers are active and taster accounts, guardians who pay included (`lib/overdue.ts`) | — | — |
 | No payment yet (Now) | Payers on a MatFlow-billed plan with no payment ever recorded. Never overlaps with overdue | — | — |
@@ -118,4 +118,4 @@ Revenue counts only `Payment` rows with status `succeeded`. Money billed by anot
 - **Timetable week:** the timetable editor's week (`components/dashboard/TimetableManager.tsx`) uses the browser's clock. Round 6.
 - **Unused stats route:** `GET /api/dashboard/stats` has no caller in the app and still uses the server's clock.
 - **Sessions nobody attended:** Top classes, their averages and fill rates, and the club fill rate are computed from attendance records, so a session with no check-ins is left out. Counting empty sessions would change the figures, so it needs Noe's decision.
-- **Retention cohort:** joined before the 1st of the club month five months back (5 to 6 months), while the page says "6+ months". A definition question for Noe.
+- **Survival cohort:** joined before the 1st of the club month five months back (5 to 6 months). The wording now names that date; whether the cohort should be a true 6 months is a definition question for Noe.
