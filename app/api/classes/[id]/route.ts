@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { resolveSettingsPreconditions, type SettingsConflict } from "@/lib/settings-precondition";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { snapshotDiff } from "@/lib/audit-snapshot";
@@ -32,6 +33,15 @@ class TierRefError extends Error {}
 class MatRefError extends Error {}
 /** A new Location would be the club's thirteenth mat: roll the whole edit back. */
 class MatLimitError extends Error {}
+/**
+ * Round 4 (10 Nov 2026): a class field the editor changed was changed by
+ * someone else since it loaded the class. Rolls the whole edit back.
+ */
+class StaleClassFieldsError extends Error {
+  constructor(readonly conflicts: SettingsConflict[]) { super("stale_class"); }
+}
+/** The class fields an edit can carry an `expected` value for (the editor sends these whenever they change). */
+const CLASS_PRECONDITION_FIELDS = ["name", "description", "coachName", "coachUserId", "duration", "maxCapacity", "requiredRankId", "maxRankId", "isKids", "locationId"] as const;
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -431,9 +441,25 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // Round 4: `expected` holds, for each class field being changed, the value
+  // the editor loaded (lib/settings-precondition). A save from an older tab
+  // cannot put back a capacity, coach or name changed since.
+  let expected: Record<string, unknown> | null = null;
+  if (body && typeof body === "object" && !Array.isArray(body) && "expected" in body) {
+    const { expected: given, ...restBody } = body as Record<string, unknown>;
+    if (!given || typeof given !== "object" || Array.isArray(given)) {
+      return NextResponse.json({ error: "`expected` must list the values you last saw, by field" }, { status: 400 });
+    }
+    expected = given as Record<string, unknown>;
+    body = restBody;
+  }
+
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+  }
+  if (expected && Object.keys(expected).some((k) => !(CLASS_PRECONDITION_FIELDS as readonly string[]).includes(k) || !(k in parsed.data))) {
+    return NextResponse.json({ error: "`expected` names a field this save does not change" }, { status: 400 });
   }
 
   // TRUTHY, not merely present. This used to be `!== undefined`, which made
@@ -615,6 +641,18 @@ export async function PATCH(req: Request, { params }: Params) {
       // roster, tier or booking work and holds the lock no longer than needed.
       if (wantsSchedules && parsed.data.baseScheduleIds && !(await schedulesAreFresh(tx, tenantId, id, parsed.data.baseScheduleIds))) {
         throw new StaleScheduleError();
+      }
+      // Round 4: the same for the class's own fields, under the same row lock
+      // and before any write. A field whose stored value is neither the one
+      // the editor loaded nor the one it sends was changed by someone else.
+      if (expected) {
+        const stored = await tx.class.findFirst({
+          where: { id, tenantId },
+          select: { name: true, description: true, coachName: true, coachUserId: true, duration: true, maxCapacity: true, requiredRankId: true, maxRankId: true, isKids: true, locationId: true },
+        });
+        const sent = Object.fromEntries(Object.keys(expected).map((k) => [k, (parsed.data as Record<string, unknown>)[k]]));
+        const { conflicts } = resolveSettingsPreconditions((stored ?? {}) as Record<string, unknown>, sent, expected);
+        if (conflicts.length > 0) throw new StaleClassFieldsError(conflicts);
       }
       // T6b: whether the class is live once this edit lands. A Resume /
       // Restore makes it live; a pause does not; otherwise it keeps its state.
@@ -901,6 +939,12 @@ export async function PATCH(req: Request, { params }: Params) {
     }
     if (e instanceof StaleScheduleError) {
       return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
+    }
+    if (e instanceof StaleClassFieldsError) {
+      return NextResponse.json(
+        { error: "Someone changed this class since you opened it. Your changes have not been saved.", reason: "stale_class", conflicts: e.conflicts },
+        { status: 409 },
+      );
     }
     // The mat went between the pre-flight and the write, or the foreign key refused it.
     if (e instanceof MatRefError || isMatForeignKeyError(e)) {

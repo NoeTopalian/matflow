@@ -173,6 +173,28 @@ function describeSave(change: ScheduleChange | null | undefined): string {
  * squad list or its rank gate — so the owner is shown who it turns away
  * first. A new class is previewed when it is created restricted.
  */
+/** The class fields the editor always sends; on an edit, only changed ones go, with what they replace (Round 4). */
+const CLASS_EDIT_FIELDS = ["name", "description", "coachName", "coachUserId", "duration", "maxCapacity", "requiredRankId", "maxRankId", "isKids", "locationId"] as const;
+
+/**
+ * Round 4 (10 Nov 2026): an edit sends each of these fields only when it
+ * differs from the class as this form loaded it, with the loaded value in
+ * `expected`. The server refuses the save (409 `stale_class`) if someone
+ * changed that field since, so a save from an older tab cannot put back a
+ * capacity, coach or name.
+ */
+export function withClassPreconditions(payload: Record<string, unknown>, initial: Partial<Record<(typeof CLASS_EDIT_FIELDS)[number], unknown>>): Record<string, unknown> {
+  const out = { ...payload };
+  const expected: Record<string, unknown> = {};
+  for (const k of CLASS_EDIT_FIELDS) {
+    if (!(k in out)) continue;
+    const loaded = initial[k] ?? null;
+    if ((out[k] ?? null) === loaded) delete out[k];
+    else expected[k] = loaded;
+  }
+  return Object.keys(expected).length > 0 ? { ...out, expected } : out;
+}
+
 function accessChanged(target: ClassRow | null, data: Record<string, unknown>): boolean {
   const ids = (v: unknown, key: "id" | "memberId") =>
     Array.isArray(v) ? (v as Array<string | Record<string, string>>).map((x) => (typeof x === "string" ? x : x[key])).sort().join(",") : null;
@@ -989,7 +1011,7 @@ function ClassForm({
 
   function submit() {
     if (!canSubmit) return;
-    onSave({
+    const payload: Record<string, unknown> = {
       name: name.trim(),
       // When a User is selected, that's authoritative; coachName is the legacy
       // free-text fallback for clubs that haven't put their coaches in Users yet.
@@ -1028,7 +1050,8 @@ function ClassForm({
       // (409) if the class's days changed since, instead of taking this list
       // as the whole truth and quietly undoing another tab's change.
       ...(initial?.id ? { baseScheduleIds: (initial.schedules ?? []).map((s) => s.id) } : {}),
-    });
+    };
+    onSave(initial?.id ? withClassPreconditions(payload, initial) : payload);
   }
 
   const loadMembers = useCallback(async () => {
