@@ -46,7 +46,7 @@ function installFetch() {
       }
       if (url.includes("/api/stripe/subscription-plans")) return plansAnswer();
       if (url.includes("/api/revenue/summary")) {
-        return { ok: true, status: 200, json: async () => ({ mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0, history: [], memberships: [], recent: [] }) };
+        return { ok: true, status: 200, json: async () => ({ mrr: 0, arr: 0, activeMembers: 0, avgPerMember: null, growth: 0, history: [], memberships: [], recent: [] }) };
       }
       return { ok: true, status: 200, json: async () => ({}) };
     }),
@@ -152,5 +152,25 @@ describe("Settings → Revenue: plans", () => {
     tab = "revenue";
     await renderOwner({ stripeConnected: true, stripeAccountId: "acct_x" });
     expect(await screen.findByText(/No plans yet/, {}, FIND)).toBeTruthy();
+  });
+});
+
+// Round 3 (10 Nov 2026): the revenue cards say what each number is. `arr` is
+// this month so far × 12, which "Annual Run Rate · projected" read as a forecast.
+describe("Settings → Revenue: card labels", () => {
+  it("names each figure plainly and never calls month-to-date × 12 a projection", async () => {
+    tab = "revenue";
+    await renderOwner({ stripeConnected: true, stripeAccountId: "acct_x" });
+    expect(await screen.findByText("Collected this month", {}, FIND)).toBeTruthy();
+    expect(screen.getByText("This month × 12")).toBeTruthy();
+    expect(screen.getByText(/not a forecast/)).toBeTruthy();
+    expect(screen.getByText("Per active member")).toBeTruthy();
+    expect(screen.queryByText(/Annual Run Rate/)).toBeNull();
+    expect(screen.queryByText(/^projected$/)).toBeNull();
+    expect(screen.queryByText("Avg per Member")).toBeNull();
+    // No active members: no per-member figure ("—"), never "£0".
+    const card = screen.getByText("Per active member").parentElement!;
+    expect(card.textContent).toContain("—");
+    expect(card.textContent).not.toContain("£0");
   });
 });

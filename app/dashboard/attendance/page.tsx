@@ -3,6 +3,8 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import AttendanceView from "@/components/dashboard/AttendanceView";
 import { parseIdParam } from "@/lib/id-param";
 import { sessionLabel } from "@/lib/session-label";
+import { clubMonthWindow, clubWeekStart } from "@/lib/club-month";
+import { usableTimezone } from "@/lib/class-time";
 
 /** The most check-ins one session's view will list. */
 const SESSION_ATTENDANCE_LIMIT = 1000;
@@ -90,10 +92,12 @@ async function fetchSummary(
   tenantId: string,
 ): Promise<AttendanceSummary> {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  startOfWeek.setHours(0, 0, 0, 0);
+  // Round 3 (10 Nov 2026): the club's month and week (Tenant.timezone), as on
+  // Reports and the dashboard home; they were the server's (UTC on Vercel).
+  const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+  const timeZone = usableTimezone(club?.timezone);
+  const startOfMonth = new Date(clubMonthWindow(now, timeZone).monthStart);
+  const startOfWeek = clubWeekStart(now, timeZone);
 
   // Audit iter-2-database A8I2-P-H-1: collapse into ONE withTenantContext.
   // Was: two separate `withTenantContext` acquisitions (the second only

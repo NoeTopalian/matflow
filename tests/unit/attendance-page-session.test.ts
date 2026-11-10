@@ -2,12 +2,13 @@
 // up THROUGH its class's tenant (ClassInstance has no tenantId column), its
 // check-ins are read with an explicit tenantId, and a malformed or unknown id
 // falls back to the recent list instead of an empty page.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { tx } = vi.hoisted(() => ({
   tx: {
     attendanceRecord: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
     classInstance: { findFirst: vi.fn() },
+    tenant: { findUnique: vi.fn() },
   },
 }));
 
@@ -31,6 +32,7 @@ beforeEach(() => {
   tx.attendanceRecord.count.mockResolvedValue(0);
   tx.attendanceRecord.groupBy.mockResolvedValue([]);
   tx.classInstance.findFirst.mockResolvedValue(null);
+  tx.tenant.findUnique.mockResolvedValue({ timezone: "Europe/London" });
 });
 
 describe("AttendancePage ?instance=", () => {
@@ -96,5 +98,27 @@ describe("AttendancePage ?instance=", () => {
     expect(props.sessionNotFound ?? false).toBe(false);
     const repeated = await run({ instance: ["a", "b"] });
     expect(repeated.session ?? null).toBeNull();
+  });
+});
+
+// Round 3 (10 Nov 2026): the summary's "this week" and "this month" are the
+// club's (Tenant.timezone), not the server's (UTC on Vercel).
+describe("AttendancePage summary uses the club's week and month", () => {
+  const ORIGINAL_TZ = process.env.TZ;
+  afterEach(() => {
+    vi.useRealTimers();
+    process.env.TZ = ORIGINAL_TZ;
+  });
+
+  it("Auckland club, UTC server, 2026-11-08T12:00Z (Monday 9 Nov, 01:00 in Auckland): week from 11:00 UTC on the 8th, month from 11:00 UTC on 31 Oct", async () => {
+    process.env.TZ = "UTC";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    tx.tenant.findUnique.mockResolvedValue({ timezone: "Pacific/Auckland" });
+    await run({});
+    const gtes = tx.attendanceRecord.count.mock.calls.map((c) => (c[0] as { where: { checkInTime?: { gte?: Date } } }).where.checkInTime?.gte?.toISOString());
+    expect(gtes).toContain("2026-11-08T11:00:00.000Z");
+    expect(gtes).toContain("2026-10-31T11:00:00.000Z");
+    expect(gtes).not.toContain("2026-11-02T00:00:00.000Z");
   });
 });

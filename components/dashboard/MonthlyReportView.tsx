@@ -155,7 +155,7 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
                     <div className="min-w-0">
                       <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{formatPeriod(r.periodStart, r.periodEnd)}</p>
                       <p className="text-[11px]" style={{ color: "var(--tx-4)" }}>
-                        {r.generationType === "auto" ? "Auto" : "On-demand"} · {r.modelUsed} · {(r.costPence / 100).toFixed(2)}p
+                        {r.generationType === "auto" ? "Auto" : "On-demand"} · {r.modelUsed} · £{(r.costPence / 100).toFixed(2)}
                       </p>
                     </div>
                   </div>

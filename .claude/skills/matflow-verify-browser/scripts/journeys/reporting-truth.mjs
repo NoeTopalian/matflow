@@ -1001,10 +1001,10 @@ try {
   await page.goto("/dashboard/analysis?period=3m");
   const aSelect = page.getByLabel("Reporting period");
   await aSelect.waitFor({ timeout: 90000 });
-  const aDesc = norm(await page.getByText(/ · AI report$/).first().innerText());
+  const aDesc = norm(await page.getByText(/ · rules-based report$/).first().innerText());
   L.check("period", "P10 Analysis opens on the same period and names its months",
-    (await aSelect.inputValue()) === "3m" && aDesc === `${label3} (to today) · AI report`,
-    { period: await aSelect.inputValue(), description: aDesc, expected: `${label3} (to today) · AI report` });
+    (await aSelect.inputValue()) === "3m" && aDesc === `${label3} (to today) · rules-based report`,
+    { period: await aSelect.inputValue(), description: aDesc, expected: `${label3} (to today) · rules-based report` });
   await shot(page, "reporting-truth-analysis-3m");
 
   // ── Phone width (390 px), same session ─────────────────────────────────────

@@ -153,7 +153,7 @@ type RevenueSummary = {
   mrr: number;
   arr: number;
   activeMembers: number;
-  avgPerMember: number;
+  avgPerMember: number | null;
   growth: number;
   history: { month: string; revenue: number }[];
   memberships: { name: string; price: number | null; cycle?: string | null; count: number; color: string }[];
@@ -177,7 +177,7 @@ export function brandingChanges(
 }
 
 const EMPTY_REVENUE: RevenueSummary = {
-  mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0,
+  mrr: 0, arr: 0, activeMembers: 0, avgPerMember: null, growth: 0,
   history: [], memberships: [], recent: [],
 };
 
@@ -2355,10 +2355,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
-              { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "recorded in MatFlow", color: "#10b981" },
-              { label: "Annual Run Rate", value: `£${revenue.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
-              { label: "Active Members",  value: revenue.activeMembers,                sub: "active, however billed", color: "#8b5cf6" },
-              { label: "Avg per Member",  value: `£${revenue.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
+              // Round 3 (10 Nov 2026): each label says what the number is.
+              // `mrr` is this club-month's succeeded payments so far, `arr`
+              // is that times 12 and `avgPerMember` is it over active
+              // members (app/api/revenue/summary). "Annual Run Rate,
+              // projected" read as a forecast; it is not one.
+              { label: "Collected this month", value: `£${revenue.mrr.toLocaleString()}`,  sub: "so far · payments recorded in MatFlow", color: "#10b981" },
+              { label: "This month × 12",      value: `£${revenue.arr.toLocaleString()}`,  sub: "this month so far × 12 · not a forecast", color: "#3b82f6" },
+              { label: "Active Members",       value: revenue.activeMembers,                sub: "active, however billed", color: "#8b5cf6" },
+              { label: "Per active member",    value: revenue.avgPerMember === null ? "—" : `£${revenue.avgPerMember}`, sub: "collected this month so far ÷ active members", color: "#f59e0b" },
             ].map(({ label, value, sub, color }) => (
               <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                 <p className="text-tx-1 text-2xl font-bold">{value}</p>

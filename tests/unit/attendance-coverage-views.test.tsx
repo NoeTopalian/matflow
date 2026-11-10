@@ -152,6 +152,13 @@ describe("1. a club with no attendance records at all", () => {
     expect(text).toContain("Test club has 10 active members today across 3 classes. No attendance recorded yet, so check-ins and engagement are not reported.");
     expect(text).not.toContain("recorded 0 check-ins");
   });
+
+  // Round 3 (10 Nov 2026): the written analysis is a template, not a model.
+  it("says it is rules-based, not AI", () => {
+    const text = buildReport(metrics(THIS_MONTH(), NONE as never) as never, []);
+    expect(text).toContain("rules-based, not AI");
+    expect(text).not.toContain("MatFlow AI");
+  });
 });
 
 // ── 2. A period wholly before the records start ──────────────────────────────

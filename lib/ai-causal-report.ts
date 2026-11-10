@@ -14,6 +14,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { ACTIVE_MEMBER, LEFT_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { loadJoinedInWindows } from "@/lib/membership-report";
 import { liveClassWhere } from "@/lib/class-live";
+import { clubMonthWindow } from "@/lib/club-month";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_OUTPUT_TOKENS = 1200;
@@ -23,6 +24,8 @@ export type ReportInput = {
   tenantName: string;
   periodStart: Date;
   periodEnd: Date;
+  /** Tenant.timezone: the previous month and the period's name are the club's. */
+  timeZone?: string | null;
 };
 
 export type ReportSections = {
@@ -51,10 +54,10 @@ const PLACEHOLDER_INSUFFICIENT: ReportSections = {
 
 async function gatherMetrics(input: ReportInput): Promise<Record<string, number>> {
   const { tenantId, periodStart, periodEnd } = input;
-  // Previous period = the calendar month before periodStart, half-open
-  // [prevStart, periodStart). Built from calendar fields on the 1st, so a
-  // 31-day month cannot overflow (31 Oct - 1 month used to land on 1 Oct).
-  const prevStart = new Date(periodStart.getFullYear(), periodStart.getMonth() - 1, 1);
+  // Previous period = the club month before periodStart, half-open
+  // [prevStart, periodStart), in the club's zone (Round 3, 10 Nov 2026).
+  // Built from the month key, so a 31-day month cannot overflow.
+  const prevStart = new Date(clubMonthWindow(periodStart, input.timeZone, -1).monthStart);
 
   const [
     totalMembers,
@@ -211,7 +214,7 @@ export async function generateMonthlyReport(input: ReportInput): Promise<Generat
     })
     .join("\n");
 
-  const periodLabel = input.periodStart.toLocaleString("en-GB", { month: "long", year: "numeric" });
+  const periodLabel = input.periodStart.toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: clubMonthWindow(input.periodStart, input.timeZone).timeZone });
   const driveNote = driveAvailable ? "" : "\n\n**Note:** Google Drive is not connected — generate without external context.";
 
   const userPrompt = `You are an analyst writing a monthly causal-analysis report for the gym **${input.tenantName}** for the period **${periodLabel}**.

@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // LB-005 (audit M4): /api/revenue/summary returns the shape the Settings
 // Revenue tab needs, derived from real Payment + Member rows.
@@ -12,7 +12,8 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { paymentFindMany, memberCount, memberGroupBy, tierFindMany } = vi.hoisted(() => ({
+const { paymentFindMany, memberCount, memberGroupBy, tierFindMany, tenantFindUnique } = vi.hoisted(() => ({
+  tenantFindUnique: vi.fn(),
   paymentFindMany: vi.fn(),
   memberCount: vi.fn(),
   memberGroupBy: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    tenant: { findUnique: tenantFindUnique },
     payment: { findMany: paymentFindMany },
     member: { count: memberCount, groupBy: memberGroupBy },
     membershipTier: { findMany: tierFindMany },
@@ -53,6 +55,7 @@ import { GET } from "@/app/api/revenue/summary/route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tenantFindUnique.mockResolvedValue({ timezone: "Europe/London" });
 });
 
 describe("GET /api/revenue/summary", () => {
@@ -69,7 +72,7 @@ describe("GET /api/revenue/summary", () => {
     expect(body.mrr).toBe(0);
     expect(body.arr).toBe(0);
     expect(body.activeMembers).toBe(0);
-    expect(body.avgPerMember).toBe(0);
+    expect(body.avgPerMember).toBeNull(); // no active members: no per-member figure (Round 3)
     expect(body.growth).toBe(0);
     expect(body.history).toHaveLength(6); // always 6 months even when empty
     expect(body.history.every((h: { revenue: number }) => h.revenue === 0)).toBe(true);
@@ -140,5 +143,52 @@ describe("GET /api/revenue/summary", () => {
     expect(body.recent[4].name).toBe("—");
     // Only the five known fields plus status: no new personal data in the row.
     expect(Object.keys(body.recent[0]).sort()).toEqual(["action", "date", "name", "status", "tier"]);
+  });
+
+  // Round 3 (10 Nov 2026): months are the club's (Tenant.timezone). 00:30 on
+  // 1 October in London (BST) is 23:30 UTC on 30 September; it belongs to
+  // October's takings, and October starts at 23:00 UTC.
+  describe("club-zone months", () => {
+    afterEach(() => vi.useRealTimers());
+
+    const run = async (timezone: string, paidAt: Date) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-15T12:00:00Z"));
+      tenantFindUnique.mockResolvedValue({ timezone });
+      paymentFindMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ amountPence: 4000, paidAt }])
+        .mockResolvedValueOnce([]);
+      memberCount.mockResolvedValue(0);
+      memberGroupBy.mockResolvedValue([]);
+      tierFindMany.mockResolvedValue([]);
+      const body = await (await GET()).json();
+      const where = (i: number) => (paymentFindMany.mock.calls[i][0] as { where: { paidAt: { gte: Date; lt?: Date } } }).where.paidAt;
+      return { body, where };
+    };
+
+    it("London: this month starts at the club's midnight (BST), and a 00:30 payment on the 1st counts in that month", async () => {
+      const { body, where } = await run("Europe/London", new Date("2026-09-30T23:30:00Z"));
+      expect(where(0).gte.toISOString()).toBe("2026-09-30T23:00:00.000Z");
+      expect(where(1)).toEqual({ gte: new Date("2026-08-31T23:00:00Z"), lt: new Date("2026-09-30T23:00:00Z") });
+      expect(where(2).gte.toISOString()).toBe("2026-04-30T23:00:00.000Z");
+      // ICU spells September "Sep" or "Sept" depending on version; check the ends.
+      expect(body.history[0].month).toBe("May");
+      expect(body.history[5].month).toBe("Oct");
+      expect(body.history[5].revenue).toBe(40);
+      expect(body.history[4].revenue).toBe(0);
+    });
+
+    it("Tokyo: the month starts at 15:00 UTC the day before", async () => {
+      const { body, where } = await run("Asia/Tokyo", new Date("2026-09-30T16:00:00Z"));
+      expect(where(0).gte.toISOString()).toBe("2026-09-30T15:00:00.000Z");
+      expect(body.history[5]).toEqual({ month: "Oct", revenue: 40 });
+    });
+
+    it("an unusable stored zone falls back to Europe/London instead of failing", async () => {
+      const { where } = await run("Not/AZone", new Date("2026-10-02T00:00:00Z"));
+      expect(where(0).gte.toISOString()).toBe("2026-09-30T23:00:00.000Z");
+    });
   });
 });

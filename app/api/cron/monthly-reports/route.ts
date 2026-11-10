@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
+import { previousClubMonthPeriod } from "@/lib/club-month";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -49,8 +50,6 @@ export async function GET(req: Request) {
   }
 
   const now = new Date();
-  const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
   // Cron job: cross-tenant by definition. Bypass is intentional and correct
   // — we need to enumerate every active tenant, then process each one in
@@ -61,7 +60,7 @@ export async function GET(req: Request) {
         subscriptionStatus: { in: ["active", "trial"] },
         deletedAt: null,
       },
-      select: { id: true, name: true },
+      select: { id: true, name: true, timezone: true },
     }),
   );
 
@@ -69,12 +68,15 @@ export async function GET(req: Request) {
   const failures: { tenantId: string; error: string }[] = [];
 
   for (const tenant of tenants) {
+    // Each club's own previous month (Round 3, 10 Nov 2026).
+    const { periodStart, periodEnd } = previousClubMonthPeriod(now, tenant.timezone);
     try {
       const result = await generateMonthlyReport({
         tenantId: tenant.id,
         tenantName: tenant.name,
         periodStart,
         periodEnd,
+        timeZone: tenant.timezone,
       });
 
       try {
@@ -115,11 +117,14 @@ export async function GET(req: Request) {
   // with no status, so a run in which every tenant failed showed green on
   // Vercel's cron dashboard. X-6 lane G, F6.
   const ok = failures.length === 0;
+  // Each club's window is its own zone's month; the response names the month
+  // in the schema-default zone (Europe/London) for the run log.
+  const reference = previousClubMonthPeriod(now, null);
   return NextResponse.json(
     {
       ok,
-      periodStart: periodStart.toISOString(),
-      periodEnd: periodEnd.toISOString(),
+      periodStart: reference.periodStart.toISOString(),
+      periodEnd: reference.periodEnd.toISOString(),
       tenantsProcessed: tenants.length,
       succeeded,
       failures,
