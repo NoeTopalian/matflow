@@ -44,6 +44,7 @@ vi.mock("@vercel/blob", () => ({
 
 const rankSystem = { id: "rank-blue", name: "Blue", discipline: "BJJ", tenantId: "tenant-L2" };
 const tx = {
+  $queryRaw: async () => [], // Round 4: the member row lock
   member: {
     // The archived-member check selects only archivedAt; the route's own read gets the member.
     findFirst: async (args?: { select?: Record<string, unknown> }) => {

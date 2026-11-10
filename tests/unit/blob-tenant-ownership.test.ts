@@ -33,7 +33,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
       member: { findFirst: vi.fn(async () => ({ id: "m-1", name: "M", tenantId: "t-A" })) },
       rankSystem: { findFirst: vi.fn(async () => ({ id: "r1", tenantId: "t-A", discipline: "BJJ", name: "Blue", color: "#00a", order: 1 })) },
       memberRank: {
-        findFirst: vi.fn(async () => ({ id: "mr-1", rankSystemId: "r1", stripes: 0, rankSystem: { discipline: "BJJ" } })),
+        // An earlier belt (r0): the award is a real promotion, not the same award resent (Round 4 no-op).
+        findFirst: vi.fn(async () => ({ id: "mr-1", rankSystemId: "r0", stripes: 0, rankSystem: { discipline: "BJJ" } })),
         update: vi.fn(async () => ({ id: "mr-1", rankSystemId: "r1", stripes: 0, achievedAt: new Date(), rankSystem: { discipline: "BJJ", name: "Blue", color: "#00a" } })),
         create: vi.fn(async () => ({ id: "mr-1", rankSystemId: "r1", stripes: 0, achievedAt: new Date(), rankSystem: { discipline: "BJJ", name: "Blue", color: "#00a" } })),
         findMany: vi.fn(async () => []),
