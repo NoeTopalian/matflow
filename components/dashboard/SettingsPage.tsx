@@ -1164,6 +1164,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         if (upRes.ok) {
           const { url } = await upRes.json();
           finalLogoUrl = url;
+          setLogoPreview(url);
+          setLogoFile(null);
         } else {
           // Surface the failure instead of silently writing logoUrl=null to the DB.
           // Common cause: BLOB_READ_WRITE_TOKEN missing in Vercel env (returns 503).
@@ -1179,21 +1181,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       // member app updated".
       let saveError: string | null = null;
 
-      // 2. Persist to localStorage for demo mode (always works)
-      const localData = { slug: settings?.slug, primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, logoSize, presetName: activePreset };
-      localStorage.setItem("gym-settings", JSON.stringify(localData));
-
-      // Apply CSS vars immediately (admin dashboard colours only — bgColor stays in member app)
-      const root = document.documentElement;
-      root.style.setProperty("--color-primary",          primaryCol);
-      root.style.setProperty("--color-secondary",        secondaryCol);
-      root.style.setProperty("--color-text",             textCol);
-      root.style.setProperty("--color-primary-dim",      hex(primaryCol, 0.1));
-      root.style.setProperty("--color-primary-border",   hex(primaryCol, 0.25));
-      root.style.setProperty("--color-secondary-dim",    hex(secondaryCol, 0.12));
-      root.style.setProperty("--color-secondary-border", hex(secondaryCol, 0.3));
-      root.style.setProperty("--color-text-muted",       hex(textCol, 0.4));
-      root.style.setProperty("--color-text-subtle",      hex(textCol, 0.2));
+      // Round 2 close-out (10 Nov 2026): this browser's cache and the staff
+      // colours used to be written here, before the PATCH, so a refused or
+      // lost save had already published the preview (and a chosen logo was
+      // cached the moment it was picked). Both now happen only after the
+      // server confirms, below.
 
       // 3. Save to DB. Allow data: URLs through so members see the logo even
       // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
@@ -1235,14 +1227,44 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         saveError = "No reply from MatFlow, so it isn't known whether your branding was saved. Your choices are kept here; reload to see what the club has now.";
       }
 
-      setLogoFile(null);
       if (saveError) {
-        // The local cache above is what the staff dashboard reads back, so
-        // leaving it in place after a failed save is what made this lie
-        // survive a reload: the owner saw their new colours, and members kept
-        // the old ones. Drop it so the screen reflects the server, not a wish.
-        try { localStorage.removeItem("gym-settings"); } catch { /* storage unavailable */ }
+        // Nothing was published: the cache and the staff colours still hold
+        // what the server last confirmed. The editor keeps the owner's choices.
         toast(saveError, "error");
+      } else {
+        // Confirmed (or nothing to send): the cache now mirrors the club's
+        // saved branding, plus this browser's own logo fill and preset name.
+        const confirmed = savedBranding.current;
+        try {
+          localStorage.setItem("gym-settings", JSON.stringify({
+            slug: settings?.slug,
+            primaryColor: confirmed.primaryColor,
+            secondaryColor: confirmed.secondaryColor,
+            textColor: confirmed.textColor,
+            bgColor: confirmed.bgColor,
+            fontFamily: confirmed.fontFamily,
+            logoUrl: confirmed.logoUrl,
+            logoSize: confirmed.logoSize,
+            logoBg,
+            presetName: activePreset,
+          }));
+        } catch { /* storage unavailable */ }
+        const root = document.documentElement;
+        const p = confirmed.primaryColor ?? primaryCol;
+        const s2 = confirmed.secondaryColor ?? secondaryCol;
+        const t = confirmed.textColor ?? textCol;
+        root.style.setProperty("--color-primary",          p);
+        root.style.setProperty("--color-secondary",        s2);
+        root.style.setProperty("--color-text",             t);
+        root.style.setProperty("--color-primary-dim",      hex(p, 0.1));
+        root.style.setProperty("--color-primary-border",   hex(p, 0.25));
+        root.style.setProperty("--color-secondary-dim",    hex(s2, 0.12));
+        root.style.setProperty("--color-secondary-border", hex(s2, 0.3));
+        root.style.setProperty("--color-text-muted",       hex(t, 0.4));
+        root.style.setProperty("--color-text-subtle",      hex(t, 0.2));
+      }
+      if (saveError) {
+        // (said above)
       } else if (uploadError) {
         toast(`Branding saved, but ${uploadError}`, "error");
       } else {
@@ -1273,12 +1295,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
+      // A preview in this editor only. It used to be written into this
+      // browser's branding cache straight away, which the login page and
+      // member app read, so an unsaved logo appeared there before (or
+      // without) any Save. Save Branding publishes it once the server confirms.
       setLogoPreview(dataUrl);
-      // Save preview immediately to localStorage so member app updates
-      try {
-        const existing = JSON.parse(localStorage.getItem("gym-settings") ?? "{}");
-        localStorage.setItem("gym-settings", JSON.stringify({ ...existing, slug: settings?.slug, logoUrl: dataUrl, logoBg }));
-      } catch { /* ignore */ }
     };
     reader.readAsDataURL(file);
   }
