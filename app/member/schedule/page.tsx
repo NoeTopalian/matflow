@@ -181,6 +181,7 @@ function EventSheet({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close class details"
             className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400"
             style={{ background: "var(--member-surface)" }}
           >

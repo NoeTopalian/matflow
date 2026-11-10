@@ -182,7 +182,7 @@ async function memberSignIn(page, m) {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(m.email);
-  await page.getByLabel("Password").fill(m.password);
+  await page.getByLabel("Password", { exact: true }).fill(m.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL(/\/member/, { timeout: 60000 });
 }

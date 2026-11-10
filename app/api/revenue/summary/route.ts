@@ -126,6 +126,7 @@ export async function GET() {
   const recent = recentPayments.map((p) => ({
     name: p.member?.name ?? "—",
     action: p.status === "refunded" || p.status === "failed" ? "cancelled" : "joined",
+    status: p.status,
     tier: p.member?.membershipType ?? "—",
     date: ago(p.paidAt ?? p.createdAt),
   }));

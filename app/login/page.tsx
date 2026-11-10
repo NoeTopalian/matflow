@@ -778,6 +778,8 @@ function LoginStep({
                 <button
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
+                  aria-label={showPw ? "Hide password" : "Show password"}
+                  aria-pressed={showPw}
                   className="absolute right-4 top-1/2 -translate-y-1/2 transition-colors"
                   style={{ color: theme.textSoft }}
                 >

@@ -107,4 +107,38 @@ describe("GET /api/revenue/summary", () => {
     // Last bucket = current month = £125
     expect(body.history[5].revenue).toBe(125);
   });
+
+  // Round 1 (9 Nov 2026): `recent` rows carry the payment's own `status` so the
+  // client can label them Paid / Failed / Refunded. `action` is kept unchanged
+  // for older consumers: "cancelled" only for failed or refunded, else "joined".
+  it("returns each recent payment's status alongside the unchanged action", async () => {
+    const now = new Date();
+    paymentFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { amountPence: 5000, status: "succeeded", createdAt: now, paidAt: now, member: { name: "A", membershipType: "Adult" } },
+        { amountPence: 5000, status: "pending", createdAt: now, paidAt: null, member: { name: "B", membershipType: "Adult" } },
+        { amountPence: 5000, status: "failed", createdAt: now, paidAt: null, member: { name: "C", membershipType: "Kids" } },
+        { amountPence: 5000, status: "refunded", createdAt: now, paidAt: now, member: { name: "D", membershipType: "Kids" } },
+        { amountPence: 5000, status: "disputed", createdAt: now, paidAt: now, member: null },
+      ]);
+    memberCount.mockResolvedValue(0);
+    memberGroupBy.mockResolvedValue([]);
+    tierFindMany.mockResolvedValue([]);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.recent.map((r: { status: string; action: string }) => [r.status, r.action])).toEqual([
+      ["succeeded", "joined"],
+      ["pending", "joined"],
+      ["failed", "cancelled"],
+      ["refunded", "cancelled"],
+      ["disputed", "joined"],
+    ]);
+    expect(body.recent[4].name).toBe("—");
+    // Only the five known fields plus status: no new personal data in the row.
+    expect(Object.keys(body.recent[0]).sort()).toEqual(["action", "date", "name", "status", "tier"]);
+  });
 });

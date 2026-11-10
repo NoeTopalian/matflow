@@ -157,7 +157,7 @@ type RevenueSummary = {
   growth: number;
   history: { month: string; revenue: number }[];
   memberships: { name: string; price: number | null; cycle?: string | null; count: number; color: string }[];
-  recent: { name: string; action: string; tier: string; date: string }[];
+  recent: { name: string; action: string; status?: string; tier: string; date: string }[];
 };
 
 /**
@@ -180,6 +180,22 @@ const EMPTY_REVENUE: RevenueSummary = {
   mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0,
   history: [], memberships: [], recent: [],
 };
+
+// "Recent payments" is Payment rows (route: recentPayments), not membership
+// movements. Each row is labelled by its payment status; the older `action`
+// ("joined" = not failed/refunded, "cancelled" = failed or refunded) is only
+// the fallback for a response without `status`. A payment is never described
+// as a join, and a refund or failure is never described as a cancellation.
+export function paymentStatusLabel(status: string | undefined, action: string): string {
+  switch (status) {
+    case "succeeded": return "Paid";
+    case "pending": return "Pending";
+    case "failed": return "Failed";
+    case "refunded": return "Refunded";
+    case "disputed": return "Disputed";
+    default: return action === "cancelled" ? "Failed or refunded" : "Payment recorded";
+  }
+}
 
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
@@ -2393,16 +2409,16 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-            <h2 className="text-tx-1 font-semibold text-sm mb-4">Recent Activity</h2>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Recent payments</h2>
             <div className="space-y-3">
-              {revenue.recent.map(({ name, action, tier, date }, i) => (
+              {revenue.recent.map(({ name, action, status, tier, date }, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: action === "joined" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)" }}>
                     <TrendingUp className="w-4 h-4" style={{ color: action === "joined" ? "#10b981" : "#ef4444" }} />
                   </div>
                   <div className="flex-1">
                     <p className="text-tx-1 text-sm font-medium">{name}</p>
-                    <p className="text-tx-3 text-xs">{action === "joined" ? "Joined" : "Cancelled"} · {tier}</p>
+                    <p className="text-tx-3 text-xs">{paymentStatusLabel(status, action)} · {tier}</p>
                   </div>
                   <span className="text-tx-3 text-xs shrink-0">{date}</span>
                 </div>
@@ -2468,8 +2484,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <p className="text-tx-1 font-bold text-sm shrink-0">£{p.price.toFixed(2)}</p>
                 {isOwner && (
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => openEditProduct(p)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-[var(--hue-danger-ink)] transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => openEditProduct(p)} aria-label={`Edit ${p.name}`} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteProduct(p.id)} aria-label={`Remove ${p.name} from the shop`} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-[var(--hue-danger-ink)] transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
@@ -3387,6 +3403,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="flex items-center justify-between p-3 rounded-xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <span className="text-sm" style={{ color: "var(--tx-1)" }}>In Stock</span>
             <button
+              type="button"
+              role="switch"
+              aria-checked={pStock}
+              aria-label="In stock"
               onClick={() => setPStock((v) => !v)}
               className="w-10 h-6 rounded-full transition-all relative"
               style={{ background: pStock ? primaryColor : "var(--sf-2)" }}
