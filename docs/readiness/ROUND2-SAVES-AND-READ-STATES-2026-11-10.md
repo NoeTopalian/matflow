@@ -98,10 +98,37 @@ The member-app null-logo rule has no unit test. It is checked in the browser ins
 | Typecheck and lint | 3899353c and the final docs-only head | tsc exit 0; eslint 0 errors; every UI ratchet at baseline. A first lint run failed the hex-literal ratchet (702 against a baseline of 701) on the new onboarding error banner; it now uses palette classes. |
 | Production build | 3899353c | `BUILD EXIT 0`, tree clean |
 | Journey `round2-settings-truth` (owner and member, desktop 1440 and phone 390, keyboard for Save, Retry and Continue) | 3899353c, run rmwa9h250e071ce | **20 PASS / 0 FAIL / 0 NOTE**; teardown left 0 rows. An earlier run on 213cf5af gave 10/0/0 for the first ten checks. |
+| Journeys `round2-member-extras` and `round2-settings-truth` (review pass) | f88509a0 (test-only on top of 3899353c), run rmwacbofm2c301f | 7/0/0 and 20/0/0; teardown left 0 rows each |
 
 The 123 skipped files are the DB integration files, which skip without a database URL. No DB suite was run: no database code or query changed. The two member-profile reads moved into a helper unchanged.
 
-L6 note: the test environment has no blob storage, so the upload failed and the editor saved the logo through its existing data-URL fallback. L6 checks that the cache then holds exactly the saved value. A successful upload (one upload, then the stored URL reused on retry) is covered by `round2-branding-cache` only.
+**Logo path the journey actually exercised (L6, corrected 10 Nov 2026).**
+- **What happened:** the harness blanks `BLOB_READ_WRITE_TOKEN`. In a production build, `POST /api/upload` does not fail when the store is unavailable. It catches the error, re-encodes the image to WebP and returns **200** with an inline `data:image/webp;base64,…` URL (`app/api/upload/route.ts`, `storage = "inline"`).
+- **What the editor did:** it took its upload-succeeded branch, saved that URL with the PATCH, and cached exactly that value.
+- **How this is known:** the saved value was `data:image/webp`. The editor's own failure fallback would have saved the browser's PNG data URL, because a 1 × 1 PNG passes through the downscaler untouched.
+- **Covered:** the server's inline-storage fallback, and the editor's success path with it.
+- **Not covered in a browser:**
+  - a real Vercel Blob write, and serving a blob URL;
+  - the editor's upload-refused path (`upRes.ok` false, then the data-URL fallback with "Branding saved, but …").
+
+  The second is covered only by the unit test's code path, not end to end. An earlier version of this note said the journey had exercised the editor's failure fallback. That was wrong.
+
+## Member-profile extras: genuinely absent, present, by role (browser)
+Journey `round2-member-extras` on a synthetic club (run `rmwacbofm2c301f`, build `f88509a0`): **7 PASS / 0 FAIL / 0 NOTE**, teardown left 0 rows.
+
+| Check | Result |
+|---|---|
+| E1 | Owner, member with no comp class and no 2FA: no roster card, no 2FA card, no "couldn't be loaded" notice |
+| E2, E2b | Owner, member with both: the roster names the class; the 2FA card shows with Reset |
+| E3 | Manager: both shown |
+| E4 | Coach: roster shown, 2FA card withheld |
+| M1 | Phone at 390 px: both shown, no horizontal scroll |
+
+The server-read failure state is still covered by unit tests only.
+
+## Unresolved, carried in the rounds ledger (`.omc/plans/rounds-ledger.md`)
+- **Onboarding is not fully fixed.** Steps 3 (belt systems) and 4 (classes) and the CSV hand-off still swallow partial failures. Each is recorded with acceptance criteria as ONBOARDING-3, ONBOARDING-4 and ONBOARDING-CSV, linked to draft PR #35.
+- **CONCURRENCY-1 (Round 4).** A save commits but its response is lost; another admin changes the same field; the first admin retries. The retry must not silently overwrite the change. Round 2 does not handle this: resending is safe only when nobody else has edited the field.
 
 ## Deferred
 - **Settings remaining on the old cache.** `app/member/schedule/page.tsx` and `app/member/shop/page.tsx` read `primaryColor` from the cache with a default and no server value. The member layout refreshes that cache from `/api/me/gym`, so they settle after the first member page load. Not changed.
