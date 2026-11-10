@@ -630,7 +630,7 @@ export async function getReportsData(
           // right type, so we no longer need the `[]`-cast shortcut.
           const instances = instanceIds.length
             ? await tx.classInstance.findMany({
-                where: { id: { in: instanceIds } },
+                where: { id: { in: instanceIds }, class: { tenantId } },
                 include: { class: { select: { name: true, maxCapacity: true } } },
               })
             : await tx.classInstance.findMany({

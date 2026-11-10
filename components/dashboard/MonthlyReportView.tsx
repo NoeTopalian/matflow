@@ -18,9 +18,11 @@ type Report = {
   generatedAt: string;
 };
 
-function formatPeriod(start: string, end: string) {
-  const s = new Date(start);
-  return `${s.toLocaleString("en-GB", { month: "long", year: "numeric" })}`;
+export function formatPeriod(start: string, end: string) {
+  // The middle of the period is in its month in every reader's zone; its
+  // start is the club's midnight, which is the day before west of the club.
+  const mid = new Date((new Date(start).getTime() + new Date(end).getTime()) / 2);
+  return mid.toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
 function MarkdownBullets({ text }: { text: string }) {

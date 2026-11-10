@@ -35,8 +35,8 @@ What each figure MatFlow shows counts, and where it is computed. Written for Rou
 | Attendance chart | One bar per club week, or per club month when the period is longer than 3 months. At least 8 weeks are shown; weeks before the period are context (`inPeriod: false`) | — | `checkInTime` |
 | Attendance rate: check-ins per member | — | check-ins ÷ active members | `checkInTime` |
 | Attendance rate: attendance percentage | — | active members with at least one check-in ÷ active members | `checkInTime` |
-| Attendance rate: fill rate | Classes with no capacity set count on neither side | check-ins ÷ class places, for classes with capacity set | `checkInTime` |
-| Top classes | The five classes with the most check-ins in the period, counted over **every** session in the period (the 200-session cap was removed in Round 3). Average = check-ins ÷ sessions; fill rate = check-ins ÷ places | — | `checkInTime` |
+| Attendance rate: fill rate | Classes with no capacity set count on neither side. Places are those of sessions with at least one check-in | check-ins ÷ class places, for classes with capacity set | `checkInTime` |
+| Top classes | The five classes with the most check-ins in the period. Counted over every session that had at least one check-in; the 200-session cap was removed in Round 3. Sessions nobody attended count in neither the average nor the fill rate (see Known gaps). Average = check-ins ÷ those sessions; fill rate = check-ins ÷ their places | — | `checkInTime` |
 | Check-in methods | Each method's share | method count ÷ all check-ins in the period | `checkInTime` |
 | Payers overdue (Now) | Payers overdue by Stripe status or by a passed due date. Payers are active and taster accounts, guardians who pay included (`lib/overdue.ts`) | — | — |
 | No payment yet (Now) | Payers on a MatFlow-billed plan with no payment ever recorded. Never overlaps with overdue | — | — |
@@ -72,14 +72,18 @@ Analysis uses the same period and club zone as Reports (`resolveReportPeriod`).
 ## Monthly report (`lib/ai-causal-report.ts`)
 
 - **Period:** the club's previous month, `previousClubMonthPeriod`. The comparison month is the club month before that.
+- **Schedule:** the automatic report runs at 14:00 UTC on the 1st (`vercel.json`), when the month has ended in every zone from UTC-12 to UTC+14. "Generate now" gives the last month that has ended in the club's zone.
+- **Initiatives:** the report's context includes initiatives whose start or end day falls in the club month. Their dates are calendar days.
+- **Month label:** the report list names a report's month from the middle of its period, so a reader's zone never shifts it.
 - **Snapshot:** the metric snapshot is computed from records.
 - **Model-written text:** the summary, wins, watch-outs and recommendations.
 - **Cost:** shown in pounds (`costPence` ÷ 100, as "£0.01").
-- **Empty state:** under 10 training members or 30 days of attendance, the report says there is not enough data, without calling the model.
+- **Empty state:** under 10 training members (any status), or no check-ins in the period, the report says there is not enough data and does not call the model. Its placeholder text still says "30 days of attendance", which the code does not check.
 
 ## Dashboard home (`app/dashboard/page.tsx`)
 
 - **This week's classes:** sessions dated Monday to Sunday of the club's week. A session's `date` is UTC midnight of its club day, so the window is each day ± 12 hours, as in `todayWindow`.
+- **Today (stats card and calendar):** the club's day (`clubDayKey`), passed down from the server. The browser's clock is not used.
 - **Active members (tile):** active members.
 - **At risk:** active members with no check-in in 14 days. It is shown only once MatFlow has been the register for the whole 14 days (`readAtRiskGate`).
 - **Computed but not shown:** `newThisMonth` (`joinedAt` in the club month), `attendanceThisWeek` and `attendanceThisMonth` are computed but not displayed (`DashboardStats` never renders them). Their boundaries are the club's.
@@ -113,4 +117,5 @@ Revenue counts only `Payment` rows with status `succeeded`. Money billed by anot
 - **Birthdays and anniversaries:** birthday and joining-anniversary days (`lib/dashboard-action-items.ts`, `app/member/home/page.tsx`) use the server's day. Round 10.
 - **Timetable week:** the timetable editor's week (`components/dashboard/TimetableManager.tsx`) uses the browser's clock. Round 6.
 - **Unused stats route:** `GET /api/dashboard/stats` has no caller in the app and still uses the server's clock.
-- **Monthly report period label:** the report list formats a report's period in the reader's browser zone, so a reader far west of the club can see the month before.
+- **Sessions nobody attended:** Top classes, their averages and fill rates, and the club fill rate are computed from attendance records, so a session with no check-ins is left out. Counting empty sessions would change the figures, so it needs Noe's decision.
+- **Retention cohort:** joined before the 1st of the club month five months back (5 to 6 months), while the page says "6+ months". A definition question for Noe.

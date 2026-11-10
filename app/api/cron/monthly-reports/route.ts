@@ -68,7 +68,11 @@ export async function GET(req: Request) {
   const failures: { tenantId: string; error: string }[] = [];
 
   for (const tenant of tenants) {
-    // Each club's own previous month (Round 3, 10 Nov 2026).
+    // Each club's own previous month (Round 3, 10 Nov 2026). The job runs at
+    // 14:00 UTC on the 1st (vercel.json): by then the month has ended in every
+    // zone from UTC-12 to UTC+14, so "previous month" is the one that just
+    // ended everywhere. At 02:00 UTC it was still the last day of the month
+    // in the Americas, and their reports would have run a month late.
     const { periodStart, periodEnd } = previousClubMonthPeriod(now, tenant.timezone);
     try {
       const result = await generateMonthlyReport({

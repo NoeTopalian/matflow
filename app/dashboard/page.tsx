@@ -20,7 +20,7 @@ import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, 
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
 import { usableTimezone } from "@/lib/class-time";
-import { clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
+import { clubDayKey, clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -275,7 +275,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   // list so they are switched off together (readAtRiskGate: shown only once
   // MatFlow has been the register for the whole 14-day window; imported
   // visits count as visits once it is).
-  const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
+  const [classes, stats, setupGaps, userTasks, actionItems, todayKey] = await withTenantContext(
     session!.user.tenantId,
     async (tx) => {
       const club = await tx.tenant.findUnique({ where: { id: session!.user.tenantId }, select: { timezone: true } });
@@ -287,6 +287,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
         getActionItems(tx, session!.user.tenantId, atRisk),
+        clubDayKey(new Date(), timeZone),
       ]);
     },
   );
@@ -296,6 +297,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
       {denied && <DeniedNotice role={session!.user.role} />}
       <SetupBanner items={setupGaps} primaryColor={session!.user.primaryColor} />
       <DashboardStats
+        todayKey={todayKey}
         stats={stats}
         classes={classes}
         tenantName={session!.user.tenantName}
@@ -307,6 +309,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
         currentUserRole={session!.user.role}
       />
       <WeeklyCalendar
+        todayKey={todayKey}
         classes={classes}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}

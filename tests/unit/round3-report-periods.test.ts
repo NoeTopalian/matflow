@@ -6,21 +6,30 @@
 import { vi, describe, it, expect } from "vitest";
 
 const checkInWindows: { gte?: Date; lte?: Date; lt?: Date }[] = [];
+const initiativeWheres: unknown[] = [];
+const sizes = { members: 0, checkIns: 0 };
 
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_tenantId: string, fn: (tx: unknown) => Promise<T>) =>
     fn({
-      member: { count: async () => 0, findMany: async () => [] },
+      member: { count: async () => sizes.members, findMany: async () => [] },
       tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
       memberStatusEvent: { findMany: async () => [] },
       importedMembership: { findMany: async () => [] },
       attendanceRecord: {
         count: async ({ where }: { where: { checkInTime: { gte?: Date; lte?: Date; lt?: Date } } }) => {
           checkInWindows.push(where.checkInTime);
-          return 0;
+          return sizes.checkIns;
         },
       },
       class: { count: async () => 0 },
+      initiative: {
+        findMany: async (args: { where: unknown }) => {
+          initiativeWheres.push(args.where);
+          return [];
+        },
+      },
+      googleDriveConnection: { findUnique: async () => null },
     }),
 }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
@@ -68,6 +77,27 @@ describe("the report compares against the club's month before", () => {
       expect(checkInWindows).toContainEqual({ gte: new Date("2026-08-31T23:00:00Z"), lt: periodStart });
     } finally {
       process.env.TZ = originalTz;
+    }
+  });
+});
+
+// Review L-2: initiative dates are calendar days stored as UTC midnight
+// (new Date("YYYY-MM-DD")), so a club month matches them by day, whatever its zone.
+describe("initiatives are matched by the club month's days", () => {
+  it("Los Angeles October report: 1 October to 31 October as UTC-midnight days, not LA instants", async () => {
+    initiativeWheres.length = 0;
+    sizes.members = 12;
+    sizes.checkIns = 5;
+    try {
+      const { periodStart, periodEnd } = previousClubMonthPeriod(new Date("2026-11-01T14:00:00Z"), "America/Los_Angeles");
+      // The model client is a bare mock, so generation stops after the context reads.
+      await generateMonthlyReport({ tenantId: "t1", tenantName: "Club", periodStart, periodEnd, timeZone: "America/Los_Angeles" }).catch(() => undefined);
+      expect(initiativeWheres).toHaveLength(1);
+      const day = { gte: new Date("2026-10-01T00:00:00.000Z"), lte: new Date("2026-10-31T23:59:59.999Z") };
+      expect(initiativeWheres[0]).toEqual({ tenantId: "t1", OR: [{ startDate: day }, { endDate: day }] });
+    } finally {
+      sizes.members = 0;
+      sizes.checkIns = 0;
     }
   });
 });

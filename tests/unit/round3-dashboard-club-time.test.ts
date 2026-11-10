@@ -81,6 +81,18 @@ describe("dashboard home counts in the club's week and month", () => {
     expect(iso(week.lt)).toBe("2026-11-15T12:00:00.000Z");
   });
 
+  it("hands the club's today to the stats card and the calendar (review M-1)", async () => {
+    clubZone = "Pacific/Auckland";
+    process.env.TZ = "UTC";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z")); // Monday 9 Nov, 01:00 in Auckland; Sunday in UTC
+    const el = (await DashboardPage({})) as unknown as { props: { children: unknown[] } };
+    const keys = (el.props.children as ({ props?: { todayKey?: string } } | false | null)[])
+      .filter((c) => c && typeof c === "object" && c.props && "todayKey" in c.props)
+      .map((c) => (c as { props: { todayKey?: string } }).props.todayKey);
+    expect(keys).toEqual(["2026-11-09", "2026-11-09"]);
+  });
+
   it("London club in BST: this week starts at 23:00 UTC on the Sunday", async () => {
     const { checkInGtes, week } = await render("Europe/London", "2026-10-19T08:00:00Z");
     expect(checkInGtes).toContain("2026-10-18T23:00:00.000Z");

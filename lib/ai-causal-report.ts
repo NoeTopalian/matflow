@@ -174,13 +174,19 @@ export async function generateMonthlyReport(input: ReportInput): Promise<Generat
     };
   }
 
+  // Initiative dates are calendar days stored as UTC midnight (app/api/
+  // initiatives: new Date("YYYY-MM-DD")), so they are matched against the
+  // club month's days, not its instants (Round 3, 10 Nov 2026).
+  const [iy, im] = clubMonthWindow(input.periodStart, input.timeZone).monthKey.split("-").map(Number);
+  const firstDay = new Date(Date.UTC(iy, im - 1, 1));
+  const lastDay = new Date(Date.UTC(iy, im, 1) - 1);
   const { initiatives, driveConn, driveFiles } = await withTenantContext(input.tenantId, async (tx) => {
     const inits = await tx.initiative.findMany({
       where: {
         tenantId: input.tenantId,
         OR: [
-          { startDate: { gte: input.periodStart, lte: input.periodEnd } },
-          { endDate: { gte: input.periodStart, lte: input.periodEnd } },
+          { startDate: { gte: firstDay, lte: lastDay } },
+          { endDate: { gte: firstDay, lte: lastDay } },
         ],
       },
       include: { attachments: true },
