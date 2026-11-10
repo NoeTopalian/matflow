@@ -302,3 +302,64 @@ describe("Description in the tier editor", () => {
     });
   });
 });
+
+// Round 4 (10 Nov 2026): an edit sends only what changed, each field with the
+// value it replaces; a conflict keeps the form and offers the latest or a
+// knowing overwrite.
+describe("plan edits send only changes, with what they replace (Round 4)", () => {
+  it("a price change sends the price and its loaded value, nothing else", async () => {
+    renderWith([tier()]);
+    openEdit("Plan A");
+    changePrice("50");
+    saveEdit();
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ pricePence: 5000, expected: { pricePence: 4500 } });
+  });
+
+  it("no change sends nothing", async () => {
+    renderWith([tier()]);
+    openEdit("Plan A");
+    saveEdit();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("a stale_plan conflict keeps the form; 'Save mine instead' resends expecting the newer price", async () => {
+    renderWith([tier()]);
+    let conflict = true;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
+      if (url.startsWith("/api/memberships/") && init?.method === "PATCH") {
+        if (conflict) { conflict = false; return json({ reason: "stale_plan", conflicts: [{ field: "pricePence", current: 7000 }] }, 409); }
+        return json({ ...tier(), pricePence: 5000 });
+      }
+      return json({ locations: [] });
+    });
+    openEdit("Plan A");
+    changePrice("50");
+    saveEdit();
+    const notice = await screen.findByTestId("settings-conflict");
+    expect(notice.textContent).toContain("Someone else changed the price since you opened this plan.");
+    expect((screen.getByLabelText("Price") as HTMLInputElement).value).toBe("50");
+    fireEvent.click(within(notice).getByRole("button", { name: "Save mine instead" }));
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1].body).toEqual({ pricePence: 5000, expected: { pricePence: 7000 } });
+  });
+
+  it("'Use the latest' puts the newer price in the form and sends nothing", async () => {
+    renderWith([tier()]);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
+      if (String(input).startsWith("/api/memberships/") && init?.method === "PATCH") return json({ reason: "stale_plan", conflicts: [{ field: "pricePence", current: 7000 }] }, 409);
+      return json({ locations: [] });
+    });
+    openEdit("Plan A");
+    changePrice("50");
+    saveEdit();
+    const notice = await screen.findByTestId("settings-conflict");
+    fireEvent.click(within(notice).getByRole("button", { name: "Use the latest" }));
+    expect((screen.getByLabelText("Price") as HTMLInputElement).value).toBe("70");
+    expect(writes()).toHaveLength(1);
+  });
+});

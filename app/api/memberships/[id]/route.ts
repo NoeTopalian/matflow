@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
+import { resolveSettingsPreconditions, type SettingsConflict } from "@/lib/settings-precondition";
 import { billingCycleSchema } from "@/lib/billing-cycle";
 import { ALLOWANCE_FIELDS, BILLING_BASIS_AVAILABLE, BILLING_BASIS_UNAVAILABLE_MESSAGE, BILLING_ON_NONE_MESSAGE, allowanceColumns, classLimitAnchorSchema, classLimitBasisSchema, classLimitSchema, classLimitWeeksSchema, refineAllowance } from "@/lib/class-allowance";
 
@@ -51,9 +52,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
+    // Round 4 (10 Nov 2026): `expected` holds, for each plan field being
+    // changed, the value the editor loaded (lib/settings-precondition). A
+    // field is written only while the plan still holds it, so a save from an
+    // older tab cannot put back a price someone changed since.
+    let expected: Record<string, unknown> | null = null;
+    if (body && typeof body === "object" && !Array.isArray(body) && "expected" in body) {
+      const { expected: given, ...restBody } = body as Record<string, unknown>;
+      if (!given || typeof given !== "object" || Array.isArray(given)) {
+        return NextResponse.json({ error: "`expected` must list the values you last saw, by field" }, { status: 400 });
+      }
+      expected = given as Record<string, unknown>;
+      body = restBody;
+    }
     const parsed = patchSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+    }
+    if (expected && Object.keys(expected).some((k) => !(k in parsed.data) || (ALLOWANCE_FIELDS as readonly string[]).includes(k))) {
+      return NextResponse.json({ error: "`expected` names a field this save does not change" }, { status: 400 });
     }
 
     // The allowance keys become the allowance columns, written together (a
@@ -71,8 +88,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         const loc = await tx.location.findFirst({ where: { id: parsed.data.locationId, tenantId }, select: { id: true } });
         if (!loc) return "bad_location" as const;
       }
+      if (expected) await tx.$queryRaw`SELECT 1 FROM "MembershipTier" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR NO KEY UPDATE`;
       const before = await tx.membershipTier.findFirst({ where: { id, tenantId } });
       if (!before) return null;
+      let toWrite = data;
+      if (expected) {
+        const r = resolveSettingsPreconditions(before as unknown as Record<string, unknown>, data, expected);
+        if (r.conflicts.length > 0) return { conflicts: r.conflicts } as { conflicts: SettingsConflict[] };
+        toWrite = r.apply;
+        // A retried save whose values are all stored already wrote nothing.
+        if (Object.keys(toWrite).length === 0) return { fresh: before, before, unchanged: true as const };
+      }
       // A plan billed once has no billing period to count classes in: the
       // basis and the cycle are judged together, whichever this body sends
       // (review round 3, L-5).
@@ -81,7 +107,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (nextBasis === "billing" && nextCycle === "none") return "billing_on_none" as const;
       const r = await tx.membershipTier.updateMany({
         where: { id, tenantId },
-        data,
+        data: toWrite,
       });
       if (r.count === 0) return null;
       const fresh = await tx.membershipTier.findFirst({ where: { id, tenantId } });
@@ -92,6 +118,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: BILLING_ON_NONE_MESSAGE, details: { fieldErrors: { classLimitBasis: [BILLING_ON_NONE_MESSAGE] } } }, { status: 400 });
     }
     if (!outcome) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if ("conflicts" in outcome) {
+      return NextResponse.json(
+        { error: "Someone changed this plan since you opened it. Your changes have not been saved.", reason: "stale_plan", conflicts: outcome.conflicts },
+        { status: 409 },
+      );
+    }
+    if ("unchanged" in outcome) return NextResponse.json(outcome.fresh);
     const { fresh, before } = outcome;
 
     await logAudit({

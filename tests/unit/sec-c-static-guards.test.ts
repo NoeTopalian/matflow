@@ -52,6 +52,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "app/api/members/[id]/rank/demote/route.ts", // Round 4: Member row lock (SELECT 1 … FOR NO KEY UPDATE) so two demotions of one member are serial; memberId and tenantId are bind parameters
       "app/api/members/[id]/rank/route.ts", // Round 4: Member row lock (SELECT 1 … FOR NO KEY UPDATE) so two awards for one member are serial; memberId and tenantId are bind parameters
       "app/api/members/[id]/route.ts", // lane D3: locked read of the member + children inside the deletion transaction; ids are bind parameters
+      "app/api/memberships/[id]/route.ts", // Round 4: MembershipTier row lock (SELECT 1 … FOR NO KEY UPDATE) before a plan save with preconditions; id and tenantId are bind parameters
       "app/api/payments/[id]/refund/route.ts", // W6: MemberClassPack row lock (SELECT … FOR UPDATE) before the refund apportionment reads it; the payment intent id and tenantId are bind parameters
       "app/api/settings/route.ts", // Round 4 CONCURRENCY-1: Tenant row lock (SELECT 1 … FOR NO KEY UPDATE) before a settings save with preconditions; tenantId is a bind parameter
       "app/api/stripe/webhook/route.ts", // W6: MemberClassPack row lock (SELECT … FOR UPDATE) before the charge.refunded apportionment reads it; the payment intent id and tenantId are bind parameters
