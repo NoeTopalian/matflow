@@ -33,11 +33,14 @@ export function SettingsConflictNotice({
   onUseLatest,
   onKeepMine,
   busy = false,
+  changed,
 }: {
   fields: string[];
   onUseLatest: () => void;
   onKeepMine: () => void;
   busy?: boolean;
+  /** The whole "… changed by someone else" clause, when the field names don't read well (the member's notes). */
+  changed?: string;
 }) {
   const names = fields.map(settingsFieldLabel);
   const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
@@ -45,7 +48,7 @@ export function SettingsConflictNotice({
     <Card padding="tight" className="mt-3">
       <div role="alert" data-testid="settings-conflict" className="space-y-3">
         <p className="text-sm" style={{ color: "var(--tx-1)" }}>
-          {list} {names.length > 1 ? "were" : "was"} changed by someone else since you opened this page. Nothing has been saved; your changes are still here.
+          {changed ?? `${list} ${names.length > 1 ? "were" : "was"} changed by someone else since you opened this page.`} Nothing has been saved; your changes are still here.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="compact" onClick={onUseLatest} disabled={busy}>

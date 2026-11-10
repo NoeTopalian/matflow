@@ -316,3 +316,60 @@ describe("member self-service details (D8, D11)", () => {
     expect(name.value).toBe("Sam C");
   });
 });
+
+// Round 4 (10 Nov 2026): the notes box expects the notes it loaded. A save
+// refused because another admin changed them keeps the draft and offers the
+// latest or a knowing overwrite; nothing resubmits on its own.
+describe("staff profile notes (Round 4)", () => {
+  async function openNotes(initialNotes: string | null) {
+    render(<MemberProfile member={{ ...MEMBER, notes: initialNotes }} rankOptions={[]} primaryColor="#3b82f6" role="owner" tenantSlug="t" />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("tab", { name: /Internal Notes/ }));
+    const box = screen.getByLabelText("Internal notes about this member") as HTMLTextAreaElement;
+    return box;
+  }
+
+  it("sends the notes it loaded as expectedNotes", async () => {
+    profileFetch(() => json({ updatedAt: "2026-09-30T09:05:00.000Z" }));
+    const box = await openNotes("Old note");
+    fireEvent.change(box, { target: { value: "New note" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save notes/ }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(JSON.parse(String(patches()[0].init!.body))).toEqual({ notes: "New note", expectedNotes: "Old note" });
+  });
+
+  it("a conflict keeps the draft; 'Save mine instead' resends expecting the newer notes; 'Use the latest' shows them", async () => {
+    let answer = () => json({ error: "changed", reason: "stale_notes", currentNotes: "Their note", currentUpdatedAt: "2026-09-30T09:06:00.000Z" }, 409);
+    profileFetch(() => answer());
+    const box = await openNotes("Old note");
+    fireEvent.change(box, { target: { value: "My note" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save notes/ }));
+    const notice = await screen.findByTestId("settings-conflict");
+    expect(notice.textContent).toContain("These notes were changed by someone else");
+    expect(box.value).toBe("My note");
+    answer = () => json({ updatedAt: "2026-09-30T09:07:00.000Z" });
+    fireEvent.click(screen.getByRole("button", { name: "Save mine instead" }));
+    await waitFor(() => expect(patches()).toHaveLength(2));
+    expect(JSON.parse(String(patches()[1].init!.body))).toEqual({ notes: "My note", expectedNotes: "Their note" });
+  });
+
+  it("'Use the latest' replaces the box with the other admin's notes and sends nothing", async () => {
+    profileFetch(() => json({ error: "changed", reason: "stale_notes", currentNotes: "Their note", currentUpdatedAt: "2026-09-30T09:06:00.000Z" }, 409));
+    const box = await openNotes("Old note");
+    fireEvent.change(box, { target: { value: "My note" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save notes/ }));
+    await screen.findByTestId("settings-conflict");
+    fireEvent.click(screen.getByRole("button", { name: "Use the latest" }));
+    expect(box.value).toBe("Their note");
+    expect(patches()).toHaveLength(1);
+  });
+
+  it("no reply keeps the draft and says it is unknown", async () => {
+    profileFetch(() => { throw new TypeError("Failed to fetch"); });
+    const box = await openNotes("Old note");
+    fireEvent.change(box, { target: { value: "Unsure note" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save notes/ }));
+    await waitFor(() => expect(toastSpy.mock.calls.some((c) => /isn't known whether the notes were saved/.test(String(c[0])))).toBe(true));
+    expect(box.value).toBe("Unsure note");
+  });
+});

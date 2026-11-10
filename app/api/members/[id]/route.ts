@@ -256,7 +256,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // gym's price list — RLS is a no-op for the app role, so the resolve
     // below is the tenant boundary. Resolving also re-derives the legacy
     // `membershipType` label from the tier row, keeping the two in step.
-    const { dateOfBirth, updatedAt: clientUpdatedAt, membershipTierId, ...rest } = parsed.data;
+    const { dateOfBirth, updatedAt: clientUpdatedAt, membershipTierId, expectedNotes, ...rest } = parsed.data;
     let tier: Awaited<ReturnType<typeof resolveMembershipTier>> | undefined;
     if (membershipTierId !== undefined) {
       tier = membershipTierId === null
@@ -270,6 +270,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // matches what the client thinks it is. Skipped when no precondition is
     // sent so existing callers stay backward-compatible.
     const concurrencyGuard = clientUpdatedAt ? { updatedAt: new Date(clientUpdatedAt) } : {};
+    // Round 4: the notes save's own precondition, in the same conditional
+    // update: written only while the stored notes are the ones this client saw.
+    const notesGuard = expectedNotes !== undefined ? { notes: expectedNotes } : {};
     // Audit iter-1-member-lifecycle A3C-2 + A3H-6: pre-flight checks before
     // any mutation. Two cases require a DB lookup of the existing member:
     //   1. Refuse status transitions away from "cancelled" when the member
@@ -415,7 +418,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         if (claim.kind !== "none") throw new LoginIdentityTaken(claim);
       }
       const m = await tx.member.updateMany({
-        where: { id, tenantId: session.user.tenantId, ...concurrencyGuard },
+        where: { id, tenantId: session.user.tenantId, ...concurrencyGuard, ...notesGuard },
         data: {
           ...rest,
           // After `...rest` so a resolved tier's own name wins over any
@@ -429,7 +432,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (m.count === 0) {
         const existing = await tx.member.findFirst({
           where: { id, tenantId: session.user.tenantId },
-          select: { updatedAt: true },
+          select: { updatedAt: true, notes: true },
         });
         return { updated: null, existing };
       }
@@ -532,7 +535,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         entityType: "Member",
         entityId: id,
         metadata: {
-          fields: Object.keys(parsed.data),
+          fields: Object.keys(parsed.data).filter((k) => k !== "expectedNotes"),
           ...(Object.keys(changes).length > 0 ? { source: "staff", changes } : {}),
           // A3H-6: surface the Stripe outcome in the audit row so the gym
           // owner can trace any billing-state side-effects of this PATCH.
@@ -556,6 +559,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     if (!result.updated) {
       if (!result.existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      if (expectedNotes !== undefined) {
+        // A retried notes save whose text is already stored (the first try
+        // committed, its reply was lost) succeeded; nothing more is written.
+        if ((result.existing.notes ?? null) === (rest.notes ?? null)) {
+          return NextResponse.json({ updatedAt: result.existing.updatedAt.toISOString(), notes: result.existing.notes });
+        }
+        return NextResponse.json(
+          {
+            error: "Someone else changed these notes since you opened this member. Your text has not been saved.",
+            reason: "stale_notes",
+            currentNotes: result.existing.notes ?? null,
+            currentUpdatedAt: result.existing.updatedAt.toISOString(),
+          },
+          { status: 409 },
+        );
+      }
       if (clientUpdatedAt) {
         return NextResponse.json(
           { error: "This member was updated by someone else. Reload and try again.", currentUpdatedAt: result.existing.updatedAt.toISOString() },
