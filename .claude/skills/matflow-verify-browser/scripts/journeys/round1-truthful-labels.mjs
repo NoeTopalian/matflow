@@ -112,8 +112,11 @@ try {
   await shot(page, "round1-attendance-desktop");
 
   // ── C3: Revenue "Recent payments" ──
+  const revenueLoaded = page.waitForResponse((r) => r.url().includes("/api/revenue/summary") && r.ok(), { timeout: 60000 });
   await page.goto("/dashboard/settings?tab=revenue");
   await page.getByText("Recent payments").waitFor({ timeout: 30000 });
+  await revenueLoaded;
+  await page.getByText(/^(Paid|Refunded) · /).first().waitFor({ timeout: 15000 });
   const rev = norm(await page.locator("body").innerText());
   L.check("revenue", "C3a the section is 'Recent payments', not 'Recent Activity'", rev.includes("Recent payments") && !rev.includes("Recent Activity"), {});
   L.check("revenue", "C3b a succeeded payment reads 'Paid' and a refunded one 'Refunded'; no 'Joined' or 'Cancelled'", /Paid ·/.test(rev) && /Refunded ·/.test(rev) && !/\bJoined ·|\bCancelled ·/.test(rev), rev.match(/(Paid|Refunded|Joined|Cancelled) · [^\n]{0,30}/g));
@@ -179,8 +182,9 @@ try {
   await page.keyboard.press("Escape");
   // D4: a refused delete keeps the row.
   await page.route(`**/api/initiatives/${seeded.initiatives[0]}`, (r) => r.request().method() === "DELETE" ? r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Failed to delete initiative" }) }) : r.continue());
-  const delBtn = page.getByRole("button", { name: /^Delete Marketing initiative from/ });
-  L.check("a11y", "A6 the initiative delete button is named with its type and date", (await delBtn.count()) === 1, await delBtn.first().getAttribute("aria-label"));
+  const delBtn = page.getByRole("button", { name: /^Delete Marketing campaign initiative from \d{1,2} \w{3} \d{4}$/ });
+  const delCount = await delBtn.count();
+  L.check("a11y", "A6 the initiative delete button is named with its type and date", delCount === 1, delCount === 1 ? await delBtn.getAttribute("aria-label") : { count: delCount });
   await delBtn.click();
   await page.getByRole("button", { name: "Delete initiative" }).click();
   const dErr = page.getByTestId("initiative-delete-error");

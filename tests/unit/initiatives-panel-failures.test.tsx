@@ -73,6 +73,8 @@ describe("InitiativesPanel: creating", () => {
     const alert = await screen.findByTestId("initiative-create-error");
     expect(alert.textContent).toBe("Couldn't save: Invalid data. Your entries are kept.");
     expect(alert.textContent).not.toContain("never shown");
+    // Focus is on the message (the disabled-while-saving button had dropped it to body).
+    await waitFor(() => expect(document.activeElement).toBe(alert));
     expect((screen.getByLabelText("Notes") as HTMLTextAreaElement).value).toBe("Open mat flyer");
     expect((screen.getByLabelText("Start date") as HTMLInputElement).value).toBe("2026-11-01");
     // The save button is usable again; nothing was retried on its own.

@@ -59,6 +59,13 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
   const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const { ask, dialogProps } = useConfirmDialog();
+  // The Save button is disabled while it is loading, so the browser drops focus
+  // to <body>. After a refused save, focus goes to the message instead, which
+  // keeps it inside the dialog and reads the sentence out.
+  const createErrorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (createError) createErrorRef.current?.focus();
+  }, [createError]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -254,7 +261,7 @@ export default function InitiativesPanel({ primaryColor }: { primaryColor: strin
         }
       >
             {createError && (
-              <p role="alert" className="mb-3 text-sm" style={{ color: "var(--hue-danger-ink)" }} data-testid="initiative-create-error">
+              <p ref={createErrorRef} tabIndex={-1} role="alert" className="mb-3 text-sm outline-none" style={{ color: "var(--hue-danger-ink)" }} data-testid="initiative-create-error">
                 {createError}
               </p>
             )}
