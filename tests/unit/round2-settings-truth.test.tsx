@@ -13,6 +13,9 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/dashboard/settings",
 }));
 
+const toasts = vi.hoisted(() => [] as { message: string; type?: string }[]);
+vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: (message: string, type?: string) => { toasts.push({ message, type }); } }) }));
+
 import { brandingChanges } from "@/components/dashboard/SettingsPage";
 
 const SETTINGS = {
@@ -92,7 +95,8 @@ describe("Settings → Branding: the club's saved values win", () => {
     fireEvent.change(name, { target: { value: "Total BJJ Kent" } });
     fireEvent.click(screen.getByRole("button", { name: /Save Branding/ }));
     await waitFor(() => expect(patches.length).toBe(1), FIND);
-    expect(patches[0]).toEqual({ name: "Total BJJ Kent" });
+    // Round 4: each changed field carries the value it replaces.
+    expect(patches[0]).toEqual({ name: "Total BJJ Kent", expected: { name: "Total BJJ" } });
   });
 
   it("with nothing changed, Save sends nothing", async () => {
@@ -117,7 +121,7 @@ describe("Settings → Branding: the club's saved values win", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: /Save Branding/ }) as HTMLButtonElement).disabled).toBe(false), FIND);
     fireEvent.click(screen.getByRole("button", { name: /Save Branding/ }));
     await waitFor(() => expect(patches.length).toBe(2), FIND);
-    expect(patches[1]).toEqual({ name: "New Name" });
+    expect(patches[1]).toEqual({ name: "New Name", expected: { name: "Total BJJ" } });
     expect(name.value).toBe("New Name");
   });
 
@@ -172,5 +176,78 @@ describe("Settings → Revenue: card labels", () => {
     const card = screen.getByText("Per active member").parentElement!;
     expect(card.textContent).toContain("—");
     expect(card.textContent).not.toContain("£0");
+  });
+});
+
+// Round 4 (10 Nov 2026), CONCURRENCY-1: a save refused because someone else
+// changed the same settings keeps the owner's draft, says so, and offers the
+// latest or a knowing overwrite. Nothing resubmits on its own.
+describe("Settings: a conflicting save keeps the draft and offers a choice", () => {
+  const conflict = (field: string, current: unknown) => async () => ({
+    ok: false, status: 409,
+    json: async () => ({ error: "Someone changed these settings since you opened them.", reason: "stale_settings", conflicts: [{ field, current }] }),
+  });
+
+  it("branding: the draft stays, the notice names the field, and 'Save mine instead' resends knowingly", async () => {
+    tab = "branding";
+    await renderOwner();
+    const name = (await screen.findByLabelText("Gym Name", {}, FIND)) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: "My Name" } });
+    patchAnswer = conflict("name", "Their Name");
+    fireEvent.click(screen.getByRole("button", { name: /Save Branding/ }));
+    const notice = await screen.findByTestId("settings-conflict", {}, FIND);
+    expect(notice.textContent).toContain("Gym name was changed by someone else");
+    expect(name.value).toBe("My Name");
+    expect(patches).toHaveLength(1);
+    patchAnswer = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+    fireEvent.click(within(notice).getByRole("button", { name: "Save mine instead" }));
+    await waitFor(() => expect(patches.length).toBe(2), FIND);
+    expect(patches[1]).toEqual({ name: "My Name", expected: { name: "Their Name" } });
+    await waitFor(() => expect(screen.queryByTestId("settings-conflict")).toBeNull(), FIND);
+  });
+
+  it("branding: 'Use the latest' shows the club's current value, and the next save expects it", async () => {
+    tab = "branding";
+    await renderOwner();
+    const name = (await screen.findByLabelText("Gym Name", {}, FIND)) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: "My Name" } });
+    patchAnswer = conflict("name", "Their Name");
+    fireEvent.click(screen.getByRole("button", { name: /Save Branding/ }));
+    const notice = await screen.findByTestId("settings-conflict", {}, FIND);
+    fireEvent.click(within(notice).getByRole("button", { name: "Use the latest" }));
+    expect(name.value).toBe("Their Name");
+    expect(screen.queryByTestId("settings-conflict")).toBeNull();
+    expect(patches).toHaveLength(1); // nothing resent
+    patchAnswer = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+    fireEvent.change(name, { target: { value: "Their Name 2" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: /Save Branding/ }) as HTMLButtonElement).disabled).toBe(false), FIND);
+    fireEvent.click(screen.getByRole("button", { name: /Save Branding/ }));
+    await waitFor(() => expect(patches.length).toBe(2), FIND);
+    expect(patches[1]).toEqual({ name: "Their Name 2", expected: { name: "Their Name" } });
+  });
+
+  it("waiver: a conflicting save keeps the text in the editor and expects the saved text", async () => {
+    tab = "waiver";
+    await renderOwner({ settings: { ...SETTINGS, waiverTitle: "Old title", waiverContent: "Old text" } });
+    fireEvent.click((await screen.findAllByRole("button", { name: /Edit Waiver/ }, FIND))[0]);
+    const text = (await screen.findByLabelText("Waiver content", {}, FIND)) as HTMLTextAreaElement;
+    fireEvent.change(text, { target: { value: "My new text" } });
+    patchAnswer = conflict("waiverContent", "Their newer text");
+    fireEvent.click(within(text.closest(".space-y-3") as HTMLElement).getByRole("button", { name: /^Save$/ }));
+    await screen.findByTestId("settings-conflict", {}, FIND);
+    expect(patches[0]).toMatchObject({ waiverContent: "My new text", expected: { waiverTitle: "Old title", waiverContent: "Old text" } });
+    expect((screen.getByLabelText("Waiver content") as HTMLTextAreaElement).value).toBe("My new text");
+  });
+
+  it("waiver: no reply keeps the editor open with the text and says it is unknown", async () => {
+    tab = "waiver";
+    await renderOwner({ settings: { ...SETTINGS, waiverTitle: "Old title", waiverContent: "Old text" } });
+    fireEvent.click((await screen.findAllByRole("button", { name: /Edit Waiver/ }, FIND))[0]);
+    const text = (await screen.findByLabelText("Waiver content", {}, FIND)) as HTMLTextAreaElement;
+    fireEvent.change(text, { target: { value: "Unsure text" } });
+    patchAnswer = async () => { throw new TypeError("Failed to fetch"); };
+    fireEvent.click(within(text.closest(".space-y-3") as HTMLElement).getByRole("button", { name: /^Save$/ }));
+    await waitFor(() => expect(toasts.some((t) => /isn't known whether the waiver was saved/.test(t.message))).toBe(true), FIND);
+    expect((screen.getByLabelText("Waiver content") as HTMLTextAreaElement).value).toBe("Unsure text");
   });
 });

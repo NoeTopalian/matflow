@@ -23,6 +23,7 @@ import { MemberAppCheckinSetting } from "@/components/dashboard/MemberAppCheckin
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
 import { ContactEmailSection } from "@/components/dashboard/ContactEmailSection";
+import { SettingsConflictNotice } from "@/components/dashboard/SettingsConflictNotice";
 import LoginEmailCard from "@/components/dashboard/LoginEmailCard";
 import ProfileCard from "@/components/dashboard/ProfileCard";
 import PasswordCard from "@/components/dashboard/PasswordCard";
@@ -35,7 +36,7 @@ import DataRequests from "@/components/dashboard/DataRequests";
 import { formatDate } from "@/lib/date";
 import type { TenantSettings, StaffMember, SettingsPopulationCounts } from "@/app/dashboard/settings/page";
 import { POPULATION_COPY } from "@/lib/member-population";
-import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
+import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText, type WaiverKind } from "@/lib/waiver-editor";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { cyclePriceSuffix } from "@/lib/billing-cycle";
@@ -175,6 +176,31 @@ export function brandingChanges(
   }
   return out;
 }
+
+/**
+ * The values a settings save expects to replace (Round 4, CONCURRENCY-1): for
+ * each field being sent, the one the server last confirmed. The route writes
+ * a field only while the club still holds that value.
+ */
+export function expectedFor(
+  saved: Record<string, string | null | undefined>,
+  changed: Record<string, unknown>,
+): Record<string, string | null> {
+  return Object.fromEntries(Object.keys(changed).map((k) => [k, saved[k] ?? null]));
+}
+
+export type SettingsConflicts = { field: string; current: unknown }[];
+
+/** A 409 `stale_settings` body's conflicts, or null for any other answer. */
+export function settingsConflictsOf(status: number, body: unknown): SettingsConflicts | null {
+  if (status !== 409 || !body || typeof body !== "object") return null;
+  const b = body as { reason?: unknown; conflicts?: unknown };
+  if (b.reason !== "stale_settings" || !Array.isArray(b.conflicts)) return null;
+  return b.conflicts.filter((c): c is { field: string; current: unknown } => !!c && typeof (c as { field?: unknown }).field === "string");
+}
+
+/** The editor's branding when the club has none saved (one place, so a "use the latest" reset matches the first load). */
+const BRANDING_FALLBACK = { secondaryColor: "#2563eb", textColor: "#ffffff", bgColor: "#111111", fontFamily: "Inter, sans-serif" } as const;
 
 const EMPTY_REVENUE: RevenueSummary = {
   mrr: 0, arr: 0, activeMembers: 0, avgPerMember: null, growth: 0,
@@ -734,10 +760,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // Branding state
   const [gymName, setGymName]           = useState(settings?.name ?? "");
   const [primaryCol, setPrimaryCol]     = useState(settings?.primaryColor   ?? primaryColor);
-  const [secondaryCol, setSecondaryCol] = useState(settings?.secondaryColor ?? "#2563eb");
-  const [textCol, setTextCol]           = useState(settings?.textColor      ?? "#ffffff");
-  const [bgCol, setBgCol]               = useState(settings?.bgColor ?? "#111111");
-  const [fontFamily, setFontFamily]     = useState(settings?.fontFamily ?? "Inter, sans-serif");
+  const [secondaryCol, setSecondaryCol] = useState<string>(settings?.secondaryColor ?? BRANDING_FALLBACK.secondaryColor);
+  const [textCol, setTextCol]           = useState<string>(settings?.textColor      ?? BRANDING_FALLBACK.textColor);
+  const [bgCol, setBgCol]               = useState<string>(settings?.bgColor ?? BRANDING_FALLBACK.bgColor);
+  const [fontFamily, setFontFamily]     = useState<string>(settings?.fontFamily ?? BRANDING_FALLBACK.fontFamily);
   // The club's branding as last confirmed by the server. Save sends only the
   // fields that differ from this, so a field the owner did not touch is never
   // written back (a fresh browser can no longer reset it).
@@ -757,7 +783,39 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [saving, setSaving]             = useState(false);
+  // Round 4 (CONCURRENCY-1): a branding save refused because someone changed
+  // the same fields since this page loaded. The editor keeps the draft.
+  const [brandingConflict, setBrandingConflict] = useState<SettingsConflicts | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+
+  /** Put the club's current value of one branding field into the editor. */
+  function showBrandingValue(field: string, current: unknown) {
+    const v = typeof current === "string" ? current : null;
+    if (field === "name") setGymName(v ?? "");
+    else if (field === "primaryColor") setPrimaryCol(v ?? primaryColor);
+    else if (field === "secondaryColor") setSecondaryCol(v ?? BRANDING_FALLBACK.secondaryColor);
+    else if (field === "textColor") setTextCol(v ?? BRANDING_FALLBACK.textColor);
+    else if (field === "bgColor") setBgCol(v ?? BRANDING_FALLBACK.bgColor);
+    else if (field === "fontFamily") setFontFamily(v ?? BRANDING_FALLBACK.fontFamily);
+    else if (field === "logoUrl") { setLogoPreview(v); setLogoFile(null); }
+    else if (field === "logoSize") setLogoSize((v as "sm" | "md" | "lg" | null) ?? "md");
+  }
+  function applyLatestBranding() {
+    for (const c of brandingConflict ?? []) {
+      savedBranding.current = { ...savedBranding.current, [c.field]: typeof c.current === "string" ? c.current : null };
+      showBrandingValue(c.field, c.current);
+    }
+    setBrandingConflict(null);
+  }
+  function keepMyBranding() {
+    // The owner chose to replace what is there now: the next save expects the
+    // current values, so it overwrites them knowingly, never silently.
+    for (const c of brandingConflict ?? []) {
+      savedBranding.current = { ...savedBranding.current, [c.field]: typeof c.current === "string" ? c.current : null };
+    }
+    setBrandingConflict(null);
+    void saveBranding();
+  }
 
   // Staff drawer
   const [staffDrawer, setStaffDrawer] = useState(false);
@@ -910,6 +968,97 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [kidsWaiverDraft, setKidsWaiverDraft]     = useState<WaiverText>({ title: "", content: "" });
   const [kidsWaiverEditing, setKidsWaiverEditing] = useState(false);
   const [kidsWaiverSaving, setKidsWaiverSaving]   = useState(false);
+
+  // Round 4 (CONCURRENCY-1): a waiver save refused because someone changed
+  // that waiver since this page loaded it. The draft stays in the editor and
+  // `values` is what the owner tried to save.
+  type WaiverValues = { title: string | null; content: string | null };
+  const [waiverConflict, setWaiverConflict] = useState<{ kind: WaiverKind; conflicts: SettingsConflicts; values: WaiverValues } | null>(null);
+  const waiverKeys = (kind: WaiverKind) =>
+    kind === "adult" ? { title: "waiverTitle", content: "waiverContent" } as const : { title: "kidsWaiverTitle", content: "kidsWaiverContent" } as const;
+  const savedWaiver = (kind: WaiverKind): WaiverValues =>
+    kind === "adult"
+      ? { title: waiverTitle || null, content: waiverContent || null }
+      : { title: kidsWaiverTitle || null, content: kidsWaiverContent || null };
+  function setSavedWaiver(kind: WaiverKind, v: WaiverValues) {
+    if (kind === "adult") { setWaiverTitle(v.title ?? ""); setWaiverContent(v.content ?? ""); }
+    else { setKidsWaiverTitle(v.title ?? ""); setKidsWaiverContent(v.content ?? ""); }
+  }
+
+  /**
+   * Save one waiver's title and text, expecting the saved text this page holds
+   * (`base`). Refused with a conflict when someone changed it since; a lost
+   * reply is said as unknown, not as a failure or a success.
+   */
+  async function persistWaiver(kind: WaiverKind, values: WaiverValues, base: WaiverValues, done: string): Promise<boolean> {
+    const keys = waiverKeys(kind);
+    const setBusy = kind === "adult" ? setWaiverSaving : setKidsWaiverSaving;
+    setBusy(true);
+    try {
+      let res: Response;
+      try {
+        res = await fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            [keys.title]: values.title,
+            [keys.content]: values.content,
+            expected: { [keys.title]: base.title, [keys.content]: base.content },
+          }),
+        });
+      } catch {
+        toast("No reply from MatFlow, so it isn't known whether the waiver was saved. Your text is still here; save again or reload to check.", "error");
+        return false;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const conflicts = settingsConflictsOf(res.status, body);
+        if (conflicts) {
+          setWaiverConflict({ kind, conflicts, values });
+          toast("Not saved: someone else changed this waiver since you opened it. Your text is still here.", "error");
+        } else {
+          toast("Failed to save waiver", "error");
+        }
+        return false;
+      }
+      setSavedWaiver(kind, values);
+      setWaiverConflict(null);
+      if (kind === "adult") setWaiverEditing(false); else setKidsWaiverEditing(false);
+      toast(done, "success");
+      return true;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** The club's waiver now, after a conflict: what was saved, overlaid with the conflicting current values. */
+  function latestWaiver(kind: WaiverKind, conflicts: SettingsConflicts): WaiverValues {
+    const keys = waiverKeys(kind);
+    const latest = { ...savedWaiver(kind) };
+    for (const c of conflicts) {
+      const v = typeof c.current === "string" ? c.current : null;
+      if (c.field === keys.title) latest.title = v;
+      if (c.field === keys.content) latest.content = v;
+    }
+    return latest;
+  }
+  function applyLatestWaiver() {
+    if (!waiverConflict) return;
+    const { kind, conflicts } = waiverConflict;
+    const latest = latestWaiver(kind, conflicts);
+    setSavedWaiver(kind, latest);
+    const draft = waiverEditorStart(kind, latest, settings?.name);
+    if (kind === "adult") setWaiverDraft(draft); else setKidsWaiverDraft(draft);
+    setWaiverConflict(null);
+  }
+  function keepMyWaiver() {
+    if (!waiverConflict) return;
+    const { kind, conflicts, values } = waiverConflict;
+    // The owner chose to replace the newer text: expect it, so the overwrite is knowing.
+    const latest = latestWaiver(kind, conflicts);
+    setWaiverConflict(null);
+    void persistWaiver(kind, values, latest, kind === "adult" ? "Waiver saved" : "Parent/guardian waiver saved");
+  }
 
   // Stripe Connect state
   const [stripeIsConnected, setStripeIsConnected] = useState(initStripeConnected);
@@ -1228,13 +1377,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           const res = await fetch("/api/settings", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(changed),
+            // Round 4: each changed field carries the value it replaces, so a
+            // stale or retried save cannot overwrite someone else's newer one.
+            body: JSON.stringify({ ...changed, expected: expectedFor(savedBranding.current, changed) }),
           });
           if (!res.ok) {
             const body = await res.json().catch(() => ({} as { error?: string }));
-            saveError = body.error ?? `Couldn't save branding (HTTP ${res.status})`;
+            const conflicts = settingsConflictsOf(res.status, body);
+            if (conflicts) setBrandingConflict(conflicts);
+            saveError = conflicts
+              ? "Not saved: someone else changed this branding since you opened it. Your changes are still here."
+              : body.error ?? `Couldn't save branding (HTTP ${res.status})`;
           } else {
             savedBranding.current = { ...savedBranding.current, ...changed };
+            setBrandingConflict(null);
           }
         }
       } catch {
@@ -2140,6 +2296,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           )}
 
           {/* Live phone preview */}
+          {isOwner && brandingConflict && (
+            <SettingsConflictNotice
+              fields={brandingConflict.map((c) => c.field)}
+              onUseLatest={applyLatestBranding}
+              onKeepMine={keepMyBranding}
+              busy={saving}
+            />
+          )}
           {isOwner && (
             <button onClick={saveBranding} disabled={saving}
               className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
@@ -3070,24 +3234,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   />
                   <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{waiverDraft.content.length}/20,000</p>
                 </div>
+                {waiverConflict?.kind === "adult" && (
+                  <SettingsConflictNotice
+                    fields={waiverConflict.conflicts.map((c) => c.field)}
+                    onUseLatest={applyLatestWaiver}
+                    onKeepMine={keepMyWaiver}
+                    busy={waiverSaving}
+                  />
+                )}
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={async () => {
-                      setWaiverSaving(true);
                       // Text identical to the default is saved as "use the default".
                       const toSave = waiverSaveValues("adult", waiverDraft, settings?.name);
-                      try {
-                        const res = await fetch("/api/settings", {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ waiverTitle: toSave.title, waiverContent: toSave.content }),
-                        });
-                        if (!res.ok) { toast("Failed to save waiver", "error"); return; }
-                        setWaiverTitle(toSave.title ?? "");
-                        setWaiverContent(toSave.content ?? "");
-                        setWaiverEditing(false);
-                        toast("Waiver saved", "success");
-                      } finally { setWaiverSaving(false); }
+                      await persistWaiver("adult", toSave, savedWaiver("adult"), "Waiver saved");
                     }}
                     disabled={waiverSaving}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
@@ -3113,19 +3273,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                           confirmLabel: "Reset waiver",
                           destructive: true,
                         }))) return;
-                        setWaiverSaving(true);
-                        try {
-                          const res = await fetch("/api/settings", {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ waiverTitle: null, waiverContent: null }),
-                          });
-                          if (!res.ok) { toast("Failed to reset waiver", "error"); return; }
-                          setWaiverTitle("");
-                          setWaiverContent("");
-                          setWaiverEditing(false);
-                          toast("Reset to default waiver", "success");
-                        } finally { setWaiverSaving(false); }
+                        await persistWaiver("adult", { title: null, content: null }, savedWaiver("adult"), "Reset to default waiver");
                       }}
                       className="ml-auto px-4 py-2 rounded-xl text-xs border"
                       style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.04)" }}
@@ -3210,24 +3358,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   />
                   <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{kidsWaiverDraft.content.length}/20,000</p>
                 </div>
+                {waiverConflict?.kind === "kids" && (
+                  <SettingsConflictNotice
+                    fields={waiverConflict.conflicts.map((c) => c.field)}
+                    onUseLatest={applyLatestWaiver}
+                    onKeepMine={keepMyWaiver}
+                    busy={kidsWaiverSaving}
+                  />
+                )}
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={async () => {
-                      setKidsWaiverSaving(true);
                       // Text identical to the default is saved as "use the default".
                       const toSave = waiverSaveValues("kids", kidsWaiverDraft, settings?.name);
-                      try {
-                        const res = await fetch("/api/settings", {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ kidsWaiverTitle: toSave.title, kidsWaiverContent: toSave.content }),
-                        });
-                        if (!res.ok) { toast("Failed to save waiver", "error"); return; }
-                        setKidsWaiverTitle(toSave.title ?? "");
-                        setKidsWaiverContent(toSave.content ?? "");
-                        setKidsWaiverEditing(false);
-                        toast("Parent/guardian waiver saved", "success");
-                      } finally { setKidsWaiverSaving(false); }
+                      await persistWaiver("kids", toSave, savedWaiver("kids"), "Parent/guardian waiver saved");
                     }}
                     disabled={kidsWaiverSaving}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
@@ -3253,19 +3397,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                           confirmLabel: "Reset waiver",
                           destructive: true,
                         }))) return;
-                        setKidsWaiverSaving(true);
-                        try {
-                          const res = await fetch("/api/settings", {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ kidsWaiverTitle: null, kidsWaiverContent: null }),
-                          });
-                          if (!res.ok) { toast("Failed to reset waiver", "error"); return; }
-                          setKidsWaiverTitle("");
-                          setKidsWaiverContent("");
-                          setKidsWaiverEditing(false);
-                          toast("Reset to default parent/guardian waiver", "success");
-                        } finally { setKidsWaiverSaving(false); }
+                        await persistWaiver("kids", { title: null, content: null }, savedWaiver("kids"), "Reset to default parent/guardian waiver");
                       }}
                       className="ml-auto px-4 py-2 rounded-xl text-xs border"
                       style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.04)" }}

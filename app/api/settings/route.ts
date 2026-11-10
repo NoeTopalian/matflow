@@ -12,6 +12,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
+import { resolveSettingsPreconditions, type SettingsConflict } from "@/lib/settings-precondition";
 
 // https-only URL validator — blocks javascript:/data:/file: URI XSS in stored
 // links (P2 finding from Sprint 3 security gate).
@@ -208,6 +209,20 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // Round 4 (10 Nov 2026, CONCURRENCY-1): `expected` holds, for each field
+  // being changed, the value the client last saw (lib/settings-precondition).
+  // It is a precondition, not a setting, so it is taken off before the field
+  // policy and the schema see the body.
+  let expected: Record<string, unknown> | null = null;
+  if (body && typeof body === "object" && !Array.isArray(body) && "expected" in body) {
+    const { expected: given, ...rest } = body as Record<string, unknown>;
+    if (!given || typeof given !== "object" || Array.isArray(given)) {
+      return NextResponse.json({ error: "`expected` must list the values you last saw, by field" }, { status: 400 });
+    }
+    expected = given as Record<string, unknown>;
+    body = rest;
+  }
+
   // Edit-session field policy (external review, 13 Oct 2026): RAW keys, before
   // zod. Branding, links, check-in windows and timezone are routine; billing
   // and payment fields, contactEmail, privacy fields, waiver content and
@@ -222,21 +237,50 @@ export async function PATCH(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
+  if (expected && Object.keys(expected).some((k) => !(k in parsed.data))) {
+    return NextResponse.json({ error: "`expected` names a field this save does not change" }, { status: 400 });
+  }
 
   try {
     // Cast needed: Zod's Record<string,unknown> doesn't satisfy Prisma's InputJsonValue for Json fields
-    const data = parsed.data as Parameters<typeof prisma.tenant.update>[0]["data"];
-    const sentFields = Object.keys(parsed.data);
-    const { tenant, before } = await withTenantContext(session.user.tenantId, async (tx) => {
-      // Before/after of exactly the fields sent, so the owner's Activity page
-      // can put a settings change back (lib/undo-registry.ts).
-      const before = await tx.tenant.findUnique({ where: { id: session.user.tenantId } });
-      const tenant = await tx.tenant.update({
-        where: { id: session.user.tenantId },
-        data,
-      });
-      return { tenant, before };
+    const tenantId = session.user.tenantId;
+    const result = await withTenantContext(tenantId, async (tx) => {
+      // With preconditions, the club row is held for this short transaction
+      // so two saves of the same field are compared one after the other.
+      // NO KEY UPDATE, not UPDATE: inserts that reference the club (check-ins,
+      // audit rows) take KEY SHARE and are not blocked (docs/design/LOCK-ORDER).
+      if (expected) await tx.$queryRaw`SELECT 1 FROM "Tenant" WHERE id = ${tenantId} FOR NO KEY UPDATE`;
+      // Before/after of exactly the fields written, so the owner's Activity
+      // page can put a settings change back (lib/undo-registry.ts).
+      const before = await tx.tenant.findUnique({ where: { id: tenantId } });
+      let apply = parsed.data as Record<string, unknown>;
+      let conflicts: SettingsConflict[] = [];
+      if (expected && before) {
+        ({ apply, conflicts } = resolveSettingsPreconditions(before as unknown as Record<string, unknown>, parsed.data, expected));
+      }
+      if (conflicts.length > 0) return { conflicts };
+      const written = Object.keys(apply);
+      const tenant = written.length > 0
+        ? await tx.tenant.update({ where: { id: tenantId }, data: apply as Parameters<typeof prisma.tenant.update>[0]["data"] })
+        : before;
+      return { tenant, before, written };
     });
+    if ("conflicts" in result) {
+      return NextResponse.json(
+        {
+          error: "Someone changed these settings since you opened them. Your changes have not been saved.",
+          reason: "stale_settings",
+          conflicts: result.conflicts,
+        },
+        { status: 409 },
+      );
+    }
+    const { tenant, before, written } = result;
+    if (!tenant) return NextResponse.json({ error: "Failed to update settings" }, { status: 500 });
+    // A retried save that found its own values already there wrote nothing,
+    // so there is nothing new to publish or record.
+    if (written.length === 0) return NextResponse.json(tenant);
+    const sentFields = written;
     // Bust the 60s branding cache so a save shows up on the next member-app
     // open immediately (see app/api/me/gym/route.ts). Best-effort: outside a
     // Next request store (unit tests) revalidateTag throws — the cache then
