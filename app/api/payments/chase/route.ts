@@ -48,6 +48,23 @@ export async function POST(req: Request) {
   const { memberId } = parsed.data;
 
   // Cap chases so the button can't be used to spam a member's inbox.
+  // Round 4 (10 Nov 2026): one reminder per member per minute, so a double
+  // click or a retried request cannot email the member twice. The rate-limit
+  // store takes each hit under an advisory lock, so two requests at once are
+  // decided one after the other. Checked before the daily allowance, so a
+  // refused duplicate does not use it up.
+  const once = await checkRateLimit(`payment-chase-once:${tenantId}:${memberId}`, 1, 60 * 1000);
+  if (!once.allowed) {
+    return NextResponse.json(
+      {
+        ok: false,
+        reason: "chase_just_sent",
+        error: "A reminder to this member was started less than a minute ago. Check the Activity log to see whether it went before sending another.",
+      },
+      { status: 409, headers: { "Retry-After": String(once.retryAfterSeconds) } },
+    );
+  }
+
   const rl = await checkRateLimit(`payment-chase:${tenantId}:${memberId}`, 3, 24 * 60 * 60 * 1000);
   if (!rl.allowed) {
     return NextResponse.json(
