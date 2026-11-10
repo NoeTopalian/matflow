@@ -239,7 +239,8 @@ try {
   L.check("mobile", "M4 Shop at 390 px: no horizontal scroll", mShop.scroll <= mShop.width + 1, mShop);
   await shot(mp, "round1-shop-phone");
   await mp.goto("/member/schedule");
-  const cell = mp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).first();
+  // The desktop week grid is in the page but hidden at 390 px: take a visible cell.
+  const cell = mp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).filter({ visible: true }).first();
   await cell.waitFor({ timeout: 60000 });
   // By keyboard: the phone day strip can leave today's cell outside the viewport for a pointer click.
   await cell.focus();
