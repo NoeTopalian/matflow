@@ -241,7 +241,9 @@ try {
   await mp.goto("/member/schedule");
   const cell = mp.getByRole("button", { name: new RegExp(`Round1 Class ${TAG}`) }).first();
   await cell.waitFor({ timeout: 60000 });
-  await cell.click();
+  // By keyboard: the phone day strip can leave today's cell outside the viewport for a pointer click.
+  await cell.focus();
+  await mp.keyboard.press("Enter");
   const closeSheet = mp.getByRole("button", { name: "Close class details" });
   await closeSheet.waitFor({ timeout: 10000 });
   L.check("a11y", "A4 the class details sheet's close button is named 'Close class details'", (await closeSheet.count()) === 1, {});
