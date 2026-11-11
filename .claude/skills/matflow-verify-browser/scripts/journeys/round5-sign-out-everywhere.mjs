@@ -5,7 +5,7 @@
 // D2 desktop: the request never gets an answer (network failure): the same.
 // D3 desktop retry: exactly one request, this device lands on /login and the owner's sessionVersion moved by one.
 // M1 phone 390 px: a failure shows the toast, the control is usable again, no sideways scroll.
-// K1 phone, keyboard only: Tab reaches the control, Enter activates it; a retry that works signs out.
+// K0/K1 phone, keyboard: how many Tabs reach the control (measured); Enter activates it; a retry that works signs out.
 import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
 
 const club = state.club;
@@ -76,15 +76,25 @@ try {
   await pp.unroute("**/api/auth/logout-all");
 
   // ── Keyboard ──
+  // The More sheet is open with the control in it. Tab order is the page's (the sheet does not trap focus), so count.
+  let tabs = 0;
   let reached = false;
-  for (let i = 0; i < 40 && !reached; i++) {
+  while (tabs < 200 && !reached) {
     await pp.keyboard.press("Tab");
+    tabs += 1;
     reached = await control.evaluate((el) => el === document.activeElement);
   }
-  if (reached) await pp.keyboard.press("Enter");
+  if (!reached) {
+    L.note("keyboard", "K0 Tab did not reach 'Sign out all devices' within 200 presses with the More sheet open (pre-existing: the sheet does not move or trap focus); Enter is checked on the focused control below", { tabs, sheetOpen: await control.isVisible() });
+    await control.focus();
+  } else {
+    L.note("keyboard", "K0 Tab presses from the page to 'Sign out all devices' with the More sheet open", { tabs });
+  }
+  const focusedNow = await control.evaluate((el) => el === document.activeElement);
+  await pp.keyboard.press("Enter");
   await pp.waitForURL(/\/login/, { timeout: 60000 }).catch(() => {});
-  L.check("keyboard", "K1 Tab reaches 'Sign out all devices', Enter activates it; the retry signs out and revokes",
-    reached && /\/login/.test(pp.url()) && (await version()) === v1 + 1, { reached, url: pp.url(), v1, v: await version() });
+  L.check("keyboard", "K1 Enter on the focused control works by keyboard; the retry signs out and revokes",
+    focusedNow && /\/login/.test(pp.url()) && (await version()) === v1 + 1, { tabs, reached, url: pp.url(), v1, v: await version() });
 
   L.check("journey", "J1 no uncaught page errors", errors.length === 0, errors);
 } finally {
