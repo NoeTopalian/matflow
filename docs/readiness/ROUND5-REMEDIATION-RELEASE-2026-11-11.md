@@ -7,7 +7,7 @@
 | Packet | Branch | Head | Code head | What |
 |---|---|---|---|---|
 | 1 | `hotfix/member-notes-preserved` | `5a2d1896` | `5a2d1896` | Member internal notes erased by every profile, plan or status edit since 1 Jun 2026 |
-| 2 | `security/round5-remediation` | the commit adding this document | `6cad2568` (build `cb107b57`, docs only after it) | Round 5 security fixes, file-ownership remediation, owner Recovery Codes card |
+| 2 | `security/round5-remediation` | the branch head (the commit after `cd7894f4`, docs only) | `6cad2568` (build `cb107b57`, docs only after it) | Round 5 security fixes, file-ownership remediation, owner Recovery Codes card |
 | 3 | `chore/migrate-test-direct-host` | `3243e38b` | `3243e38b` | Test-only tooling: Prisma Migrate lock handling on the shared test branch |
 
 **Recommended order:** 1, then 2, then 3. Packet 1 is the data-loss stop and the smallest change.
@@ -136,7 +136,7 @@ On main's erasure, her details are still in the `ImportJob` row, the job view an
 | `bd1fa8a0` | owner Recovery Codes card |
 | `6cad2568` | remediation review follow-ups F1–F6 |
 | `cb107b57` | design and decision documents |
-| this document's commit | — |
+| `cd7894f4` and the branch head | this document (docs only) |
 
 **Migration:** none.
 
@@ -156,7 +156,30 @@ On main's erasure, her details are still in the `ImportJob` row, the job view an
 | Journey `round5-sign-out-everywhere` | 6 PASS / 0 FAIL / 1 NOTE (48 Tab presses to the control, the More sheet's existing focus order) |
 | Database suites, both roles | see below |
 
-DATABASE_RESULTS
+Database suites on the Neon test branch, commit `cb107b57`, each batch under `neondb_owner` and `matflow_app`:
+
+| Batch | Owner | Restricted |
+|---|---|---|
+| round5-blob-ownership, round5-erase-manifest, round5-member-recovery-codes, push-subscribe, member-children-photos | 20/20 pass | 20/20 pass |
+| round5-file-ownership, promote-with-photo, staff-photo-viewer | 14/14 pass | 14/14 pass |
+| round5-erase-then-rollback | 2/2 pass | 2/2 pass |
+| erase-import-data, erase-large-club | 8/8 pass | 8/8 pass |
+| cross-tenant-authorisation-matrix | 63/63 pass | 63/63 pass |
+| sec-b-role-matrix | 59/59 pass | 59/59 pass |
+| member-archive, t8a-status-history | 16/16 pass | 16/16 pass |
+| sec-d3-deletion-race, security, tenant-isolation | 17/17 pass | 17/17 pass |
+| support-session-binding, operator-member-totp-reset, totp-login-paths | 27/27 pass | 27/27 pass |
+| sec-d2-deletion-provenance | **7 pass, 3 timed out (30 s)** | **7 pass, 3 timed out (30 s)** |
+
+**The `sec-d2` timeouts are an existing failure,** not a pass, and this branch did not cause them.
+- All three are the import-based cases.
+- The same three time out on main `33592fe0`.
+- This branch changes no import code.
+- They stay open.
+
+**Not run on this head:**
+- `login-identity-claims-db`: it exceeds the runner's 10-minute limit, on main too.
+- DB files this branch doesn't touch: CI covers them.
 
 **Not exercised:**
 - real Vercel Blob storage (the store is stubbed; the path and ownership rules are what is tested);
@@ -234,7 +257,7 @@ If D1 to D4 return no rows, no exploitation of the file holes is visible in stor
 
 ## Existing failures and open items (unchanged by this release)
 
-- **`sec-d2-deletion-provenance-db`:** three import-based cases time out at 30 s, on main and on this branch. It is environment latency, not a regression.
+- **`sec-d2-deletion-provenance-db`:** three import-based cases time out at 30 s, on main and on this branch. The cause is not diagnosed; it is not introduced here.
 - **`login-identity-claims-db`:** exceeds the runner's 10-minute limit, on main too.
 - **Members can't see a blob-stored club logo or announcement image** (see above).
 - **Shared-device push subscription (L-6):** must be settled before push goes live.
