@@ -210,7 +210,10 @@ try {
     ["K12", "desktop, dark shell", "#111111", { width: 1440, height: 900 }],
   ];
   for (const [id, label, bg, vp] of memberRuns) {
-    await q(`update "Tenant" set "bgColor" = $1 where id = $2`, [bg, tenantId]);
+    // Through the owner's settings save, as a club would: it revalidates the member branding cache
+    // (app/api/me/gym, 60 s), which a direct database write does not.
+    const saved = await page.evaluate(async (b) => (await fetch("/api/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ bgColor: b }) })).status, bg);
+    if (saved !== 200) throw new Error(`settings PATCH bgColor ${bg} returned ${saved}`);
     const { width, height, ...rest } = vp;
     const mctx = await context(browser, `10.96.2.${memberRuns.findIndex((r) => r[0] === id) + 1}`, { viewport: { width, height }, ...rest, timezoneId: "Europe/London" });
     const mpage = await mctx.newPage();
