@@ -53,6 +53,12 @@ const updateSchema = z.object({
   // deactivate it, because the submitted list was taken as the whole truth.
   // Omitted = legacy behaviour (the list is the truth); the app always sends it.
   baseScheduleIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+  // Round 4 (11 Nov 2026): the squad (active members' ids) the editor loaded.
+  // A save that rewrites or clears the squad (a squad change, or a rank gate,
+  // which clears it by the mutual-exclusion rule) is refused (409
+  // stale_class) if the squad changed since, so a rank set from an older tab
+  // cannot silently wipe a squad someone else just edited.
+  baseRosterIds: z.array(z.string().min(1).max(64)).max(2000).optional(),
   description: z.string().max(500).optional().nullable(),
   coachName: z.string().max(100).optional().nullable(),
   coachUserId: z.string().optional().nullable(),
@@ -653,6 +659,15 @@ export async function PATCH(req: Request, { params }: Params) {
         const sent = Object.fromEntries(Object.keys(expected).map((k) => [k, (parsed.data as Record<string, unknown>)[k]]));
         const { conflicts } = resolveSettingsPreconditions((stored ?? {}) as Record<string, unknown>, sent, expected);
         if (conflicts.length > 0) throw new StaleClassFieldsError(conflicts);
+      }
+      if ((wantsRoster || wantsRankGate) && parsed.data.baseRosterIds) {
+        const squadNow = (await tx.classRoster.findMany({
+          where: { classId: id, tenantId, member: { archivedAt: null } },
+          select: { memberId: true },
+        })).map((r) => r.memberId);
+        if (!sameIds(squadNow, parsed.data.baseRosterIds)) {
+          throw new StaleClassFieldsError([{ field: "roster", current: [...squadNow].sort() }]);
+        }
       }
       // T6b: whether the class is live once this edit lands. A Resume /
       // Restore makes it live; a pause does not; otherwise it keeps its state.

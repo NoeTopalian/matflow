@@ -1054,6 +1054,9 @@ function ClassForm({
       // (409) if the class's days changed since, instead of taking this list
       // as the whole truth and quietly undoing another tab's change.
       ...(initial?.id ? { baseScheduleIds: (initial.schedules ?? []).map((s) => s.id) } : {}),
+      // Round 4: the squad this form loaded. A squad change or a rank gate (which
+      // clears the squad) is refused if the squad changed since.
+      ...(initial?.id ? { baseRosterIds: (initial.roster ?? []).map((r) => r.memberId) } : {}),
     };
     onSave(initial?.id ? withClassPreconditions(payload, initial) : payload);
   }
