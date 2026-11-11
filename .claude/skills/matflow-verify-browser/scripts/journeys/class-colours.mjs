@@ -220,6 +220,10 @@ try {
     await section(id, `member schedule, ${label}: booked light-yellow text 4.5:1; its selection ring 3:1 against the gap beside it and the shell; a live pale block's edge 3:1`, async () => {
       const block = mpage.locator("button[data-booked]").filter({ hasText: SUNRISE }).first();
       await expect(block).toBeVisible({ timeout: 30_000 });
+      // The shell renders dark first and takes the club's background when /api/me/gym answers (app/member/layout.tsx):
+      // measure only once the shell is the one this run set, or "light shell" silently measures the dark one.
+      await expect.poll(() => mpage.evaluate(() => getComputedStyle(document.querySelector("[style*='--member-bg']") ?? document.body)
+        .getPropertyValue("--member-bg").trim().toLowerCase()), { timeout: 30_000 }).toBe(bg);
       // A booked block is painted with a gradient (background-image), which the harness's measureInk does not
       // see: it would measure the ink against the shell behind the block. Measure against each gradient stop,
       // composited over the shell, and keep the weaker.
