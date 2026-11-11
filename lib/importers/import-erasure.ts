@@ -401,7 +401,8 @@ export function scrubSubjectFromDiagnostics(value: unknown, subject: ErasureSubj
 
 /**
  * The lists of a job's `manifest` that hold one entry per PERSON (Round 5, 11 Nov 2026): a TeamUp import's exception
- * rows, decisions and scheduled starts; a refresh's exception lists; a rollback's kept list. Only these are scrubbed by
+ * rows, decisions and scheduled starts; a refresh's exception lists; a rollback's kept list; and the review list
+ * (`conflicts`, reduced rather than removed: scrubConflictEntries). Only these are scrubbed by
  * name and address. The rest of the manifest is structure (counts, plan-label maps, a pre-rule refresh's change
  * `before`/`after`, which a rollback replays): a plan named after a person ("Jane Smith (Privates)") must not be taken
  * for that person there. Entries that name the member by id or source key anywhere in the manifest are removed by
@@ -413,6 +414,41 @@ const MANIFEST_PERSON_LISTS: readonly (readonly string[])[] = [
   ["teamup2", "scheduled"],
   ["rollback", "kept"],
 ];
+
+/**
+ * The review list (`manifest.conflicts`, re-review R-1): an entry that is the subject's (by name, own address or own
+ * key; an ambiguous entry often has no member id the id/key scrub could match) is reduced to its kind, as
+ * import-conflicts-scrub.ts does, so the list's counts still add up. In another member's entry, a compared value
+ * (`fields[].upload` / `matflow`) holding the subject's name or address is blanked, never dropped.
+ */
+function scrubConflictEntries(list: unknown[], subject: ErasureSubject): { value: unknown[]; scrubbed: number } {
+  const w = who(subject);
+  widenWithPastAddresses(w, subject, allStrings(list));
+  let scrubbed = 0;
+  const value = list.map((entry) => {
+    if (!isObject(entry)) return entry;
+    if (verdict(entry, w).kind === "remove") {
+      scrubbed += 1;
+      return { kind: entry.kind === "ambiguous" ? "ambiguous" : "conflict" };
+    }
+    const out: Record<string, unknown> = { ...entry };
+    if (Array.isArray(entry.fields)) {
+      out.fields = entry.fields.map((f) => {
+        if (!isObject(f)) return f;
+        const g: Record<string, unknown> = { ...f };
+        for (const k of ["upload", "matflow"]) {
+          const v = g[k];
+          if (typeof v === "string" && stringIsSubjects(v, w)) { g[k] = ""; scrubbed += 1; }
+        }
+        return g;
+      });
+    }
+    const v = verdict(out, w);
+    if (v.kind === "blank") for (const k of v.fields) { out[k] = ""; scrubbed += 1; }
+    return out;
+  });
+  return { value, scrubbed };
+}
 
 /** Pure: the manifest with the subject's entries removed from its person lists (see MANIFEST_PERSON_LISTS) only. */
 export function scrubSubjectFromManifest(manifest: unknown, subject: ErasureSubject): { value: unknown; scrubbed: number } {
@@ -428,6 +464,11 @@ export function scrubSubjectFromManifest(manifest: unknown, subject: ErasureSubj
   for (const path of MANIFEST_PERSON_LISTS) {
     const parent = path.slice(0, -1).reduce<unknown>((o, k) => (isObject(o) ? o[k] : undefined), out);
     if (isObject(parent)) scrubList(parent, path[path.length - 1]);
+  }
+  if (Array.isArray(out.conflicts)) {
+    const r = scrubConflictEntries(out.conflicts, subject);
+    out.conflicts = r.value;
+    scrubbed += r.scrubbed;
   }
   const refreshExceptions = isObject(out.refresh) ? out.refresh.exceptions : undefined;
   if (isObject(refreshExceptions)) for (const key of Object.keys(refreshExceptions)) scrubList(refreshExceptions, key);
