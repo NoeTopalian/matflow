@@ -231,6 +231,30 @@ describe("club-managed categories — the migration (Release A)", () => {
     expect(sql).toMatch(/FOREIGN KEY \("categoryId", "tenantId"\) REFERENCES "ClassCategory"\("id", "tenantId"\)/);
   });
 
+  it("takes Class then Tenant explicitly before anything else (the application's order), under the 5 s lock wait", () => {
+    const code = sql.replace(/--.*$/gm, "");
+    const cls = code.indexOf('LOCK TABLE "Class" IN ACCESS EXCLUSIVE MODE;');
+    const tenant = code.indexOf('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE;');
+    expect(cls).toBeGreaterThan(code.indexOf("SET LOCAL statement_timeout"));
+    expect(tenant).toBeGreaterThan(cls);
+    expect(code.indexOf("CREATE TABLE")).toBeGreaterThan(tenant);
+  });
+
+  it("the column markers sort before the bridge, so a statement that names both columns is always seen as such", () => {
+    const names = [...sql.matchAll(/CREATE TRIGGER "([^"]+)"/g)].map((m) => m[1]);
+    expect(names).toEqual(["Class_category_0_key_named", "Class_category_0_ref_named", "Class_category_bridge"]);
+    expect([...names].sort()).toEqual(names);
+    expect(sql).toMatch(/BEFORE UPDATE OF "category" ON "Class"\s+FOR EACH ROW EXECUTE FUNCTION matflow_class_category_mark\('key'\)/);
+    expect(sql).toMatch(/BEFORE UPDATE OF "categoryId" ON "Class"\s+FOR EACH ROW EXECUTE FUNCTION matflow_class_category_mark\('ref'\)/);
+  });
+
+  it("every function pins its search_path; names are held to 32 characters by the database too", () => {
+    const functions = [...sql.matchAll(/CREATE FUNCTION [^\n]+\n?[^\n]*/g)].map((m) => m[0]);
+    expect(functions).toHaveLength(3);
+    for (const f of functions) expect(f).toMatch(/SET search_path = public, pg_temp/);
+    expect(sql).toMatch(/CHECK \(char_length\("name"\) BETWEEN 1 AND 32\)/);
+  });
+
   it("neither function runs with elevated rights (both are SECURITY INVOKER, under row-level security)", () => {
     expect(sql.replace(/--.*$/gm, "")).not.toMatch(/SECURITY DEFINER/i);
     expect(sql).toMatch(/ALTER TABLE "ClassCategory" FORCE ROW LEVEL SECURITY/);

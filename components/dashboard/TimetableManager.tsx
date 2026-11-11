@@ -896,14 +896,17 @@ function ClassForm({
   // The class's category. Values: "" uncategorised (sent as categoryId null), "id:<id>" one of the club's
   // categories, and "key:<old key>" only when the club has no category rows yet (a club created by an older build
   // during the changeover): the server turns the old key into the club's category with that key.
-  const initialCategory = initial?.categoryId ? `id:${initial.categoryId}` : "";
-  const [category, setCategory] = useState<string>(initialCategory);
-  // Offered: the club's active categories, then the class's own one when it is archived (it may keep it, never
-  // choose it again), or its name alone when the list does not hold it.
-  const activeCategories = categories.filter((c) => !c.archived);
   const ownCategory = initial?.categoryId ? categories.find((c) => c.id === initial.categoryId) ?? null : null;
-  const keepCategory = initial?.categoryId && (!ownCategory || ownCategory.archived)
-    ? { id: initial.categoryId, name: ownCategory?.name ?? initial.categoryName ?? "Current category" }
+  // A new class copied from one on an archived category starts uncategorised: choosing an archived category is
+  // refused, only keeping one is allowed.
+  const initialCategory = initial?.categoryId && !(ownCategory?.archived && !initial.id) ? `id:${initial.categoryId}` : "";
+  const [category, setCategory] = useState<string>(initialCategory);
+  // Offered: the club's active categories, then, on an edit, the class's own one when it is archived (it may keep
+  // it, never choose it again, so it says so) or when the list does not hold it yet (its name alone: a category the
+  // server made since this page loaded).
+  const activeCategories = categories.filter((c) => !c.archived);
+  const keepCategory = initial?.categoryId && (initial.id ? !ownCategory || ownCategory.archived : !ownCategory)
+    ? { id: initial.categoryId, name: ownCategory?.name ?? initial.categoryName ?? "Current category", archived: ownCategory?.archived === true }
     : null;
   function categoryFields(): Record<string, unknown> {
     // Sent on create, and on edit only when changed, so an unrelated edit never rewrites it.
@@ -1166,7 +1169,7 @@ function ClassForm({
             <option key={c.id} value={`id:${c.id}`}>{c.name}</option>
           ))}
           {keepCategory && (
-            <option value={`id:${keepCategory.id}`}>{keepCategory.name} (archived)</option>
+            <option value={`id:${keepCategory.id}`}>{keepCategory.archived ? `${keepCategory.name} (archived)` : keepCategory.name}</option>
           )}
           {categories.length === 0 && CLASS_CATEGORIES.map((key) => (
             <option key={key} value={`key:${key}`}>{CLASS_CATEGORY_LABELS[key]}</option>

@@ -625,16 +625,22 @@ model Class {
   coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id], onDelete: SetNull)
   color          String?
   // LEGACY (club-managed categories, Release A, 11 Nov 2026): the old fixed key
-  // from lib/class-category.ts LEGACY_CATEGORY_KEYS, kept so a build from before
+  // from lib/class-category.ts CLASS_CATEGORIES, kept so a build from before
   // Release A keeps working. NULL = uncategorised, or a category the club made
   // itself. The trigger matflow_class_category_bridge keeps it in step with
   // categoryId on every write (migration 20261111120000_class_categories).
-  // Read categoryRef, never this.
+  // Read categoryRef, never this; this build writes categoryId only.
   category       String?
   // The club's category for this class. NULL = uncategorised. The composite
   // key with tenantId means a class can never point at another club's category.
+  // Write `categoryId` as a scalar only. Never `connect`/`disconnect`
+  // `categoryRef`: the relation shares `tenantId`, and a disconnect would null it.
   categoryId     String?
   categoryRef    ClassCategory? @relation(fields: [categoryId, tenantId], references: [id, tenantId], onDelete: NoAction, onUpdate: NoAction)
+  // When an old key last reached this class by itself (a build from before
+  // Release A, or a script writing `category`). Set only by the trigger; the
+  // Release B activation gate reads max() of it. Never written by app code.
+  categoryKeyWrittenAt DateTime?
   isActive       Boolean     @default(true)
   // T6b lifecycle (Sean note 7): isActive=false + deletedAt null = PAUSED (off the
   // timetable, booking and kiosk; reversible). deletedAt set = ARCHIVED (removed

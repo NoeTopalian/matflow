@@ -12,8 +12,9 @@
 //                                  class categories by old key and insert new classes with one; meant to run WHILE
 //                                  migration-rehearsal.mjs migrates this database (prints how many writes landed)
 //   verify  VAR <db>               after: every club has its eight starting rows exactly once ("Open mat" spelling),
-//                                  every class's reference agrees with its old key, the per-key counts are unchanged
-//                                  apart from the writer's own writes, and an old-build write still goes through
+//                                  every class's reference agrees with its old key, no class points at another club,
+//                                  the per-key counts are printed (compare by eye with prepare's, allowing for the
+//                                  writer's own writes), and an old-build write still goes through and is stamped
 //   oldnew  VAR <db>               old and new writers against the migrated schema, alternately on one class: an old
 //                                  key write, a reference write, a category the club made, an old write after it
 //
@@ -150,8 +151,9 @@ const commands = {
     await c.query("BEGIN");
     const one = (await c.query(`SELECT id, "tenantId" FROM "Class" WHERE "tenantId" = 'rht3' ORDER BY id LIMIT 1`)).rows[0];
     await c.query(`UPDATE "Class" SET "category" = 'kids' WHERE id = $1`, [one.id]);
-    const after = (await c.query(`SELECT c."categoryId", cc."legacyKey" FROM "Class" c JOIN "ClassCategory" cc ON cc.id = c."categoryId" WHERE c.id = $1`, [one.id])).rows[0];
+    const after = (await c.query(`SELECT c."categoryId", cc."legacyKey", c."categoryKeyWrittenAt" FROM "Class" c JOIN "ClassCategory" cc ON cc.id = c."categoryId" WHERE c.id = $1`, [one.id])).rows[0];
     check("an old-build write after the migration moves the reference too", after?.legacyKey === "kids");
+    check("and is stamped for the Release B activation gate (categoryKeyWrittenAt)", after?.categoryKeyWrittenAt != null);
     await c.query("ROLLBACK");
     await c.end();
     return failures ? 1 : 0;

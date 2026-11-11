@@ -21,7 +21,7 @@ import { auth } from "@/auth";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { POST as classPOST } from "@/app/api/classes/route";
 import { PATCH as classPATCH } from "@/app/api/classes/[id]/route";
-import { seedClassCategories, CATEGORY_ERRORS } from "@/lib/class-category-store";
+import { seedClassCategories, classCategoryDbError, CATEGORY_ERRORS } from "@/lib/class-category-store";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS } from "@/lib/class-category";
 import { executeUndo } from "@/lib/undo-batch";
 import { decideUndo, REASON, type AuditRowLike } from "@/lib/undo-registry";
@@ -143,6 +143,54 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
       expect(await read(T, c.id)).toMatchObject({ category: null, categoryId: null });
     });
 
+    it("both named in one write where one equals its current value: still refused when they disagree (never resolved)", async () => {
+      const gi = await byKey(T, "gi");
+      const nogi = await byKey(T, "nogi");
+      const own = await madeByClub(T, `Made ${randomUUID().slice(0, 4)}`);
+      const c = await classRow(T, "Named both", { categoryId: gi.id });
+      // The key is named but unchanged ('gi'), the reference moves to a club-made category: they disagree.
+      expect(await errorText(withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "categoryId" = ${own.id}, "category" = 'gi' WHERE "id" = ${c.id}`))).toContain("MF_CLASS_CATEGORY_CONFLICT");
+      // The reference is named but unchanged (Gi), the key moves to 'nogi': they disagree.
+      expect(await errorText(withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "categoryId" = ${gi.id}, "category" = 'nogi' WHERE "id" = ${c.id}`))).toContain("MF_CLASS_CATEGORY_CONFLICT");
+      // Through Prisma, which names exactly the fields it is given.
+      expect(await errorText(withTenantContext(T, (tx) => tx.class.update({ where: { id: c.id }, data: { categoryId: gi.id, category: "nogi" } })))).toContain("MF_CLASS_CATEGORY_CONFLICT");
+      expect(await read(T, c.id)).toMatchObject({ category: "gi", categoryId: gi.id });
+      // Both named and agreeing (one of them unchanged) is fine.
+      await withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "categoryId" = ${nogi.id}, "category" = 'nogi' WHERE "id" = ${c.id}`);
+      expect(await read(T, c.id)).toMatchObject({ category: "nogi", categoryId: nogi.id });
+      await withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "categoryId" = ${nogi.id}, "category" = 'nogi' WHERE "id" = ${c.id}`);
+      // A club-made category with an empty key agrees.
+      await withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "categoryId" = ${own.id}, "category" = NULL WHERE "id" = ${c.id}`);
+      expect(await read(T, c.id)).toMatchObject({ category: null, categoryId: own.id });
+    });
+
+    it("a column named in one statement is not carried into the next statement of the same transaction", async () => {
+      const gi = await byKey(T, "gi");
+      const comp = await byKey(T, "competition");
+      const c = await classRow(T, "Two statements", { categoryId: gi.id });
+      await withTenantContext(T, async (tx) => {
+        await tx.$executeRaw`UPDATE "Class" SET "categoryId" = ${gi.id} WHERE "id" = ${c.id}`;
+        // The next statement names only the key: it must be read as old-key-only, not as "both named".
+        await tx.$executeRaw`UPDATE "Class" SET "category" = 'competition' WHERE "id" = ${c.id}`;
+      });
+      expect(await read(T, c.id)).toMatchObject({ category: "competition", categoryId: comp.id });
+    });
+
+    it("an old-key-only write is stamped (categoryKeyWrittenAt); this release's reference writes never are", async () => {
+      const gi = await byKey(T, "gi");
+      const c = await classRow(T, "Stamp", { categoryId: gi.id });
+      const stamp = () => withRlsBypass((tx) => tx.class.findFirstOrThrow({ where: { id: c.id }, select: { categoryKeyWrittenAt: true } }));
+      expect((await stamp()).categoryKeyWrittenAt).toBeNull();
+      as("owner", T);
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      // The route translating an old key from an older page writes the reference: no stamp.
+      expect((await classPATCH(request(`/api/classes/${c.id}`, "PATCH", { category: "nogi" }), params(c.id))).status).toBe(200);
+      expect((await stamp()).categoryKeyWrittenAt).toBeNull();
+      // A build from before the release writes the old key itself: stamped.
+      await oldBuildWrite(T, c.id, "kids");
+      expect((await stamp()).categoryKeyWrittenAt).not.toBeNull();
+    });
+
     it("both in one write: agreeing is accepted; disagreeing is refused whole, never silently resolved", async () => {
       const gi = await byKey(T, "gi");
       const nogi = await byKey(T, "nogi");
@@ -189,6 +237,19 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
       const res = await classPATCH(request(`/api/classes/${c.id}`, "PATCH", { categoryId: other.id, name: "Keeping archived (Thu)" }), params(c.id));
       expect(res.status).toBe(200);
       expect(await read(T, c.id)).toMatchObject({ name: "Keeping archived (Thu)", categoryId: other.id, category: "other" });
+    });
+
+    it("the trigger's real refusal, as Prisma surfaces it, is recognised by classCategoryDbError", async () => {
+      const priv = await byKey(T, "private");
+      const c = await classRow(T, "Real error");
+      let caught: unknown = null;
+      await withTenantContext(T, (tx) => tx.class.update({ where: { id: c.id }, data: { categoryId: priv.id } })).catch((e) => { caught = e; });
+      expect(caught).not.toBeNull();
+      expect(classCategoryDbError(caught)).toEqual({ status: 409, error: CATEGORY_ERRORS.archived });
+      caught = null;
+      await withTenantContext(T, (tx) => tx.class.update({ where: { id: c.id }, data: { categoryId: "no-such-category" } })).catch((e) => { caught = e; });
+      // The trigger runs before the foreign key, so an unknown id is its NOT_FOUND (400), never a raw P2003.
+      expect(classCategoryDbError(caught)).toEqual({ status: 400, error: CATEGORY_ERRORS.notFound });
     });
 
     it("the route refuses choosing an archived category with a 409 and the sentence the form shows", async () => {
@@ -254,14 +315,21 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
     it("acting for one club, the other club's categories are invisible and cannot be seeded or written", async () => {
       const visible = await withTenantContext(A, (tx) => tx.classCategory.findMany({ where: { tenantId: B } }));
       // Row-level security on the restricted role; the owner role is checked for BYPASSRLS below.
-      const [{ bypass }] = await withRlsBypass((tx) => tx.$queryRaw<{ bypass: boolean }[]>`SELECT rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`);
-      if (!bypass) expect(visible).toEqual([]);
+      const [{ role, bypass }] = await withRlsBypass((tx) => tx.$queryRaw<{ role: string; bypass: boolean }[]>`SELECT current_user::text AS role, rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user`);
+      console.log(`[class-categories-bridge-db] database role ${role}, BYPASSRLS ${bypass}`);
+      // db-tests.mjs runs the restricted pass with RLS_ENFORCED=1: that role must never bypass row-level security.
+      if (process.env.RLS_ENFORCED === "1") expect(bypass).toBe(false);
       const C = await club("iso-C", { seeded: false });
       const seedOther = await errorText(withTenantContext(A, (tx) => seedClassCategories(tx, C)));
       if (!bypass) {
+        expect(visible).toEqual([]);
         // SECURITY INVOKER: the function inserts with the caller's rights, so row-level security refuses it.
         expect(seedOther).toMatch(/row-level security|violates/i);
         expect(await categories(C)).toHaveLength(0);
+      } else {
+        // A role that bypasses row-level security sees across clubs: the branch is observed, not skipped silently.
+        // Isolation for it rests on the composite key and the trigger's tenant filter, proved by the tests above.
+        expect(visible.length).toBe(8);
       }
     });
 
@@ -289,13 +357,15 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
         await release.opened;
       }, { timeout: 30_000 });
       await held.opened;
-      const started = Date.now();
-      const assigning = errorText(withTenantContext(T, (tx) => tx.class.update({ where: { id: c.id }, data: { categoryId: comp.id } }), { timeout: 30_000 }));
+      let assignSettled = false;
+      const assigning = errorText(withTenantContext(T, (tx) => tx.class.update({ where: { id: c.id }, data: { categoryId: comp.id } }), { timeout: 30_000 }))
+        .finally(() => { assignSettled = true; });
       await sleep(700);
+      // Still waiting on the category row while the archive is uncommitted: the lock is real, not timing luck.
+      expect(assignSettled).toBe(false);
       release.open();
       await archiving;
       const outcome = await assigning;
-      expect(Date.now() - started).toBeGreaterThanOrEqual(600);
       expect(outcome).toContain("MF_CLASS_CATEGORY_ARCHIVED");
       expect(await read(T, c.id)).toMatchObject({ categoryId: null });
     }, 60_000);
@@ -312,13 +382,16 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
         await release.opened;
       }, { timeout: 30_000 });
       await held.opened;
-      const started = Date.now();
-      const archiving = withTenantContext(T, (tx) => tx.classCategory.update({ where: { id: comp.id }, data: { archivedAt: new Date() } }), { timeout: 30_000 });
+      let archiveSettled = false;
+      const archiving = withTenantContext(T, (tx) => tx.classCategory.update({ where: { id: comp.id }, data: { archivedAt: new Date() } }), { timeout: 30_000 })
+        .finally(() => { archiveSettled = true; });
       await sleep(700);
+      // The archive waits on the assignment's FOR SHARE (the foreign key's KEY SHARE alone would not stop a non-key
+      // UPDATE), so it has not finished while the assignment is uncommitted.
+      expect(archiveSettled).toBe(false);
       release.open();
       await assigning;
       await archiving;
-      expect(Date.now() - started).toBeGreaterThanOrEqual(600);
       expect(await read(T, c.id)).toMatchObject({ categoryId: comp.id, category: "competition" });
       expect((await byKey(T, "competition")).archivedAt).not.toBeNull();
     }, 60_000);
@@ -353,7 +426,8 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
       await oldBuildWrite(T, c.id, null); // the recorded edit: Gi → uncategorised
       const row = await oldRow(c.id, "gi", null);
       await withTenantContext(T, (tx) => tx.class.update({ where: { id: c.id }, data: { categoryId: own.id } }));
-      await expect(undo(row)).rejects.toThrow();
+      // The stale refusal itself (lib/undo-registry.ts UndoStale's default sentence), not any error.
+      await expect(undo(row)).rejects.toThrow("This has been changed since");
       expect(await read(T, c.id)).toMatchObject({ categoryId: own.id, category: null });
     });
 

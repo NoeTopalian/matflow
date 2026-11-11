@@ -104,6 +104,16 @@ describe("class form — Category", () => {
     expect(sent()).not.toHaveProperty("category");
   });
 
+  it("a class on a category the page's list does not hold yet shows its name alone, not \"(archived)\"", async () => {
+    stubFetch();
+    render(<TimetableManager {...props([makeClass("c1", "Advanced", null, { categoryId: "cat-new", categoryName: "Gi" })], [])} />);
+    fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
+    const select = (await screen.findByRole("combobox", { name: "Category" })) as HTMLSelectElement;
+    expect(select.value).toBe("id:cat-new");
+    const own = Array.from(select.options).find((o) => o.value === "id:cat-new");
+    expect(own?.textContent).toBe("Gi");
+  });
+
   it("picking Intermediate (a category the club made) sends its id; the card then shows the name", async () => {
     stubFetch({ categoryId: "cat-int", categoryName: "Intermediate" });
     render(<TimetableManager {...props([makeClass("c1", "Advanced", null)])} />);
