@@ -81,12 +81,15 @@ try {
   });
 
   // ── 2. The form: the club's names, archived Private absent; driven by keyboard ──
-  await page.getByLabel(`Edit ${CLASS}`).first().click();
+  // The visible week chip ("Edit <class>, <day> <start> to <end>"), as classes-lifecycle opens a class: the card list
+  // is not shown on the week view, and a hidden phone grid in the DOM carries the same labels.
+  await page.locator(`button[aria-label^="Edit ${CLASS}, "]:visible`).first().click();
   const select = page.getByRole("combobox", { name: "Category" });
   await section("C3", "the Category select offers Uncategorised and the club's active categories by name, starting on the class's own", async () => {
     await expect(select).toBeVisible();
     const options = await select.locator("option").allTextContents();
-    expect(options).toEqual(["Uncategorised", "Beginners", "Gi", "No-Gi", "Kids", "Competition", "Open mat", "Other", "Intermediate"]);
+    expect(options).toEqual(["Uncategorised", "Beginners", "Gi", "No-Gi", "Kids", "Competition", "Open Mat", "Other", "Intermediate"]); // a club made after the release starts with "Open Mat"
+    expect(options).not.toContain("Private");
     expect(await select.inputValue()).toBe(`id:${fundamentals.id}`);
     return options;
   });
