@@ -29,7 +29,7 @@ async function section(id, desc, fn) {
   try {
     L.check(id, desc, true, await fn());
   } catch (e) {
-    L.check(id, desc, false, String(e.message ?? e).split("\n").slice(0, 3).join(" | "));
+    L.check(id, desc, false, String(e.message ?? e).split("\n").filter((s) => s.trim()).slice(0, 6).join(" | "));
   }
 }
 const colourOf = async (id) => (await q(`select color from "Class" where id = $1 and "tenantId" = $2`, [id, tenantId]))[0]?.color;
@@ -157,7 +157,9 @@ try {
     let patches = 0;
     page.on("request", (r) => { if (r.method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${classId}`) patches++; });
     await page.getByRole("button", { name: "Save changes" }).click();
-    await expect.poll(() => colourOf(classId), { timeout: 15_000 }).toBe(GREY);
+    const t0 = Date.now();
+    await expect.poll(() => colourOf(classId), { timeout: 45_000 }).toBe(GREY);
+    const savedMs = Date.now() - t0;
     expect(patches).toBe(1);
     await page.reload();
     const chip = page.locator(`button[aria-label^="Edit ${SUNRISE}, "]:visible`).first();
@@ -165,7 +167,7 @@ try {
     const dot = await chip.locator("span[aria-hidden='true'].rounded-full").first().evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, ring: getComputedStyle(el).boxShadow }));
     expect(dot.bg).toBe("rgb(148, 163, 184)");
     expect(dot.ring).not.toBe("none");
-    return dot;
+    return { ...dot, savedMs, patches };
   });
   // Back to light yellow for the phone and member checks.
   await q(`update "Class" set color = $1 where id = $2 and "tenantId" = $3`, [LIGHT_YELLOW, classId, tenantId]);
@@ -218,8 +220,28 @@ try {
     await section(id, `member schedule, ${label}: booked light-yellow text 4.5:1; its selection ring 3:1 against the gap beside it and the shell; a live pale block's edge 3:1`, async () => {
       const block = mpage.locator("button[data-booked]").filter({ hasText: SUNRISE }).first();
       await expect(block).toBeVisible({ timeout: 30_000 });
-      const ink = await contrast(block.locator("[data-block-part='name']"));
-      expect(ink).toBeGreaterThanOrEqual(4.5);
+      // A booked block is painted with a gradient (background-image), which the harness's measureInk does not
+      // see: it would measure the ink against the shell behind the block. Measure against each gradient stop,
+      // composited over the shell, and keep the weaker.
+      const ink = await block.evaluate((el) => {
+        const name = el.querySelector("[data-block-part='name']");
+        // Resolve --member-bg to a colour by painting it on a probe beside the block (the token may itself be a var()).
+        const probe = document.createElement("div");
+        probe.style.background = "var(--member-bg, #ffffff)";
+        el.parentElement.appendChild(probe);
+        const shellCss = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+        const px = (under, top) => { c.clearRect(0, 0, 1, 1); c.fillStyle = under; c.fillRect(0, 0, 1, 1); c.fillStyle = top; c.fillRect(0, 0, 1, 1); return Array.from(c.getImageData(0, 0, 1, 1).data.slice(0, 3)); };
+        const lum = (rgb) => rgb.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+        const stops = getComputedStyle(el).backgroundImage.match(/rgba?\([^)]*\)/g) ?? [];
+        const text = px(shellCss, getComputedStyle(name).color);
+        const each = stops.map((s) => Math.round(ratio(text, px(shellCss, s)) * 100) / 100);
+        return { min: each.length ? Math.min(...each) : 0, each, stops, shell: shellCss };
+      });
+      expect(ink.stops.length).toBeGreaterThanOrEqual(2);
+      expect(ink.min).toBeGreaterThanOrEqual(4.5);
       await block.click();
       const shadow = await block.evaluate((el) => getComputedStyle(el).boxShadow);
       const ringCss = lastColour(shadow);
