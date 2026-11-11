@@ -107,4 +107,38 @@ Authorised use is asserted in the same files:
 
 ## Verification
 
-Filled in below from runs on the code head.
+Code head `347c383f`. The journey commits after it (`7332dc8b`, `1839dffb`) change only the harness journey file.
+
+| Gate | Commit | Result |
+|---|---|---|
+| Full suite (`npm test`, no database) | `1839dffb` | 9,460 passed, 0 failed, 977 skipped (the database-backed files, run below) |
+| Lint (`npm run lint`: eslint plus the UI-RULES ratchet) | `d174daf4` + `347c383f` changes | passed; ratchets at baseline |
+| Type-check (`tsc --noEmit`) | `347c383f` | clean |
+| Production build (`server.mjs build`) | `9921f8ae`, `7332dc8b`, `1839dffb` | `BUILD EXIT 0`, tree clean |
+| Round 5 DB suites, both roles: blob ownership, erase manifest, member recovery codes, push subscribe, member children photos, erase import data | `9921f8ae` (code `347c383f`) | 27/27 owner, 27/27 restricted |
+| Neighbouring DB suites, both roles: support-session binding, operator member TOTP reset, TOTP login paths | `1839dffb` | 27/27 each role |
+| Neighbouring DB suites, both roles: erase large club, member children lifecycle, waiver blob fallback | `1839dffb` | 15/15 each role |
+| Cross-tenant authorisation matrix; role matrix (one file per run: together they exceed the runner's 10-minute limit as owner) | `1839dffb` | 63/63 and 59/59, both roles |
+| Unit: import erasure (incl. manifest scope + review list), sign-out failure, upload controls, member TOTP, support scope, request validation | `347c383f` | all pass; the new manifest and review-list tests fail on `d8813cd1` / `d174daf4` respectively |
+| Journey `round5-sign-out-everywhere` (desktop 1440, phone 390, keyboard, forced 500 and network failure, retry) | build `1839dffb` (run `rmwblxtn9ca2f52`) | 6 PASS / 0 FAIL / 1 NOTE: Tab takes 48 presses to reach the control with the More sheet open, because the sheet does not move focus (pre-existing; recorded for the UI round) |
+
+**Not exercised:**
+- real blob storage (the store is stubbed; the URL-path rules are what is tested);
+- push delivery (not live);
+- member enrolment in a browser. L-5 is covered by the DB test and by `TotpEnrollmentStep`, which already uses `recoveryCodes` from the setup reply.
+
+`sec-d2-deletion-provenance-db`: once another session's stale migrate lock was cleared, three import-based cases time out at 30 seconds in both roles. The same cases timed out on the base commit in the first run. They are recorded as pre-existing environment latency, not a Round 5 effect.
+
+## Verdict
+
+**READY FOR REVIEW. Local only: not pushed, merged or deployed.**
+
+Five vulnerabilities were found, each reproduced under both database roles (or in jsdom for R5-3) and fixed with a narrow server-side change. Each has a regression test that fails on the old code. Independent review: CHANGES REQUIRED, then APPROVE WITH NITS after the follow-ups (`d174daf4`, `347c383f`). No migration. No production access. No secrets touched.
+
+**Decisions for Noe (one recommendation each):**
+1. **Member email change** (map #4): require the current password, or for a passwordless member a confirmation link sent to the old address; and notify the old address.
+2. **`admin` role** (map #6): treat it as coach-level for member email, status, plan and payment status.
+3. **Children on the public leaderboard** (map #8): off by default; a guardian opts in.
+4. **Member TOTP single use** (map #11): approve an additive `Member.totpLastUsedStep` migration.
+
+**Open, recorded for later rounds:** L-2, L-3, L-6, R-2, G3-3, G10-4, G4-3, G1-3; the owner's broken Settings recovery-codes card; the More sheet's focus order; otplib's zero tolerance at sign-in.
