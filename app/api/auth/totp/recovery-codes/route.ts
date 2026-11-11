@@ -31,6 +31,7 @@ import { generateRecoveryCodes } from "@/lib/recovery-codes";
 import { assertSameOrigin } from "@/lib/csrf";
 import { refuseSupportSession } from "@/lib/support-session";
 import { consumeUserTotp } from "@/lib/login-email";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -55,6 +56,14 @@ export async function POST(req: Request) {
     );
   }
   const { totpCode } = parsed.data;
+  // Round 5: attempts are limited per user, so the six-digit code cannot be guessed.
+  const rl = await checkRateLimit(`totp-recovery-codes:${session.user.id}`, 5, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } },
+    );
+  }
 
   try {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
