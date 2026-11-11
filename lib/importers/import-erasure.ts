@@ -401,11 +401,14 @@ export function scrubSubjectFromDiagnostics(value: unknown, subject: ErasureSubj
 
 type DiagTx = Pick<Prisma.TransactionClient, "importJob">;
 
-export type DiagnosticsJob = { id: string; errorLog: unknown; dryRunSummary: unknown };
+export type DiagnosticsJob = { id: string; errorLog: unknown; dryRunSummary: unknown; manifest: unknown };
 
 /**
  * Remove the subjects (a member, and the children erased with them; children first, as for the files) from every
- * job's `errorLog` and `dryRunSummary` in this club: one read of the jobs (or the caller's, from the same
+ * job's `errorLog`, `dryRunSummary` and `manifest` in this club (`manifest` since Round 5, 11 Nov 2026: a TeamUp
+ * import's exception rows, `manifest.teamup2.exceptionRows`, carry a name and an address but no member id or source
+ * key, so the id/key scrub in import-conflicts-scrub.ts never reached them, and GET admin/import/[id]/exceptions
+ * still served them after the erasure): one read of the jobs (or the caller's, from the same
  * transaction), one write per job that changed.
  * `dryRun` counts without writing (the erasure's fulfilment record is written before the scrub, in the same
  * transaction).
@@ -416,11 +419,11 @@ export async function eraseSubjectsFromImportDiagnostics(
   subjects: ErasureSubject[],
   opts: { dryRun?: boolean; jobs?: DiagnosticsJob[] } = {},
 ): Promise<number> {
-  const jobs = opts.jobs ?? (await tx.importJob.findMany({ where: { tenantId }, select: { id: true, errorLog: true, dryRunSummary: true } }));
+  const jobs = opts.jobs ?? (await tx.importJob.findMany({ where: { tenantId }, select: { id: true, errorLog: true, dryRunSummary: true, manifest: true } }));
   let scrubbed = 0;
   for (const job of jobs) {
-    const data: { errorLog?: Prisma.InputJsonValue; dryRunSummary?: Prisma.InputJsonValue } = {};
-    for (const field of ["errorLog", "dryRunSummary"] as const) {
+    const data: { errorLog?: Prisma.InputJsonValue; dryRunSummary?: Prisma.InputJsonValue; manifest?: Prisma.InputJsonValue } = {};
+    for (const field of ["errorLog", "dryRunSummary", "manifest"] as const) {
       let value = job[field];
       if (!value || typeof value !== "object") continue;
       let changed = false;
