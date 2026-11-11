@@ -77,7 +77,7 @@ describe.skipIf(!HAS_DB)("member recovery codes: step-up, attempt limit, fresh s
     expect(stored).not.toContain("old-hash");
   });
 
-  it("the previous 30-second step's code is accepted (the enrolment passes on the code it just verified, across a step rollover)", async () => {
+  it("the previous 30-second step's code is accepted (a code typed as the step rolls over)", async () => {
     const id = await member("g", { totpEnabled: true, totpSecret: secret, totpRecoveryCodes: ["old-hash"] });
     as(id);
     const previous = generateSync({ secret, epoch: Math.floor(Date.now() / 1000) - 30 });
@@ -94,13 +94,23 @@ describe.skipIf(!HAS_DB)("member recovery codes: step-up, attempt limit, fresh s
     expect(await codesOf(id)).toEqual(["old-hash"]);
   });
 
-  it("a new enrolment clears recovery codes kept from an earlier one", async () => {
+  it("a new enrolment replaces recovery codes kept from an earlier one: a fresh eight in the same write when asked, none otherwise", async () => {
     // As the self-service recovery leaves a member: second factor off, the unused codes kept.
-    const id = await member("d", { totpEnabled: false, totpSecret: secret, totpRecoveryCodes: ["kept-1", "kept-2"] });
+    const kept = { totpEnabled: false, totpSecret: secret, totpRecoveryCodes: ["kept-1", "kept-2"] };
+    const id = await member("d", kept);
     as(id);
-    expect((await post(enrol, { code: generateSync({ secret }), issueRecoveryCodes: true })).status).toBe(200);
+    const res = await post(enrol, { code: generateSync({ secret }), issueRecoveryCodes: true });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { recoveryCodes?: string[] }).recoveryCodes).toHaveLength(8);
     const row = await withRlsBypass((tx) => tx.member.findUniqueOrThrow({ where: { id }, select: { totpEnabled: true, totpRecoveryCodes: true } }));
-    expect(row).toEqual({ totpEnabled: true, totpRecoveryCodes: null });
+    expect(row.totpEnabled).toBe(true);
+    expect(row.totpRecoveryCodes as string[]).toHaveLength(8);
+    expect(row.totpRecoveryCodes as string[]).not.toContain("kept-1");
+
+    const bare = await member("d2", kept);
+    as(bare);
+    expect((await post(enrol, { code: generateSync({ secret }) })).status).toBe(200);
+    expect(await codesOf(bare)).toBeNull();
   });
 
   it("another member's session cannot reach this member's codes (the session's own member only)", async () => {

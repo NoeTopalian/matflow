@@ -8,8 +8,8 @@
  * from the member's authenticator, as the staff route has required since
  * L1-I2-S-01, so a stolen session cannot replace the member's recovery codes
  * with a set the thief holds. Attempts are rate limited per member, so the
- * code cannot be guessed. The enrolment step already sends the code it just
- * verified (TotpEnrollmentStep loadRecoveryCodes). Members have no
+ * code cannot be guessed. Enrolment now gets its codes from the setup POST
+ * (issueRecoveryCodes); this route replaces a set later. Members have no
  * `totpLastUsedStep` column, so the code is checked, not spent: single use for
  * members needs that column (Round 5 finding, migration not made here).
  */
@@ -61,8 +61,8 @@ export async function POST(req: Request) {
       });
       if (!member) return { kind: "no-member" as const };
       if (!member.totpEnabled || !member.totpSecret) return { kind: "no-totp" as const };
-      // The previous 30-second step is accepted too: the enrolment step passes on the code it has just verified,
-      // and a step rolling over between the two requests must not leave a new member without recovery codes.
+      // The previous 30-second step is accepted too: a code typed as the step rolls over (otplib's default checks the
+      // current step only) is not refused.
       if (!verifySync({ token: parsed.data.totpCode, secret: member.totpSecret, epochTolerance: [30, 0] }).valid) return { kind: "bad-code" as const };
 
       const codes = generateRecoveryCodes();

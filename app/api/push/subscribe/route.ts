@@ -57,8 +57,15 @@ export async function POST(req: Request) {
     if (!sub) return apiError("This device is registered to someone else", 409);
     return NextResponse.json({ ok: true, id: sub.id }, { status: 201 });
   } catch (e) {
-    // Another club's row is invisible here under row-level security, so the create collides with it.
-    if ((e as { code?: unknown })?.code === "P2002") return apiError("This device is registered to someone else", 409);
+    if ((e as { code?: unknown })?.code === "P2002") {
+      // Two first registrations by the same subject at once: the loser finds the winner's row, which is theirs.
+      // Another club's row is invisible here under row-level security, so a collision with it stays a 409.
+      const mine = await withTenantContext(tenantId, (tx) =>
+        tx.pushSubscription.findFirst({ where: { endpoint: parsed.data.endpoint, tenantId, memberId, userId }, select: { id: true } }),
+      ).catch(() => null);
+      if (mine) return NextResponse.json({ ok: true, id: mine.id }, { status: 201 });
+      return apiError("This device is registered to someone else", 409);
+    }
     return apiError("Failed to subscribe", 500, e, "[push/subscribe]");
   }
 }

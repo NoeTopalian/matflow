@@ -96,7 +96,7 @@ export function isMemberBlobUrl(url: string, tenantId: string, memberId: string)
 
 /** An inline image the routes accept in place of a blob (the upload route's no-store fallback). */
 export function isInlineImageUrl(url: string): boolean {
-  return /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url);
+  return /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url);
 }
 
 /**

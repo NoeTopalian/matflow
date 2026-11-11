@@ -21,9 +21,12 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import { generateRecoveryCodes } from "@/lib/recovery-codes";
+import { logAudit } from "@/lib/audit-log";
 
-// Lane C2 (9 Oct 2026): TotpEnrollmentStep posts { code, issueRecoveryCodes: true } to either base;
-// the member route ignores issueRecoveryCodes but must accept it.
+// Lane C2 (9 Oct 2026): TotpEnrollmentStep posts { code, issueRecoveryCodes: true } to either base.
+// Round 5 (11 Nov 2026): the member route now honours it, as the staff route does: the codes are issued in the
+// enabling write, so an enrolment can never end with the old codes wiped and no new ones (a failed follow-up call).
 const postSchema = z.strictObject({ code: z.string().regex(/^\d{6}$/), issueRecoveryCodes: z.boolean().optional() });
 
 const VERIFY_LIMIT_MAX = 5;
@@ -108,7 +111,7 @@ export async function POST(req: NextRequest) {
   if (!parsedBody.success) {
     return NextResponse.json({ error: "Invalid code format" }, { status: 400 });
   }
-  const { code } = parsedBody.data;
+  const { code, issueRecoveryCodes } = parsedBody.data;
 
   // Audit iter-1-auth-boundary AH-2: atomic read-verify-enable inside one
   // withTenantContext transaction. The previous implementation did
@@ -132,11 +135,12 @@ export async function POST(req: NextRequest) {
     // recovery keeps the unused ones (with the second factor off); without
     // this they would work again against the new enrolment. The enrolment
     // step asks for a fresh set straight after (recovery-codes POST).
+    const recovery = issueRecoveryCodes === true ? generateRecoveryCodes() : null;
     await tx.member.update({
       where: { id: memberId },
-      data: { totpEnabled: true, totpRecoveryCodes: Prisma.JsonNull },
+      data: { totpEnabled: true, totpRecoveryCodes: recovery ? recovery.map((c) => c.hash) : Prisma.JsonNull },
     });
-    return { kind: "ok" as const };
+    return { kind: "ok" as const, recoveryCodes: recovery ? recovery.map((c) => c.display) : undefined };
   });
 
   if (verifyResult.kind === "not-initialised") {
@@ -150,6 +154,17 @@ export async function POST(req: NextRequest) {
   }
   if (verifyResult.kind === "invalid-code") {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
+  }
+  if (verifyResult.recoveryCodes) {
+    await logAudit({
+      tenantId: session.user.tenantId,
+      userId: null,
+      action: "auth.member.totp.recovery_codes.generated",
+      entityType: "Member",
+      entityId: memberId,
+      metadata: { count: verifyResult.recoveryCodes.length, regenerated: false, atEnrolment: true },
+      req,
+    });
   }
 
   // Re-encode JWT so the recommendation banner clears immediately.
@@ -167,7 +182,7 @@ export async function POST(req: NextRequest) {
       maxAge: 30 * 24 * 60 * 60,
       salt: SESSION_COOKIE_NAME,
     });
-    const res = NextResponse.json({ ok: true });
+    const res = NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
     res.cookies.set(SESSION_COOKIE_NAME, encoded, {
       httpOnly: true,
       sameSite: "lax",
@@ -177,5 +192,5 @@ export async function POST(req: NextRequest) {
     });
     return res;
   }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
 }
