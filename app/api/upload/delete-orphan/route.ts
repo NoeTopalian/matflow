@@ -20,7 +20,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
 export const runtime = "nodejs";
@@ -58,6 +58,16 @@ export async function POST(req: Request) {
       { error: "Invalid data", details: parsed.error.flatten() },
       { status: 400 },
     );
+  }
+  // Round 5 (11 Nov 2026): a member (not staff) may only clear an unsaved
+  // upload of their own (lib/blob-url isMemberBlobUrl), never another club
+  // file that happens to be unreferenced (an import hand-off CSV, a chunk).
+  const STAFF = ["owner", "manager", "coach", "admin"];
+  if (!STAFF.includes(session.user.role)) {
+    const memberId = (session.user as { memberId?: string }).memberId;
+    if (!memberId || !isMemberBlobUrl(parsed.data.url, session.user.tenantId, memberId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
   const { url } = parsed.data;
 

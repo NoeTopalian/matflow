@@ -236,7 +236,29 @@ describe("POST /api/upload/delete-orphan", () => {
   }
 
   beforeEach(() => {
-    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-X" } } as never);
+    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-X", role: "owner" } } as never);
+  });
+
+  // Round 5 (11 Nov 2026): a member may only clear an unsaved upload of their own.
+  it("a member can clear an unreferenced upload under their own member path", async () => {
+    mockAuth.mockResolvedValue({ user: { tenantId: "tenant-X", role: "member", memberId: "mem-1" } } as never);
+    const url = "https://abc123.blob.vercel-storage.com/tenants/tenant-X/members/mem-1/x.webp";
+    const res = await deleteOrphan(makeOrphanReq(url));
+    expect(res.status).toBe(200);
+    expect(delMock).toHaveBeenCalledWith(url);
+  });
+
+  it("a member cannot delete a club file or another member's upload, even if unreferenced", async () => {
+    for (const url of [
+      "https://abc123.blob.vercel-storage.com/tenants/tenant-X/x.webp",
+      "https://abc123.blob.vercel-storage.com/tenants/tenant-X/members/mem-2/x.webp",
+    ]) {
+      delMock.mockClear();
+      mockAuth.mockResolvedValue({ user: { tenantId: "tenant-X", role: "member", memberId: "mem-1" } } as never);
+      const res = await deleteOrphan(makeOrphanReq(url));
+      expect(res.status).toBe(403);
+      expect(delMock).not.toHaveBeenCalled();
+    }
   });
 
   it("accepts a private-store blob URL in the caller's tenant prefix", async () => {
@@ -282,7 +304,7 @@ describe("POST /api/upload/delete-orphan — referenced blobs are not orphans", 
 
   it("refuses to delete a blob that a row still points at, and deletes nothing", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1", role: "owner" } } as any);
     referencedIn.value = "signedWaiver";
 
     const res = await deleteOrphan(req(OWN_TENANT_URL));
@@ -294,7 +316,7 @@ describe("POST /api/upload/delete-orphan — referenced blobs are not orphans", 
 
   it("still deletes a genuinely unreferenced blob", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1", role: "owner" } } as any);
     referencedIn.value = null;
     tablesQueried.value = [];
 
@@ -309,7 +331,7 @@ describe("POST /api/upload/delete-orphan — referenced blobs are not orphans", 
   // which is exactly what a review found wrong with the first version.
   it.each(BLOB_TABLES)("refuses when the reference is held by %s alone", async (table) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1", role: "owner" } } as any);
     referencedIn.value = table;
     tablesQueried.value = [];
 
@@ -321,7 +343,7 @@ describe("POST /api/upload/delete-orphan — referenced blobs are not orphans", 
 
   it("consults every table that can hold a blob URL", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1" } } as any);
+    mockAuth.mockResolvedValue({ user: { id: "u1", tenantId: "tenant-1", role: "owner" } } as any);
     referencedIn.value = null;
     tablesQueried.value = [];
 
