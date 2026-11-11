@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
 import { refuseArchivedMember } from "@/lib/archived-member-guard";
@@ -93,6 +93,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return apiError("Invalid JSON", 400);
   }
   const parsed = postSchema.safeParse(body);
+  // Round 5: a blob must have been uploaded for this member (not the logo or
+  // another member's photo), so a later delete can never remove a club file.
+  if (parsed.success && isVercelBlobUrl(parsed.data.url) && !isMemberBlobUrl(parsed.data.url, tenantId, memberId)) {
+    return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this member" }, { status: 400 });
+  }
   if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
     return apiError("Photo must be uploaded through MatFlow for this club", 400);
   }
@@ -174,7 +179,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     // Best-effort blob cleanup (no-op for inline data: URLs); only this
     // club's own store files are ever deleted.
-    if (isTenantBlobUrl(removed.url, tenantId)) {
+    if (isMemberBlobUrl(removed.url, tenantId, memberId)) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

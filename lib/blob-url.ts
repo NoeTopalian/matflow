@@ -81,6 +81,25 @@ export function isTenantBlobUrl(url: string, tenantId: string): boolean {
 }
 
 /**
+ * Round 5 (11 Nov 2026): a blob uploaded FOR this member (profile picture or
+ * member photo: `/api/upload` writes those under
+ * `tenants/<club>/members/<member>/`). Club-namespace membership alone is not
+ * ownership: a member could otherwise point their own picture at the club
+ * logo or another member's photo and have it deleted, or read it through the
+ * image proxy. Every member-photo write accepts only this (or an inline
+ * image), and every member-photo delete only ever deletes this.
+ */
+export function isMemberBlobUrl(url: string, tenantId: string, memberId: string): boolean {
+  if (!memberId || /[/%.]/.test(memberId) || !isTenantBlobUrl(url, tenantId)) return false;
+  return new URL(url).pathname.startsWith(`/tenants/${tenantId}/members/${memberId}/`);
+}
+
+/** An inline image the routes accept in place of a blob (the upload route's no-store fallback). */
+export function isInlineImageUrl(url: string): boolean {
+  return /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url);
+}
+
+/**
  * A blob-store URL (any scheme/host case, so "HTTPS://" cannot slip past a
  * case-sensitive prefix test) that is NOT under this club's namespace. The
  * accept-time refusal for every client-supplied photo/picture URL; data: and

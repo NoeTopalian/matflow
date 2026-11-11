@@ -262,7 +262,13 @@ export async function POST(req: Request) {
     // store rejects the write, fall back to an inline data: URL so uploads
     // never hard-fail. The resized WebP is small enough to inline, and every
     // consumer's URL validator accepts data:image/webp;base64 URLs.
-    const filename = `tenants/${tenantId}/${id}.${uploadExt}`;
+    // Round 5: an upload FOR a member (profile picture, member photo) is
+    // stored under that member's own path, so ownership can be checked from
+    // the URL (lib/blob-url isMemberBlobUrl). Club uploads stay at the root.
+    const ownerMemberId = MEMBER_SCOPED_PURPOSES.includes(purpose ?? "") && targetMemberId ? targetMemberId : null;
+    const filename = ownerMemberId
+      ? `tenants/${tenantId}/members/${ownerMemberId}/${id}.${uploadExt}`
+      : `tenants/${tenantId}/${id}.${uploadExt}`;
     let finalUrl: string;
     let storage: "blob" | "inline";
     try {

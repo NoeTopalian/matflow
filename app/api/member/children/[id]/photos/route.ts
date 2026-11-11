@@ -24,7 +24,7 @@ import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
 import { z } from "zod";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
-import { isForeignBlobUrl } from "@/lib/blob-url";
+import { isForeignBlobUrl, isInlineImageUrl, isMemberBlobUrl } from "@/lib/blob-url";
 
 const ALLOWED_KINDS = ["evidence", "milestone", "promotion"] as const;
 const MAX_URL_LENGTH = 3_500_000; // ~3MB — matches the /api/upload data: URL fallback cap
@@ -113,6 +113,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // deletion, 14 Oct 2026): a foreign store URL is refused before any write.
   if (isForeignBlobUrl(parsed.data.url, tenantId)) {
     return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this club" }, { status: 400 });
+  }
+  // Round 5: only an inline image or a blob uploaded for this child. Any
+  // other URL (an outside tracking image, the club logo, another member's
+  // photo) is refused: it would render in staff views or be served by the
+  // image proxy as this child's.
+  if (!isInlineImageUrl(parsed.data.url) && !isMemberBlobUrl(parsed.data.url, tenantId, childId)) {
+    return NextResponse.json({ error: "Photo must be uploaded through MatFlow" }, { status: 400 });
   }
   const { url, caption, kind } = parsed.data;
 

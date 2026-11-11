@@ -24,7 +24,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
-import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { refuseSupportSession } from "@/lib/support-session";
 import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
@@ -124,6 +124,12 @@ export async function PUT(
   const parsed = putSchema.safeParse(body);
   if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
     return NextResponse.json({ error: "Picture must be uploaded through MatFlow for this club" }, { status: 400 });
+  }
+  // Round 5: a club file that is not this member's own upload (the club logo,
+  // another member's photo) is refused, so it can never be deleted or read
+  // through this member's picture.
+  if (parsed.success && isVercelBlobUrl(parsed.data.url) && !isMemberBlobUrl(parsed.data.url, tenantId, memberId)) {
+    return NextResponse.json({ error: "Picture must be uploaded through MatFlow for this member" }, { status: 400 });
   }
   if (!parsed.success) {
     // Log the rejected url shape (truncated, never the full data: bytes) so a
@@ -236,7 +242,8 @@ export async function DELETE(
     // Best-effort blob deletion. Failure does NOT fail the API — the row is
     // already gone from the DB and the blob will eventually be orphaned.
     // Vercel Blob has no GC sweep; orphan cleanup is a future feature-follow-up.
-    if (removed && isTenantBlobUrl(removed.url, tenantId)) {
+    // Round 5: only a file uploaded for this member is ever deleted.
+    if (removed && isMemberBlobUrl(removed.url, tenantId, memberId)) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);
