@@ -25,7 +25,7 @@ vi.mock("@/lib/import-storage", () => ({
   }),
 }));
 
-import { csvRecords, decodeImportBytes, eraseSubjectsFromImportDiagnostics, eraseSubjectsFromImportFiles, importFileUrls, isSubjectsOwnAddress, removeSubjectRows, scrubSubjectFromDiagnostics, type ErasureSubject } from "@/lib/importers/import-erasure";
+import { csvRecords, decodeImportBytes, eraseSubjectsFromImportDiagnostics, eraseSubjectsFromImportFiles, importFileUrls, isSubjectsOwnAddress, removeSubjectRows, scrubSubjectFromDiagnostics, scrubSubjectFromManifest, type ErasureSubject } from "@/lib/importers/import-erasure";
 
 const TEAMUP = "Customer Name,Customer Email,Phone,Emergency Contact Name,Membership";
 // An adult whose own address is in the file, and her child, whose TeamUp row carries her address.
@@ -304,3 +304,58 @@ describe("eraseSubjectsFromImportFiles", () => {
     await expect(walk(ADA)).rejects.toThrow("store down");
   });
 });
+
+// Round 5 review L-4: the manifest is scrubbed by name and address in its PERSON lists only. A plan named after the
+// subject must survive in the structure (counts, plan maps, a pre-rule refresh's before/after that a rollback replays).
+describe("scrubSubjectFromManifest — person lists only", () => {
+  const PLAN = "Ada Obi (Privates)"; // a plan named after the coach being erased
+  const commit = {
+    created: { total: 2, byPlan: { [PLAN]: 1, Adult: 1 } },
+    teamup2: {
+      asOf: "2026-11-01",
+      ledger: { rows: 4, byDisposition: { live: 4 } },
+      exceptions: { refusedRows: 1, unmatchedPlanLabels: [PLAN] },
+      exceptionRows: [
+        { kind: "cancelled_without_date", name: "Ada Obi", email: "ada@example.test", action: "a", detail: "Adult", sourceRows: [2] },
+        { kind: "guardian_suggested", name: "Zed Ray", email: null, action: "a", detail: "Ada Obi (shared email)", sourceRows: [3] },
+        { kind: "shared_email_adult", name: "Ben Ray", email: "ben@example.test", action: "a", detail: "Shares ben@example.test", sourceRows: [4] },
+      ],
+      decisions: [{ name: "Ada Obi", sourceKey: "k1", kind: "x", options: ["A"], rows: [2] }, { name: "Ben Ray", sourceKey: "k2", kind: "x", options: ["A", "B"], rows: [4] }],
+      scheduled: [],
+    },
+  };
+  const refresh = {
+    mode: "refresh",
+    refresh: {
+      changes: [{ memberId: "m_ben", name: "Ben Ray", before: { status: "active", membershipType: PLAN }, after: { status: "cancelled", membershipType: PLAN } }],
+      exceptions: { notInMatFlow: [{ name: "Ada Obi", email: "ada@example.test", sourceKey: "k1", rows: [2] }, { name: "Ben Ray", email: null, sourceKey: "k2", rows: [4] }], refused: [] },
+    },
+    rollback: { kind: "refresh", kept: [{ memberId: "m_ben", name: "Ben Ray", reasons: ["plan changed since this refresh"] }] },
+  };
+
+  it("a commit manifest: her rows leave the person lists; the structure, plan labels and other people stay exactly", () => {
+    const { value, scrubbed } = scrubSubjectFromManifest(commit, ADA);
+    expect(scrubbed).toBeGreaterThanOrEqual(3);
+    const v = value as typeof commit;
+    expect(JSON.stringify(v.teamup2.exceptionRows)).not.toContain("ada@example.test");
+    expect(v.teamup2.exceptionRows.map((r) => r.name)).toEqual(["Zed Ray", "Ben Ray"]);
+    expect(v.teamup2.exceptionRows[0].detail).toBe(""); // her name blanked from the child's row
+    expect(v.teamup2.decisions.map((d) => d.name)).toEqual(["Ben Ray"]);
+    expect({ ...v, teamup2: { ...v.teamup2, exceptionRows: [], decisions: [] } }).toEqual({ ...commit, teamup2: { ...commit.teamup2, exceptionRows: [], decisions: [] } });
+  });
+
+  it("a refresh manifest: a change's before/after carrying a plan named after her is untouched, so the rollback still replays it", () => {
+    const { value } = scrubSubjectFromManifest(refresh, ADA);
+    const v = value as typeof refresh;
+    expect(v.refresh.changes).toEqual(refresh.refresh.changes);
+    expect(v.rollback).toEqual(refresh.rollback);
+    expect(v.refresh.exceptions.notInMatFlow.map((e) => e.name)).toEqual(["Ben Ray"]);
+  });
+
+  it("the input is not mutated", () => {
+    const before = JSON.stringify(commit);
+    scrubSubjectFromManifest(commit, ADA);
+    expect(JSON.stringify(commit)).toBe(before);
+  });
+});
+

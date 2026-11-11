@@ -399,6 +399,41 @@ export function scrubSubjectFromDiagnostics(value: unknown, subject: ErasureSubj
   return { value: r.value, scrubbed: r.n };
 }
 
+/**
+ * The lists of a job's `manifest` that hold one entry per PERSON (Round 5, 11 Nov 2026): a TeamUp import's exception
+ * rows, decisions and scheduled starts; a refresh's exception lists; a rollback's kept list. Only these are scrubbed by
+ * name and address. The rest of the manifest is structure (counts, plan-label maps, a pre-rule refresh's change
+ * `before`/`after`, which a rollback replays): a plan named after a person ("Jane Smith (Privates)") must not be taken
+ * for that person there. Entries that name the member by id or source key anywhere in the manifest are removed by
+ * lib/importers/import-conflicts-scrub.ts, which the erasure runs first.
+ */
+const MANIFEST_PERSON_LISTS: readonly (readonly string[])[] = [
+  ["teamup2", "exceptionRows"],
+  ["teamup2", "decisions"],
+  ["teamup2", "scheduled"],
+  ["rollback", "kept"],
+];
+
+/** Pure: the manifest with the subject's entries removed from its person lists (see MANIFEST_PERSON_LISTS) only. */
+export function scrubSubjectFromManifest(manifest: unknown, subject: ErasureSubject): { value: unknown; scrubbed: number } {
+  if (!isObject(manifest)) return { value: manifest, scrubbed: 0 };
+  const out = JSON.parse(JSON.stringify(manifest)) as Record<string, unknown>;
+  let scrubbed = 0;
+  const scrubList = (parent: Record<string, unknown>, key: string) => {
+    if (!Array.isArray(parent[key])) return;
+    const r = scrubSubjectFromDiagnostics(parent[key], subject);
+    parent[key] = r.value;
+    scrubbed += r.scrubbed;
+  };
+  for (const path of MANIFEST_PERSON_LISTS) {
+    const parent = path.slice(0, -1).reduce<unknown>((o, k) => (isObject(o) ? o[k] : undefined), out);
+    if (isObject(parent)) scrubList(parent, path[path.length - 1]);
+  }
+  const refreshExceptions = isObject(out.refresh) ? out.refresh.exceptions : undefined;
+  if (isObject(refreshExceptions)) for (const key of Object.keys(refreshExceptions)) scrubList(refreshExceptions, key);
+  return { value: out, scrubbed };
+}
+
 type DiagTx = Pick<Prisma.TransactionClient, "importJob">;
 
 export type DiagnosticsJob = { id: string; errorLog: unknown; dryRunSummary: unknown; manifest: unknown };
@@ -428,7 +463,7 @@ export async function eraseSubjectsFromImportDiagnostics(
       if (!value || typeof value !== "object") continue;
       let changed = false;
       for (const subject of subjects) {
-        const r = scrubSubjectFromDiagnostics(value, subject);
+        const r = field === "manifest" ? scrubSubjectFromManifest(value, subject) : scrubSubjectFromDiagnostics(value, subject);
         if (r.scrubbed === 0) continue;
         scrubbed += r.scrubbed;
         value = r.value;

@@ -98,7 +98,7 @@ describe.skipIf(!HAS_DB)("US-5 — kid photo evidence", () => {
     } as never);
 
     const createRes = await createPhoto(
-      jsonReq({ url: "https://blob.example/img1.png", caption: "First stripe!", kind: "milestone" }),
+      jsonReq({ url: "data:image/png;base64,iVBORw0KGgo=", caption: "First stripe!", kind: "milestone" }), // Round 5: an inline image or the child's own upload only
       { params: Promise.resolve({ id: kidAId }) },
     );
     expect(createRes.status).toBe(201);
@@ -119,7 +119,7 @@ describe.skipIf(!HAS_DB)("US-5 — kid photo evidence", () => {
     } as never);
 
     const res = await createPhoto(
-      jsonReq({ url: "https://blob.example/img-x.png" }),
+      jsonReq({ url: "data:image/png;base64,iVBORw0KGgo=" }),
       { params: Promise.resolve({ id: kidBId }) },
     );
     expect(res.status).toBe(404);

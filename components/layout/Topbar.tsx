@@ -95,11 +95,15 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     // Signing out regardless told someone revoking a lost phone that it had
     // worked when it had not.
     let revoked = false;
+    let reason: string | null = null;
     try {
-      revoked = (await fetch("/api/auth/logout-all", { method: "POST" })).ok;
+      const res = await fetch("/api/auth/logout-all", { method: "POST" });
+      // 401: this session is already gone, so there is nothing left to keep.
+      revoked = res.ok || res.status === 401;
+      if (!revoked) reason = ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? null;
     } catch { /* network failure: revoked stays false */ }
     if (!revoked) {
-      toast("Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
+      toast(reason ? `Your other devices are still signed in. ${reason}` : "Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
       return;
     }
     signOut({ callbackUrl: "/login" });

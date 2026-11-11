@@ -170,7 +170,8 @@ describe("POST /api/member/totp/setup — verify + enable", () => {
     const res = await POST(postReq("123456") as never);
     expect(res.status).toBe(200);
     expect(updateMock).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "m-1" }, data: { totpEnabled: true } }),
+      // Round 5: a new enrolment starts with no recovery codes (no issueRecoveryCodes here).
+      expect.objectContaining({ where: { id: "m-1" }, data: expect.objectContaining({ totpEnabled: true }) }),
     );
     // Banner clears immediately: JWT re-encoded with totpEnabled=true.
     expect(encodeMock).toHaveBeenCalledWith(

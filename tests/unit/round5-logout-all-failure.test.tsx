@@ -28,7 +28,7 @@ vi.mock("@/components/ui/Toast", () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-type Answer = "ok" | "500" | "403" | "network";
+type Answer = "ok" | "500" | "403" | "401" | "network";
 let answer: Answer = "ok";
 
 beforeEach(() => {
@@ -85,6 +85,19 @@ describe.each(callers)("%s: sign out all devices", (_name, revoke) => {
       expect(String(message)).toMatch(/other devices are still signed in/i);
     });
   }
+
+  it("the server's reason is shown when it gives one (e.g. an authenticator code still owed)", async () => {
+    answer = "403";
+    await revoke();
+    expect(String(toastMock.mock.calls[0][0])).toContain("Failed to revoke sessions");
+  });
+
+  it("a 401 (this session is already gone) signs this device out: there is nothing left to keep", async () => {
+    answer = "401";
+    await revoke();
+    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(toastMock).not.toHaveBeenCalled();
+  });
 
   it("after a failure the control can be used again, and a retry that works signs out", async () => {
     answer = "500";
