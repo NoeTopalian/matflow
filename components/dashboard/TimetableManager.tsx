@@ -27,7 +27,7 @@ import type { ClassRow, CoachUserOption, MatOption, TierOption } from "@/app/das
 import { MatsSheet } from "@/components/dashboard/MatsSheet";
 import { effectiveLayout, matsInUse, type TimetableLayout } from "@/lib/timetable-layout";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryTag } from "@/lib/class-category";
+import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, categoryTag, type ClassCategoryOption } from "@/lib/class-category";
 import type { RestrictionPreview } from "@/lib/booking-eligibility";
 import { RestrictionPreviewBody, previewHasRefusals } from "@/components/dashboard/RestrictionPreview";
 
@@ -48,6 +48,8 @@ interface Props {
   coachUsers: CoachUserOption[];
   /** T6a: every membership tier of the club, for "Who can attend". */
   membershipTiers?: TierOption[];
+  /** The club's categories for the class form: active first in the club's order, then archived. */
+  categories?: ClassCategoryOption[];
   /** The club's mats, in the club's order (the order of the columns). */
   mats?: MatOption[];
   /** How same-time classes are split, if somebody has chosen: "mat" | "time". null = nobody has. */
@@ -66,6 +68,7 @@ interface Props {
 }
 
 const NO_MATS: MatOption[] = [];
+const NO_CATEGORIES: ClassCategoryOption[] = [];
 
 /** A place typed on the club's classes that is not one of its mats yet. */
 type PlaceOption = { key: string; name: string };
@@ -419,14 +422,14 @@ function ClassCard({
             Kids
           </span>
         )}
-        {classCategoryTag(cls) && (
+        {categoryTag(cls) && (
           // T6c: what kind of class this is. Absent = uncategorised.
           <span
             className="flex items-center text-xs px-2 py-0.5 rounded-full font-medium"
             style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
             data-testid="class-card-category"
           >
-            {classCategoryTag(cls)}
+            {categoryTag(cls)}
           </span>
         )}
         {cls.allowedTiers && cls.allowedTiers.length > 0 && (
@@ -795,6 +798,7 @@ function ClassForm({
   rankSystems,
   coachUsers,
   membershipTiers = [],
+  categories = NO_CATEGORIES,
   mats = NO_MATS,
   places = NO_PLACES,
   primaryColor,
@@ -807,6 +811,8 @@ function ClassForm({
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
   membershipTiers?: TierOption[];
+  /** The club's categories, active first in the club's order, then archived. */
+  categories?: ClassCategoryOption[];
   /** The club's mats (its saved locations), in the club's order. */
   mats?: MatOption[];
   /** Places typed on the club's classes that are not mats yet, in name order. */
@@ -887,9 +893,24 @@ function ClassForm({
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
   const [isKids, setIsKids] = useState<boolean>(initial?.isKids ?? false);
-  // T6c: "" = uncategorised (sent as null).
-  const initialCategory = initial?.category ?? "";
+  // The class's category. Values: "" uncategorised (sent as categoryId null), "id:<id>" one of the club's
+  // categories, and "key:<old key>" only when the club has no category rows yet (a club created by an older build
+  // during the changeover): the server turns the old key into the club's category with that key.
+  const initialCategory = initial?.categoryId ? `id:${initial.categoryId}` : "";
   const [category, setCategory] = useState<string>(initialCategory);
+  // Offered: the club's active categories, then the class's own one when it is archived (it may keep it, never
+  // choose it again), or its name alone when the list does not hold it.
+  const activeCategories = categories.filter((c) => !c.archived);
+  const ownCategory = initial?.categoryId ? categories.find((c) => c.id === initial.categoryId) ?? null : null;
+  const keepCategory = initial?.categoryId && (!ownCategory || ownCategory.archived)
+    ? { id: initial.categoryId, name: ownCategory?.name ?? initial.categoryName ?? "Current category" }
+    : null;
+  function categoryFields(): Record<string, unknown> {
+    // Sent on create, and on edit only when changed, so an unrelated edit never rewrites it.
+    if (initial?.id && category === initialCategory) return {};
+    if (category.startsWith("key:")) return { category: category.slice(4) };
+    return { categoryId: category.startsWith("id:") ? category.slice(3) : null };
+  }
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
   const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
@@ -1001,9 +1022,7 @@ function ClassForm({
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       isKids,
-      // T6c: sent on create, and on edit only when changed, so an unrelated
-      // edit never rewrites it. "" (Uncategorised) clears it to null.
-      ...(!initial?.id || category !== initialCategory ? { category: category || null } : {}),
+      ...categoryFields(),
       description: description.trim() || null,
       requiredRankId: useRoster ? null : (requiredRankId || null),
       maxRankId: useRoster ? null : (maxRankId || null),
@@ -1143,8 +1162,14 @@ function ClassForm({
           data-testid="class-category-select"
         >
           <option value="">Uncategorised</option>
-          {CLASS_CATEGORIES.map((key) => (
-            <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
+          {activeCategories.map((c) => (
+            <option key={c.id} value={`id:${c.id}`}>{c.name}</option>
+          ))}
+          {keepCategory && (
+            <option value={`id:${keepCategory.id}`}>{keepCategory.name} (archived)</option>
+          )}
+          {categories.length === 0 && CLASS_CATEGORIES.map((key) => (
+            <option key={key} value={`key:${key}`}>{CLASS_CATEGORY_LABELS[key]}</option>
           ))}
         </Select>
         <p id="class-category-hint" className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>
@@ -1635,7 +1660,7 @@ function ClassForm({
 const NO_CLASSES: ClassRow[] = [];
 
 export default function TimetableManager({
-  initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [],
+  initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [], categories = NO_CATEGORIES,
   mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt,
   primaryColor, role, currentUserId,
 }: Props) {
@@ -2635,7 +2660,7 @@ export default function TimetableManager({
                                   state={stateOf.get(slot.id) ?? null}
                                   duplicate={duplicates.has(slot.id)}
                                   kids={cls.isKids}
-                                  category={classCategoryTag(cls)}
+                                  category={categoryTag(cls)}
                                   canManage={canManage}
                                   onEdit={() => openEdit(cls)}
                                 />
@@ -2794,7 +2819,7 @@ export default function TimetableManager({
                               state={stateByKey.get(slot.id) ?? null}
                               duplicate={duplicates.has(slot.id)}
                               kids={cls.isKids}
-                              category={classCategoryTag(cls)}
+                              category={categoryTag(cls)}
                               canManage={canManage}
                               onEdit={() => openEdit(cls)}
                             />
@@ -2883,6 +2908,7 @@ export default function TimetableManager({
           rankSystems={rankSystems}
           coachUsers={coachUsers}
           membershipTiers={membershipTiers}
+          categories={categories}
           mats={mats}
           places={places}
           primaryColor={primaryColor}

@@ -30,6 +30,7 @@ model Tenant {
   // belongs to all of them, so a single-venue club never notices.
   locations              Location[]
   mats                   Mat[]
+  classCategories        ClassCategory[]
   importedMemberships    ImportedMembership[]
   importedBookings       ImportedBooking[]
   importSourceMappings   ImportSourceMapping[]
@@ -623,11 +624,17 @@ model Class {
   // coach via the dashboard.
   coachUser      User?       @relation("ClassCoach", fields: [coachUserId], references: [id], onDelete: SetNull)
   color          String?
-  // T6c (Sean note 7): what kind of class this is, a lowercase key from
-  // lib/class-category.ts CLASS_CATEGORIES. NULL = uncategorised (every class
-  // before the column; never inferred). The DB enforces the list with
-  // Class_category_check (migration 20261017035912_class_category).
+  // LEGACY (club-managed categories, Release A, 11 Nov 2026): the old fixed key
+  // from lib/class-category.ts LEGACY_CATEGORY_KEYS, kept so a build from before
+  // Release A keeps working. NULL = uncategorised, or a category the club made
+  // itself. The trigger matflow_class_category_bridge keeps it in step with
+  // categoryId on every write (migration 20261111120000_class_categories).
+  // Read categoryRef, never this.
   category       String?
+  // The club's category for this class. NULL = uncategorised. The composite
+  // key with tenantId means a class can never point at another club's category.
+  categoryId     String?
+  categoryRef    ClassCategory? @relation(fields: [categoryId, tenantId], references: [id, tenantId], onDelete: NoAction, onUpdate: NoAction)
   isActive       Boolean     @default(true)
   // T6b lifecycle (Sean note 7): isActive=false + deletedAt null = PAUSED (off the
   // timetable, booking and kiosk; reversible). deletedAt set = ARCHIVED (removed
@@ -647,6 +654,36 @@ model Class {
   @@index([tenantId, deletedAt])
   @@index([sourceImportJobId])
   @@index([matId])
+  @@index([categoryId])
+}
+
+// A club's own class categories (club-managed categories, Release A, 11 Nov
+// 2026; migration 20261111120000_class_categories). Every club starts with the
+// eight that used to be fixed, each carrying its old key in legacyKey; one the
+// club makes itself has legacyKey NULL. Archived, never deleted, so a class
+// always keeps the category it has.
+model ClassCategory {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  // lib/class-category.ts categoryNameKey: what counts as the same name.
+  nameKey    String
+  // One of the eight old keys, or NULL for a category the club made.
+  legacyKey  String?
+  sortOrder  Int
+  archivedAt DateTime?
+  // Bumped by every rename, archive, restore and reorder (Release B's stale checks).
+  version    Int       @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  classes    Class[]
+
+  @@unique([id, tenantId])
+  @@unique([tenantId, nameKey])
+  @@unique([tenantId, legacyKey])
+  @@index([tenantId, sortOrder])
 }
 
 model ClassSchedule {

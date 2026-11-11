@@ -7,6 +7,16 @@
 //    and its CHECK lists exactly the canonical keys, so the DB and the app
 //    can never disagree about what a valid category is.
 //  - Undo of a class edit restores the previous category (acceptance 2).
+//
+// Club-managed categories (Release A, 11 Nov 2026) on top of that:
+//  - The eight keys survive as each club's starting rows; names are cleaned
+//    and compared by one rule; the tag reads the club's name for a category.
+//  - The release's migration seeds exactly today's labels for existing clubs
+//    ("Open mat") and "Open Mat" for new ones, keyed as categoryNameKey keys.
+//  - Undo speaks in `categoryId`. An older row's old keys are translated to
+//    this club's categories, and a class whose category changed since (to one
+//    the club made, whose old-key column is empty) is never overwritten.
+//    Putting back an archived or vanished category is refused.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -16,15 +26,21 @@ vi.mock("@/lib/checkin", () => ({ restorePackCreditsForAttendance: vi.fn(async (
 vi.mock("@/lib/class-lifecycle", () => ({ mintUpcomingSessions: vi.fn(async () => 0) }));
 
 import {
+  CATEGORY_NAME_MAX,
   CLASS_CATEGORIES,
   CLASS_CATEGORY_LABELS,
+  categoryNameKey,
+  categoryNameOf,
+  categoryTag,
+  classCategoryIdSchema,
   classCategoryLabel,
   classCategorySchema,
   classCategoryTag,
+  cleanCategoryName,
   isClassCategory,
 } from "@/lib/class-category";
 import { classCreateSchema } from "@/lib/schemas/class";
-import { decideUndo, applyUndo, UndoStale, type AuditRowLike, type TxLike } from "@/lib/undo-registry";
+import { decideUndo, applyUndo, REASON, UndoStale, type AuditRowLike, type TxLike } from "@/lib/undo-registry";
 
 const MIGRATIONS = join(process.cwd(), "prisma", "migrations");
 
@@ -132,38 +148,178 @@ describe("migration (acceptance 1)", () => {
   });
 });
 
-describe("undo restores the previous category (acceptance 2)", () => {
-  const fake = { class: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() } };
+describe("club-managed categories — names (Release A)", () => {
+  it("cleans a name for storing and showing", () => {
+    expect(cleanCategoryName("  Open   Mat ​")).toBe("Open Mat");
+    expect(cleanCategoryName("Be​ginners")).toBe("Beginners");
+  });
+
+  it("counts names as the same category whatever their spacing, case or compatibility form", () => {
+    expect(categoryNameKey(" beginners ")).toBe(categoryNameKey("Beginners"));
+    expect(categoryNameKey("OPEN   MAT")).toBe(categoryNameKey("Open Mat"));
+    // Full-width letters fold to their ordinary form.
+    expect(categoryNameKey("Ｋｉｄｓ")).toBe("kids");
+    expect(categoryNameKey("Intermediate")).not.toBe(categoryNameKey("Advanced"));
+  });
+
+  it("the eight starting names key exactly as the migration's lower() keys them", () => {
+    for (const label of [...Object.values(CLASS_CATEGORY_LABELS), "Open Mat"]) {
+      expect(categoryNameKey(label)).toBe(label.toLowerCase());
+    }
+  });
+
+  it("a name is at most 32 characters (Noe, 11 Nov 2026)", () => {
+    expect(CATEGORY_NAME_MAX).toBe(32);
+  });
+
+  it("a category id is a bounded string or null", () => {
+    expect(classCategoryIdSchema.safeParse("cat_1").success).toBe(true);
+    expect(classCategoryIdSchema.safeParse(null).success).toBe(true);
+    expect(classCategoryIdSchema.safeParse("").success).toBe(false);
+    expect(classCategoryIdSchema.safeParse("x".repeat(65)).success).toBe(false);
+    expect(classCreateSchema.safeParse({ ...basePayload, categoryId: "cat_1" }).success).toBe(true);
+  });
+
+  it("the tag is the club's name for the category; Kids is not said twice, a renamed Kids still is", () => {
+    expect(categoryTag({ categoryName: "Beginners" })).toBe("Beginners");
+    expect(categoryTag({ categoryName: "Kids", isKids: true })).toBeNull();
+    expect(categoryTag({ categoryName: "kids ", isKids: true })).toBeNull();
+    expect(categoryTag({ categoryName: "Juniors", isKids: true })).toBe("Juniors");
+    expect(categoryTag({ categoryName: null })).toBeNull();
+  });
+
+  it("a page newer than its server (no categoryName) still labels from the old key; a newer server's null is uncategorised", () => {
+    expect(categoryNameOf({ category: "open_mat" })).toBe("Open mat");
+    expect(categoryNameOf({ category: "fundamentals", categoryName: "Beginners" })).toBe("Beginners");
+    expect(categoryNameOf({ category: null, categoryName: null })).toBeNull();
+    expect(categoryNameOf({ category: null, categoryName: "Intermediate" })).toBe("Intermediate");
+  });
+});
+
+describe("club-managed categories — the migration (Release A)", () => {
+  const dir = readdirSync(MIGRATIONS).find((d) => d.endsWith("_class_categories"));
+  const sql = readFileSync(join(MIGRATIONS, dir!, "migration.sql"), "utf8");
+
+  it("seeds today's eight, in today's order and spelling, with their old keys", () => {
+    const values = [...sql.matchAll(/\('([a-z_]+)', ('[^']+'|p_open_mat_name), (\d)\)/g)].map((m) => [m[1], m[2], Number(m[3])]);
+    expect(values.map((v) => v[0])).toEqual([...CLASS_CATEGORIES]);
+    expect(values.map((v) => v[2])).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    for (const [key, name] of values) {
+      if (key === "open_mat") expect(name).toBe("p_open_mat_name");
+      else expect(name).toBe(`'${CLASS_CATEGORY_LABELS[key as keyof typeof CLASS_CATEGORY_LABELS]}'`);
+    }
+  });
+
+  it("existing clubs keep \"Open mat\"; clubs created later start with \"Open Mat\"", () => {
+    expect(sql).toMatch(/p_open_mat_name TEXT DEFAULT 'Open Mat'/);
+    expect(sql).toMatch(/SELECT matflow_seed_class_categories\("id", 'Open mat'\) FROM "Tenant";/);
+  });
+
+  it("the legacy-key CHECK lists exactly the canonical keys", () => {
+    const check = sql.match(/"legacyKey" IS NULL OR "legacyKey" IN \(([^)]*)\)/);
+    expect(check).toBeTruthy();
+    expect(check![1].split(",").map((k) => k.trim().replace(/^'|'$/g, ""))).toEqual([...CLASS_CATEGORIES]);
+  });
+
+  it("keeps the old column and its CHECK (a build from before the release still writes them)", () => {
+    const code = sql.replace(/--.*$/gm, "");
+    expect(code).not.toMatch(/DROP\s+(COLUMN|CONSTRAINT|TABLE)/i);
+    expect(code).not.toMatch(/Class_category_check/);
+  });
+
+  it("the composite key ties a class's category to its own club", () => {
+    expect(sql).toMatch(/FOREIGN KEY \("categoryId", "tenantId"\) REFERENCES "ClassCategory"\("id", "tenantId"\)/);
+  });
+
+  it("neither function runs with elevated rights (both are SECURITY INVOKER, under row-level security)", () => {
+    expect(sql.replace(/--.*$/gm, "")).not.toMatch(/SECURITY DEFINER/i);
+    expect(sql).toMatch(/ALTER TABLE "ClassCategory" FORCE ROW LEVEL SECURITY/);
+  });
+});
+
+describe("undo restores the previous category (acceptance 2, club-managed categories)", () => {
+  const fake = {
+    class: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    classCategory: { findFirst: vi.fn() },
+  };
   const tx = fake as unknown as TxLike;
   const row = (metadata: unknown): AuditRowLike => ({
     id: "a1", tenantId: "t1", userId: "u1", action: "class.updated",
     entityType: "Class", entityId: "c1", metadata, createdAt: new Date("2026-10-17T09:00:00.000Z"),
   });
+  /** This club's starting rows, by old key; cat-own is one the club made. */
+  const IDS: Record<string, string> = { gi: "cat-gi", nogi: "cat-nogi", competition: "cat-comp" };
+  const current = (categoryId: string | null, category: string | null) =>
+    ({ id: "c1", tenantId: "t1", categoryId, category, isActive: true, sourceImportJobId: null, matId: null });
 
   beforeEach(() => {
     vi.clearAllMocks();
     fake.class.update.mockResolvedValue({});
+    fake.classCategory.findFirst.mockImplementation(async ({ where }: { where: { legacyKey?: string; id?: string; tenantId: string } }) => {
+      expect(where.tenantId).toBe("t1");
+      if (where.legacyKey) return IDS[where.legacyKey] ? { id: IDS[where.legacyKey] } : null;
+      if (where.id === "cat-archived") return { archivedAt: new Date() };
+      if (where.id && where.id.startsWith("cat-")) return { archivedAt: null };
+      return null;
+    });
   });
 
-  it("puts the earlier category back", async () => {
-    fake.class.findFirst.mockResolvedValue({ id: "c1", tenantId: "t1", category: "nogi", isActive: true, sourceImportJobId: null });
+  it("an older row (old keys): puts the earlier category back, as this club's category with that key", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-nogi", "nogi"));
     const r = row({ fields: ["category"], before: { category: "gi" }, after: { category: "nogi" } });
     expect(decideUndo(r, false)).toEqual({ ok: true });
     await applyUndo(tx, r);
-    expect(fake.class.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { category: "gi" } });
+    expect(fake.class.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { categoryId: "cat-gi" } });
   });
 
-  it("puts an uncategorised class back to uncategorised", async () => {
-    fake.class.findFirst.mockResolvedValue({ id: "c1", tenantId: "t1", category: "nogi", isActive: true, sourceImportJobId: null });
+  it("an older row: puts an uncategorised class back to uncategorised", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-nogi", "nogi"));
     await applyUndo(tx, row({ fields: ["category"], before: { category: null }, after: { category: "nogi" } }));
-    expect(fake.class.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { category: null } });
+    expect(fake.class.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { categoryId: null } });
   });
 
-  it("refuses as stale when the category has been changed again since", async () => {
-    fake.class.findFirst.mockResolvedValue({ id: "c1", tenantId: "t1", category: "competition", isActive: true, sourceImportJobId: null });
+  it("an older row: refuses as stale when the category has been changed again since", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-comp", "competition"));
     await expect(
       applyUndo(tx, row({ fields: ["category"], before: { category: "gi" }, after: { category: "nogi" } })),
     ).rejects.toBeInstanceOf(UndoStale);
+    expect(fake.class.update).not.toHaveBeenCalled();
+  });
+
+  it("an older row that CLEARED the category does not overwrite a category the club made since (its old key is empty too)", async () => {
+    // The edit took the class from Gi to uncategorised; since then it has been put on a category the club made,
+    // whose old-key column is NULL — the same as "uncategorised" to a key-only comparison.
+    fake.class.findFirst.mockResolvedValue(current("cat-own", null));
+    await expect(
+      applyUndo(tx, row({ fields: ["category"], before: { category: "gi" }, after: { category: null } })),
+    ).rejects.toBeInstanceOf(UndoStale);
+    expect(fake.class.update).not.toHaveBeenCalled();
+  });
+
+  it("this release's rows: puts the earlier category back by id", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-own", null));
+    await applyUndo(tx, row({ fields: ["categoryId"], before: { categoryId: "cat-gi" }, after: { categoryId: "cat-own" } }));
+    expect(fake.class.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { categoryId: "cat-gi" } });
+  });
+
+  it("refuses to put back a category archived since", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-own", null));
+    const p = applyUndo(tx, row({ fields: ["categoryId"], before: { categoryId: "cat-archived" }, after: { categoryId: "cat-own" } }));
+    await expect(p).rejects.toThrow(REASON.categoryArchived);
+    expect(fake.class.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to put back a category that is not this club's (or no longer exists)", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-own", null));
+    const p = applyUndo(tx, row({ fields: ["categoryId"], before: { categoryId: "gone" }, after: { categoryId: "cat-own" } }));
+    await expect(p).rejects.toThrow(REASON.categoryGone);
+    expect(fake.class.update).not.toHaveBeenCalled();
+  });
+
+  it("an older row naming a key this club has no row for is refused, not guessed", async () => {
+    fake.class.findFirst.mockResolvedValue(current("cat-nogi", "nogi"));
+    const p = applyUndo(tx, row({ fields: ["category"], before: { category: "private" }, after: { category: "nogi" } }));
+    await expect(p).rejects.toThrow(REASON.categoryGone);
     expect(fake.class.update).not.toHaveBeenCalled();
   });
 });

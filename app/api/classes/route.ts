@@ -14,6 +14,7 @@ import { readRankOrders, restrictionPreview } from "@/lib/booking-eligibility-db
 import { LOCATION_ERRORS, checkLocationName, lockClubMats } from "@/lib/mats";
 import { matForLocation } from "@/lib/mats-store";
 import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
+import { CATEGORY_ERRORS, CATEGORY_REF_SELECT, ClassCategoryRefusal, categoryFields, categoryIdToWrite, classCategoryDbError } from "@/lib/class-category-store";
 
 /** A tier vanished between the club check and the write: roll the class back. */
 class TierRefError extends Error {}
@@ -89,7 +90,12 @@ export async function POST(req: Request) {
   // written as ClassMembershipTier rows in the same transaction.
   // `matName` is resolved to a mat (or a typed place) inside the write
   // transaction, never written as a column.
-  const { schedules, roster, allowedTierIds, matName, ...classData } = parsed.data;
+  // `categoryId` / `category` (an old key) are resolved to the club's category
+  // inside the write transaction, then written as `categoryId` only.
+  const { schedules, roster, allowedTierIds, matName, categoryId: categoryIdIn, category: categoryKeyIn, ...classData } = parsed.data;
+  if (categoryIdIn !== undefined && categoryKeyIn !== undefined) {
+    return NextResponse.json({ error: CATEGORY_ERRORS.both, reason: "category" }, { status: 400 });
+  }
 
   // The class form's Location by name.
   let locationName: string | null = null;
@@ -179,10 +185,12 @@ export async function POST(req: Request) {
       const tenant = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } });
       const timeZone = usableTimezone(tenant?.timezone);
       const now = new Date();
+      const categoryId = await categoryIdToWrite(tx, session.user.tenantId, { categoryId: categoryIdIn, category: categoryKeyIn }, null);
       const cls = await tx.class.create({
         data: {
           tenantId: session.user.tenantId,
           ...classData,
+          ...(categoryId !== undefined ? { categoryId } : {}),
           ...(place !== null ? place : {}),
           schedules: {
             create: schedules.map((s: typeof schedules[number]) => ({
@@ -199,6 +207,7 @@ export async function POST(req: Request) {
           requiredRank: true,
           maxRank: true,
           coachUser: { select: { id: true, name: true } },
+          categoryRef: { select: CATEGORY_REF_SELECT },
         },
       });
       // T6a: the memberships that include the class, in the same transaction
@@ -277,13 +286,19 @@ export async function POST(req: Request) {
       metadata: { name: cls.name, instancesCreated, allowedTierIds: { before: [], after: tierIdsWritten } },
       req,
     });
+    const { categoryRef, ...created } = cls;
     return NextResponse.json(
       // `locationAdded`: the mat this save added from a typed Location, the club's other classes it took with it, and
       // when the save was done (after the commit), so the page can tell a list read before it from one read after.
-      { ...cls, instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten, locationAdded: locationAdded ? { ...locationAdded, savedAt: new Date().toISOString() } : null },
+      { ...created, ...categoryFields(categoryRef), instancesCreated, allowedTierIds: tierIdsWritten, allowedTiers: tiersWritten, roster: rosterWritten, locationAdded: locationAdded ? { ...locationAdded, savedAt: new Date().toISOString() } : null },
       { status: 201 },
     );
   } catch (e) {
+    if (e instanceof ClassCategoryRefusal) {
+      return NextResponse.json({ error: e.message, reason: "category" }, { status: e.status });
+    }
+    const categoryRefused = classCategoryDbError(e);
+    if (categoryRefused) return NextResponse.json({ error: categoryRefused.error, reason: "category" }, { status: categoryRefused.status });
     if (e instanceof TierRefError) {
       return NextResponse.json({ error: CLASS_REF_ERRORS.tier }, { status: 400 });
     }

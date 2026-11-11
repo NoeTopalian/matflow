@@ -387,6 +387,7 @@ export const ACTIVITY_FIELD_LABELS: Record<string, string> = {
   color: "Colour",
   isActive: "Active",
   category: "Category",
+  categoryId: "Category",
   deletedAt: "Archived",
   // Plan
   pricePence: "Price",

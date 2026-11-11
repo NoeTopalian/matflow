@@ -14,7 +14,7 @@ import { isSafeFontFamily } from "@/lib/fonts";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { formatTimeRange } from "@/lib/class-time";
 import { SQUAD_ONLY_LABEL, SQUAD_NO_MATCH_SENTENCE } from "@/lib/class-tier-gate";
-import { classCategoryLabel } from "@/lib/class-category";
+import { categoryNameOf } from "@/lib/class-category";
 
 // Branding arrives from the Tenant row and is edited by gym staff, so it is
 // untrusted input painted straight into inline `style` — `fontFamily` in
@@ -57,8 +57,10 @@ type ClassRow = {
    * name search lists only the members on it. Absent on an older server.
    */
   rosterOnly?: boolean;
-  /** T6c: the category key (lib/class-category.ts); null/absent = uncategorised. */
+  /** The legacy key (lib/class-category.ts); only an older server sends nothing else. */
   category?: string | null;
+  /** The club's name for the class's category; null = uncategorised; absent from an older server. */
+  categoryName?: string | null;
 };
 
 type LinkedKid = {
@@ -510,11 +512,11 @@ export default function KioskPage({ token, tenant }: { token: string; tenant: Te
                   </span>
                   <span className="opacity-60 text-sm whitespace-nowrap">{formatTimeRange(cls.startTime, cls.endTime)}</span>
                 </div>
-                {classCategoryLabel(cls.category) && (
+                {categoryNameOf(cls) && (
                   // T6c: what kind of class this is, so two classes at the
                   // same time can be told apart at a glance.
                   <p data-testid="kiosk-class-category" className="opacity-70 text-xs mt-1 uppercase tracking-wide">
-                    {classCategoryLabel(cls.category)}
+                    {categoryNameOf(cls)}
                   </p>
                 )}
                 {(cls.requiredRank || cls.maxRank) && (

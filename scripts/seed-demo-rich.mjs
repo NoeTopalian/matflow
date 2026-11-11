@@ -284,6 +284,8 @@ async function main() {
       }
 
       const tenantId = tenant.id;
+      // The eight starting class categories, as every club-creation path makes them (adds nothing when present).
+      await tx.$executeRaw`SELECT matflow_seed_class_categories(${tenantId})`;
 
       // ── 2. Staff users ──────────────────────────────────────────────────────
       const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
