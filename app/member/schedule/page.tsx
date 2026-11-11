@@ -561,8 +561,10 @@ function SessionBlock({
         border: `1px solid ${isSub
           ? `color-mix(in srgb, ${color} 70%, var(--member-text) 30%)`
           : `color-mix(in srgb, ${color} ${ended ? 30 : 55}%, var(--member-text) ${ended ? 14 : 22}%)`}`,
-        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : color}` : undefined,
-        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
+        // The live edge and the selection ring mix in the shell's own text colour, so a pale class colour (light
+        // yellow, grey) still shows on the light member shell as on the dark one; a strong colour barely changes.
+        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : `color-mix(in srgb, ${color} 65%, var(--member-text) 35%)`}` : undefined,
+        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px color-mix(in srgb, ${color} 60%, var(--member-text) 40%)` : undefined,
         color: ink,
         // A booked class that has ended is greyed. Desaturating keeps each colour's brightness, so its ink still
         // reads; a see-through fill would not on a light shell.
