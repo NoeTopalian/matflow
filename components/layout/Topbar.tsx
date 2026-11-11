@@ -9,6 +9,7 @@ import { toBlobProxyUrl } from "@/lib/blob-url";
 import { STAFF_NAV } from "@/components/layout/routes";
 import { userTone } from "@/lib/color";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/Toast";
 
 interface TopbarProps {
   user: {
@@ -65,6 +66,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ask, dialogProps } = useConfirmDialog();
+  const { toast } = useToast();
   const roleLabel = getRoleLabel(user.role);
   const logoPadding = logoSize === "lg" ? 3 : logoSize === "sm" ? 5 : 4;
   const displayName = user.name ?? "";
@@ -89,9 +91,17 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
       destructive: true,
     });
     if (!confirmed) return;
+    // Round 5: sign this device out only once the other sessions are revoked.
+    // Signing out regardless told someone revoking a lost phone that it had
+    // worked when it had not.
+    let revoked = false;
     try {
-      await fetch("/api/auth/logout-all", { method: "POST" });
-    } catch { /* ignore */ }
+      revoked = (await fetch("/api/auth/logout-all", { method: "POST" })).ok;
+    } catch { /* network failure: revoked stays false */ }
+    if (!revoked) {
+      toast("Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
+      return;
+    }
     signOut({ callbackUrl: "/login" });
   }
 
