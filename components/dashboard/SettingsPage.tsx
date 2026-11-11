@@ -17,6 +17,7 @@ import ImportPanel from "@/components/dashboard/ImportPanel";
 import ImportReconciliation from "@/components/dashboard/ImportReconciliation";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import LocationsCard from "@/components/dashboard/LocationsCard";
 import { SettingImpact } from "@/components/dashboard/SettingImpact";
 import { MemberAppCheckinSetting } from "@/components/dashboard/MemberAppCheckinSetting";
@@ -771,6 +772,9 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [recoveryCodes, setRecoveryCodes]         = useState<string[]>([]);
   const [recoveryGenerating, setRecoveryGenerating] = useState(false);
   const [recoveryError, setRecoveryError]         = useState("");
+  // Round 5 remediation: the route needs a current authenticator code (step-up); the card asks for it inline.
+  const [recoveryAsking, setRecoveryAsking]       = useState(false);
+  const [recoveryCode, setRecoveryCode]           = useState("");
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [recoveryCopied, setRecoveryCopied]       = useState(false);
 
@@ -2697,35 +2701,68 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <Shield className="w-4 h-4" style={{ color: "var(--tx-3)" }} />
                   <span className="text-sm font-medium" style={{ color: "var(--tx-2)" }}>8 single-use codes</span>
                 </div>
-                <button
-                  onClick={async () => {
+                {!recoveryAsking && (
+                  <Button size="compact" onClick={() => { setRecoveryError(""); setRecoveryCode(""); setRecoveryAsking(true); }}>
+                    Generate new
+                  </Button>
+                )}
+              </div>
+              {/* Round 5 remediation: this card used to POST with no code, and the route (which requires a current
+                  authenticator code since L1-I2-S-01) always refused it. It now asks for the code here. */}
+              {recoveryAsking && (
+                <form
+                  className="mt-3 flex flex-wrap items-center gap-2"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const totpCode = recoveryCode.trim();
+                    if (!/^\d{6}$/.test(totpCode)) { setRecoveryError("Enter the six-digit code from your authenticator app."); return; }
                     setRecoveryError("");
                     setRecoveryGenerating(true);
                     setRecoveryAcknowledged(false);
                     setRecoveryCopied(false);
                     try {
-                      const res = await fetch("/api/auth/totp/recovery-codes", { method: "POST" });
+                      const res = await fetch("/api/auth/totp/recovery-codes", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ totpCode }),
+                      });
                       const data = await res.json().catch(() => ({}));
                       if (!res.ok) {
-                        setRecoveryError(data?.error ?? "Failed to generate codes");
+                        // A refused code is spent or wrong: clear it so the next attempt is a fresh one.
+                        setRecoveryCode("");
+                        setRecoveryError(data?.error ?? "Couldn't generate new codes. Try again.");
                       } else {
+                        setRecoveryAsking(false);
+                        setRecoveryCode("");
                         setRecoveryCodes(Array.isArray(data?.codes) ? data.codes : []);
                         setRecoveryDrawer(true);
                       }
                     } catch {
-                      setRecoveryError("Network error");
+                      setRecoveryError("Couldn't reach MatFlow. Check your connection and try again; your old codes still work.");
                     } finally {
                       setRecoveryGenerating(false);
                     }
                   }}
-                  disabled={recoveryGenerating}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--tx-on-accent)] disabled:opacity-50 flex items-center gap-1.5"
-                  style={{ background: primaryColor }}
                 >
-                  {recoveryGenerating && <Loader2 className="w-3 h-3 animate-spin" />}
-                  Generate new
-                </button>
-              </div>
+                  <Input
+                    aria-label="Authenticator code"
+                    placeholder="6-digit code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    autoFocus
+                    value={recoveryCode}
+                    onChange={(e) => setRecoveryCode(e.target.value.replace(/\D/g, ""))}
+                    className="w-32"
+                  />
+                  <Button type="submit" size="compact" loading={recoveryGenerating} disabled={recoveryGenerating}>
+                    Generate new codes
+                  </Button>
+                  <Button type="button" size="compact" variant="ghost" disabled={recoveryGenerating} onClick={() => { setRecoveryAsking(false); setRecoveryCode(""); setRecoveryError(""); }}>
+                    Cancel
+                  </Button>
+                </form>
+              )}
               {recoveryError && (
                 <p role="alert" className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
               )}
