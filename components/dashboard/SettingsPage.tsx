@@ -775,6 +775,13 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // Round 5 remediation: the route needs a current authenticator code (step-up); the card asks for it inline.
   const [recoveryAsking, setRecoveryAsking]       = useState(false);
   const [recoveryCode, setRecoveryCode]           = useState("");
+  // Closing the code field (Cancel, or codes issued) unmounts the control that had focus: put it back on the button.
+  const recoveryGenerateRef = useRef<HTMLButtonElement>(null);
+  const recoveryWasAsking = useRef(false);
+  useEffect(() => {
+    if (recoveryWasAsking.current && !recoveryAsking) recoveryGenerateRef.current?.focus();
+    recoveryWasAsking.current = recoveryAsking;
+  }, [recoveryAsking]);
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [recoveryCopied, setRecoveryCopied]       = useState(false);
 
@@ -2702,7 +2709,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <span className="text-sm font-medium" style={{ color: "var(--tx-2)" }}>8 single-use codes</span>
                 </div>
                 {!recoveryAsking && (
-                  <Button size="compact" onClick={() => { setRecoveryError(""); setRecoveryCode(""); setRecoveryAsking(true); }}>
+                  <Button ref={recoveryGenerateRef} size="compact" onClick={() => { setRecoveryError(""); setRecoveryCode(""); setRecoveryAsking(true); }}>
                     Generate new
                   </Button>
                 )}
@@ -2751,6 +2758,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                     autoComplete="one-time-code"
                     maxLength={6}
                     autoFocus
+                    aria-invalid={recoveryError ? true : undefined}
+                    aria-describedby={recoveryError ? "recovery-code-error" : undefined}
                     value={recoveryCode}
                     onChange={(e) => setRecoveryCode(e.target.value.replace(/\D/g, ""))}
                     className="w-32"
@@ -2764,7 +2773,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 </form>
               )}
               {recoveryError && (
-                <p role="alert" className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
+                <p id="recovery-code-error" role="alert" className="text-[var(--hue-danger-ink)] text-xs mt-2">{recoveryError}</p>
               )}
             </div>
           )}

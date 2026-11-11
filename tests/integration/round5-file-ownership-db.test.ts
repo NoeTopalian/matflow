@@ -36,7 +36,8 @@ vi.mock("@/lib/api-authz", async (importOriginal) => {
 const blob = vi.hoisted(() => ({ deleted: [] as string[] }));
 vi.mock("@vercel/blob", () => ({
   del: vi.fn(async (url: string | string[]) => { for (const u of [url].flat()) blob.deleted.push(u); }),
-  get: vi.fn(async () => ({ statusCode: 200, stream: "img", blob: { contentType: "image/webp" } })),
+  // As the store does: a deleted file is gone (get answers null), anything else answers an image.
+  get: vi.fn(async (url: string) => (blob.deleted.includes(url) ? null : { statusCode: 200, stream: "img", blob: { contentType: "image/webp" } })),
 }));
 
 import { auth } from "@/auth";
@@ -47,6 +48,7 @@ import { DELETE as deletePicture } from "@/app/api/members/[id]/profile-picture/
 import { POST as postAnnouncement } from "@/app/api/announcements/route";
 import { DELETE as deleteAnnouncement } from "@/app/api/announcements/[id]/route";
 import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
+import { PATCH as patchSettings } from "@/app/api/settings/route";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -187,5 +189,50 @@ describe.skipIf(!HAS_DB)("file ownership at attach, read and delete", () => {
     const res = await dsarErase(req("POST", undefined, `https://test.local/api/admin/dsar/erase?memberId=${dee}`));
     expect(res.status).toBe(200);
     expect(blob.deleted).toEqual([memberFile(dee, "dee.webp")]);
+  });
+
+  // Review F1: when the OWNER of a legacy photo removes it (or is erased), a row planted later by someone else does
+  // not keep the file alive, or the planter would become the earliest reference and go on reading it.
+  it("delete: the owner removing a legacy photo deletes it even though a planted row still points at it; the planter can no longer read it", async () => {
+    const eve = (await withRlsBypass((tx) => tx.member.create({ data: { tenantId, name: `${STAMP} Eve`, email: `${STAMP}-eve@example.test` } }))).id;
+    const fay = (await withRlsBypass((tx) => tx.member.create({ data: { tenantId, name: `${STAMP} Fay`, email: `${STAMP}-fay@example.test` } }))).id;
+    const legacy = root("legacy-eve.webp");
+    await photo(eve, legacy, "profile", new Date("2026-02-01T00:00:00Z"));
+    await photo(fay, legacy, "evidence", new Date("2026-11-09T00:00:00Z")); // planted before the fix
+    asMember(eve);
+    blob.deleted.length = 0;
+    expect((await deletePicture(req("DELETE"), ctx(eve))).status).toBe(200);
+    expect(blob.deleted).toEqual([legacy]);
+    // …so the planter reads nothing: the file is gone (404), where on main it stayed and went on being served.
+    asMember(fay);
+    expect(await read(legacy)).toBe(404);
+  });
+
+  it("delete: erasing the owner of a legacy photo deletes it despite a planted row", async () => {
+    const gus = (await withRlsBypass((tx) => tx.member.create({ data: { tenantId, name: `${STAMP} Gus`, email: `${STAMP}-gus@example.test` } }))).id;
+    const hal = (await withRlsBypass((tx) => tx.member.create({ data: { tenantId, name: `${STAMP} Hal`, email: `${STAMP}-hal@example.test` } }))).id;
+    const legacy = root("legacy-gus.webp");
+    await photo(gus, legacy, "profile", new Date("2026-02-01T00:00:00Z"));
+    await photo(hal, legacy, "evidence", new Date("2026-11-09T00:00:00Z"));
+    gate.tenantId = tenantId;
+    gate.userId = ownerId;
+    asStaff("owner", ownerId);
+    blob.deleted.length = 0;
+    expect((await dsarErase(req("POST", undefined, `https://test.local/api/admin/dsar/erase?memberId=${gus}`))).status).toBe(200);
+    expect(blob.deleted).toEqual([legacy]);
+  });
+
+  // Review F2/F3: staff cannot turn a member's photo (or another club's file) into a club asset.
+  it("attach: an announcement image or the logo cannot be a member's legacy photo, a member-path file, an import or another club's file", async () => {
+    asStaff("owner", ownerId);
+    gate.tenantId = tenantId;
+    gate.userId = ownerId;
+    const memberLegacy = root("legacy-ada.webp"); // Ada's photo, from the read test above
+    expect((await postAnnouncement(req("POST", { title: "T", body: "B", imageUrl: memberLegacy }))).status).toBe(400);
+    for (const logoUrl of [memberLegacy, memberFile(ada, "own.webp"), `${STORE}/tenants/${tenantId}/imports/x.csv`, `${STORE}/tenants/another-club/logo.webp`]) {
+      expect((await patchSettings(req("PATCH", { logoUrl }))).status).toBe(400);
+    }
+    expect((await patchSettings(req("PATCH", { logoUrl: root("new-logo.webp") }))).status).toBe(200);
+    await withRlsBypass((tx) => tx.tenant.update({ where: { id: tenantId }, data: { logoUrl: root("logo.webp") } }));
   });
 });

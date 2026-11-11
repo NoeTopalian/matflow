@@ -48,6 +48,9 @@ try {
     /code/i.test(await alert.innerText()) && (await card(page).getByLabel("Authenticator code").inputValue()) === "" && (await codes()) === before,
     { alert: await alert.innerText(), field: await card(page).getByLabel("Authenticator code").inputValue() });
   await shot(page, "round5-recovery-card-refused");
+  const field1 = card(page).getByLabel("Authenticator code");
+  L.check("a11y", "A1 the refused field is marked invalid and points at its message",
+    (await field1.getAttribute("aria-invalid")) === "true" && (await field1.getAttribute("aria-describedby")) === "recovery-code-error", { invalid: await field1.getAttribute("aria-invalid"), describedby: await field1.getAttribute("aria-describedby") });
 
   // ── R2 / R3 ──
   await page.route("**/api/auth/totp/recovery-codes", (r) => r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Failed to generate recovery codes" }) }));
@@ -61,7 +64,14 @@ try {
   L.check("failure", "R3 network failure: says so (old codes still work), nothing changed", (await codes()) === before, await card(page).getByRole("alert").innerText());
   await page.unroute("**/api/auth/totp/recovery-codes");
 
+  // ── A2: Cancel returns focus to "Generate new" ──
+  await card(page).getByRole("button", { name: "Cancel" }).click();
+  const genBtn = card(page).getByRole("button", { name: "Generate new", exact: true });
+  await genBtn.waitFor();
+  L.check("a11y", "A2 Cancel closes the field and returns focus to 'Generate new'", await genBtn.evaluate((el) => el === document.activeElement), {});
+
   // ── R4 ──
+  await ask(page);
   await submit(page, await freshCode(club.owner.secret));
   const shown = page.getByText("Save these 8 single-use codes");
   await shown.waitFor({ timeout: 30000 });

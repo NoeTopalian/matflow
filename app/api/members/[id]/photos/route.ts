@@ -169,7 +169,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const removed = await withTenantContext(tenantId, async (tx) => {
       const p = await tx.memberPhoto.findFirst({
         where: { id: photoId, memberId, tenantId },
-        select: { id: true, url: true, kind: true },
+        select: { id: true, url: true, kind: true, uploadedAt: true },
       });
       if (!p) return null;
       if (p.kind === "profile") throw new Error("use_profile_route");
@@ -181,7 +181,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // Best-effort blob cleanup (no-op for inline data: URLs). Round 5: only
     // this member's own file, or a legacy club-root file no other row still
     // uses, is ever deleted (lib/blob-ownership.ts).
-    if (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url))) {
+    if (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url, removed.uploadedAt))) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

@@ -233,7 +233,7 @@ export async function DELETE(
     const removed = await withTenantContext(tenantId, async (tx) => {
       const existing = await tx.memberPhoto.findFirst({
         where: { tenantId, memberId, kind: "profile" },
-        select: { id: true, url: true },
+        select: { id: true, url: true, uploadedAt: true },
       });
       if (!existing) return null;
       await tx.memberPhoto.delete({ where: { id: existing.id } });
@@ -245,7 +245,7 @@ export async function DELETE(
     // Vercel Blob has no GC sweep; orphan cleanup is a future feature-follow-up.
     // Round 5: only this member's own file, or a legacy club-root file that no
     // other row still uses, is ever deleted (lib/blob-ownership.ts).
-    if (removed && (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url)))) {
+    if (removed && (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url, removed.uploadedAt)))) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

@@ -61,7 +61,13 @@ const row = (p: { name: string; email: string }, status: string, phone: string) 
 // Ada is cancelled with no date: she also appears in the job's exception rows (name and address).
 const CSV = [HEADER, row(ADA, "cancelled", "07700 900111"), row(BEN, "active", "07700 900222")].join("\n") + "\n";
 
-const PERSON_TABLES = ["Member", "ImportJob", "ImportedMembership", "ImportSourceMapping", "ImportedBooking", "AuditLog", "MemberStatusEvent"] as const;
+/** Every table with a tenantId column (read from the catalogue, so a future table is searched too). */
+const tenantTables = async () =>
+  (await withRlsBypass((tx) => tx.$queryRaw<{ t: string }[]>`
+    SELECT table_name AS t FROM information_schema.columns
+     WHERE table_schema = current_schema() AND column_name = 'tenantId' ORDER BY table_name`)).map((r) => r.t);
+// Her details as they could be stored: name, address, and the phone in the forms an import or a form writes.
+const NEEDLES = [ADA.name, ADA.email, "07700 900111", "07700900111", "+447700900111"];
 
 type Club = { tenantId: string; userId: string; fileUrl: string };
 const clubs: Club[] = [];
@@ -107,15 +113,17 @@ async function erase(club: Club, memberId: string) {
 /** Every place her details could survive: each table's rows (as JSON text), the kept file, and the three owner views. */
 async function traces(club: Club, jobIds: string[]) {
   const found: string[] = [];
-  for (const table of PERSON_TABLES) {
+  const has = (text: string) => NEEDLES.some((n) => text.toLowerCase().includes(n.toLowerCase()));
+  for (const table of await tenantTables()) {
+    if (!/^[A-Za-z_]+$/.test(table)) continue;
     const rows = await withRlsBypass((tx) => tx.$queryRawUnsafe<{ n: number }[]>(
-      `SELECT count(*)::int AS n FROM "${table}" t WHERE t."tenantId" = $1 AND (row_to_json(t)::text ILIKE '%' || $2 || '%' OR row_to_json(t)::text ILIKE '%' || $3 || '%')`,
-      club.tenantId, ADA.name, ADA.email,
+      `SELECT count(*)::int AS n FROM "${table}" t WHERE t."tenantId" = $1 AND row_to_json(t)::text ILIKE ANY ($2::text[])`,
+      club.tenantId, NEEDLES.map((n) => `%${n}%`),
     ));
     if (rows[0].n > 0) found.push(`${table}: ${rows[0].n} row(s)`);
   }
   const file = (await readImportFile(club.fileUrl, club.tenantId)) ?? "";
-  if (file.includes(ADA.email) || file.includes(ADA.name)) found.push("kept import file");
+  if (has(file)) found.push("kept import file");
   as(club);
   for (const id of jobIds) {
     for (const [label, res] of [
@@ -124,7 +132,7 @@ async function traces(club: Club, jobIds: string[]) {
       ["review list", await conflictsGET(new Request(`https://test.local/api/admin/import/${id}/conflicts`), ctx(id))],
     ] as const) {
       const text = await res.text();
-      if (text.includes(ADA.email) || text.includes(ADA.name)) found.push(`${label} (${id})`);
+      if (has(text)) found.push(`${label} (${id})`);
     }
   }
   return found;
@@ -175,6 +183,7 @@ describe.skipIf(!HAS_DB)("erasure, then rollback or retry: her details do not co
     expect(rb.status, await rb.clone().text()).toBe(200);
     expect(await traces(A, [job]), "after the rollback").toEqual([]);
     expect(await adaId(A)).toBeNull();
+    expect(await benStillThere(A), "the rollback removed the member only this import created").toBe(0);
   });
 
   it("B. import, erase, retry the same job, then a new job from the kept file: she is not re-created and nothing of hers returns", async () => {
@@ -182,11 +191,17 @@ describe.skipIf(!HAS_DB)("erasure, then rollback or retry: her details do not co
     expect((await previewAndCommit(B, job)).status).toBe(200);
     await erase(B, (await adaId(B))!);
 
+    // A run that stopped part-way and is resumed after the erasure (the commit route's resume path for a failed job):
+    // it re-reads the kept file, which no longer holds her.
+    await withRlsBypass((tx) => tx.importJob.update({ where: { id: job }, data: { status: "failed", completedAt: null } }));
     as(B);
-    const retry = await commitPOST(post(`${job}/commit`), ctx(job)); // a retry of the committed job (resume path)
-    expect([200, 409]).toContain(retry.status);
-    expect(await traces(B, [job]), "after retrying the job").toEqual([]);
+    const retry = await commitPOST(post(`${job}/commit`), ctx(job));
+    expect(retry.status, await retry.clone().text()).toBe(200);
+    expect(await adaId(B)).toBeNull();
+    expect(await traces(B, [job]), "after resuming the job").toEqual([]);
 
+    // A second job from the same kept file. Its fileHash is synthetic, so the "this exact file was already imported"
+    // guard does not stop it: the adversarial case, the import actually runs again.
     const again = await newJob(B, 2);
     const second = await previewAndCommit(B, again);
     expect(second.status, second.body).toBe(200);

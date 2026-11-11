@@ -50,10 +50,13 @@ export function memberPathOwner(url: string, tenantId: string): string | null {
 
 type RefTx = Pick<Prisma.TransactionClient, "memberPhoto" | "tenant" | "announcement" | "signedWaiver" | "initiativeAttachment" | "importJob">;
 
-/** Whether any row of this club still references the file (every column that can hold a stored-file URL). */
-export async function isBlobReferenced(tx: RefTx, tenantId: string, url: string): Promise<boolean> {
+/**
+ * Whether any row of this club still references the file (every column that can hold a stored-file URL).
+ * `photosOf` limits the photo-row check to one member's rows (the other columns are always checked).
+ */
+export async function isBlobReferenced(tx: RefTx, tenantId: string, url: string, opts: { photosOf?: string } = {}): Promise<boolean> {
   const [photo, logo, announcement, waiver, attachment, importJob] = await Promise.all([
-    tx.memberPhoto.findFirst({ where: { tenantId, url }, select: { id: true } }),
+    tx.memberPhoto.findFirst({ where: { tenantId, url, ...(opts.photosOf ? { memberId: opts.photosOf } : {}) }, select: { id: true } }),
     tx.tenant.findFirst({ where: { id: tenantId, logoUrl: url }, select: { id: true } }),
     tx.announcement.findFirst({ where: { tenantId, imageUrl: url }, select: { id: true } }),
     tx.signedWaiver.findFirst({ where: { tenantId, signatureImageUrl: url }, select: { id: true } }),
@@ -64,12 +67,32 @@ export async function isBlobReferenced(tx: RefTx, tenantId: string, url: string)
 }
 
 /**
- * After a member's photo row has been removed: may its file be deleted? Only the member's own file (their path) or a
- * legacy club-root file, and only if no row of the club still references it. Call AFTER the row is gone.
+ * After a member's photo row has been removed: may its file be deleted? Call AFTER the row is gone, with the removed
+ * row's `uploadedAt`.
+ *   - The member's own file (their path): only if no row of the club still references it.
+ *   - A legacy club-root file: only if the member OWNED it, i.e. their removed row was its earliest photo reference
+ *     (the same rule the image proxy reads by). Then later photo rows of OTHER members are rows planted through the
+ *     old attach hole, not owners: they do not keep the file (review F1, 11 Nov 2026), or the planter would become the
+ *     "earliest" reference once the owner left and go on reading it, and an erased person's photo would survive.
+ *     The member's own remaining rows, the logo, an announcement, a waiver, an attachment or an import still keep it.
+ *     If another member's row is EARLIER, the file was theirs: never deleted here.
  */
-export async function mayDeleteMemberPhotoBlob(tx: RefTx, tenantId: string, memberId: string, url: string): Promise<boolean> {
-  if (!isMemberBlobUrl(url, tenantId, memberId) && !isClubRootBlobUrl(url, tenantId)) return false;
-  return !(await isBlobReferenced(tx, tenantId, url));
+export async function mayDeleteMemberPhotoBlob(tx: RefTx, tenantId: string, memberId: string, url: string, removedUploadedAt: Date): Promise<boolean> {
+  if (isMemberBlobUrl(url, tenantId, memberId)) return !(await isBlobReferenced(tx, tenantId, url));
+  if (!isClubRootBlobUrl(url, tenantId)) return false;
+  const earlier = await tx.memberPhoto.findFirst({ where: { tenantId, url, uploadedAt: { lte: removedUploadedAt }, NOT: { memberId } }, select: { id: true } });
+  if (earlier) return false;
+  return !(await isBlobReferenced(tx, tenantId, url, { photosOf: memberId }));
+}
+
+/**
+ * A stored file a club ASSET (logo, announcement image) may point at: a club-root file that is not a member's photo.
+ * Refuses a member's legacy photo (club root, referenced by a photo row), so staff cannot turn a member's photo into
+ * a club asset, which would lock the member out of it and keep it past their removal or erasure (review F2/F3).
+ */
+export async function isAttachableClubAsset(tx: Pick<Prisma.TransactionClient, "memberPhoto">, tenantId: string, url: string): Promise<boolean> {
+  if (!isClubRootBlobUrl(url, tenantId)) return false;
+  return !(await tx.memberPhoto.findFirst({ where: { tenantId, url }, select: { id: true } }));
 }
 
 /** After a club asset's row (announcement image) has been removed: a club-root file nothing else references. */

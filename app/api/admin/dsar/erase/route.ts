@@ -386,7 +386,7 @@ export async function POST(req: Request) {
       ] = await Promise.all([
         tx.memberPhoto.findMany({
           where: { memberId, tenantId },
-          select: { id: true, url: true },
+          select: { id: true, url: true, uploadedAt: true },
         }),
         tx.signedWaiver.findMany({
           where: { memberId, tenantId },
@@ -823,7 +823,7 @@ export async function POST(req: Request) {
     // other row still uses. A row planted through the old attach hole (their
     // picture pointed at the logo or someone else's photo) must not make the
     // erasure delete that file (lib/blob-ownership.ts).
-    const mine = await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, photo.url)).catch(() => false);
+    const mine = await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, photo.url, photo.uploadedAt)).catch(() => false);
     if (!mine) {
       if (/^https:\/\//i.test(photo.url)) console.warn(`[dsar/erase] blob for MemberPhoto ${photo.id} is not the member's own or is still used elsewhere; left in place`);
       continue;
