@@ -352,6 +352,22 @@ describe("scrubSubjectFromManifest — person lists only", () => {
     expect(v.refresh.exceptions.notInMatFlow.map((e) => e.name)).toEqual(["Ben Ray"]);
   });
 
+  it("the review list: her ambiguous entry (no member id) is reduced to its kind; in another member's entry her name is blanked from a compared value, which stays", () => {
+    const manifest = {
+      conflicts: [
+        { kind: "ambiguous", memberIds: [], name: "Ada Obi", sourceKey: "teamup:ada@example.test|ada obi", rows: [2], reason: "Two rows share ada@example.test with different details" },
+        { kind: "conflict", memberId: "m_ben", name: "Ben Ray", sourceKey: null, rows: [4], fields: [{ field: "emergencyContactName", upload: "Ada Obi", matflow: "Tom Ray" }, { field: "phone", upload: "07700 900222", matflow: null }] },
+      ],
+    };
+    const { value } = scrubSubjectFromManifest(manifest, ADA);
+    const v = value as typeof manifest;
+    expect(v.conflicts).toHaveLength(2); // the counts still add up
+    expect(v.conflicts[0]).toEqual({ kind: "ambiguous" });
+    expect(v.conflicts[1]).toEqual({ ...manifest.conflicts[1], fields: [{ field: "emergencyContactName", upload: "", matflow: "Tom Ray" }, manifest.conflicts[1].fields![1]] });
+    expect(JSON.stringify(v)).not.toContain("Ada Obi");
+    expect(JSON.stringify(v)).not.toContain("ada@example.test");
+  });
+
   it("the input is not mutated", () => {
     const before = JSON.stringify(commit);
     scrubSubjectFromManifest(commit, ADA);

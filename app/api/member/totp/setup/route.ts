@@ -23,6 +23,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { generateRecoveryCodes } from "@/lib/recovery-codes";
 import { logAudit } from "@/lib/audit-log";
+import { refuseSupportSession } from "@/lib/support-session";
 
 // Lane C2 (9 Oct 2026): TotpEnrollmentStep posts { code, issueRecoveryCodes: true } to either base.
 // Round 5 (11 Nov 2026): the member route now honours it, as the staff route does: the codes are issued in the
@@ -87,6 +88,9 @@ export async function POST(req: NextRequest) {
   if (csrfViolation) return csrfViolation;
 
   const session = await auth();
+  // Round 5 re-review R-4: this write now also issues recovery codes; a support session never does (as the
+  // recovery-codes route already refuses it). The proxy refuses support POSTs anyway; this is the in-route backstop.
+  const support = refuseSupportSession(session); if (support) return support;
   if (!session?.user?.memberId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -133,8 +137,9 @@ export async function POST(req: NextRequest) {
     }
     // Round 5: a new enrolment starts with no recovery codes. The self-service
     // recovery keeps the unused ones (with the second factor off); without
-    // this they would work again against the new enrolment. The enrolment
-    // step asks for a fresh set straight after (recovery-codes POST).
+    // this they would work again against the new enrolment. With
+    // issueRecoveryCodes (the enrolment step sends it) the fresh set is
+    // written here, in the enabling write.
     const recovery = issueRecoveryCodes === true ? generateRecoveryCodes() : null;
     await tx.member.update({
       where: { id: memberId },
