@@ -5,6 +5,8 @@ import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react"
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage } from "@/lib/checkin-outcome";
 import { classCategoryTag } from "@/lib/class-category";
+import { readableOn } from "@/lib/color";
+import { memberClassMark } from "@/lib/class-colours";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -97,16 +99,6 @@ function hex(h: string, a: number) {
   const value = normalizeHex(h);
   const n = parseInt(value.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
-
-function readableText(color: string) {
-  const value = normalizeHex(color);
-  const n = parseInt(value.replace("#", ""), 16);
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  const luma = (r * 299 + g * 587 + b * 114) / 1000;
-  return luma > 155 ? "#0f172a" : "#ffffff";
 }
 
 function getWeekDays(anchor: Date): Date[] {
@@ -518,7 +510,9 @@ function SessionBlock({
   matName: string | null;
 }) {
   const color  = normalizeHex(cls.color ?? primaryColor);
-  const text   = readableText(color);
+  // UI-RULES §2a: the house helper picks the ink with the higher WCAG contrast; the local luma threshold it
+  // replaces picked the weaker ink across the mid-tones (green 2.28:1, orange 2.80:1 on a booked block).
+  const text   = readableOn(color);
   // Subscribed blocks are filled with the class colour, so the ink is whatever
   // reads on it. Unsubscribed blocks are a tint of that colour over the member
   // shell, so their ink is the shell's own text, never a hard-coded dark navy
@@ -549,6 +543,8 @@ function SessionBlock({
       aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${where ? `, ${where}` : ""}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
       className={[
         "relative h-auto flex-col items-stretch justify-start gap-0.5 overflow-hidden whitespace-normal rounded-xl text-left font-normal transition-all active:scale-[0.98] hover:bg-transparent",
+        // Keyboard focus outside the selection ring (which fills 2-4 px out), so the two never share a band.
+        "focus-visible:outline-offset-[6px]",
         large ? "min-h-[56px] px-[7px] pb-[8px] pt-[7px]" : "min-h-[44px] px-[5px] pb-[6px] pt-[5px]",
       ].join(" ")}
       style={{
@@ -561,10 +557,10 @@ function SessionBlock({
         border: `1px solid ${isSub
           ? `color-mix(in srgb, ${color} 70%, var(--member-text) 30%)`
           : `color-mix(in srgb, ${color} ${ended ? 30 : 55}%, var(--member-text) ${ended ? 14 : 22}%)`}`,
-        // The live edge and the selection ring mix in the shell's own text colour, so a pale class colour (light
-        // yellow, grey) still shows on the light member shell as on the dark one; a strong colour barely changes.
-        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : `color-mix(in srgb, ${color} 65%, var(--member-text) 35%)`}` : undefined,
-        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px color-mix(in srgb, ${color} 60%, var(--member-text) 40%)` : undefined,
+        // The live edge and the selection ring are the class colour mixed half and half with the shell's text
+        // colour (lib/class-colours.ts memberClassMark): 3:1 for every palette colour on the light and the dark shell.
+        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : memberClassMark(color)}` : undefined,
+        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${memberClassMark(color)}` : undefined,
         color: ink,
         // A booked class that has ended is greyed. Desaturating keeps each colour's brightness, so its ink still
         // reads; a see-through fill would not on a light shell.
@@ -634,7 +630,7 @@ function SessionBlock({
         <span
           aria-hidden="true"
           className="absolute left-0 bottom-0 h-0.5"
-          style={{ width: `${Math.round(progress * 100)}%`, background: isSub ? text : color }}
+          style={{ width: `${Math.round(progress * 100)}%`, background: isSub ? text : memberClassMark(color) }}
         />
       )}
     </Button>

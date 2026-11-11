@@ -82,14 +82,41 @@ describe("class form — colour picker", () => {
     expect(patchBody().color).toBe("#94a3b8");
   });
 
-  it("a colour the palette does not hold is kept: offered first as Current colour, and an unrelated save sends it unchanged", async () => {
+  it("a colour the palette does not hold is kept: offered first as Current colour, and an unrelated save does not touch it", async () => {
     const group = await openEdit(makeClass("c1", "Advanced", "#123456"));
     const first = within(group).getAllByRole("button")[0];
     expect(first.getAttribute("aria-label")).toBe("Class colour: Current colour");
     expect(first.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
-    expect(patchBody().color).toBe("#123456");
+    expect(patchBody()).not.toHaveProperty("color");
+  });
+});
+
+describe("class form — a class with no colour of its own", () => {
+  it("chooses nothing, says it uses the club's colour, and an unrelated save leaves it without one", async () => {
+    const group = await openEdit(makeClass("c1", "Imported", null));
+    expect(within(group).getAllByRole("button").filter((b) => b.getAttribute("aria-pressed") === "true")).toHaveLength(0);
+    expect(screen.getByTestId("class-colour-name").textContent).toBe("The club's colour (none chosen)");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
+    expect(patchBody()).not.toHaveProperty("color");
+  });
+
+  it("picking a colour for it sends that colour", async () => {
+    const group = await openEdit(makeClass("c1", "Imported", null));
+    fireEvent.click(within(group).getByRole("button", { name: "Class colour: Navy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
+    expect(patchBody().color).toBe("#1e3a8a");
+  });
+
+  it("swatches are fixed-size (never stretched to the touch 44 px), with focus drawn outside the selection ring", async () => {
+    const group = await openEdit(makeClass("c1", "Advanced", "#3b82f6"));
+    for (const b of within(group).getAllByRole("button")) {
+      expect(b.className).toContain("ui-fixed-size");
+      expect(b.className).toContain("focus-visible:outline-offset-[6px]");
+    }
   });
 });
 

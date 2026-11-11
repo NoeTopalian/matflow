@@ -45,21 +45,38 @@ export function classInk(colour: string): string {
 }
 
 /**
- * A class's colour as a 3 px edge (the live chip's left border) on white:
- * darkened only as far as the non-text 3:1 floor needs, so a pale class still
- * shows which session is live.
+ * A class's colour as a 3 px edge (the live chip's left border): darkened only
+ * as far as the non-text 3:1 floor needs against the chip's own 12 % tint, its
+ * inner neighbour (and so against the white outside it too), so a pale class
+ * still shows which session is live.
  */
 export function classEdge(colour: string): string {
-  return legibleInk(colour, STAFF_SURFACE, 3);
+  return legibleInk(colour, tintOver(colour, 0.12, STAFF_SURFACE), 3);
 }
 
 /**
  * The style of a class's small dot: its colour, with a hairline ring in the
- * text tone when the colour alone would vanish on white (below 3:1). The
- * ring is drawn as a box-shadow, so the dot's size and the layout are unchanged.
+ * text tone when the colour alone would vanish on white (below 3:1). Measured
+ * against white: on a chip the dot sits on its own 12 % tint, which gives the
+ * same answer for every palette colour (pink, the closest, is 3.53 on white and
+ * 3.04 on its tint). The ring is a box-shadow, so size and layout are unchanged.
  */
 export function classDotStyle(colour: string): { background: string; boxShadow?: string } {
   return markNeedsOutline(colour, STAFF_SURFACE) ? { background: colour, boxShadow: "0 0 0 1px var(--tx-3)" } : { background: colour };
+}
+
+/**
+ * The member shell's marks drawn in a class colour: the selection ring, the
+ * live edge and the live progress bar of a session block. The shell is dark or
+ * light (from the club's background), so the class colour is mixed half and
+ * half with the shell's own text colour: every palette colour then clears 3:1
+ * against the shell and against the ring's gap (`--member-elevated`) on both
+ * shells (tests/unit/class-colours.test.ts). At 60 % light yellow's ring was
+ * 2.95:1 on the light shell.
+ */
+export const MEMBER_MARK_SHARE = 0.5;
+export function memberClassMark(colour: string): string {
+  return `color-mix(in srgb, ${colour} ${MEMBER_MARK_SHARE * 100}%, var(--member-text) ${(1 - MEMBER_MARK_SHARE) * 100}%)`;
 }
 
 /** The default colour of a new class: the first of the palette, as before. */

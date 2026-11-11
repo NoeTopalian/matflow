@@ -923,7 +923,10 @@ function ClassForm({
   function toggleTier(id: string) {
     setAllowedTierIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
-  const [color, setColor] = useState(initial?.color ?? DEFAULT_CLASS_COLOUR);
+  // A new class starts on the palette's first colour. A class with no colour of its own (shown in the club's colour,
+  // e.g. one an import made) has none chosen here, and keeps having none until someone picks one.
+  const initialColour: string | null = initial?.id ? (initial.color ?? null) : (initial?.color ?? DEFAULT_CLASS_COLOUR);
+  const [color, setColor] = useState<string | null>(initialColour);
   // A class saved with a colour the palette does not hold keeps it: offered first, as "Current colour".
   const [ownColour] = useState(() => (initial?.color && !classColourName(initial.color) ? initial.color : null));
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
@@ -1022,7 +1025,8 @@ function ClassForm({
       // an unrelated edit never rewrites the list; clearing every tick sends
       // [] and reopens the class.
       ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
-      color,
+      // Sent on create, and on edit only when changed, so an unrelated edit never rewrites a class's colour.
+      ...(!initial?.id || color !== initialColour ? { color } : {}),
       schedules,
       // P6: the slot ids this form loaded with. The server refuses the save
       // (409) if the class's days changed since, instead of taking this list
@@ -1516,9 +1520,9 @@ function ClassForm({
           which is drawn as an outline and so stays distinct from the selection ring. */}
       <div>
         <p id="class-colour-label" className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Colour</p>
-        <div role="group" aria-labelledby="class-colour-label" className="flex gap-2 flex-wrap" data-testid="class-colour-swatches">
+        <div role="group" aria-labelledby="class-colour-label" className="flex gap-4 flex-wrap" data-testid="class-colour-swatches">
           {[...(ownColour ? [{ value: ownColour, name: "Current colour" }] : []), ...CLASS_COLOURS].map((c) => {
-            const selected = color.toLowerCase() === c.value.toLowerCase();
+            const selected = color !== null && color.toLowerCase() === c.value.toLowerCase();
             return (
               <Button
                 key={c.value}
@@ -1528,7 +1532,10 @@ function ClassForm({
                 aria-label={`Class colour: ${c.name}`}
                 aria-pressed={selected}
                 title={c.name}
-                className="h-7 w-7 rounded-full p-0 hover:opacity-90"
+                // Fixed size (UI-RULES §5a): a 28 px circle on every pointer, never stretched to the touch 44 px; the
+                // ::before is the 44 px hit area instead (gap-4 keeps neighbours' apart). Keyboard focus sits 6 px out,
+                // beyond the selection ring's 2-4 px band, so the two are never drawn in the same place.
+                className="ui-fixed-size relative h-7 w-7 rounded-full p-0 hover:brightness-95 before:absolute before:-inset-2 before:content-[''] focus-visible:outline-offset-[6px]"
                 style={{
                   background: c.value,
                   // The gap is the surface token and the ring the text tone, so the ring shows on any swatch;
@@ -1544,7 +1551,7 @@ function ClassForm({
           })}
         </div>
         <p className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }} aria-live="polite" data-testid="class-colour-name">
-          {classColourName(color) ?? "Current colour"}
+          {color === null ? "The club's colour (none chosen)" : (classColourName(color) ?? "Current colour")}
         </p>
       </div>
 
