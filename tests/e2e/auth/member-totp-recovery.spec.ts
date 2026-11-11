@@ -253,7 +253,9 @@ async function enrolTotpAndGetRecoveryCodes(
   ).toBe(200);
 
   // Generate recovery codes — CSRF guard on this route too.
+  // Round 5: the route needs a current authenticator code (step-up).
   const codesRes = await request.post("/api/member/totp/recovery-codes", {
+    data: { totpCode: code },
     headers: { Origin: BASE },
   });
   expect(

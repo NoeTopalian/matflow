@@ -20,6 +20,7 @@ import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSameOrigin } from "@/lib/csrf";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 
 // Lane C2 (9 Oct 2026): TotpEnrollmentStep posts { code, issueRecoveryCodes: true } to either base;
 // the member route ignores issueRecoveryCodes but must accept it.
@@ -127,9 +128,13 @@ export async function POST(req: NextRequest) {
     if (!verifySync({ token: code, secret: m.totpSecret }).valid) {
       return { kind: "invalid-code" as const };
     }
+    // Round 5: a new enrolment starts with no recovery codes. The self-service
+    // recovery keeps the unused ones (with the second factor off); without
+    // this they would work again against the new enrolment. The enrolment
+    // step asks for a fresh set straight after (recovery-codes POST).
     await tx.member.update({
       where: { id: memberId },
-      data: { totpEnabled: true },
+      data: { totpEnabled: true, totpRecoveryCodes: Prisma.JsonNull },
     });
     return { kind: "ok" as const };
   });
