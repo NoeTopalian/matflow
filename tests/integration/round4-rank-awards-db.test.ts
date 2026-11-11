@@ -140,4 +140,18 @@ describe.skipIf(!HAS_DB)("rank awards are recorded once", () => {
     expect(audit.calls.filter((c) => c.action === "member.rank.demote")).toHaveLength(1);
     expect(mail.calls.filter((c) => c.templateId === "rank_demoted")).toHaveLength(1);
   });
+
+  // Round 4 substantiation: IDEMPOTENCY BY STATE, not a rate limit. The award
+  // is compared with the rank the member holds, under the Member row lock;
+  // there is no window. A legitimate later award of the same belt (after a
+  // demotion) is a real change and is recorded, with one push.
+  it("re-awarding a belt after a demotion is a real promotion: one history row, one push", async () => {
+    as("A");
+    expect((await demote(memberId, { toRankId: white })).status).toBe(200);
+    push.calls = 0;
+    const before = (await history()).rows.length;
+    expect((await award(memberId, { rankSystemId: blue, stripes: 0 })).status).toBe(200);
+    expect((await history()).rows.length - before).toBe(1);
+    expect(push.calls).toBe(1); // one push queued (delivery is not live and not tested)
+  });
 });

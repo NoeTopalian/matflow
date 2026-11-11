@@ -190,3 +190,34 @@ Noe: "close Round 3's retention wording, denominator labels, precise test invent
 | R3-O5 | Dashboard computes three figures it never shows | performance | Open | — |
 | R3-O6 | Placeholder text "30 days of attendance" not checked | presentation | Open | — |
 | R3-O7 | `cron-smoke` class-instances times out (on the base too) | test infrastructure | Open, not caused by Round 3 | — |
+
+## Close-out corrections (11 Nov 2026)
+
+**The survival label matches the query exactly.**
+- **Cohort:** `member.count({ joinedAt: { lt: sixMonthsAgo }, ...TRAINING_MEMBER })` (`lib/reports.ts:669`).
+- **Survivors:** the same filter with `ACTIVE_MEMBER` (`:670`).
+- **`sixMonthsAgo`** is `clubMonthWindow(now, timeZone, -5).monthStart`: midnight in the club's zone on the 1st of the club month five back. `retention.joinedBefore` is that same instant (`:1031`).
+- **The label** "Members who joined before 1 June 2026" formats it in the club's zone. "Before" is strict (`lt`).
+- **Who counts:** training members only. Guardian accounts and archived members are excluded, by `TRAINING_MEMBER` and `NOT_ARCHIVED`.
+
+**Unsupported performance claim corrected.**
+- The removed 200-session cap was justified in code as "a year of a busy timetable stays a few thousand rows". That was an **estimate, not a measurement**.
+- The read returns one row per session that had at least one check-in in the period. Example: 20 attended sessions a week is about 1,040 rows a year, and a 24-month custom period about 2,080.
+- The follow-up lookup loads those sessions by id in one `IN` list (reviewer L-5). It was not load-tested. Round 8 (measured performance) owns this.
+
+**Unresolved findings from Round 3, explicitly:**
+- R3-O1: Member Progress uses the server clock (Round 10).
+- R3-O2: birthdays and anniversaries use the server's day (Round 10).
+- R3-O3: the timetable editor's week uses the browser clock (Round 6).
+- R3-O4: `/api/dashboard/stats` has no caller and uses the server clock.
+- R3-O5: the dashboard computes three unused figures.
+- R3-O6: the monthly report placeholder text.
+- L-4: `weeksBack` across a clock change (no reader).
+
+**Product decisions for Noe:**
+- M-3: should sessions nobody attended count?
+- Survival cohort length: 5 to 6 months, now labelled by date.
+
+**Pre-existing test failures,** which fail the same way on the base `78e84038`, both roles:
+- `cron-smoke` class-instances: 240 s timeout.
+- `contact-email-change-imports-db`: 30 s timeout.

@@ -201,11 +201,43 @@ R4-9 first survived: the helper's unit test does not see the form. A form-level 
 - **Typecheck:** clean.
 - **Lint:** passes, with every UI-RULES ratchet at its baseline.
 
-## Performance implications
+## Performance (measured 11 Nov 2026; replaces the earlier unmeasured claims)
 
-- **Row locks.** Each new lock is one indexed primary-key `SELECT 1 … FOR NO KEY UPDATE` inside a transaction that was already open, held for that transaction only, with no network call inside. Settings and plan saves take it only when `expected` is sent.
-- **Rate-limit hits.** The chase and announcement checks add one rate-limit hit each, the same store and cost as the existing daily chase limit.
-- **No new polling, websockets or global locks.**
+**How it was measured.**
+- File: `tests/integration/round4-perf-db.test.ts`.
+- Real `PATCH /api/settings` against the Neon test branch, run as both roles.
+- The numbers below are from the `matflow_app` run.
+- They are from this machine over the internet, so each request includes several network round trips. They are not production latencies.
+
+| Measure | Result |
+|---|---|
+| Settings save, no `expected` (n = 20) | p50 1,404 ms, p95 1,552 ms |
+| Settings save with `expected` (row lock + compare, n = 20) | p50 1,639 ms, p95 1,839 ms: about +235 ms, consistent with one extra statement |
+| 10 concurrent saves of the same field from the same base | One 200 and nine 409. They **queue on the row lock**: the last answered after 8.65 s |
+
+**Limitations.**
+- **Writers queue.** Same-field writers to one club's settings, or one plan, are served one at a time. Ten at once took about 9 s here. Real clubs have one or two staff editing settings, but the queue is real.
+- **Lock timeout.** `lock_timeout` is 10 s per transaction (`lib/prisma-tenant.ts`). A queue longer than that fails the later saves (Postgres 55P03), which the route answers as a 500.
+- **Other routes not measured.** Rank, notes, plan and class locks were not measured separately. They are the same single-row primary-key lock pattern; the class route already held its lock before Round 4.
+- **Rate-limit checks.** The chase and announcement checks are one store hit each, like the existing daily limit. Not measured separately.
+
+## Duplicate protection: what each mechanism is (Round 4 substantiation)
+
+| Action | Mechanism | Kind | Persistence | Window | Simultaneous requests | Committed, reply lost, then retried | After the window | A legitimate later action |
+|---|---|---|---|---|---|---|---|---|
+| Belt award / demotion | Member row lock; the request is compared with the rank held | **Idempotency by state** | `MemberRank` row (Postgres) | None (state-based) | One recorded; the other is "unchanged" (tested) | "Unchanged", nothing written (tested) | n/a: still unchanged while the rank is the same | Re-awarding a belt after a demotion is recorded once (tested) |
+| Payment chase | `RateLimitHit` bucket `payment-chase-once:<club>:<member>`, max 1 | **Rate limit** | `RateLimitHit` rows (Postgres, advisory lock) | 60 s | One 200, one 409 `chase_just_sent` (tested) | 409 inside the minute; no second email (tested) | A new reminder is sent (tested, by back-dating the hit) | Allowed after 60 s, up to the existing 3 a day |
+| Announcement | `RateLimitHit` bucket `announcement-once:<club>:<hash of title, body, pinned, image, expiry>`, max 1 | **Rate limit** plus lookup of the notice just posted | `RateLimitHit` rows; `Announcement` rows | 2 min | One 201; the other gets that notice (200) or 409 `announcement_in_flight` (tested) | The same notice back, 200 (tested) | A deliberate repost is created (tested) | A different notice (text, pinned, image or expiry) is created at once (tested) |
+| Add child | `requestId` stored as `Member.createRequestId`, unique per club; replay on match or P2002 | **Idempotency key** | `Member` row (Postgres unique index) | None: permanent | One child, both answered with it (tested) | 200 with the same child (tested) | Still the same child, however late (tested) | A new Add child (new id) is a new child (tested) |
+
+**Rate limit versus idempotency.**
+- **Rate limit (chase, announcement).** Bounds how often an action can happen. It is not tied to one request. If the store is down, these "once" buckets are in the security class and are **refused**. The person is then told the action is a repeat when it may not be (listed under limitations).
+- **Idempotency (child, rank).** Ties a retry to the original result with no time limit.
+
+**Email and push: what "once" means here.**
+- **Chase.** One committed chase is one `sendEmail` call. That call writes one `EmailLog` row and makes at most one provider request (`lib/email.ts`). The tests count `sendEmail` calls. Delivery by Resend, and the member actually receiving it, is **not** tested and not claimed. Exactly-once delivery is not claimed: a provider timeout after acceptance could still lead to a resend if staff chase again after the minute.
+- **Rank.** One committed award queues one `sendPushToMember` call. Push delivery is not live (per `CLAUDE.md`) and is not tested.
+- **Demotion "tell the member".** One `sendEmail` call per committed demotion (tested). Delivery is not tested.
 
 ## Remaining limitations (explicit last-write-wins and gaps)
 
@@ -216,7 +248,7 @@ R4-9 first survived: the helper's unit test does not see the form. A form-level 
 - **Class editor on a conflict.** It shows the server's sentence and keeps the form, but has no inline Use latest / Save mine. Reopening the class loads the latest. Belongs to Round 6 (the timetable editor).
 - **Initiatives** are last write wins (owner-only campaign notes).
 - **Announcement fingerprint.** The whole notice (title, body, pinned, image, expiry). The same notice reposted deliberately within two minutes is treated as a repeat.
-- **Squad versus rank gate.** A rank-gate save from an older tab can clear a squad edited elsewhere (no `baseRosterIds` precondition). Two admins editing one class's squad at once is the remaining last-write-wins case on classes.
+- **Squad versus rank gate: fixed in `51b1b7b9`.** The class editor sends `baseRosterIds`. A squad change or rank gate is refused if the squad changed since. Reproduced with two editors and fixed, both roles.
 - **Rank photos.** A double click on an unchanged award with a new photo can attach that photo twice; the check runs outside the Member lock.
 - **Rate-limit store outage.** If the store is down, the chase and announcement "once" checks follow the store's outage policy and can refuse a genuine action as a repeat.
 - **Audit.** Most routes write the audit row after the transaction commits. A failure there leaves a committed change without its audit row. It is logged; it never records a change that rolled back. Member, staff and notes edits are audited inside their transaction.
@@ -224,3 +256,25 @@ R4-9 first survived: the helper's unit test does not see the form. A form-level 
 - **Pre-existing test failures**, which fail the same way on the Round 2 base `78e84038` under both roles:
   - `cron-smoke` class-instances (240 s timeout);
   - `contact-email-change-imports-db` (30 s timeout).
+
+## Close-out (11 Nov 2026)
+
+**Containment of R4-0.**
+- **Hotfix branch:** `hotfix/member-notes-preserved` (worktree `matflow-worktrees/hotfix-notes`), from `origin/main` `33592fe0`. It holds the cherry-picked fix plus its DB test and review nits.
+- **Evidence:** in the hotfix report to Noe. Not pushed.
+- **Recovery plan:** `docs/readiness/NOTES-RECOVERY-PLAN-2026-11-11.md`, read-only.
+
+**Squad versus rank gate:** fixed and verified in `51b1b7b9`, see Limitations.
+
+**Unresolved findings, explicitly:**
+- **Member profile whole-form save.** Protected by `updatedAt`, not per field. A retry after a lost reply reads as "someone else changed this member".
+- **Class editor conflict UI.** Reload only, with no Use latest / Save mine. Round 6.
+- **Rank photo.** A double click on an unchanged award with a new photo can attach it twice.
+- **Rate-limit store outage.** The "once" checks refuse, and the message says "repeat".
+- **Initiatives.** Last write wins.
+- **Writers queue.** Same-field writers queue on the row lock. 10 at once took about 9 s on the test branch. Beyond the 10 s `lock_timeout`, later saves fail with a 500.
+- **Bodies without `expected`.** Settings and plans still accept them, as last write wins (onboarding, toggles).
+
+**Pre-existing test failures,** which fail the same way on the base `78e84038`, both roles:
+- `cron-smoke` class-instances: 240 s timeout.
+- `contact-email-change-imports-db`: 30 s timeout.

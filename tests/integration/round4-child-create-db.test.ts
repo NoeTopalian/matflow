@@ -74,4 +74,23 @@ describe.skipIf(!HAS_DB)("add child: one child per request id", () => {
     expect(results.map((r) => r.status).sort()).toEqual([200, 201]);
     expect((await kids()) - before).toBe(1);
   });
+
+  // Round 4 substantiation: this is IDEMPOTENCY, not a rate limit. The request
+  // id is stored on the member (unique tenantId+createRequestId) and has no
+  // window: the same id returns the same child however late it is retried. A
+  // new id (the form starts one when the details change, or a new Add child)
+  // is a new child.
+  it("the same request id much later still returns the same child; a new id adds another", async () => {
+    const key = randomUUID();
+    const first = await send(key);
+    expect(first.status).toBe(201);
+    const firstId = (await first.json()).id;
+    await withRlsBypass((tx) => tx.member.update({ where: { id: String(firstId) }, data: { joinedAt: new Date("2026-01-01T00:00:00Z") } })); // "much later": nothing in the replay depends on time
+    const late = await send(key);
+    expect(late.status).toBe(200);
+    expect((await late.json()).id).toBe(firstId);
+    const before = await kids();
+    expect((await send(randomUUID())).status).toBe(201);
+    expect((await kids()) - before).toBe(1);
+  });
 });

@@ -95,4 +95,21 @@ describe.skipIf(!HAS_DB)("announcements: posted once per click burst", () => {
     expect([plain.status, r.status]).toEqual([201, 201]);
     expect(await count("A", "Pinned or not")).toBe(2);
   });
+
+  // Round 4 substantiation: also a RATE LIMIT keyed on the whole notice, two
+  // minutes, in Postgres (RateLimitHit). After the window the same notice is
+  // a deliberate repost and is created.
+  it("after two minutes, the same notice again is a deliberate repost and is created", async () => {
+    as("A");
+    const first = await post("Repost later");
+    expect(first.status).toBe(201);
+    await withRlsBypass(async (tx) => {
+      await tx.rateLimitHit.updateMany({ where: { bucket: { startsWith: `announcement-once:${club.A}:` } }, data: { hitAt: new Date(Date.now() - 121_000) } });
+      await tx.announcement.update({ where: { id: String(first.body.id) }, data: { createdAt: new Date(Date.now() - 121_000) } });
+    });
+    const again = await post("Repost later");
+    expect(again.status).toBe(201);
+    expect(again.body.id).not.toBe(first.body.id);
+    expect(await count("A", "Repost later")).toBe(2);
+  });
 });

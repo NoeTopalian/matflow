@@ -630,8 +630,9 @@ export async function getReportsData(
           // busiest sessions, so over 3, 6 or 12 months Top classes, their
           // averages and fill rates, the class mix and the club-wide fill
           // rate were counted over the busiest sessions only. One row per
-          // session is read (never per check-in), so a year of a busy
-          // timetable stays a few thousand rows.
+          // attended session is read (never per check-in): about 1,040 a year
+          // at 20 attended sessions a week. An estimate, not load-tested
+          // (Round 8).
           orderBy: { _count: { classInstanceId: "desc" } },
         })
         .then(async (topRaw) => {

@@ -103,4 +103,23 @@ describe.skipIf(!HAS_DB)("payment chase: one reminder per click burst", () => {
     expect((await sendFor()).status).toBe(200); // the retry is allowed and sends
     expect(mail.calls.length).toBeGreaterThanOrEqual(1);
   });
+
+  // Round 4 substantiation (11 Nov 2026): the chase guard is a RATE LIMIT, not
+  // idempotency. One RateLimitHit row per member per minute (bucket
+  // payment-chase-once:<club>:<member>), in Postgres. Inside the minute a
+  // repeat is refused; after it, a new reminder is a legitimate new action and
+  // is sent (still within the 3-a-day limit).
+  it("after the minute has passed, a second chase is a new reminder and is sent", async () => {
+    as("A");
+    const m = await withRlsBypass((tx) => tx.member.create({ data: { tenantId: club.A, name: `${STAMP} window`, email: `${STAMP}-w@example.test` } }));
+    const sendFor = () => chase(new Request("https://test.local/api/payments/chase", {
+      method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify({ memberId: m.id }),
+    })) as unknown as Promise<{ status: number }>;
+    mail.calls.length = 0;
+    expect((await sendFor()).status).toBe(200);
+    expect((await sendFor()).status).toBe(409);            // inside the minute
+    await withRlsBypass((tx) => tx.rateLimitHit.updateMany({ where: { bucket: `payment-chase-once:${club.A}:${m.id}` }, data: { hitAt: new Date(Date.now() - 61_000) } }));
+    expect((await sendFor()).status).toBe(200);            // the minute has passed
+    expect(mail.calls).toHaveLength(2);                    // two committed sends (provider delivery not tested)
+  });
 });
