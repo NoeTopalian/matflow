@@ -1,10 +1,11 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { mayDeleteMemberPhotoBlob } from "@/lib/blob-ownership";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
 import { refuseArchivedMember } from "@/lib/archived-member-guard";
@@ -177,9 +178,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     });
     if (!removed) return apiError("Not found", 404);
 
-    // Best-effort blob cleanup (no-op for inline data: URLs); only this
-    // club's own store files are ever deleted.
-    if (isMemberBlobUrl(removed.url, tenantId, memberId)) {
+    // Best-effort blob cleanup (no-op for inline data: URLs). Round 5: only
+    // this member's own file, or a legacy club-root file no other row still
+    // uses, is ever deleted (lib/blob-ownership.ts).
+    if (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url))) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

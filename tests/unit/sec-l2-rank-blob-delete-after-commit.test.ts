@@ -98,7 +98,8 @@ import { del } from "@vercel/blob";
 // never deletes one (tests/unit/blob-tenant-ownership.test.ts).
 const BLOB_A = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/old-a.png";
 const BLOB_B = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/old-b.png";
-const NEW_PHOTO = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/new.png";
+// Round 5 remediation: the new promotion photo is the member's own upload.
+const NEW_PHOTO = "https://abc123store.blob.vercel-storage.com/tenants/tenant-L2/members/member-1/new.png";
 
 function req(body: unknown): Request {
   return new Request("https://test.local/", {

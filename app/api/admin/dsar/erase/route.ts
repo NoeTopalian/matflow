@@ -59,6 +59,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { emailDigest } from "@/lib/login-email";
 import { isTenantBlobUrl } from "@/lib/blob-url";
+import { mayDeleteMemberPhotoBlob } from "@/lib/blob-ownership";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
@@ -818,6 +819,15 @@ export async function POST(req: Request) {
   // surviving PII linked to the member. Never abort the erase for it — the
   // warning names the row so an operator can clean up by hand.
   for (const photo of scope.photos) {
+    // Round 5 remediation: the member's own file, or a legacy club-root file no
+    // other row still uses. A row planted through the old attach hole (their
+    // picture pointed at the logo or someone else's photo) must not make the
+    // erasure delete that file (lib/blob-ownership.ts).
+    const mine = await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, photo.url)).catch(() => false);
+    if (!mine) {
+      if (/^https:\/\//i.test(photo.url)) console.warn(`[dsar/erase] blob for MemberPhoto ${photo.id} is not the member's own or is still used elsewhere; left in place`);
+      continue;
+    }
     await deleteBlobBestEffort(photo.url, `MemberPhoto ${photo.id}`, tenantId);
   }
   for (const waiver of scope.waivers) {
