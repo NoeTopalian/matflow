@@ -109,7 +109,7 @@ describe.skipIf(!HAS_DB)("member edits keep internal notes they do not send", ()
 
   it("notes are still sanitised when sent (control and zero-width characters stripped, trimmed)", async () => {
     as("A");
-    expect((await patch({ notes: "  Pays​ cash\u0007  " })).status).toBe(200);
+    expect((await patch({ notes: "  Pays\u200b cash\u0007  " })).status).toBe(200);
     expect((await row()).notes).toBe("Pays cash");
   });
 
