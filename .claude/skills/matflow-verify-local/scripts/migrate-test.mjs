@@ -15,8 +15,10 @@
 //     clients reused, and every import route answered "a database update is being applied" (holdOffMigrations). On a
 //     direct connection the lock lives and dies with one real backend: Postgres releases it when the CLI disconnects,
 //     however the run ends (scripts/readiness/migration-rehearsal.mjs uses the same rule).
-//   - Every connection of a run carries application_name `mf-migrate-test-<run>`; the run records its own and its
-//     child's process ids under %LOCALAPPDATA%\matflow-verify\migrate-test\.
+//   - Every connection of a run carries application_name `mf-migrate-test-<host>-<pid>-<hex>` (host = a short hash of
+//     this machine's name); the run records its own and its child's process ids under
+//     %LOCALAPPDATA%\matflow-verify\migrate-test\. A tag from ANOTHER host is never judged here (its processes cannot be
+//     seen from this machine): it is refused, never ended (review F7).
 //   - Before a run, a backend holding the lock is ended ONLY when it carries a mf-migrate-test tag whose recorded
 //     processes are both gone (an orphan of an earlier run of this tool). A holder still owned by a live run, and any
 //     holder that is not this tool's, is reported and the run refuses (exit 3): it is never terminated.
@@ -26,6 +28,7 @@
 //     (created and dropped with scripts/readiness/migration-rehearsal.mjs), for verifying this behaviour in isolation.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -33,7 +36,8 @@ import { APP, DATA, TEST_HOST, assertTestUrl, assertWorktree, node24, prismaEnv 
 
 const LOCK_KEY = 72707369; // Prisma Migrate's advisory lock (schema engine 7.x), lib/migration-lock.ts
 const TAG_PREFIX = "mf-migrate-test-";
-const RUN = `${TAG_PREFIX}${process.pid}-${randomBytes(3).toString("hex")}`;
+const HOST = createHash("sha256").update(os.hostname()).digest("hex").slice(0, 6);
+const RUN = `${TAG_PREFIX}${HOST}-${process.pid}-${randomBytes(3).toString("hex")}`;
 const RUNS = path.join(DATA, "migrate-test");
 const WIN = process.platform === "win32";
 const redact = (s) => String(s ?? "").replace(/postgres(ql)?:\/\/[^\s"']+/g, "<url>");
@@ -66,9 +70,10 @@ async function connect(url, suffix) {
 /** Backends of THIS database holding (or waiting for) Prisma Migrate's lock. */
 async function lockHolders(c) {
   return (await c.query(
-    `SELECT a.pid, a.application_name AS app, l.granted
+    `SELECT a.pid, a.application_name AS app, a.backend_start::text AS backend_start, l.granted
        FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-      WHERE l.locktype = 'advisory' AND l.objid = $1 AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
+      WHERE l.locktype = 'advisory' AND l.classid = 0 AND l.objid = $1 AND l.objsubid = 1
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
     [LOCK_KEY],
   )).rows;
 }
@@ -79,14 +84,28 @@ function recordRun(childPid) {
   fs.mkdirSync(RUNS, { recursive: true });
   fs.writeFileSync(runFile(RUN), JSON.stringify({ tag: RUN, parentPid: process.pid, childPid, startedAt: new Date().toISOString(), cmd }));
 }
-/** Whether a mf-migrate-test tag belongs to a run with a live process (its record, or the pid in the tag). */
+/**
+ * Whether a lock holder is a run of this tool ON THIS HOST, and whether that run still has a live process (its record,
+ * or the pid in the tag). A tag from another host, or an older tag without a host, is not ours to judge.
+ */
 function runIsLive(app) {
-  const tag = app.match(/^(mf-migrate-test-\d+-[0-9a-f]{6})/)?.[1];
-  if (!tag) return { ours: false, live: false };
+  const m = app.match(/^(mf-migrate-test-([0-9a-f]{6})-(\d+)-[0-9a-f]{6})/);
+  if (!m || m[2] !== HOST) return { ours: false, live: false, foreignTool: app.startsWith(TAG_PREFIX) };
+  const tag = m[1];
   let rec = null;
   try { rec = JSON.parse(fs.readFileSync(runFile(tag), "utf8")); } catch { /* no record */ }
-  const parentPid = rec?.parentPid ?? Number(tag.split("-")[3]);
+  const parentPid = rec?.parentPid ?? Number(m[3]);
   return { ours: true, tag, live: alive(parentPid) || alive(rec?.childPid) };
+}
+
+/** End ONE backend, and only if it is still the same session (pid, application_name and start time all match; the start
+ *  time is compared as text, at Postgres's microsecond precision, never through a millisecond JS Date). */
+async function endBackend(c, h) {
+  const r = await c.query(
+    "SELECT pg_terminate_backend(pid) AS ok FROM pg_stat_activity WHERE pid = $1 AND application_name = $2 AND backend_start::text = $3",
+    [h.pid, h.app, h.backend_start],
+  );
+  return r.rows[0]?.ok === true;
 }
 
 /** Before a run: end orphaned lock holders of THIS tool only; refuse on any other holder. Never touches unrelated sessions. */
@@ -97,11 +116,12 @@ async function sweepBefore(url) {
     for (const h of holders) {
       const who = runIsLive(h.app ?? "");
       if (who.ours && !who.live) {
-        const ended = (await c.query("SELECT pg_terminate_backend($1) AS ok", [h.pid])).rows[0].ok;
+        const ended = await endBackend(c, h);
         console.log(`[migrate-test] ended orphaned backend ${h.pid} of an earlier run (${who.tag}, its processes are gone): ${ended}`);
         try { fs.rmSync(runFile(who.tag)); } catch { /* none */ }
       } else {
-        console.log(`[migrate-test] REFUSED: Prisma Migrate's lock is ${h.granted ? "held" : "awaited"} by backend ${h.pid} (${h.app || "no application_name"}${who.ours ? ", a live migrate-test run" : ", not this tool's"}); it was not touched. Wait for it to finish, or ask its owner.`);
+        const whose = who.ours ? ", a live migrate-test run on this machine" : who.foreignTool ? ", a migrate-test run from another machine" : ", not this tool's";
+        console.log(`[migrate-test] REFUSED: Prisma Migrate's lock is ${h.granted ? "held" : "awaited"} by backend ${h.pid} (${h.app || "no application_name"}${whose}); it was not touched. Wait for it to finish, or ask its owner.`);
         return false;
       }
     }
@@ -118,7 +138,7 @@ async function verifyAfter(url) {
     const holders = await lockHolders(c);
     const ours = holders.filter((h) => (h.app ?? "").startsWith(RUN) && !(h.app ?? "").endsWith("-verify"));
     for (const h of ours) {
-      const ended = (await c.query("SELECT pg_terminate_backend($1) AS ok", [h.pid])).rows[0].ok;
+      const ended = await endBackend(c, h);
       console.log(`[migrate-test] backend ${h.pid} of this run still held the lock after the CLI ended; ended it: ${ended}`);
     }
     const left = (await lockHolders(c)).filter((h) => (h.app ?? "").startsWith(RUN));
