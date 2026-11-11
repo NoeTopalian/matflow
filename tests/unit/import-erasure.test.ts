@@ -281,8 +281,8 @@ describe("eraseSubjectsFromImportFiles", () => {
 
   it("diagnostics for several subjects: the caller's jobs are used (no read), and each changed job is written once", async () => {
     const jobs = [
-      { id: "j1", errorLog: [{ row: 2, reason: "Duplicate email ada@example.test" }, { row: 3, reason: "Zara Obi: missing date of birth" }, { row: 4, reason: "Missing plan" }], dryRunSummary: null },
-      { id: "j2", errorLog: [{ row: 2, reason: "Missing plan" }], dryRunSummary: null },
+      { id: "j1", errorLog: [{ row: 2, reason: "Duplicate email ada@example.test" }, { row: 3, reason: "Zara Obi: missing date of birth" }, { row: 4, reason: "Missing plan" }], dryRunSummary: null, manifest: null },
+      { id: "j2", errorLog: [{ row: 2, reason: "Missing plan" }], dryRunSummary: null, manifest: null },
     ];
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const findMany = vi.fn(async () => jobs);

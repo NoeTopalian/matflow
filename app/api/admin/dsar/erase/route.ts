@@ -43,7 +43,7 @@
  *   - Stored import files — every kept file of the club rewritten without the
  *     rows whose email or source key is the member's (6 Nov 2026: files are
  *     kept, so the erasure must reach them); ImportJob.errorLog and
- *     dryRunSummary — every entry naming the member removed, by id, source
+ *     dryRunSummary and manifest (manifest: Round 5, 11 Nov 2026) — every entry naming the member removed, by id, source
  *     key, email or name (lib/importers/import-erasure.ts)
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
@@ -461,7 +461,7 @@ export async function POST(req: Request) {
       const holders = addressHolders(members, history);
       const subjects = subjectRows.map((m) => toSubject(m, edits, holders));
       // One read of the club's import jobs serves the file list and the diagnostics.
-      const jobs = await tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true, errorLog: true, dryRunSummary: true } });
+      const jobs = await tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true, errorLog: true, dryRunSummary: true, manifest: true } });
       const uploads = await tx.importUpload.findMany({ where: { tenantId }, select: { id: true, status: true, expiresAt: true } });
       return {
         subjects,
