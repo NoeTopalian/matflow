@@ -15,7 +15,8 @@
  * cannot drift, unlike "a month". Month-based cycles keep the existing
  * end-of-month clamping in lib/overdue.ts.
  */
-import { z } from "zod";
+// Bundled into client components too: lib/zod-client sets jitless there first.
+import { z } from "@/lib/zod-client";
 
 export const BILLING_CYCLES = [
   "weekly",
