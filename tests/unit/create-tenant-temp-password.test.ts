@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const st = vi.hoisted(() => ({
   createArgs: null as null | { data: Record<string, unknown> },
   audit: [] as Array<Record<string, unknown>>,
+  seededFor: [] as unknown[],
 }));
 
 vi.mock("@/lib/prisma-tenant", () => ({
@@ -26,6 +27,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
           return { id: "t-new", slug: args.data.slug, name: args.data.name, users: [{ id: "u-new-owner", email: "owner@example.test", role: "owner" }] };
         },
       },
+      // The club's starting class categories, seeded in the same transaction (lib/class-category-store.ts).
+      $executeRaw: async (_s: TemplateStringsArray, ...values: unknown[]) => { st.seededFor.push(...values); return 1; },
     }),
   withTenantContext: vi.fn(),
 }));
@@ -59,6 +62,7 @@ function req() {
 beforeEach(() => {
   st.createArgs = null;
   st.audit = [];
+  st.seededFor = [];
 });
 
 describe("create-tenant: the operator-chosen owner password is temporary", () => {
@@ -72,6 +76,11 @@ describe("create-tenant: the operator-chosen owner password is temporary", () =>
     expect(exp).toBeInstanceOf(Date);
     expect(exp.getTime()).toBeGreaterThanOrEqual(before + TEMP_PASSWORD_TTL_MS);
     expect(exp.getTime()).toBeLessThanOrEqual(Date.now() + TEMP_PASSWORD_TTL_MS);
+  });
+
+  it("the new club gets its starting class categories in the same transaction as the club", async () => {
+    await POST(req());
+    expect(st.seededFor).toEqual(["t-new"]);
   });
 
   it("the audit row names the owner it created (the activation verdict reads it)", async () => {

@@ -107,6 +107,10 @@ export const REASON = {
   timetablePage: "Change it back from the Timetable page.",
   matGone: "That mat no longer exists.",
   onMatNow: "This class is on a mat now. Change its mat from the Timetable page.",
+  // Club-managed categories (Release A): a class goes back only to one of this
+  // club's categories that is still offered.
+  categoryGone: "That category is no longer one of this club's. Choose the class's category on the Timetable page.",
+  categoryArchived: "That category has been archived since. Choose the class's category on the Timetable page.",
 } as const;
 
 const meta = (row: AuditRowLike): Record<string, unknown> =>
@@ -143,7 +147,10 @@ const RESTORABLE: Record<string, readonly string[]> = {
     // The mat the class runs on. Restored by id; its place text is then the
     // mat's current name, never the recorded one (see class.updated `prepare`).
     "matId",
-    // T6c: the class category (a key from lib/class-category.ts, or null).
+    // The class's category: `categoryId` on rows from Release A of club-managed
+    // categories on; the old key `category` on rows from before it, which
+    // class.updated `prepare` turns into this club's category with that key.
+    "categoryId",
     "category",
     // T6b: Resume / Restore clears it; undoing that puts the archive back.
     "deletedAt",
@@ -308,6 +315,49 @@ export function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
+/**
+ * A class edit's category, made safe to undo (club-managed categories,
+ * Release A). Two things, both before the stale check:
+ *
+ *  - A row recorded before Release A speaks in old keys (`category`). Both the
+ *    value to put back and the value the class must still hold are turned into
+ *    this club's category with that key, and checked against the class's
+ *    `categoryId`. So a class given a category the club made after the edit
+ *    (whose old-key column is empty, as an edit that cleared the category also
+ *    left it) is "changed since" and is not overwritten.
+ *  - Putting back a category is choosing it again: it must still be this
+ *    club's and not archived. Undoing to the class's own current category is
+ *    no change and needs neither. The trigger refuses the same in the write.
+ */
+async function prepareCategoryUndo(
+  tx: TxLike,
+  tenantId: string,
+  current: Record<string, unknown>,
+  restore: Record<string, unknown>,
+  expectNow: Record<string, unknown>,
+): Promise<void> {
+  const idForKey = async (key: unknown): Promise<string | null> => {
+    if (key == null) return null;
+    const row = await tx.classCategory.findFirst({ where: { tenantId, legacyKey: String(key) }, select: { id: true } });
+    if (!row) throw new UndoStale(REASON.categoryGone);
+    return row.id;
+  };
+  if ("category" in restore) {
+    restore.categoryId = await idForKey(restore.category);
+    delete restore.category;
+  }
+  if ("category" in expectNow) {
+    expectNow.categoryId = await idForKey(expectNow.category);
+    delete expectNow.category;
+  }
+  const target = restore.categoryId;
+  if (typeof target === "string" && target !== current.categoryId) {
+    const row = await tx.classCategory.findFirst({ where: { id: target, tenantId }, select: { archivedAt: true } });
+    if (!row) throw new UndoStale(REASON.categoryGone);
+    if (row.archivedAt) throw new UndoStale(REASON.categoryArchived);
+  }
+}
+
 const stripeTouched = (row: AuditRowLike) => {
   const m = meta(row);
   return Boolean(m.stripePaused || m.stripeResumed || m.stripe || m.stripeSubscriptionId);
@@ -403,6 +453,7 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
         delete restore.location;
         if (Object.keys(restore).length === 0) throw new UndoStale(REASON.onMatNow);
       }
+      await prepareCategoryUndo(tx, tenantId, current, restore, expectNow);
     },
     guard(current, restore) {
       // T6b: an imported history class never goes on the timetable, not even

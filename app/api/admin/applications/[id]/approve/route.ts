@@ -14,6 +14,7 @@ import { z } from "zod";
 import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { seedClassCategories } from "@/lib/class-category-store";
 import { logAudit } from "@/lib/audit-log";
 import { sendEmail } from "@/lib/email";
 import { isEmailDeliveryOn } from "@/lib/email-delivery";
@@ -103,8 +104,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   let tenantId: string;
   let ownerUserId: string;
   try {
-    const tenant = await withRlsBypass((tx) =>
-      tx.tenant.create({
+    // The club's eight starting class categories are made in the same transaction (lib/class-category-store.ts).
+    const tenant = await withRlsBypass(async (tx) => {
+      const created = await tx.tenant.create({
         data: {
           name: application.gymName,
           slug,
@@ -122,8 +124,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           },
         },
         include: { users: { select: { id: true } } },
-      }),
-    );
+      });
+      await seedClassCategories(tx, created.id);
+      return created;
+    });
     tenantId = tenant.id;
     ownerUserId = tenant.users[0].id;
   } catch (e: unknown) {
