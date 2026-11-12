@@ -16,6 +16,9 @@ let rows: Row[] = [];
 let calls: Call[] = [];
 let orderFault: null | "hold" | "lose" = null;
 let releaseHeld: (() => void) | null = null;
+/** When set, the next category list read after a reorder waits until released (a slow reload). */
+let holdReload = false;
+let releaseReload: (() => void) | null = null;
 
 const STALE_ONE = "This category was changed in another tab or by someone else. Close this and open Categories again.";
 const STALE_ALL = "Your categories have changed. Close this and open Categories again.";
@@ -34,6 +37,8 @@ beforeEach(() => {
   calls = [];
   orderFault = null;
   releaseHeld = null;
+  holdReload = false;
+  releaseReload = null;
   rows = ["Kids", "Beginners", "Gi", "No-Gi", "Competition", "Open Mat"].map((name, i) => ({ id: `c${i}`, name, legacyKey: null, archived: false, version: 3, classCount: 0, sortOrder: i * 10 }));
   vi.stubGlobal(
     "fetch",
@@ -42,7 +47,10 @@ beforeEach(() => {
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
       const call: Call = { method, url, body };
       calls.push(call);
-      if (method === "GET" && url.startsWith("/api/class-categories")) return ok({ categories: list(), managementEnabled: true });
+      if (method === "GET" && url.startsWith("/api/class-categories")) {
+        if (holdReload && calls.some((c) => c.method === "PUT" && c.status === 200)) { holdReload = false; await new Promise<void>((res) => { releaseReload = res; }); }
+        return ok({ categories: list(), managementEnabled: true });
+      }
       if (method === "PUT" && url === "/api/class-categories/order") {
         const items = body!.items as { id: string; version: number }[];
         const same = items.length === rows.length && items.every((i) => rows.find((r) => r.id === i.id)?.version === i.version);
@@ -147,6 +155,21 @@ describe("Categories sheet: the version a write carries (B3-1)", () => {
     rename("Competition", "Competition Team");
     await waitFor(() => expect(patches()).toHaveLength(1));
     expect({ status: patches()[0].status, sent: patches()[0].body!.version, server: rows.find((r) => r.id === "c4")!.version - (patches()[0].status === 200 ? 1 : 0) }).toEqual({ status: 200, sent: rows.find((r) => r.id === "c4")!.version - 1, server: rows.find((r) => r.id === "c4")!.version - 1 });
+  });
+
+  it("a rename begun after a reorder's answer but before its slow reload lands, on a row it moved: lands (the journey's B15 window)", async () => {
+    await open();
+    holdReload = true;
+    moveDown("Competition");
+    await waitFor(() => expect(releaseReload).not.toBeNull());
+    // Typed after the reorder's answer was counted, while the reload is still out: the rename waits for it.
+    rename("Competition", "Competition Team");
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(patches()).toHaveLength(0);
+    await act(async () => { releaseReload!(); });
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].status).toBe(200);
+    expect(names()).toContain("Competition Team");
   });
 
   it("a rename begun while a lost-answer reorder is in flight, on a row it moved, is refused, never applied over an unaccounted version", async () => {

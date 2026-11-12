@@ -224,7 +224,11 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       // again (it may also bring another person's change, which an edit started earlier will then be refused over).
       const done = (await res.json().catch(() => null)) as { moved?: { id: string; version: number }[] } | null;
       const sentVersion = new Map(items.map((i) => [i.id, i.version]));
-      for (const m of done?.moved ?? []) countOwnBump(m.id, m.version - (sentVersion.get(m.id) ?? m.version));
+      const movedTo = new Map((done?.moved ?? []).map((m) => [m.id, m.version]));
+      // Counted and shown in the same step: an edit begun before the reload below lands must not pair the old
+      // version on screen with a bump already counted (that sends one version short and is refused as stale).
+      for (const [id, version] of movedTo) countOwnBump(id, version - (sentVersion.get(id) ?? version));
+      setCats((c) => (c.state === "ready" ? { state: "ready", value: c.value.map((x) => (movedTo.has(x.id) ? { ...x, version: movedTo.get(x.id)! } : x)) } : c));
       await load();
       setLive(`${order[to].name} is now ${to + 1} of ${order.length}`);
       onChanged();
