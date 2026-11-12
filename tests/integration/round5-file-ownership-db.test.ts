@@ -247,7 +247,9 @@ describe.skipIf(!HAS_DB)("file ownership at attach, read and delete", () => {
     gate.userId = ownerId;
     // Fix re-review 4: an EMPTY query or fragment (A1), and host spellings the strict matcher does not recognise (A3).
     const variants = [`${legacy}?v=1`, `${legacy}#x`, legacy.replace(STORE, STORE.toUpperCase().replace("HTTPS://", "https://")),
-      `${legacy}?`, `${legacy}#`, legacy.replace(".com/", ".com:443/"), legacy.replace(".com/", ".com./")];
+      `${legacy}?`, `${legacy}#`, legacy.replace(".com/", ".com:443/"), legacy.replace(".com/", ".com./"),
+      // Round 2, A-R2: a protocol-relative spelling, which the settings schema's relative branch admits.
+      legacy.replace("https:", "")];
     for (const v of variants) {
       expect((await postAnnouncement(req("POST", { title: "T", body: "B", imageUrl: v }))).status, v).toBe(400);
       expect((await patchSettings(req("PATCH", { logoUrl: v }))).status, v).toBe(400);
@@ -266,5 +268,18 @@ describe.skipIf(!HAS_DB)("file ownership at attach, read and delete", () => {
     await withRlsBypass((tx) => applyUndo(tx, ok as never));
     expect((await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { logoUrl: true } })))?.logoUrl).toBe(root("old-logo.webp"));
     await withRlsBypass((tx) => tx.tenant.update({ where: { id: tenantId }, data: { logoUrl: root("logo.webp") } }));
+  });
+
+  it("a settings save that re-sends the club's stored logo unchanged is accepted, even when that logo would not pass today's rule; changing to it is refused", async () => {
+    // Round 2, A-R3: no new reference is made, so a club is never locked out of saving its name or colours.
+    asStaff("owner", ownerId);
+    gate.tenantId = tenantId;
+    gate.userId = ownerId;
+    const stored = `${root("logo.webp")}?v=1`;
+    await withRlsBypass((tx) => tx.tenant.update({ where: { id: tenantId }, data: { logoUrl: stored } }));
+    expect((await patchSettings(req("PATCH", { logoUrl: stored, name: `${STAMP} renamed` }))).status).toBe(200);
+    await withRlsBypass((tx) => tx.tenant.update({ where: { id: tenantId }, data: { logoUrl: root("logo.webp") } }));
+    expect((await patchSettings(req("PATCH", { logoUrl: stored }))).status).toBe(400);
+    expect((await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { logoUrl: true } })))?.logoUrl).toBe(root("logo.webp"));
   });
 });

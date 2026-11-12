@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   // a stored file ("?v=1", "#x", an upper-case host) would read as unreferenced and be deleted. Every caller, staff
   // included, may name only the one stored spelling (lib/blob-url.ts isCanonicalBlobUrl).
   if (!isCanonicalBlobUrl(url)) {
-    return NextResponse.json({ error: "URL is not in your tenant's blob namespace" }, { status: 403 });
+    return NextResponse.json({ error: "That is not the stored address of an uploaded file" }, { status: 403 });
   }
 
   // Defence in depth: the upload route stores at `tenants/<tenantId>/<id>.<ext>`.

@@ -101,12 +101,13 @@ export function isCanonicalBlobUrl(url: string): boolean {
 
 /**
  * Any spelling of a blob-store host, including ones the strict matcher above does not recognise (an explicit
- * ":443", a trailing dot). The club-asset rules run on these too, so an odd spelling is refused rather than stored
- * unchecked (fix re-review 4, A3).
+ * ":443", a trailing dot, a protocol-relative "//host/..." or "/\\host/..." that a browser resolves against the
+ * page). The club-asset rules run on these too, so an odd spelling is refused rather than stored unchecked (fix
+ * re-review 4, A3; round 2, A-R2). Parsed against a placeholder base so a relative spelling still yields its host.
  */
 export function isBlobStoreHost(url: string): boolean {
   try {
-    const host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+    const host = new URL(url, "https://base.invalid").hostname.toLowerCase().replace(/\.$/, "");
     return host === "blob.vercel-storage.com" || host.endsWith(".blob.vercel-storage.com");
   } catch {
     return false;

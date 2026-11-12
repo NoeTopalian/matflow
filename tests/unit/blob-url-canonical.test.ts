@@ -21,9 +21,20 @@ describe("isCanonicalBlobUrl", () => {
     ["a trailing-dot host", BASE.replace(".com/", ".com./")],
     ["a dot segment", BASE.replace("/tenants/", "/x/../tenants/")],
     ["an upper-case scheme", BASE.replace("https://", "HTTPS://")],
+    ["an IDN host", "https://xn--bcher-kva.private.blob.vercel-storage.com/tenants/t1/photo.webp".replace("xn--bcher-kva", "b\u00fccher")],
+    ["a protocol-relative URL", BASE.replace("https:", "")],
     ["not a URL", "not a url"],
   ])("refuses %s", (_what, url) => {
     expect(isCanonicalBlobUrl(url)).toBe(false);
+  });
+});
+
+describe("the club-root rule leans on the namespace check for paths", () => {
+  it("refuses a percent-encoded or dot-segment path even when it is otherwise canonical", async () => {
+    const { isClubRootBlobUrl } = await import("@/lib/blob-ownership");
+    expect(isClubRootBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t1/photo.webp", "t1")).toBe(true);
+    expect(isClubRootBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t1/a%2Fb.webp", "t1")).toBe(false);
+    expect(isClubRootBlobUrl("https://abc123.private.blob.vercel-storage.com/tenants/t1/members/m1/a.webp", "t1")).toBe(false);
   });
 });
 
@@ -34,6 +45,8 @@ describe("isBlobStoreHost", () => {
     BASE.replace(".com/", ".com./"),
     BASE.replace("abc123.private", "ABC123.PUBLIC"),
     "https://blob.vercel-storage.com/x",
+    BASE.replace("https:", ""),
+    BASE.replace("https://", "/\\"),
   ])("recognises %s", (url) => {
     expect(isBlobStoreHost(url)).toBe(true);
   });
