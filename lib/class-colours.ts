@@ -96,6 +96,25 @@ export function memberBookedFill(colour: string): { from: string; to: string; in
   return { from, to: mixHex(away, from, 0.12), ink };
 }
 
+/**
+ * An ended booked session's colour: the class colour greyed (the CSS saturate(0.35) matrix, in sRGB). The member
+ * schedule paints it through memberBookedFill, so its ink is chosen against the greyed fill and reaches 4.5:1. It
+ * used to be a CSS filter over the whole block, which greyed the ink with it: blue's text 4.35:1, and the "Ended"
+ * pill 3.69:1 (measured in Chromium, 12 Nov 2026). The stored colour is unchanged.
+ */
+export const MEMBER_ENDED_SATURATION = 0.35;
+export function memberEndedColour(colour: string): string {
+  const m = /^#?([0-9a-f]{6})/i.exec(colour.trim());
+  if (!m) return colour;
+  const n = parseInt(m[1], 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const s = MEMBER_ENDED_SATURATION;
+  const ch = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  return "#" + ch((0.213 + 0.787 * s) * r + (0.715 - 0.715 * s) * g + (0.072 - 0.072 * s) * b)
+    + ch((0.213 - 0.213 * s) * r + (0.715 + 0.285 * s) * g + (0.072 - 0.072 * s) * b)
+    + ch((0.213 - 0.213 * s) * r + (0.715 - 0.715 * s) * g + (0.072 + 0.928 * s) * b);
+}
+
 /** The default colour of a new class: the first of the palette, as before. */
 export const DEFAULT_CLASS_COLOUR = CLASS_COLOURS[0].value;
 

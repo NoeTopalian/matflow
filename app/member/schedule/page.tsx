@@ -6,7 +6,7 @@ import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage } from "@/lib/checkin-outcome";
 import { classCategoryTag } from "@/lib/class-category";
 import { readableOn } from "@/lib/color";
-import { memberBookedFill, memberClassMark } from "@/lib/class-colours";
+import { memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -512,9 +512,11 @@ function SessionBlock({
   const color  = normalizeHex(cls.color ?? primaryColor);
   // UI-RULES §2a: the house helper picks the ink with the higher WCAG contrast; the local luma threshold it
   // replaces picked the weaker ink across the mid-tones (green 2.28:1, orange 2.80:1 on a booked block).
-  const text   = readableOn(color);
-  // A booked block's fill: opaque at both stops, so its ink reads 4.5:1 on either shell (lib/class-colours.ts).
-  const booked = memberBookedFill(color);
+  // A booked block's fill: opaque at both stops, so its ink reads 4.5:1 on either shell (lib/class-colours.ts). A
+  // booked block that has ended is greyed in the fill itself and its ink chosen against the greyed fill: a CSS
+  // saturate filter over the whole block took blue's text to 4.35:1 (measured in Chromium, 12 Nov 2026).
+  const booked = memberBookedFill(isSub && state === "ended" ? memberEndedColour(color) : color);
+  const text   = isSub ? booked.ink : readableOn(color);
   // Subscribed blocks are filled with the class colour, so the ink is whatever
   // reads on it. Unsubscribed blocks are a tint of that colour over the member
   // shell, so their ink is the shell's own text, never a hard-coded dark navy
@@ -564,9 +566,6 @@ function SessionBlock({
         borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : memberClassMark(color)}` : undefined,
         boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${memberClassMark(color)}` : undefined,
         color: ink,
-        // A booked class that has ended is greyed. Desaturating keeps each colour's brightness, so its ink still
-        // reads; a see-through fill would not on a light shell.
-        filter: isSub && ended ? "saturate(0.35)" : undefined,
       }}
     >
       <span className={["font-bold tabular-nums", large ? "text-xs leading-[15px]" : "text-[11px] leading-[14px]"].join(" ")} data-block-part="time">
@@ -585,7 +584,10 @@ function SessionBlock({
             <span
               className={`${pill} gap-1`}
               style={{
-                background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
+                // On a booked block the pill's text sits on the block's own fill (no tint under it): a tint took
+                // live-on-purple to 4.47:1 and cancelled-on-blue to 4.25 (measured 12 Nov 2026). The state keeps its
+                // colour in the border and the live dot, and its word.
+                background: isSub ? "transparent" : pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
                 border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : `color-mix(in srgb, ${ink} 30%, transparent)`}`,
               }}
             >

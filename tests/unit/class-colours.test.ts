@@ -1,7 +1,7 @@
 // The class colour palette (11 Nov 2026: grey, light yellow, navy and light blue added) and how a class colour is
 // made readable where it is painted. Contrast floors: 4.5:1 for text, 3:1 for marks and edges (WCAG 1.4.3, 1.4.11).
 import { describe, it, expect } from "vitest";
-import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, MEMBER_MARK_SHARE, classColourName, classDotStyle, classEdge, classInk, memberBookedFill, memberClassMark } from "@/lib/class-colours";
+import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, MEMBER_MARK_SHARE, classColourName, classDotStyle, classEdge, classInk, memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
 import { contrastRatio, legibleInk, markNeedsOutline, mixHex, readableOn, tintOver } from "@/lib/color";
 
 const WHITE = "#ffffff";
@@ -130,6 +130,24 @@ describe("member schedule: a booked block's fill (memberBookedFill)", () => {
       const seeThrough = tintOver(colour, 0.82, "#111111");
       expect(contrastRatio(readableOn(colour), seeThrough)).toBeCloseTo(worst, 1);
     }
+  });
+});
+
+describe("member schedule: an ended booked block (memberEndedColour)", () => {
+  it("is greyed in the fill, and its ink still reads 4.5:1 on both opaque stops, for every palette colour", () => {
+    for (const { value, name } of CLASS_COLOURS) {
+      const grey = memberEndedColour(value);
+      expect(grey, name).toMatch(/^#[0-9a-f]{6}$/);
+      const f = memberBookedFill(grey);
+      for (const stop of [f.from, f.to]) expect(contrastRatio(f.ink, stop), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+  it("is the CSS saturate(0.35) matrix: a grey stays itself, a pure colour moves toward its own grey", () => {
+    expect(memberEndedColour("#808080")).toBe("#808080");
+    const blue = memberEndedColour("#3b82f6");
+    expect(blue).not.toBe("#3b82f6");
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(blue.slice(i, i + 2), 16));
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThan(0xf6 - 0x3b); // less saturated than the colour
   });
 });
 
