@@ -853,10 +853,11 @@ export async function PATCH(req: Request, { params }: Params) {
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Release B's activation signal must not be lost: a save from an old page (old key, no `categoryBaseId`) writes
-    // its row durably, awaited before the answer, instead of best-effort. A failure to write it is logged; it never
+    // Release B's observation signal (readiness §3.2): a category change from a page older than Release B (an old key,
+    // or a Release A page's `categoryId`, either way without `categoryBaseId`) marks its row, written awaited before
+    // the answer rather than best-effort. It is lost only if that audit write itself fails, which is logged; it never
     // turns the committed save into an error.
-    const fromOldPage = parsed.data.category !== undefined && parsed.data.categoryBaseId === undefined;
+    const fromOldPage = (parsed.data.category !== undefined || parsed.data.categoryId !== undefined) && parsed.data.categoryBaseId === undefined;
     try {
       await logAudit({
         ...(fromOldPage ? { durable: true } : {}),

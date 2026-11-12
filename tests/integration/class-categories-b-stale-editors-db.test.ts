@@ -75,6 +75,8 @@ describe.skipIf(!HAS_DB)("Release B — editors left open while categories chang
     return { status: res.status, error: res.ok ? undefined : ((await res.json()) as { error?: string }).error };
   };
   const oldPage = (T: string, id: string, category: string | null) => save(T, id, { category });
+  // A Release A page: sends the category by id, but not the category it saw.
+  const releaseAPage = (T: string, id: string, categoryId: string | null) => save(T, id, { categoryId });
   const currentForm = (T: string, id: string, categoryId: string | null, seen: string | null) =>
     save(T, id, { categoryId, categoryBaseId: seen });
   const unrelated = (T: string, id: string, name: string) => save(T, id, { name });
@@ -199,11 +201,35 @@ describe.skipIf(!HAS_DB)("Release B — editors left open while categories chang
         // Reloaded (sees Advanced): applied.
         expect((await currentForm(T, c.id, kids.id, adv.id)).status).toBe(200);
         expect((await readClass(T, c.id)).categoryId).toBe(kids.id);
+        // Choosing the category the class already has changes nothing: never refused, even from a stale form.
+        expect((await currentForm(T, c.id, kids.id, gi.id)).status).toBe(200);
+        expect((await readClass(T, c.id)).categoryId).toBe(kids.id);
+      });
+
+      it("a Release A page left open (categoryId without categoryBaseId): refused on a class on a club-made category, applied on a starting one", async () => {
+        setSwitch();
+        const T = await club(`release-a-${sw}`);
+        const adv = await made(T, "Advanced");
+        const gi = await catByKey(T, "gi");
+        const nogi = await catByKey(T, "nogi");
+        const onMade = await classOn(T, "Advanced Gi", adv.id);
+        const onStart = await classOn(T, "Gi", gi.id);
+        for (const target of [gi.id, null]) {
+          expect(await releaseAPage(T, onMade.id, target)).toMatchObject({ status: 409, error: CATEGORY_ERRORS.stale });
+        }
+        expect((await readClass(T, onMade.id)).categoryId).toBe(adv.id);
+        // Re-sending the category it already has, and an unrelated save: accepted, nothing changes.
+        expect((await releaseAPage(T, onMade.id, adv.id)).status).toBe(200);
+        expect((await unrelated(T, onMade.id, "Advanced Gi (Sat)")).status).toBe(200);
+        expect((await readClass(T, onMade.id)).categoryId).toBe(adv.id);
+        // On a starting category it could show: applied, as Release A does.
+        expect((await releaseAPage(T, onStart.id, nogi.id)).status).toBe(200);
+        expect((await readClass(T, onStart.id)).categoryId).toBe(nogi.id);
       });
     });
   }
 
-  it("the activation signal is durable: an old page's save is marked categoryOldKey in the audit log (with who made it); the current form's save and an unrelated save are not", async () => {
+  it("the observation signal: a category change from a page older than Release B (old key, or a Release A page) is marked categoryOldKey with who made it; the current form's save and an unrelated save are not", async () => {
     process.env.CLASS_CATEGORY_MANAGEMENT = "on";
     const T = await club("signal");
     const gi = await catByKey(T, "gi");
@@ -218,15 +244,13 @@ describe.skipIf(!HAS_DB)("Release B — editors left open while categories chang
     expect((await currentForm(T, c.id, kids.id, gi.id)).status).toBe(200);
     expect((await unrelated(T, c.id, "Signal (Tue)")).status).toBe(200);
     expect((await oldPage(T, c.id, "gi")).status).toBe(200);
+    expect((await releaseAPage(T, c.id, kids.id)).status).toBe(200);
     const who = `synthetic-owner-${T.slice(-6)}`;
-    // The old page's row is written durably, before the save answers: present at once, no waiting.
-    expect((await marked()).filter((r) => r.oldKey)).toEqual([{ userId: who, oldKey: true }]);
-    // The other two are ordinary best-effort rows: they land shortly, unmarked.
-    await expect.poll(marked, { timeout: 20_000, interval: 500 }).toEqual([
-      { userId: who, oldKey: false },
-      { userId: who, oldKey: false },
-      { userId: who, oldKey: true },
-    ]);
+    // The two older pages' rows are written awaited, before the save answers: present at once, no waiting.
+    expect((await marked()).filter((r) => r.oldKey)).toEqual([{ userId: who, oldKey: true }, { userId: who, oldKey: true }]);
+    // The other two are ordinary best-effort rows: they land shortly, unmarked. Compared as a set (they land in any order).
+    const count = (rows: { oldKey: boolean }[]) => ({ marked: rows.filter((r) => r.oldKey).length, unmarked: rows.filter((r) => !r.oldKey).length });
+    await expect.poll(async () => count(await marked()), { timeout: 20_000, interval: 500 }).toEqual({ marked: 2, unmarked: 2 });
   });
 
   it("the limit that remains: an old page carries no record of what it saw, so on a class whose category is a starting one (which it can show) its explicit change applies even if someone changed that class since", async () => {

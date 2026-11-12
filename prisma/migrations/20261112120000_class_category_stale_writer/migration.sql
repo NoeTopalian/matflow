@@ -13,6 +13,8 @@ SET LOCAL statement_timeout = '15s';
 -- bridge now refuses that write (MF_CLASS_CATEGORY_STALE_WRITER). Everything else in the bridge is unchanged; the
 -- route-level twin of this check is lib/class-category-store.ts categoryIdToWrite (an old page against a new server).
 --
+-- It also stamps categoryKeyWrittenAt on every old-key-only write, not only on a change (the observation signal O1).
+--
 -- Only the function body changes: CREATE OR REPLACE FUNCTION takes no table lock, and the triggers keep pointing at
 -- it. Rolling back the code to Release A leaves this function in place, which only refuses more. Design and
 -- evidence: docs/readiness/CLASS-CATEGORIES-RELEASE-B-2026-11-12.md.
@@ -83,16 +85,20 @@ BEGIN
   END IF;
 
   IF key_named THEN
+    -- Only the old key: a build from before Release A, or a script. This release's code never comes this way.
+    -- Stamped on every such write, even one that re-sends the key the class already has, so a pre-Release-A server
+    -- still serving shows up in the observation signal O1 (fix re-review 4, B1; Release A stamped changes only).
+    NEW."categoryKeyWrittenAt" := CURRENT_TIMESTAMP;
     IF NOT key_changed THEN
       RETURN NEW;
     END IF;
-    -- Only the old key: a build from before Release A, or a script. This release's code never comes this way.
-    NEW."categoryKeyWrittenAt" := CURRENT_TIMESTAMP;
     -- Release B (12 Nov 2026): such a writer cannot see a category the club made (it has no old key), so changing
     -- the old key of a class on one would replace or clear a category the writer never saw. Refused, not guessed.
     IF TG_OP = 'UPDATE' AND OLD."categoryId" IS NOT NULL THEN
       SELECT "legacyKey" INTO t_key FROM "ClassCategory" WHERE "id" = OLD."categoryId" AND "tenantId" = OLD."tenantId";
-      IF FOUND AND t_key IS NULL THEN
+      -- The foreign key guarantees the row exists, so NOT FOUND means it is not visible to this writer: refused
+      -- rather than waved through (review B-N6).
+      IF NOT FOUND OR t_key IS NULL THEN
         RAISE EXCEPTION 'MF_CLASS_CATEGORY_STALE_WRITER: this class is on a category the club made; an old-key writer cannot change it' USING ERRCODE = 'P0001';
       END IF;
     END IF;

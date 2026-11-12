@@ -47,7 +47,7 @@ export async function PUT(req: Request) {
     const byId = new Map(rows.map((r) => [r.id, r]));
     const ids = items.map((i) => i.id);
     const same = ids.length === rows.length && new Set(ids).size === ids.length && items.every((i) => byId.get(i.id)?.version === i.version);
-    if (!same) return { ok: false as const, status: 409, error: STALE };
+    if (!same) return { ok: false as const, status: 409, error: STALE, code: "stale" as const };
     const before = [...rows].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map((r) => r.id);
     if (ids.every((id, i) => id === before[i])) return { ok: true as const, changed: false };
     const moved = items.map((it, i) => ({ id: it.id, sortOrder: i })).filter((m) => byId.get(m.id)!.sortOrder !== m.sortOrder).sort((a, b) => a.id.localeCompare(b.id));
@@ -57,6 +57,6 @@ export async function PUT(req: Request) {
     await logAudit({ tenantId, userId, action: "class_category.reorder", entityType: "Tenant", entityId: tenantId, metadata: { before, after: ids }, req, tx });
     return { ok: true as const, changed: true };
   });
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  if (!result.ok) return NextResponse.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, { status: result.status });
   return NextResponse.json({ ok: true, changed: result.changed });
 }

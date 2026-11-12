@@ -42,6 +42,10 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState("");
   const inFlight = useRef(new Set<string>());
+  // Saves still on their way, and the version each one came back with: a move waits for them and sends the newest
+  // versions, so a rename followed at once by a move is not refused as somebody else's change (review B-N2).
+  const pending = useRef(new Set<Promise<unknown>>());
+  const latestVersion = useRef(new Map<string, number>());
   const focusNext = useRef<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -50,6 +54,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       const res = await fetch("/api/class-categories", { cache: "no-store" });
       if (!res.ok) { setCats({ state: "error" }); return; }
       const body = (await res.json()) as { categories: Category[] };
+      latestVersion.current.clear();
       setCats({ state: "ready", value: body.categories });
     } catch {
       setCats({ state: "error" });
@@ -78,33 +83,46 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   async function conflict(message: string) {
     await load();
     setDrafts({});
+    // The notice is announced by its own role="alert"; the polite live region is for successes (review B-N3).
     setNotice(message);
-    setLive(message);
   }
 
   async function patch(cat: Category, body: { name?: string; archived?: boolean }, failed: string): Promise<boolean> {
     if (inFlight.current.has(cat.id)) return false;
     inFlight.current.add(cat.id);
+    const run = patchOnce(cat, body, failed);
+    pending.current.add(run);
+    try {
+      return await run;
+    } finally {
+      pending.current.delete(run);
+      inFlight.current.delete(cat.id);
+    }
+  }
+
+  async function patchOnce(cat: Category, body: { name?: string; archived?: boolean }, failed: string): Promise<boolean> {
     try {
       const res = await fetch(`/api/class-categories/${cat.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version: cat.version, ...body }),
+        body: JSON.stringify({ version: latestVersion.current.get(cat.id) ?? cat.version, ...body }),
       });
       if (res.status === 409) {
-        const message = (await readError(res)) ?? failed;
-        // A name that clashes is the typist's to fix: keep the draft. A stale version: show what is there now.
-        if (body.name !== undefined && !/changed in another tab/.test(message)) { setRowError((e) => ({ ...e, [cat.id]: message })); setLive(message); return false; }
+        const refusal = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+        const message = refusal?.error ?? failed;
+        // A name that clashes is the typist's to fix: keep the draft. A stale version (code "stale"): show what is
+        // there now. The error paragraph beside the field is the announcement (role="alert"), not the live region too.
+        if (body.name !== undefined && refusal?.code !== "stale") { setRowError((e) => ({ ...e, [cat.id]: message })); return false; }
         await conflict(message);
         return false;
       }
       if (!res.ok) {
         const message = (await readError(res)) ?? failed;
         setRowError((e) => ({ ...e, [cat.id]: message }));
-        setLive(message);
         return false;
       }
       const saved = (await res.json()) as { id: string; name: string; archived: boolean; version: number };
+      latestVersion.current.set(saved.id, saved.version);
       setCats((c) => (c.state === "ready" ? { state: "ready", value: c.value.map((x) => (x.id === cat.id ? { ...x, name: saved.name, archived: saved.archived, version: saved.version } : x)) } : c));
       setRowError((e) => { const next = { ...e }; delete next[cat.id]; return next; });
       setNotice(null);
@@ -112,10 +130,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       return true;
     } catch {
       setRowError((e) => ({ ...e, [cat.id]: failed }));
-      setLive(failed);
       return false;
-    } finally {
-      inFlight.current.delete(cat.id);
     }
   }
 
@@ -142,9 +157,10 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   async function move(index: number, by: -1 | 1) {
     const to = index + by;
     if (busy || to < 0 || to >= active.length) return;
+    if (pending.current.size > 0) await Promise.allSettled([...pending.current]);
     const order = [...active];
     [order[index], order[to]] = [order[to], order[index]];
-    const items = [...order, ...archived].map((c) => ({ id: c.id, version: c.version }));
+    const items = [...order, ...archived].map((c) => ({ id: c.id, version: latestVersion.current.get(c.id) ?? c.version }));
     const before = list;
     setCats({ state: "ready", value: [...order, ...archived] });
     focusNext.current = `${by === -1 ? "up" : "down"}:${active[index].id}`;
@@ -156,7 +172,6 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
         setCats({ state: "ready", value: before });
         const message = (await readError(res)) ?? "Couldn't move that. Try again.";
         setNotice(message);
-        setLive(message);
         return;
       }
       // A moved row's version went up by one: read the list again so the next write carries the new versions.
@@ -166,7 +181,6 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     } catch {
       setCats({ state: "ready", value: before });
       setNotice("Couldn't move that. Try again.");
-      setLive("Couldn't move that. Try again.");
     } finally {
       setBusy(false);
     }
@@ -184,7 +198,6 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       if (!res.ok) {
         const message = (await readError(res)) ?? failed;
         setNewError(message);
-        setLive(message);
         return;
       }
       const made = (await res.json()) as Category;
@@ -292,10 +305,10 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
                     return (
                       <li key={cat.id} className="flex items-center justify-between gap-2" data-testid="categories-archived-row">
                         <span className="text-sm text-tx-1">{cat.name} <span className="text-xs text-tx-2">· {cat.classCount ? `kept by ${plural(cat.classCount, "class", "classes")}` : "no classes"}</span></span>
-                        <Button variant="secondary" size="compact" aria-label={`Restore ${cat.name}`} data-cat-focus={`restore:${cat.id}`} onClick={() => void setArchived(cat, false)}>
+                        <Button variant="secondary" size="compact" aria-label={`Restore ${cat.name}`} aria-describedby={error ? `categories-error-${cat.id}` : undefined} data-cat-focus={`restore:${cat.id}`} onClick={() => void setArchived(cat, false)}>
                           <RotateCcw aria-hidden="true" /> Restore
                         </Button>
-                        {error ? <p className="text-xs text-[var(--hue-danger-ink)]" role="alert">{error}</p> : null}
+                        {error ? <p id={`categories-error-${cat.id}`} className="text-xs text-[var(--hue-danger-ink)]" role="alert">{error}</p> : null}
                       </li>
                     );
                   })}

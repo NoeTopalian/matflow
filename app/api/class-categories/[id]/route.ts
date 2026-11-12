@@ -60,7 +60,7 @@ export async function PATCH(req: Request, { params }: Params) {
         SELECT "id", "name", "archivedAt", "version" FROM "ClassCategory" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
       const row = locked[0];
       if (!row) return { ok: false as const, status: 404, error: "That category isn't one of this club's." };
-      if (row.version !== version) return { ok: false as const, status: 409, error: STALE };
+      if (row.version !== version) return { ok: false as const, status: 409, error: STALE, code: "stale" as const };
 
       const data: { name?: string; nameKey?: string; archivedAt?: Date | null; version: number } = { version: row.version + 1 };
       const renamed = name !== undefined && name !== row.name;
@@ -76,13 +76,14 @@ export async function PATCH(req: Request, { params }: Params) {
       if (restoring) data.archivedAt = null;
       if (!renamed && !archiving && !restoring) return { ok: true as const, changed: false, row: { id: row.id, name: row.name, archived: row.archivedAt !== null, version: row.version } };
 
-      const updated = await tx.classCategory.update({ where: { id }, data, select: { id: true, name: true, archivedAt: true, version: true } });
+      const updated = await tx.classCategory.update({ where: { id_tenantId: { id, tenantId } }, data, select: { id: true, name: true, archivedAt: true, version: true } });
       if (renamed) await logAudit({ tenantId, userId, action: "class_category.rename", entityType: "ClassCategory", entityId: id, metadata: { before: { name: row.name }, after: { name: updated.name } }, req, tx });
       if (archiving) await logAudit({ tenantId, userId, action: "class_category.archive", entityType: "ClassCategory", entityId: id, metadata: { name: updated.name }, req, tx });
       if (restoring) await logAudit({ tenantId, userId, action: "class_category.restore", entityType: "ClassCategory", entityId: id, metadata: { name: updated.name }, req, tx });
       return { ok: true as const, changed: true, row: { id: updated.id, name: updated.name, archived: updated.archivedAt !== null, version: updated.version } };
     });
-    if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+    // `code: "stale"` tells the sheet a stale version from a name clash without reading the English text.
+    if (!result.ok) return NextResponse.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, { status: result.status });
     return NextResponse.json({ ...result.row, changed: result.changed });
   } catch (e) {
     if ((e as { code?: string })?.code === "P2002") return NextResponse.json({ error: `You already have a category called “${name}”.` }, { status: 409 });

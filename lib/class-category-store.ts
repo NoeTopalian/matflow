@@ -128,16 +128,21 @@ export async function categoryIdToWrite(
 
   // The category this release's form saw on the class when it opened (null: uncategorised). Judged under the Class
   // lock: if the class's category has changed since, this explicit choice was made without seeing that change.
+  // Choosing the category the class already has changes nothing, so it is never refused (review B-N1).
   // Omitted by pages from before Release B; for them the rule below is what applies.
-  if (input.categoryBaseId !== undefined && input.categoryBaseId !== currentCategoryId) {
+  const choosesCurrent = hasId && input.categoryId === currentCategoryId;
+  if (input.categoryBaseId !== undefined && input.categoryBaseId !== currentCategoryId && !choosesCurrent) {
     throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.changed);
   }
 
-  // Release B's stale-client control. An old key is all a page from before club-managed categories can send, and
-  // such a page cannot show a category the club made (it has no old key). So when the class is on a club-made
-  // category, an old-key write was chosen without seeing it: refused, whatever key (or null) it carries. The
-  // database repeats this for writers that bypass this route (migration 20261112120000_class_category_stale_writer).
-  if (hasKey && currentCategoryId) {
+  // Release B's stale-client control. A page from before Release B cannot have shown a category the club made:
+  //  - a page from before club-managed categories sends only an old key, and a club-made category has none;
+  //  - a Release A page sends `categoryId` but no `categoryBaseId`, and no club-made category existed while Release A
+  //    was served (review B-2).
+  // So when the class is on a club-made category, such a write was chosen without seeing it: refused, whatever it
+  // names (or null). Only on an edit (a new class has no current category). The database repeats the old-key half
+  // for writers that bypass this route (migration 20261112120000_class_category_stale_writer).
+  if (currentCategoryId && !choosesCurrent && (hasKey || input.categoryBaseId === undefined)) {
     const current = await tx.classCategory.findFirst({ where: { id: currentCategoryId, tenantId }, select: { legacyKey: true } });
     if (current && current.legacyKey === null) throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.stale);
   }
@@ -150,9 +155,8 @@ export async function categoryIdToWrite(
     if (input.category === null) return null;
     const key = input.category as string;
     if (!(CLASS_CATEGORIES as readonly string[]).includes(key)) throw new ClassCategoryRefusal(400, CATEGORY_ERRORS.notFound);
-    // Counted, never logged with the club or person: the activation gate for
-    // Release B is a run of days with no such line (docs/readiness/
-    // CLASS-CATEGORIES-RELEASE-A-EVIDENCE-2026-11-11.md §6).
+    // Counted, never logged with the club or person. Runtime logs are kept for one hour on the Hobby plan, so this
+    // line is not the observation signal: the durable audit marker `categoryOldKey` is (Release B readiness §3.2).
     console.info("[class-category] legacy key write");
     row = await tx.classCategory.findFirst({ where: { tenantId, legacyKey: key }, select: { id: true, archivedAt: true } });
     if (!row) {
