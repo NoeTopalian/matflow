@@ -134,15 +134,21 @@ try {
   });
 
   // ── 4. An older page's old key, and choosing the archived category, through the API ──
-  await section("C8", "an old page's key: refused on a class on a club-made category (Release B, reload), translated on a class on a starting category and not stamped as an old build's write", async () => {
+  await section("C8", "an old page's key, and a Release A page's id without what it saw: refused on a class on a club-made category (Release B, reload); an old key translated on a class on a starting category and not stamped as an old build's write", async () => {
     const send = (body) => page.evaluate(async ([id, b]) => { const res = await fetch(`/api/classes/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return { status: res.status, body: await res.json() }; }, [classId, body]);
     // The class is on Intermediate, which the club made: an old page shows it as uncategorised, so its choice is refused.
     const refused = await send({ category: "competition" });
     expect(refused.status).toBe(409);
     expect(refused.body.error).toMatch(/out of date/);
     expect((await classRow(classId)).categoryId).toBe(intermediateId);
+    // A Release A page (a category by id, without the category it saw) is refused on a club-made category too
+    // (Release B, round 2 B-2); this release's form, which sends what it saw, moves it to Gi.
+    const giId = (await cat("gi")).id;
+    const releaseA = await send({ categoryId: giId });
+    expect(releaseA.status).toBe(409);
+    expect(releaseA.body.error).toMatch(/out of date/);
+    expect((await send({ categoryId: giId, categoryBaseId: intermediateId })).status).toBe(200);
     // On a starting category the old page can see the class's category: its choice is translated.
-    expect((await send({ categoryId: (await cat("gi")).id })).status).toBe(200);
     const r = (await send({ category: "competition" })).status;
     expect(r).toBe(200);
     const comp = await cat("competition");

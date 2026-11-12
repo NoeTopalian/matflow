@@ -33,7 +33,15 @@ async function readError(res: Response): Promise<string | null> {
 }
 
 export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
-  const [cats, setCats] = useState<Loaded>({ state: "loading" });
+  const [cats, setCatsState] = useState<Loaded>({ state: "loading" });
+  // The list as it is now, updated in the same tick as every change, so a move that waited for a rename reads the
+  // rename's result rather than the snapshot from when its button was pressed (round 2, B-R7).
+  const catsRef = useRef<Loaded>({ state: "loading" });
+  const setCats = useCallback((next: Loaded | ((c: Loaded) => Loaded)) => {
+    const value = typeof next === "function" ? next(catsRef.current) : next;
+    catsRef.current = value;
+    setCatsState(value);
+  }, []);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
@@ -46,6 +54,13 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   // versions, so a rename followed at once by a move is not refused as somebody else's change (review B-N2).
   const pending = useRef(new Set<Promise<unknown>>());
   const latestVersion = useRef(new Map<string, number>());
+  // A reorder still on its way (its PUT and the reload after it): a rename waits for it, so it carries the version
+  // the reorder produced instead of being refused as somebody else's change.
+  const reorderInFlight = useRef<Promise<unknown> | null>(null);
+  const versionOf = (c: Category) => {
+    const now = catsRef.current.state === "ready" ? catsRef.current.value.find((x) => x.id === c.id) : undefined;
+    return latestVersion.current.get(c.id) ?? now?.version ?? c.version;
+  };
   const focusNext = useRef<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -59,14 +74,14 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     } catch {
       setCats({ state: "error" });
     }
-  }, []);
+  }, [setCats]);
 
   useEffect(() => {
     if (!open) return;
     setCats({ state: "loading" });
     setDrafts({}); setRowError({}); setNotice(null); setNewName(null); setNewError(null);
     void load();
-  }, [open, load]);
+  }, [open, load, setCats]);
 
   // After a move or an add, keep keyboard focus on the control that was pressed (or the new row's name).
   useEffect(() => {
@@ -101,11 +116,12 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   }
 
   async function patchOnce(cat: Category, body: { name?: string; archived?: boolean }, failed: string): Promise<boolean> {
+    if (reorderInFlight.current) await reorderInFlight.current.catch(() => {});
     try {
       const res = await fetch(`/api/class-categories/${cat.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version: latestVersion.current.get(cat.id) ?? cat.version, ...body }),
+        body: JSON.stringify({ version: versionOf(cat), ...body }),
       });
       if (res.status === 409) {
         const refusal = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
@@ -155,34 +171,50 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   }
 
   async function move(index: number, by: -1 | 1) {
-    const to = index + by;
-    if (busy || to < 0 || to >= active.length) return;
-    if (pending.current.size > 0) await Promise.allSettled([...pending.current]);
-    const order = [...active];
-    [order[index], order[to]] = [order[to], order[index]];
-    const items = [...order, ...archived].map((c) => ({ id: c.id, version: latestVersion.current.get(c.id) ?? c.version }));
-    const before = list;
-    setCats({ state: "ready", value: [...order, ...archived] });
-    focusNext.current = `${by === -1 ? "up" : "down"}:${active[index].id}`;
+    if (busy || index + by < 0 || index + by >= active.length) return;
+    const movedId = active[index].id;
+    // Busy from the press: a second press while renames finish cannot send a second reorder (round 2, B-R7).
     setBusy(true);
+    const run = moveOnce(movedId, by);
+    reorderInFlight.current = run;
+    try {
+      await run;
+    } finally {
+      reorderInFlight.current = null;
+      setBusy(false);
+    }
+  }
+
+  async function moveOnce(movedId: string, by: -1 | 1) {
+    // Renames still on their way finish first, so the reorder carries the versions they produced (review B-N2).
+    if (pending.current.size > 0) await Promise.allSettled([...pending.current]);
+    const now = catsRef.current.state === "ready" ? catsRef.current.value : [];
+    const nowActive = now.filter((c) => !c.archived);
+    const nowArchived = now.filter((c) => c.archived);
+    const from = nowActive.findIndex((c) => c.id === movedId);
+    const to = from + by;
+    if (from < 0 || to < 0 || to >= nowActive.length) return;
+    const order = [...nowActive];
+    [order[from], order[to]] = [order[to], order[from]];
+    const items = [...order, ...nowArchived].map((c) => ({ id: c.id, version: versionOf(c) }));
+    setCats({ state: "ready", value: [...order, ...nowArchived] });
+    focusNext.current = `${by === -1 ? "up" : "down"}:${movedId}`;
     try {
       const res = await fetch("/api/class-categories/order", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) });
       if (res.status === 409) { await conflict((await readError(res)) ?? "Your categories have changed."); return; }
       if (!res.ok) {
-        setCats({ state: "ready", value: before });
+        setCats({ state: "ready", value: now });
         const message = (await readError(res)) ?? "Couldn't move that. Try again.";
         setNotice(message);
         return;
       }
       // A moved row's version went up by one: read the list again so the next write carries the new versions.
       await load();
-      setLive(`${active[index].name} is now ${to + 1} of ${active.length}`);
+      setLive(`${order[to].name} is now ${to + 1} of ${order.length}`);
       onChanged();
     } catch {
-      setCats({ state: "ready", value: before });
+      setCats({ state: "ready", value: now });
       setNotice("Couldn't move that. Try again.");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -209,7 +241,6 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       onChanged();
     } catch {
       setNewError(failed);
-      setLive(failed);
     } finally {
       inFlight.current.delete("#new");
     }

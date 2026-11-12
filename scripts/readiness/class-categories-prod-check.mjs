@@ -8,8 +8,9 @@
 // Checks. Each prints counts, booleans, timestamps and the database role name only: never a person's name, email or
 // record id, and never a connection string.
 //   pre             before Release A: the runtime role matflow_app gets new tables' rights through default
-//                   privileges (so it can read and write ClassCategory once the migration makes it), and has them on
-//                   an existing table made by an earlier migration ("Mat")
+//                   privileges granted FOR ROLE neondb_owner (so it can read and write ClassCategory once the migration
+//                   makes it), and has them on an existing table made by an earlier migration ("Mat"). This assumes
+//                   production migrations run as neondb_owner: the owner of "Mat" is printed so that can be seen.
 //   post-a          after Release A: clubs; ClassCategory rows; clubs without exactly eight starting rows; the two
 //                   consistency counts; matflow_app's rights on ClassCategory
 //   gate-b          after Release B: the stale-writer refusal and the every-write stamp are in the bridge function;
@@ -77,6 +78,8 @@ const client = new Client({
   ssl: { rejectUnauthorized: true, servername: host }, connectionTimeoutMillis: 10000, application_name: "class-categories-prod-check",
 });
 const out = { check, endpoint: expectHost };
+// A dropped connection is reported as a failure, never an unhandled crash (round 2, B-R11).
+client.on("error", (e) => { console.error("FAILED: connection error: " + String(e?.message ?? e).replace(/postgres(ql)?:\/\/[^\s"']+/g, "<url>")); process.exit(1); });
 try {
   await client.connect();
   await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -87,6 +90,10 @@ try {
   out.roleHasBypassRls = who.bypass === true;
   out.clubs = await count(client, `SELECT count(*)::int AS n FROM "Tenant"`);
   if (out.clubs === 0) throw new Error("no clubs visible: row-level security or the wrong database; nothing reported");
+  // After Release A every club has category rows: none visible means the wrong database or no visibility (B-R13).
+  if (check === "gate-b" || check === "observe") {
+    if ((await count(client, `SELECT count(*)::int AS n FROM "ClassCategory"`)) === 0) throw new Error("no categories visible; nothing reported");
+  }
   if (check === "pre") {
     const acl = (await client.query(
       `SELECT count(*)::int AS n FROM pg_default_acl d JOIN pg_namespace ns ON ns.oid = d.defaclnamespace
@@ -94,6 +101,7 @@ try {
           AND array_to_string(d.defaclacl, ',') LIKE '%matflow_app=arwd%'`)).rows[0].n;
     out.defaultPrivilegesGiveMatflowAppNewTables = acl > 0;
     out.matflowAppHasRightsOnMat = await appRights(client, 'public."Mat"');
+    out.ownerOfMat = (await client.query(`SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'Mat'`)).rows[0]?.tableowner ?? null;
   } else if (check === "post-a") {
     out.categoryRows = await count(client, `SELECT count(*)::int AS n FROM "ClassCategory"`);
     if (out.categoryRows < out.clubs * 8) out.warning = "fewer than eight category rows per club";
@@ -106,7 +114,9 @@ try {
     const fn = (await client.query(`SELECT prosrc FROM pg_proc WHERE proname = 'matflow_class_category_bridge'`)).rows;
     out.bridgeFunctions = fn.length;
     out.staleWriterRefusalPresent = fn.length === 1 && fn[0].prosrc.includes("MF_CLASS_CATEGORY_STALE_WRITER");
-    out.everyOldKeyWriteStamped = fn.length === 1 && fn[0].prosrc.indexOf('"categoryKeyWrittenAt" := CURRENT_TIMESTAMP') < fn[0].prosrc.indexOf("IF NOT key_changed");
+    const stampAt = fn.length === 1 ? fn[0].prosrc.indexOf('"categoryKeyWrittenAt" := CURRENT_TIMESTAMP') : -1;
+    const unchangedAt = fn.length === 1 ? fn[0].prosrc.indexOf("IF NOT key_changed") : -1;
+    out.everyOldKeyWriteStamped = stampAt >= 0 && unchangedAt >= 0 && stampAt < unchangedAt;
     const mig = (await client.query(
       `SELECT finished_at IS NOT NULL AS finished, rolled_back_at IS NOT NULL AS rolled_back FROM _prisma_migrations
         WHERE migration_name = '20261112120000_class_category_stale_writer'`)).rows;

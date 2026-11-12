@@ -234,9 +234,13 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release B — real data
     const oldWrite = (id: string, key: string | null) => withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "category" = ${key} WHERE "id" = ${id} AND "tenantId" = ${T}`);
     expect(await errorText(oldWrite(onMade.id, "gi"))).toContain("MF_CLASS_CATEGORY_STALE_WRITER");
     expect(await readClass(T, onMade.id)).toMatchObject({ category: null, categoryId: made.body.id });
-    // Writing the key it already has (NULL) is no change: the bridge does nothing.
+    // Writing the key it already has (NULL) changes no category, but it is stamped: an old writer re-sending the
+    // same key is still seen by the observation signal O1 (round 2, B-R6).
+    await withRlsBypass((tx) => tx.$executeRaw`UPDATE "Class" SET "categoryKeyWrittenAt" = NULL WHERE "id" = ${onMade.id}`);
     await oldWrite(onMade.id, null);
     expect((await readClass(T, onMade.id)).categoryId).toBe(made.body.id);
+    const stamped = await withRlsBypass((tx) => tx.class.findFirstOrThrow({ where: { id: onMade.id, tenantId: T }, select: { categoryKeyWrittenAt: true } }));
+    expect(stamped.categoryKeyWrittenAt).not.toBeNull();
     await withTenantContext(T, (tx) => tx.$executeRaw`UPDATE "Class" SET "name" = ${"Intermediate Gi (Thu)"} WHERE "id" = ${onMade.id} AND "tenantId" = ${T}`);
     expect(await readClass(T, onMade.id)).toMatchObject({ name: "Intermediate Gi (Thu)", categoryId: made.body.id });
     const kids = (await cats(T)).find((c) => c.legacyKey === "kids")!;

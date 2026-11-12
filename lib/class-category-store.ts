@@ -144,7 +144,8 @@ export async function categoryIdToWrite(
   // for writers that bypass this route (migration 20261112120000_class_category_stale_writer).
   if (currentCategoryId && !choosesCurrent && (hasKey || input.categoryBaseId === undefined)) {
     const current = await tx.classCategory.findFirst({ where: { id: currentCategoryId, tenantId }, select: { legacyKey: true } });
-    if (current && current.legacyKey === null) throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.stale);
+    // Not visible (the foreign key guarantees it exists): refused, as the trigger refuses (round 2, B-R8).
+    if (!current || current.legacyKey === null) throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.stale);
   }
 
   let row: { id: string; archivedAt: Date | null } | null;
