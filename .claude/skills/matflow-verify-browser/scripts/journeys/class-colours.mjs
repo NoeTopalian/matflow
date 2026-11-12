@@ -274,6 +274,8 @@ try {
         expect(m.min, name).toBeGreaterThanOrEqual(4.5);
       }
       await block.click();
+      // The block animates its ring in (transition-all): measure the settled ring, not a frame of the transition.
+      await block.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
       const shadow = await block.evaluate((el) => getComputedStyle(el).boxShadow);
       const ringCss = lastColour(shadow);
       expect(ringCss).not.toBe("");
@@ -287,15 +289,15 @@ try {
       const shell = await bytesOf(mpage, vars.bg);
       const ringVsGap = ratio(ring, gap);
       const ringVsShell = ratio(ring, shell);
-      expect(ringVsGap).toBeGreaterThanOrEqual(3);
-      expect(ringVsShell).toBeGreaterThanOrEqual(3);
+      expect(ringVsGap, `ring ${ringCss} vs gap ${vars.gap}`).toBeGreaterThanOrEqual(3);
+      expect(ringVsShell, `ring ${ringCss} vs shell ${vars.bg}`).toBeGreaterThanOrEqual(3);
       let liveEdge = null;
       if (liveCan) {
         const liveBlock = mpage.locator("button[data-session-state='live']").filter({ hasText: NOW_CLASS }).first();
         await expect(liveBlock).toBeVisible({ timeout: 15_000 });
         const edgeCss = await liveBlock.evaluate((el) => getComputedStyle(el).borderLeftColor);
         liveEdge = ratio(await bytesOf(mpage, edgeCss), shell);
-        expect(liveEdge).toBeGreaterThanOrEqual(3);
+        expect(liveEdge, `live edge ${edgeCss} vs shell ${vars.bg}`).toBeGreaterThanOrEqual(3);
       }
       await shot(mpage, `class-colours-member-${id}`);
       return { ink, extra, ringVsGap, ringVsShell, liveEdge };
