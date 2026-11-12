@@ -146,6 +146,44 @@ A create made by this release's form, in a club that has no category rows yet, a
 - **Longer** adds little. A page used less often than weekly is not reliably caught by any fixed window, and the refusals in §2 cover it anyway.
 - This is a judgement from how the product is used, not a measurement. Seven days is kept on that basis, not because Release A chose it.
 
+### 3.2a The observation period: start, resets and evidence (settled 12 Nov 2026)
+
+**Start.**
+- The moment Release B's production deployment reports success: its deployment ID, commit and time are recorded in §6.
+- It does **not** start at Release A's deployment. Some earlier text said it did: Release A's evidence §6 and §13 before 12 Nov, and this branch's copy of that file. That text is superseded.
+- Release A's trigger stamped key changes only, and the durable old-page marker O2 exists only from Release B. So nothing before Release B's deployment can count.
+- G6 reads the gap between the two deploys once, as a weaker check.
+
+**What restarts it** (the new start is the time the cause was resolved, recorded in §6):
+1. O1: a `categoryKeyWrittenAt` later than the start.
+2. O2: any `categoryOldKey` row later than the start.
+3. A production deployment that changes a stale-client control or a signal:
+   - the route refusals in `categoryIdToWrite`;
+   - the bridge function;
+   - the audit marker.
+
+   Evidence gathered before it measured other code. A deployment that changes neither does not restart it, for example the B3-1 sheet fix, which touches the management sheet and the reorder route's answer only.
+4. A required read that fails or sees nothing (`FAILED`, or no clubs or categories visible). That leaves a gap, so the period is not clean across it.
+
+**Evidence, before activation:**
+- An `observe <start>` read on the first day, and at least one read every day after it. Each must show `o1StampAfterSince` false and `o2OldPageCategoryChanges` 0. The last read is at least seven full days after the start.
+- G1–G6 passed, each with its date.
+- G3's deletions confirmed: a Vercel production listing that no longer shows any deployment older than Release A.
+- The B3-1 fix deployed and verified: its deployment ID, and its journey results on that build.
+
+### 3.2b G3: the deployments it covers (read-only listing, 12 Nov 2026)
+
+These are the production deployments older than Release A that Vercel still holds. Every one predates Release A. Their unique URLs redirect anonymous visitors to Vercel sign-in, so only signed-in members of the Vercel team can reach them. No preview deployment has a database URL (the Preview environment has none), so previews are outside G3.
+
+The list, with deployment IDs and commits, is kept in the private release record, not in this public file. **Retain:**
+- Release A's deployment;
+- Release B's deployment (the compatible recovery: deploy Release B with the switch off, never Release A after activation, §5a);
+- anything later.
+
+**Delete** (Noe, in Vercel; a destructive step, after Release B is deployed and verified):
+- every listed deployment;
+- only after confirming that `matflow.studio` is served by Release B's deployment.
+
 ### 3.3 Which writers the protections and signals cover
 
 | Writer | Old-key writes possible? | Protected by | Seen by |
@@ -183,7 +221,7 @@ Under Noe's authority of 12 Nov 2026, the agent merges, deploys and runs the rea
    - every old-key-only database write is stamped (O1).
 3. Every production deployment older than Release A is deleted in Vercel (G3).
 4. The safety gate G1–G6 (§3.1) passes, with each result and its date recorded in §6.
-5. The seven-day observation period (§3.2) ends clean: O1 and O2 have shown nothing for seven consecutive days since step 2, or since the last restart. Recorded in §6 with dates.
+5. The seven-day observation period (§3.2, §3.2a) ends clean: daily `observe` reads show nothing for seven full days since Release B's deployment, or since the last restart. Recorded in §6 with dates.
 6. `CLASS_CATEGORY_MANAGEMENT=on` is set for production and production is redeployed (a Vercel action: Noe's, unless the agent has that access). The earliest date is seven clean days after step 2.
 7. Post-activation check, read-only. The Categories button shows for an owner on the Timetable page, and `GET /api/class-categories` reports `managementEnabled: true`. **No category is created, renamed or archived to test it:** that is Sean's club's data (§7).
 8. Sean's setup session (§7). Never inferred from class titles, and nothing archived unless Sean names it.
@@ -261,10 +299,15 @@ Under Noe's authority of 12 Nov 2026, the agent merges, deploys and runs the rea
 
 The journeys ran on the shared test branch, where Release B's migration is **not** applied. The database refusals are proved on the rehearsal database; the route refusals on both.
 
-**Open before activation (review round 3).**
-- **B3-1:** in the Categories sheet, a rename or archive that waited behind a slow reorder is sent with the version from the reloaded list. So it can overwrite another tab's change unseen.
-  - It is reachable only with management switched on.
-  - It is fixed in its own PR, with its own tests and review, before step 6 of §4.
+**B3-1, fixed on `fix/categories-b3-1` (review round 3).**
+- **The defect:** a rename or archive that waited behind a slow reorder was sent with the version from the reloaded list, so it could overwrite another admin's change unseen.
+- **The fix:** each write carries the version on screen when it began, plus only the bumps this sheet's own writes made since. The reorder route now says which rows it moved.
+- **Proof:**
+  - journey steps B13–B15: two admins, a held reorder answer, a lost answer and a retry;
+  - the DB suite (the reorder's moved rows; every mutation refused while switched off);
+  - the static switch guard.
+
+  Results are in "B3-1 results" below.
 - **Nits B3-2 to B3-7:** focus after a waited move, a lost unit case, the placement of the O2 cost bullet, the O2 follow-up's precision, `ownerOfMat` as a boolean, and a move going ahead after a conflict. They go into the same PR.
 
 **History (earlier code, superseded):** code `8d080073`: unit 655 files passed; DB 34/34 under each role; journeys 12/0, 13/0, 56/0/4. Code `32aa3da1`: journeys 13/0, 13/0, 56/0/4.
