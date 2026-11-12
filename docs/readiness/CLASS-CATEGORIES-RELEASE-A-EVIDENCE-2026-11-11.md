@@ -296,7 +296,7 @@ The checkpoint (`.omc/plans/class-categories-design-checkpoint-2026-11-11.md`) s
 Each step needs its own approval from Noe:
 
 1. **Push** `feat/class-categories-a` and open a draft PR. CI's six checks run on it.
-2. **Before the merge,** `class-categories-prod-check.mjs pre` (read-only): `defaultPrivilegesGiveMatflowAppNewTables` and `matflowAppHasRightsOnMat` both true, and `ownerOfMat` is `neondb_owner`. Otherwise the runtime role may not be able to read the new table, and the merge waits.
+2. **Before the merge,** `class-categories-prod-check.mjs pre` (read-only; the script from Release B's branch): `connectedRoleOwnsMigrationTables` true. Where the `matflow_app` role exists, `defaultPrivilegesGiveMatflowAppNewTables` and `matflowAppHasRightsOnMat` must also be true. Otherwise the runtime role may not be able to read the new table, and the merge waits. The result is recorded privately, not in this public record.
 3. **Merge to `main`** at the exact head. That deploys and **migrates production** (this migration: about 1.5 s of exclusive locks on `Class` and `Tenant`), at a quiet time.
 4. **After the deploy** (read-only; the agent may run it, authorised 12 Nov 2026):
    - the deployment's SHA and the health check;
