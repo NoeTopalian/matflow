@@ -93,10 +93,16 @@ export function sanitiseNoteText(input: string | null | undefined): string | nul
  *
  * Returns null for whitespace-only or all-stripped inputs.
  */
+// An omitted value passes through as undefined (absent), so an update body
+// that does not mention the field never writes it.
 export function notesField(maxLength: number) {
   return z
     .string()
     .max(maxLength)
     .nullish()
-    .transform((s) => sanitiseNoteText(s ?? null));
+    // 10 Nov 2026 (found in Round 4): an ABSENT key stays absent. It used to
+    // become null here, so every member PATCH that did not send notes (a
+    // profile save, a plan or status change) wrote `notes: null` and erased the
+    // member's internal notes. Sent null / blank / whitespace-only is still null.
+    .transform((s) => (s === undefined ? undefined : sanitiseNoteText(s)));
 }
