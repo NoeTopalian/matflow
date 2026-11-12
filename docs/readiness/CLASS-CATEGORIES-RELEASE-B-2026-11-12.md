@@ -68,7 +68,7 @@
 **Still allowed:**
 - an old client's choice on a class whose category is one of the eight starting ones, including a renamed one, which keeps its old key (the old client shows it under its old name);
 - an unrelated edit, from any writer: no category is sent, so the class keeps its current one;
-- re-sending the key a class already has, which is a no-op in the trigger.
+- re-sending the key a class already has: no category change (the trigger stamps it for O1).
 
 **The limit that remains.** An old page carries no record of what it saw. On a class whose category is a starting one, its explicit change applies even if someone changed that class since. This is the same as Release A and main today. It cannot be closed for pages that already exist, and it ends when they are reloaded. A test pins this limit, so a change to it is seen.
 
@@ -85,8 +85,8 @@ Proved in `tests/integration/class-categories-b-stale-editors-db.test.ts`. The f
 | Change while the editor is open | Old page | Current form | Direct old-key writer |
 |---|---|---|---|
 | **Fundamentals renamed to Beginners** | Unrelated save keeps it. Choosing another starting category applies. Choosing "Fundamentals" lands on Beginners, the same row. | Its choice is by id, so it lands on Beginners. | Same as the old page. |
-| **A starting category archived** (Competition) | Choosing it: 409 (archived). A class already on it keeps it through unrelated saves and re-sends. | Choosing it: 409 (archived). | Choosing it: `MF_CLASS_CATEGORY_ARCHIVED`. Re-writing the key the class has: no change. |
-| **A category the club made** (Advanced) | Any change to a class on it (key or null): 409 (stale). Unrelated save keeps it. | Saw it, so its change applies. | Any key: `MF_CLASS_CATEGORY_STALE_WRITER`. NULL, the key the class already has: no change. |
+| **A starting category archived** (Competition) | Choosing it: 409 (archived). A class already on it keeps it through unrelated saves and re-sends. | Choosing it: 409 (archived). | Choosing it: `MF_CLASS_CATEGORY_ARCHIVED`. Re-writing the key the class has: no category change (stamped for O1). |
+| **A category the club made** (Advanced) | Any change to a class on it (key or null): 409 (stale). Unrelated save keeps it. | Saw it, so its change applies. | Any key: `MF_CLASS_CATEGORY_STALE_WRITER`. NULL, the key the class already has: no category change (stamped for O1). |
 | **Someone else changed the class's category** | Club-made category now: 409 (stale). Starting category now: applied (the limit above). | Explicit change or clear: 409 (changed), nothing changes. Choosing the category it already has: accepted. Unrelated save keeps theirs. After reload: applied. | Club-made: refused. Starting: applied. |
 
 The browser journey `class-categories-b` step B12 shows the current-form refusal in the form, beside the buttons, and checks that the other tab's choice is kept.
@@ -104,7 +104,7 @@ These are two different things.
 | # | Check | How | Who | Blocks activation when |
 |---|---|---|---|---|
 | G1 | Production runs Release B | The production deployment's SHA (GitHub deployments API) contains the Release B merge, and `/api/health` returns 200 `db: ok` | Agent (read-only, the established checks) | Any other SHA, or health not ok |
-| G2 | The database refusal is in production | `class-categories-prod-check.mjs gate-b`: `staleWriterRefusalPresent` true; migration `20261112120000_class_category_stale_writer` finished, not rolled back | Agent, read-only (authorised 12 Nov 2026) | False, missing, or rolled back |
+| G2 | The database refusal is in production | `class-categories-prod-check.mjs gate-b`: `staleWriterRefusalPresent` true; migration `20261112120000_class_category_stale_writer` finished, not rolled back | Agent, read-only (authorised 12 Nov 2026) | `staleWriterRefusalPresent` or `everyOldKeyWriteStamped` false; the migration missing or rolled back |
 | G3 | No server from before Release A can answer | Vercel lists no production deployment older than Release A: each was deleted | Noe (Vercel) | Any such deployment still exists |
 | G4 | The data agrees | `gate-b`: `classesWithKeyButNoReference` and `referencesWhoseKeyDiffers` both 0 (Release A evidence §6 item 4) | Agent, read-only (authorised 12 Nov 2026) | Any row |
 | G5 | No new category writer | Repeat the grep on the merged head (`scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers), and record it | Agent | Any writer of `Class.category` or `Class.categoryId` outside the class routes and undo |
@@ -115,7 +115,10 @@ Every database read in G2, G4, G6, O1 and O2 is made by `scripts/readiness/class
 - It uses stage0's host and routing guard and a client with TLS verified.
 - It sets `app.bypass_rls` for that transaction, because row-level security is forced on these tables. It refuses to report if it can see no club.
 - It prints counts, booleans, timestamps and the database role name. It never prints a person's name, email or record id, or a connection string.
-- Its `pre` check confirms, before Release A, that the runtime role `matflow_app` gets new tables' rights through default privileges. Its `post-a` check is Release A's post-deploy read: every club has exactly its eight starting rows, the two consistency counts are 0, and `matflow_app` has its rights on `ClassCategory`. On the test branch, fixture clubs inserted directly by the journey harness have no rows until first use; clubs made in the app are seeded on creation (`create-tenant`, application approval).
+- Its `pre` check confirms, before Release A, that the runtime role `matflow_app` gets new tables' rights through default privileges granted for `neondb_owner`.
+  - That assumes production migrations run as `neondb_owner`. The check prints the owner of `Mat`, a table an earlier migration made, so a different migration role would show.
+  - If the owner is not `neondb_owner`, Release A is not merged until the default privileges for that role are confirmed.
+- **The O2 query's cost.** It filters `AuditLog` on `createdAt > since` first (indexed: `AuditLog(createdAt)`), then on the two class actions, then on the marker. Its cost is bounded by seven days of audit rows, and the check has a 15 s statement timeout. Its `post-a` check is Release A's post-deploy read: every club has exactly its eight starting rows, the two consistency counts are 0, and `matflow_app` has its rights on `ClassCategory`. On the test branch, fixture clubs inserted directly by the journey harness have no rows until first use; clubs made in the app are seeded on creation (`create-tenant`, application approval).
 
 The route refusals need no production check of their own: they ship in the code that G1 verifies. They are proved by the suites in §6.
 
@@ -128,7 +131,7 @@ The route refusals need no production check of their own: they ship in the code 
 | Signal | What it shows | Where it is kept | Who reads it | Blocks activation when |
 |---|---|---|---|---|
 | O1 `observe <since>`: the latest `categoryKeyWrittenAt` | A pre-Release-A server or a script wrote the old key column directly. Release B's function stamps every such write, even one re-sending the same key; this release's code never writes that way. | The database (durable) | Agent, read-only (authorised 12 Nov 2026) | A stamp later than `since`. Find the writer, delete the deployment or stop the script, then restart the period. |
-| O2 `observe <since>`: `class.updated` / `class.created` audit rows with `metadata.categoryOldKey = true`, and how many people made them | A page older than Release B (a pre-Release-A page or a Release A page) is still open **and changing a class's category**. Old pages that only edit names, times or rosters are not seen, and need not be: the refusals in §2 apply only to category changes. **New in Release B.** | The audit log. The row is awaited before the save answers, and lost only if that audit write itself fails, which is logged | Agent, read-only (authorised 12 Nov 2026). Who they are is read only if the count is not 0 | Any row. That person reloads every MatFlow tab and device they edit classes from, then the period restarts. Without this, they would meet the 409 after activation. That is safe, but it is avoidable confusion. |
+| O2 `observe <since>`: `class.updated` / `class.created` audit rows with `metadata.categoryOldKey = true`, and how many people made them | A page older than Release B (a pre-Release-A page or a Release A page) is still open **and changing a class's category**. Old pages that only edit names, times or rosters are not seen, and need not be: the refusals in §2 apply only to category changes. **New in Release B.** | The audit log. The row is awaited before the save answers, and lost only if that audit write itself fails, which is logged | Agent, read-only (authorised 12 Nov 2026). If the count is not 0, Noe finds who on the Activity page (Classes, the same days), which shows each class change and who made it. No further production query | Any row. That person reloads every MatFlow tab and device they edit classes from, then the period restarts. Without this, they would meet the 409 after activation. That is safe, but it is avoidable confusion. |
 | The `[class-category] legacy key write` runtime log line (Release A) | The same as O2 | Vercel runtime logs: **1 hour** on the Hobby plan (Vercel docs, checked 12 Nov 2026) | — | Not used. It cannot cover seven days on Hobby, so Release A §6 item 2 could not have been collected as written. O2 replaces it. |
 
 A create made by this release's form, in a club that has no category rows yet, also sets `categoryOldKey`. All production clubs are seeded by Release A's migration, so in practice this needs a club created by an older build during the changeover. Such a row names a current user and is read as a false alarm.
@@ -149,6 +152,7 @@ A create made by this release's form, in a club that has no category rows yet, a
 |---|---|---|---|
 | A Vercel deployment from before Release A, still answering (its own URL; production traffic moves to the new deployment) | Yes: writes `Class.category` directly | The trigger (§2, control 3); and G3 deletes it | O1 |
 | A browser tab or kiosk holding a page loaded before Release A | Yes: posts the old key to the current server | The route (§2, control 1) | O2 |
+| A Release A page left open across Release B's deploy | Posts `categoryId` without `categoryBaseId` | The route (§2, control 1) | O2 |
 | This release's class form, left open | No: posts `categoryId` with `categoryBaseId` | The route (§2, control 2) | — (not an old writer) |
 | A script, cron, import or other API writer | None found (grep of `scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers; Release A evidence §6) | The trigger, if one ever writes the old key | O1; G5 repeats the grep |
 | Undo of a class edit | Writes the reference (Release A §7) | The trigger's archived and tenant rules; Release A's undo refusals | — |
@@ -221,7 +225,7 @@ Under Noe's authority of 12 Nov 2026, the agent merges, deploys and runs the rea
 |---|---|---|
 | An earlier Release B deployment | Supported | Supported, with the switch on or off |
 | **Release A** | Supported. It writes references, which this function accepts. It drops the open-form refusal (back to last writer wins), the Release A page refusal and the audit marker. The stale-writer rule cannot fire, because no club-made category exists yet. Evidence: Release A's own bridge suite, run against a database carrying this migration, passes 24 of 25 as both roles. The one failure is the case this release tightens: a direct old-key write replacing a club-made category is now refused (§6). | **Not a supported fallback, and not demonstrated safe.** It is unsafe in one known case. Release A's route turns an old page's key into a reference write, which the trigger's old-key refusal does not see, and Release A has no route refusal. So an old page can replace or clear a club-made category it never saw. Release A also has no open-form refusal. **If Release B's code must be withdrawn after activation, deploy Release B with the switch off; never Release A.** |
-| A build from before Release A | Prohibited (Release A evidence §5) | Prohibited. This function would refuse its old-key writes on club-made categories, but it remains prohibited. |
+| A build from before Release A | Supported only until G3 has run (Release A evidence §5: while only the eight starting rows exist). After G3, no such deployment exists to fall back to. | Prohibited (Release A evidence §5). This function would refuse its old-key writes on club-made categories, but it stays prohibited. |
 - **Recovery from a failed migration.** As in Release A evidence §9:
   1. The deploy stops at P3009.
   2. Noe runs `prisma migrate resolve --rolled-back 20261112120000_class_category_stale_writer`.
