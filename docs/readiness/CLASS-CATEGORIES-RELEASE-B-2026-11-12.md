@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Branch:** `feat/class-categories-b`, built on Release A (`feat/class-categories-a` at `b73c1c40`). Pushed as draft PR #84, stacked on #79. Not merged, not deployed, not activated.
+- **Branch:** `feat/class-categories-b`, PR #84, based on main (Release A merged and deployed on 12 Nov 2026). Not merged, not deployed, not activated.
 - **Sean's categories:** not touched.
 - **Authority** (Noe, 12 Nov 2026):
   - First: build the management UI and the server operations on the verified Release A foundation, without activating it.
@@ -279,38 +279,50 @@ Under Noe's authority of 12 Nov 2026, the agent merges, deploys and runs the rea
 
 ## 6. Results
 
-**Final code:** `53669a7d`. After it come `ef891708` (this record) and `ad20e942` (the read-only check script only). Results on earlier code are kept below for history and do not describe what ships.
+**Final code:** `e379c0dd`. It contains:
+- Release B (reviewed in three rounds);
+- the B3-1 fix and its two follow-up rounds;
+- main at `c671435b` (Release A and the security release), merged in. Release B's diff against main is exactly its own changes; no file is touched by both sides.
 
 | Gate | Commit | Result |
 |---|---|---|
-| Type-check | `53669a7d` | clean |
-| Lint (eslint and the UI-RULES ratchet) | `ad20e942` | passed |
-| Full unit suite | `ad20e942` | 657 files passed, 126 skipped (database files), 0 failed; 9,393 tests. The full JSON report is kept for diagnostics. |
-| Production build | `ad20e942` | passed (clean tree) |
-| DB suites `class-categories-b-stale-editors`, `class-categories-b`, `class-categories-bridge`, owner role | `ad20e942`, rehearsal database with the final migration | 46/46 |
+| Type-check | `e379c0dd` | clean |
+| Lint (eslint and the UI-RULES ratchet) | `e379c0dd` | passed |
+| Full unit suite | `e379c0dd` | 661 files passed, 132 skipped (database files), 0 failed; 9,465 tests |
+| Production build | `e379c0dd` | passed (clean tree) |
+| DB suites `class-categories-b-stale-editors`, `class-categories-b`, `class-categories-bridge`, owner role | `e379c0dd`, rehearsal database with the final migration | 46/46 |
 | The same, `matflow_app` with RLS enforced | same | 46/46 |
-| Release A's own `class-categories-bridge` suite against the final migration (§5a) | Release A `82c2cb59` code (`9712e19e`), same rehearsal database | 24/25 under each role. The one failure is the intended tightening: a direct old-key write replacing a club-made category is refused. |
-| The migration on a fresh rehearsal database | `3a3dc9dc` migration text (unchanged since) | applied in 1,821 ms (Release A's: 1,048 ms). Rehearsal evidence, not a production duration. |
-| Journey `class-categories-b` (switch on), including B12 | build of `ad20e942` | 13 PASS / 0 FAIL |
-| Journey `class-categories-a` (switch on), C8 updated for Release A pages | build of `ad20e942` | 13 PASS / 0 FAIL |
-| Journey `classes-lifecycle` (switch on) | build of `ad20e942` | 56 PASS / 0 FAIL / 4 NOTE |
-| CI | PR #84 | required to be green on the merge head before merge (the branch protection's strict check) |
-| Independent review | three rounds, 12 Nov 2026 (separate sessions) | round 3: APPROVE WITH NITS to merge and deploy with the switch off. **B3-1 must be fixed before activation** (below). |
+| Release A's own `class-categories-bridge` suite against the final migration (§5a) | Release A code (`9712e19e`) | 24/25 under each role. The one failure is the intended tightening: a direct old-key write replacing a club-made category is refused. |
+| The migration on a fresh rehearsal database | migration text unchanged since `3a3dc9dc` | applied in 1,821 ms. Rehearsal evidence, not a production duration. |
+| Journey `class-categories-b` (switch on), incl. B12 and B13–B15 (two admins, a held reorder answer, a lost answer and a retry) | build of `e379c0dd` | 16 PASS / 0 FAIL |
+| Journey `class-categories-a` (switch on) | build of `e379c0dd` | 13 PASS / 0 FAIL |
+| Journey `classes-lifecycle` (switch on) | build of `e379c0dd` | 56 PASS / 0 FAIL / 4 NOTE |
+| Categories sheet component tests (`tests/unit/categories-sheet.test.tsx`) | `e379c0dd` | 11 cases. Those for the B15 window, S1, B3-7, N3, F1 and F2 each fail without their fix. |
+| CI on PR #84 | `e379c0dd` | all six checks passed |
+| Independent review | 12 Nov 2026, separate sessions | Release B round 3: APPROVE WITH NITS. B3-1: APPROVE WITH NITS. Its follow-ups: CHANGES REQUIRED (F1, F2), then APPROVE WITH NITS on `e379c0dd`. |
 
 The journeys ran on the shared test branch, where Release B's migration is **not** applied. The database refusals are proved on the rehearsal database; the route refusals on both.
 
-**B3-1, fixed on `fix/categories-b3-1` (review round 3).**
+**B3-1, fixed before deployment.**
 - **The defect:** a rename or archive that waited behind a slow reorder was sent with the version from the reloaded list, so it could overwrite another admin's change unseen.
-- **The fix:** each write carries the version on screen when it began, plus only the bumps this sheet's own writes made since. The reorder route now says which rows it moved.
-- **Proof:**
-  - journey steps B13–B15: two admins, a held reorder answer, a lost answer and a retry;
-  - the DB suite (the reorder's moved rows; every mutation refused while switched off);
-  - the static switch guard.
+- **Two more found while verifying it, and fixed:**
+  - a rename begun between a reorder's answer and its reload was sent one version short, a false refusal (found by journey B15, traced);
+  - a reload could show an older name at a newer version, which in a rare race could again allow an unseen overwrite (review F2).
+- **Now:** each write carries the version on screen when it began, plus only this sheet's own counted bumps. A reload never shows another answer's content at a counted version.
 
-  Results are in "B3-1 results" below.
-- **Nits B3-2 to B3-7:** focus after a waited move, a lost unit case, the placement of the O2 cost bullet, the O2 follow-up's precision, `ownerOfMat` as a boolean, and a move going ahead after a conflict. They go into the same PR.
+**Open nits (none blocks deployment or activation).**
+- **From B3-1's last review:**
+  - a mark from an archive or restore that succeeds after a lost move is not cleared until the next conflict or reopen;
+  - focus is not restored when a failed move puts the old order back;
+  - a stale comment;
+  - further regression tests.
+- **From round 3:** the B3-3 unit case (covered by the DB suite), and the O2 follow-up's precision (the Activity page does not show which class change carried the marker).
+- **The switch guard** checks database calls before the switch check, not every possible way of writing first (N4).
 
-**History (earlier code, superseded):** code `8d080073`: unit 655 files passed; DB 34/34 under each role; journeys 12/0, 13/0, 56/0/4. Code `32aa3da1`: journeys 13/0, 13/0, 56/0/4.
+**History (earlier code, superseded):**
+- `8d080073`: unit 655 files passed; DB 34/34 under each role; journeys 12/0, 13/0, 56/0/4.
+- `32aa3da1`: journeys 13/0, 13/0, 56/0/4.
+- `53669a7d` / `ad20e942`: unit 657 files passed; DB 46/46 under each role; journeys 13/0, 13/0, 56/0/4.
 
 ## 7. Sean's setup and acceptance checklist (after activation; with Sean, never inferred)
 
