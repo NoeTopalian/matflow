@@ -270,6 +270,13 @@ try {
     await reopen();
     const before = await activeNames();
     const w = before[4];
+    const wId = (await catRows()).find((r) => r.name === w).id;
+    // Every category write, its body, and its answer, from here to the end of the step.
+    const trace = [];
+    const onReq = (req) => { if (req.url().includes("/api/class-categories") && req.method() !== "GET") trace.push({ t: Date.now(), dir: "req", method: req.method(), body: (req.postData() ?? "").slice(0, 400) }); };
+    const onRes = async (resp) => { if (resp.url().includes("/api/class-categories") && resp.request().method() !== "GET") trace.push({ t: Date.now(), dir: "res", method: resp.request().method(), status: resp.status(), body: (await resp.text().catch(() => "")).slice(0, 300) }); };
+    const onFail = (req) => { if (req.url().includes("/api/class-categories")) trace.push({ t: Date.now(), dir: "failed", method: req.method() }); };
+    page.on("request", onReq); page.on("response", onRes); page.on("requestfailed", onFail);
     let reached = 0;
     await page.route("**/api/class-categories/order", async (r) => { reached++; await r.fetch(); await r.abort("failed"); });
     await sheet().getByRole("button", { name: `Move ${w} down`, exact: true }).click();
@@ -294,9 +301,11 @@ try {
     try {
       await expect.poll(async () => (await activeNames()).includes(renamed), { timeout: 60_000 }).toBe(true);
     } catch (e) {
-      throw new Error(`rename did not land; answers ${JSON.stringify(answers)}; notice ${JSON.stringify(await sheet().getByTestId("categories-notice").textContent().catch(() => null))}; names ${JSON.stringify(await activeNames())}`);
+      const dbRow = (await catRows()).find((r) => r.id === wId);
+      throw new Error(`rename did not land; db version ${dbRow?.version}; trace ${JSON.stringify(trace)}; answers ${JSON.stringify(answers)}; notice ${JSON.stringify(await sheet().getByTestId("categories-notice").textContent().catch(() => null))}; names ${JSON.stringify(await activeNames())}`);
     } finally {
       page.off("response", onAnswer);
+      page.off("request", onReq); page.off("response", onRes); page.off("requestfailed", onFail);
     }
     await expect.poll(shownNames, { timeout: 30_000 }).toEqual(await activeNames());
     return await activeNames();
