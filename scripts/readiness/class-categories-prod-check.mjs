@@ -94,14 +94,23 @@ try {
   if (check === "gate-b" || check === "observe") {
     if ((await count(client, `SELECT count(*)::int AS n FROM "ClassCategory"`)) === 0) throw new Error("no categories visible; nothing reported");
   }
+  const appRole = (await client.query(`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'matflow_app') AS e`)).rows[0].e === true;
+  out.matflowAppRoleExists = appRole;
   if (check === "pre") {
+    // The connected role (the env file's DATABASE_URL) owning a migration-made table means it owns the tables the
+    // next migration makes too, so it can read and write ClassCategory whatever the default privileges say.
+    out.ownerOfMat = (await client.query(`SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'Mat'`)).rows[0]?.tableowner ?? null;
+    out.connectedRoleOwnsMigrationTables = out.ownerOfMat === who.role;
+    if (!appRole) {
+      out.note = "matflow_app does not exist here, so it cannot be the runtime role; its rights are not checked";
+    } else {
     const acl = (await client.query(
       `SELECT count(*)::int AS n FROM pg_default_acl d JOIN pg_namespace ns ON ns.oid = d.defaclnamespace
         WHERE ns.nspname = 'public' AND d.defaclobjtype = 'r' AND pg_get_userbyid(d.defaclrole) = 'neondb_owner'
           AND array_to_string(d.defaclacl, ',') LIKE '%matflow_app=arwd%'`)).rows[0].n;
     out.defaultPrivilegesGiveMatflowAppNewTables = acl > 0;
     out.matflowAppHasRightsOnMat = await appRights(client, 'public."Mat"');
-    out.ownerOfMat = (await client.query(`SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'Mat'`)).rows[0]?.tableowner ?? null;
+    }
   } else if (check === "post-a") {
     out.categoryRows = await count(client, `SELECT count(*)::int AS n FROM "ClassCategory"`);
     if (out.categoryRows < out.clubs * 8) out.warning = "fewer than eight category rows per club";
@@ -109,7 +118,8 @@ try {
       `SELECT count(*)::int AS n FROM "Tenant" t WHERE (SELECT count(*) FROM "ClassCategory" cc
          WHERE cc."tenantId" = t."id" AND cc."legacyKey" = ANY($1::text[])) <> 8`, [KEYS]);
     Object.assign(out, await consistency(client));
-    out.matflowAppHasRightsOnClassCategory = await appRights(client, 'public."ClassCategory"');
+    if (appRole) out.matflowAppHasRightsOnClassCategory = await appRights(client, 'public."ClassCategory"');
+    out.connectedRoleOwnsClassCategory = (await client.query(`SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'ClassCategory'`)).rows[0]?.tableowner === who.role;
   } else if (check === "gate-b") {
     const fn = (await client.query(`SELECT prosrc FROM pg_proc WHERE proname = 'matflow_class_category_bridge'`)).rows;
     out.bridgeFunctions = fn.length;
