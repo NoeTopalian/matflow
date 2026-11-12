@@ -775,13 +775,17 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // Round 5 remediation: the route needs a current authenticator code (step-up); the card asks for it inline.
   const [recoveryAsking, setRecoveryAsking]       = useState(false);
   const [recoveryCode, setRecoveryCode]           = useState("");
-  // Closing the code field (Cancel, or codes issued) unmounts the control that had focus: put it back on the button.
+  // Cancel unmounts the control that had focus, and closing the codes drawer leaves focus nowhere: put it back on
+  // "Generate new" then, and only then. Not when codes are issued: the drawer opens and owns focus (review of
+  // 12 Nov 2026: focusing the button behind the open drawer pulled focus out of it).
   const recoveryGenerateRef = useRef<HTMLButtonElement>(null);
-  const recoveryWasAsking = useRef(false);
+  const recoveryRefocus = useRef(false);
   useEffect(() => {
-    if (recoveryWasAsking.current && !recoveryAsking) recoveryGenerateRef.current?.focus();
-    recoveryWasAsking.current = recoveryAsking;
-  }, [recoveryAsking]);
+    if (recoveryRefocus.current && !recoveryAsking && !recoveryDrawer) {
+      recoveryRefocus.current = false;
+      recoveryGenerateRef.current?.focus();
+    }
+  }, [recoveryAsking, recoveryDrawer]);
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [recoveryCopied, setRecoveryCopied]       = useState(false);
 
@@ -2767,7 +2771,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   <Button type="submit" size="compact" loading={recoveryGenerating} disabled={recoveryGenerating}>
                     Generate new codes
                   </Button>
-                  <Button type="button" size="compact" variant="ghost" disabled={recoveryGenerating} onClick={() => { setRecoveryAsking(false); setRecoveryCode(""); setRecoveryError(""); }}>
+                  <Button type="button" size="compact" variant="ghost" disabled={recoveryGenerating} onClick={() => { recoveryRefocus.current = true; setRecoveryAsking(false); setRecoveryCode(""); setRecoveryError(""); }}>
                     Cancel
                   </Button>
                 </form>
@@ -3462,6 +3466,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           // Block accidental dismiss until acknowledged. The codes can never
           // be retrieved again — only regenerated, which invalidates them.
           if (!recoveryAcknowledged) return;
+          recoveryRefocus.current = true;
           setRecoveryDrawer(false);
           setRecoveryCodes([]);
         }}
@@ -3521,6 +3526,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </label>
           <button
             onClick={() => {
+              recoveryRefocus.current = true;
               setRecoveryDrawer(false);
               setRecoveryCodes([]);
             }}

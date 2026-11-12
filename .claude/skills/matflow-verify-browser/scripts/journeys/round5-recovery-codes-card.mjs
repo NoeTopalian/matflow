@@ -80,6 +80,21 @@ try {
     after !== before && JSON.parse(after).length === 8, { stored: JSON.parse(after).length });
   await shot(page, "round5-recovery-card-codes");
 
+  // ── A3 / A4: focus stays with the codes drawer when it opens, and returns to "Generate new" after Done ──
+  await page.waitForTimeout(500);
+  const inDrawer = await page.evaluate(() => {
+    const a = document.activeElement;
+    const gen = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Generate new");
+    return { inDialog: !!a?.closest("[role='dialog']"), onGenerate: !!gen && a === gen, tag: a?.tagName ?? null };
+  });
+  L.check("a11y", "A3 codes issued: focus is inside the codes drawer, not pulled behind it onto 'Generate new'", inDrawer.inDialog && !inDrawer.onGenerate, inDrawer);
+  await page.getByLabel("I've saved these codes somewhere I can find them.").check();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  const genAfter = card(page).getByRole("button", { name: "Generate new", exact: true });
+  await genAfter.waitFor();
+  await page.waitForTimeout(300);
+  L.check("a11y", "A4 Done closes the drawer and returns focus to 'Generate new'", await genAfter.evaluate((el) => el === document.activeElement), {});
+
   // ── M1 + K1 (phone, keyboard) ──
   const ph = await context(browser, "198.18.56.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const pp = await ph.newPage();

@@ -179,7 +179,10 @@ Database suites on the Neon test branch, commit `cb107b57`, each batch under `ne
 
 **Not run on this head:**
 - `login-identity-claims-db`: it exceeds the runner's 10-minute limit, on main too.
-- DB files this branch doesn't touch: CI covers them.
+- Every other DB file has not been run against this branch on the test branch. **CI does not fully cover them** (checked 12 Nov 2026 on PR #80's CI run, the same workflow):
+  - CI's own Postgres runs the DB files guarded by `DATABASE_URL`, but only as the `postgres` superuser, so RLS is not enforced there. The exception is `rls-foundation.test.ts`, which CI reruns as a NOBYPASSRLS role.
+  - CI skips 29 files that need `TEST_DATABASE_URL`. Examples: `member-archive-db` (run above, both roles), `activity-feed-db`, `sec-f2-auditlog-append-only-db`, `sec-l1-*`, `support-mats-db`, `timetable-multiday-db`. This branch has no CI run yet, because it is not pushed.
+  - The suites this branch's diff touches or directly covers are the ones listed above.
 
 **Not exercised:**
 - real Vercel Blob storage (the store is stubbed; the path and ownership rules are what is tested);
@@ -254,6 +257,40 @@ If D1 to D4 return no rows, no exploitation of the file holes is visible in stor
 **Deploy (Noe):** push, then a PR, then merge. Nothing runs in production. After it merges, peer sessions may use `migrate-test.mjs` again (`matflow-e8` is holding off until then).
 
 ---
+
+## Re-review of the fixes (12 Nov 2026, independent, read-only)
+
+| Packet | Verdict | Status of earlier findings |
+|---|---|---|
+| 2: security | APPROVE WITH NITS | F1–F6 fixed. `uploadedAt` is always server-set, so the earliest-row rule cannot be backdated. Every new query is tenant-filtered inside `withTenantContext`. The recovery-codes route still requires the code; its only change is a rate limit. The test changed in `6cad2568` was not loosened: a null `get` for a deleted file matches `@vercel/blob` 2.3.3. |
+| 3: tooling | APPROVE WITH NITS | F7 and F8 fixed. |
+
+**Packet 2 findings, and what was done:**
+
+- **N2 (fixed, the one regression).** The F6 fix moved focus to "Generate new" whenever the code field closed, including after a successful generation. That pulled focus out of the codes drawer, onto a button behind it.
+  - Fix: focus returns only after Cancel, or after the drawer is closed with Done or Escape.
+  - Journey checks: **A3**, codes issued, focus is inside the drawer; **A4**, Done returns focus to "Generate new".
+  - A3 failed on the previous build; results are in the verification table.
+- **N1 and N4 (historical, not changed in code).** Take a legacy club-root photo that has a row planted by another member *before this release*. When the owner replaces the photo (PUT), the file is not deleted, by the keep-everything rule (#72). The planter's row then becomes the earliest, so the planter can read it.
+  - After this release no new reference to a legacy file can be made, so the exposure is limited to rows planted before deploy.
+  - Detection query **D2** finds them.
+  - Removing planted rows would be a production data write. It needs Noe's separate approval, after he has run D2. Nothing is prepared to run automatically.
+- **N3 (open, nit).** A branding save resends the current logo. If a planted row points at that logo (D1 finds these), every settings save is refused with 400 until the row is removed. It fails closed; no data is exposed.
+- **N5 (nit, fails safe).** The read rule breaks a tie on equal timestamps by id; the delete rule keeps the file on a tie.
+- **N6 (test limits).**
+  - The erasure sweep searches tables with a `tenantId` column only.
+  - The F2/F3 test depends on a file created by an earlier test.
+  - A logo or announcement set to an erased member's photo before this release keeps that file.
+
+**Packet 3 findings (documented, not changed):**
+
+- **N8.** A host is identified by its name hash alone. WSL, or a container sharing the hostname, could have a live run judged dead.
+- **N9.** An orphan with an old-format tag is refused as "another machine" and must be cleared by hand.
+- **N10.** With no run record, a dead parent's live Prisma child could be ended mid-migration.
+- **N11.** On a Prisma failure, the exit code does not say whether the lock is still held.
+- **N12.** The guards do not parse `host=` or `hostaddr=`; this is theoretical.
+
+The tag is a naming convention, not authentication. A refused lock is cleared by its owner, or by Noe.
 
 ## Existing failures and open items (unchanged by this release)
 
