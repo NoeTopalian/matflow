@@ -47,6 +47,19 @@ describe.skipIf(!HAS_DB)("member recovery codes: step-up, attempt limit, fresh s
     const near = new Set([-30_000, 0, 30_000].map((d) => generateSync({ secret, epoch: Math.floor((now + d) / 1000) })));
     for (let i = 0; ; i++) { const c = String(i).padStart(6, "0"); if (!near.has(c)) return c; }
   };
+  /**
+   * A code for the current 30-second step (or, with stepsBack 1, the previous one), generated with at least 10 s left
+   * in the current step. The routes make several database round trips before they check the code (1-2 s against the
+   * test branch), so a code generated just before a step boundary reached them one step older than the test meant:
+   * enrolment (current step only) refused the current code, and the recovery-codes route (current and previous)
+   * refused the "previous" code, now two steps old. Both seen intermittently on 12 Nov 2026. Waiting for the next step
+   * changes no expectation and no acceptance rule; it only keeps the test's own delay inside one step.
+   */
+  const codeWithTimeLeft = async (stepsBack: 0 | 1 = 0, marginMs = 10_000) => {
+    const left = 30_000 - (Date.now() % 30_000);
+    if (left < marginMs) await new Promise((resolve) => setTimeout(resolve, left + 50));
+    return generateSync({ secret, epoch: Math.floor(Date.now() / 1000) - 30 * stepsBack });
+  };
 
   beforeAll(async () => {
     tenantId = (await withRlsBypass((tx) => tx.tenant.create({ data: { name: STAMP, slug: STAMP } }))).id;
@@ -80,7 +93,7 @@ describe.skipIf(!HAS_DB)("member recovery codes: step-up, attempt limit, fresh s
   it("the previous 30-second step's code is accepted (a code typed as the step rolls over)", async () => {
     const id = await member("g", { totpEnabled: true, totpSecret: secret, totpRecoveryCodes: ["old-hash"] });
     as(id);
-    const previous = generateSync({ secret, epoch: Math.floor(Date.now() / 1000) - 30 });
+    const previous = await codeWithTimeLeft(1);
     expect((await post(regenerate, { totpCode: previous })).status).toBe(200);
   });
 
@@ -99,7 +112,7 @@ describe.skipIf(!HAS_DB)("member recovery codes: step-up, attempt limit, fresh s
     const kept = { totpEnabled: false, totpSecret: secret, totpRecoveryCodes: ["kept-1", "kept-2"] };
     const id = await member("d", kept);
     as(id);
-    const res = await post(enrol, { code: generateSync({ secret }), issueRecoveryCodes: true });
+    const res = await post(enrol, { code: await codeWithTimeLeft(), issueRecoveryCodes: true });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { recoveryCodes?: string[] }).recoveryCodes).toHaveLength(8);
     const row = await withRlsBypass((tx) => tx.member.findUniqueOrThrow({ where: { id }, select: { totpEnabled: true, totpRecoveryCodes: true } }));
@@ -109,7 +122,7 @@ describe.skipIf(!HAS_DB)("member recovery codes: step-up, attempt limit, fresh s
 
     const bare = await member("d2", kept);
     as(bare);
-    expect((await post(enrol, { code: generateSync({ secret }) })).status).toBe(200);
+    expect((await post(enrol, { code: await codeWithTimeLeft() })).status).toBe(200);
     expect(await codesOf(bare)).toBeNull();
   });
 
