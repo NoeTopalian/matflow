@@ -302,7 +302,19 @@ try {
       await expect.poll(async () => (await activeNames()).includes(renamed), { timeout: 60_000 }).toBe(true);
     } catch (e) {
       const dbRow = (await catRows()).find((r) => r.id === wId);
-      throw new Error(`rename did not land; db version ${dbRow?.version}; trace ${JSON.stringify(trace)}; answers ${JSON.stringify(answers)}; notice ${JSON.stringify(await sheet().getByTestId("categories-notice").textContent().catch(() => null))}; names ${JSON.stringify(await activeNames())}`);
+      // Compact: for each write, the version of the renamed row it carried or reported.
+      const vOf = (e) => {
+        try {
+          const j = JSON.parse(e.body || "{}");
+          if (e.dir === "req" && e.method === "PUT") return `sent ${j.items?.find((i) => i.id === wId)?.version}`;
+          if (e.dir === "req" && e.method === "PATCH") return `sent ${j.version}`;
+          if (e.dir === "res" && e.method === "PUT") return `moved ${JSON.stringify(j.moved?.find((m) => m.id === wId) ?? null)} n=${j.moved?.length}`;
+          return e.status ?? "";
+        } catch { return "?"; }
+      };
+      const t0 = trace[0]?.t ?? 0;
+      const brief = trace.map((e) => `${e.t - t0}ms ${e.dir} ${e.method} ${e.status ?? ""} ${vOf(e)}`).join(" | ");
+      throw new Error(`rename did not land; db ${dbRow?.version}; ${brief}; notice ${JSON.stringify(await sheet().getByTestId("categories-notice").textContent().catch(() => null))}; names ${JSON.stringify(await activeNames())}`);
     } finally {
       page.off("response", onAnswer);
       page.off("request", onReq); page.off("response", onRes); page.off("requestfailed", onFail);
