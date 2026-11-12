@@ -22,7 +22,7 @@ let releaseReload: (() => void) | null = null;
 
 const STALE_ONE = "This category was changed in another tab or by someone else. Close this and open Categories again.";
 const STALE_ALL = "Your categories have changed. Close this and open Categories again.";
-const list = () => [...rows].sort((a, b) => a.sortOrder - b.sortOrder).map(({ sortOrder: _s, ...r }) => ({ ...r }));
+const list = () => [...rows].sort((a, b) => a.sortOrder - b.sortOrder).map((r) => ({ id: r.id, name: r.name, legacyKey: r.legacyKey, archived: r.archived, version: r.version, classCount: r.classCount }));
 const ok = (data: unknown) => ({ ok: true, status: 200, json: async () => data, text: async () => JSON.stringify(data) });
 const refuse = (status: number, data: unknown) => ({ ok: false, status, json: async () => data, text: async () => JSON.stringify(data) });
 
