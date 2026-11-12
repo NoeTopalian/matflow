@@ -282,11 +282,22 @@ try {
     // The retry: one more step, exactly.
     await sheet().getByRole("button", { name: `Move ${w} down`, exact: true }).click();
     await expect.poll(async () => (await activeNames()).indexOf(w), { timeout: 60_000 }).toBe(6);
-    // A rename begun after the reload carries what was on screen: it lands.
+    // A rename begun after the reload carries what was on screen: it lands. Every category write's answer is kept,
+    // so a failure says what the server said.
+    const answers = [];
+    const onAnswer = async (resp) => { if (resp.url().includes("/api/class-categories/") && resp.request().method() !== "GET") answers.push({ method: resp.request().method(), status: resp.status(), body: (await resp.text().catch(() => "")).slice(0, 300) }); };
+    page.on("response", onAnswer);
+    const renamed = `B15 ${TAG}`;
     const field = sheet().getByLabel(`${w} name`, { exact: true });
-    await field.fill(`${w} (B15)`);
+    await field.fill(renamed);
     await field.press("Enter");
-    await expect.poll(async () => (await activeNames()).includes(`${w} (B15)`), { timeout: 60_000 }).toBe(true);
+    try {
+      await expect.poll(async () => (await activeNames()).includes(renamed), { timeout: 60_000 }).toBe(true);
+    } catch (e) {
+      throw new Error(`rename did not land; answers ${JSON.stringify(answers)}; notice ${JSON.stringify(await sheet().getByTestId("categories-notice").textContent().catch(() => null))}; names ${JSON.stringify(await activeNames())}`);
+    } finally {
+      page.off("response", onAnswer);
+    }
     await expect.poll(shownNames, { timeout: 30_000 }).toEqual(await activeNames());
     return await activeNames();
   });
