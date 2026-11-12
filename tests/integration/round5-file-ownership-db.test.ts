@@ -245,7 +245,9 @@ describe.skipIf(!HAS_DB)("file ownership at attach, read and delete", () => {
     asStaff("owner", ownerId);
     gate.tenantId = tenantId;
     gate.userId = ownerId;
-    const variants = [`${legacy}?v=1`, `${legacy}#x`, legacy.replace(STORE, STORE.toUpperCase().replace("HTTPS://", "https://"))];
+    // Fix re-review 4: an EMPTY query or fragment (A1), and host spellings the strict matcher does not recognise (A3).
+    const variants = [`${legacy}?v=1`, `${legacy}#x`, legacy.replace(STORE, STORE.toUpperCase().replace("HTTPS://", "https://")),
+      `${legacy}?`, `${legacy}#`, legacy.replace(".com/", ".com:443/"), legacy.replace(".com/", ".com./")];
     for (const v of variants) {
       expect((await postAnnouncement(req("POST", { title: "T", body: "B", imageUrl: v }))).status, v).toBe(400);
       expect((await patchSettings(req("PATCH", { logoUrl: v }))).status, v).toBe(400);

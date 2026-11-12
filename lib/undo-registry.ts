@@ -26,7 +26,7 @@ import { mintUpcomingSessions } from "@/lib/class-lifecycle";
 import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { BILLING_BASIS_AVAILABLE } from "@/lib/class-allowance";
 import { recordStatusEvent } from "@/lib/member-status";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isBlobStoreHost, isVercelBlobUrl } from "@/lib/blob-url";
 import { isAttachableClubAsset } from "@/lib/blob-ownership";
 
 /** What the owner reads when an undo would switch a plan to the billing-period basis while it ships dark. */
@@ -367,7 +367,7 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     // member's photo), or an undo could make a member's photo the club logo (re-review of 12 Nov 2026).
     async prepare(tx, row, _current, restore) {
       const logo = restore.logoUrl;
-      if (typeof logo === "string" && logo && isVercelBlobUrl(logo) && !(await isAttachableClubAsset(tx, row.tenantId ?? "", logo))) {
+      if (typeof logo === "string" && logo && (isVercelBlobUrl(logo) || isBlobStoreHost(logo)) && !(await isAttachableClubAsset(tx, row.tenantId ?? "", logo))) {
         throw new UndoStale("The previous logo can't be put back: that file is not one of the club's own images.");
       }
     },

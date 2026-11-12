@@ -20,7 +20,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
+import { isCanonicalBlobUrl, isVercelBlobUrl, isTenantBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
 export const runtime = "nodejs";
@@ -70,6 +70,12 @@ export async function POST(req: Request) {
     }
   }
   const { url } = parsed.data;
+  // Fix re-review 4, A2: the "still referenced?" checks below compare stored URLs as strings, so a variant spelling of
+  // a stored file ("?v=1", "#x", an upper-case host) would read as unreferenced and be deleted. Every caller, staff
+  // included, may name only the one stored spelling (lib/blob-url.ts isCanonicalBlobUrl).
+  if (!isCanonicalBlobUrl(url)) {
+    return NextResponse.json({ error: "URL is not in your tenant's blob namespace" }, { status: 403 });
+  }
 
   // Defence in depth: the upload route stores at `tenants/<tenantId>/<id>.<ext>`.
   // Refuse cleanup of blobs that don't carry the caller's tenant prefix in

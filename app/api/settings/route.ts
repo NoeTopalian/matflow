@@ -10,7 +10,7 @@ import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
-import { isVercelBlobUrl } from "@/lib/blob-url";
+import { isBlobStoreHost, isVercelBlobUrl } from "@/lib/blob-url";
 import { isAttachableClubAsset } from "@/lib/blob-ownership";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
@@ -227,7 +227,7 @@ export async function PATCH(req: Request) {
   // Round 5 remediation (review F3): a stored logo is a club file (club root), never a member's photo, an import file
   // or another club's file (lib/blob-ownership.ts).
   const logoUrl = parsed.data.logoUrl;
-  if (logoUrl && isVercelBlobUrl(logoUrl)) {
+  if (logoUrl && (isVercelBlobUrl(logoUrl) || isBlobStoreHost(logoUrl))) {
     const ok = await withTenantContext(session.user.tenantId, (tx) => isAttachableClubAsset(tx, session.user.tenantId, logoUrl));
     if (!ok) return NextResponse.json({ error: "Logo must be uploaded through MatFlow for this club" }, { status: 400 });
   }
