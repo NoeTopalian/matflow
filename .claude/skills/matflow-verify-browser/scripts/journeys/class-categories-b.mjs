@@ -110,16 +110,23 @@ try {
     await expect.poll(async () => (await catRows()).find((r) => r.id === gi.id)?.archivedAt !== null, { timeout: 30_000 }).toBe(true);
     expect((await classCat(onGi.body.id)).categoryId).toBe(gi.id);
     await page.keyboard.press("Escape");
-    await page.waitForLoadState("networkidle");
-    await page.locator(`button[aria-label^="Edit Plain ${TAG}, "]:visible`).first().click();
-    const options = await page.getByTestId("class-category-select").locator("option").allTextContents();
-    expect(options.some((o) => o.trim() === "Gi")).toBe(false);
+    // The sheet refreshes the page's categories (router.refresh) without a reload: the class form must stop
+    // offering Gi once that refresh lands. Opened and read again until it has, at most 20 s.
+    let options = [];
+    await expect.poll(async () => {
+      await page.locator(`button[aria-label^="Edit Plain ${TAG}, "]:visible`).first().click();
+      options = (await page.getByTestId("class-category-select").locator("option").allTextContents()).map((o) => o.trim());
+      await page.keyboard.press("Escape");
+      await page.getByTestId("class-category-select").waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
+      return options.includes("Gi");
+    }, { timeout: 20_000, intervals: [500, 1000, 2000] }).toBe(false);
     expect(options).toContain("Intermediate");
-    await page.keyboard.press("Escape");
     return { options };
   });
 
   await section("B6", "restore Gi: active again and offered", async () => {
+    await page.goto("/dashboard/timetable");
+    await page.waitForLoadState("networkidle");
     await open();
     await sheet().getByRole("button", { name: "Restore Gi" }).click();
     await expect.poll(async () => (await catRows()).find((r) => r.id === gi.id)?.archivedAt, { timeout: 30_000 }).toBeNull();

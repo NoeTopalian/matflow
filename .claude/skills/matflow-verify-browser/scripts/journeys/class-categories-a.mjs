@@ -134,8 +134,16 @@ try {
   });
 
   // ── 4. An older page's old key, and choosing the archived category, through the API ──
-  await section("C8", "an old key from an older page is translated: the class is on the club's Competition, and not stamped as an old build's write", async () => {
-    const r = await page.evaluate(async (id) => (await fetch(`/api/classes/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "competition" }) })).status, classId);
+  await section("C8", "an old page's key: refused on a class on a club-made category (Release B, reload), translated on a class on a starting category and not stamped as an old build's write", async () => {
+    const send = (body) => page.evaluate(async ([id, b]) => { const res = await fetch(`/api/classes/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return { status: res.status, body: await res.json() }; }, [classId, body]);
+    // The class is on Intermediate, which the club made: an old page shows it as uncategorised, so its choice is refused.
+    const refused = await send({ category: "competition" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/out of date/);
+    expect((await classRow(classId)).categoryId).toBe(intermediateId);
+    // On a starting category the old page can see the class's category: its choice is translated.
+    expect((await send({ categoryId: (await cat("gi")).id })).status).toBe(200);
+    const r = (await send({ category: "competition" })).status;
     expect(r).toBe(200);
     const comp = await cat("competition");
     expect(await classRow(classId)).toMatchObject({ categoryId: comp.id, category: "competition", categoryKeyWrittenAt: null });
