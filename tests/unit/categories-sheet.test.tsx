@@ -186,5 +186,40 @@ describe("Categories sheet: the version a write carries (B3-1)", () => {
     await waitFor(() => expect(patches()).toHaveLength(1));
     expect(patches()[0].status).toBe(409);
     expect(rows.find((r) => r.id === "c2")!.name).toBe("Gi");
+    // It was this person's own unconfirmed move, and the sheet says so (N3).
+    await screen.findByText(/Your earlier move wasn't confirmed/);
+  });
+
+  it("a rename cancelled with Escape leaves nothing behind: after another admin's rename is shown, a new rename lands (S1)", async () => {
+    await open();
+    const field = screen.getByLabelText("Gi name") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "Gi (draft)" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+    // A move elsewhere is saved; before its reload lands, the other admin renames Gi; the reload then shows it, with
+    // no conflict on the way (a conflict would clear everything and hide the defect).
+    holdReload = true;
+    moveDown("No-Gi");
+    await waitFor(() => expect(releaseReload).not.toBeNull());
+    otherAdminRenames("c2", "Gi Adults");
+    await act(async () => { releaseReload!(); });
+    await screen.findByLabelText("Gi Adults name");
+    expect(screen.queryByText(STALE_ONE)).toBeNull();
+    rename("Gi Adults", "Gi Adults (Mon)");
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].status).toBe(200);
+  });
+
+  it("a move that waited for a rename which was then refused does not go ahead (B3-7)", async () => {
+    await open();
+    const field = screen.getByLabelText("Kids name") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "Kids (Sat)" } });
+    otherAdminRenames("c0", "Kids Club");
+    fireEvent.keyDown(field, { key: "Enter" });
+    moveDown("Gi");
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].status).toBe(409);
+    await screen.findByText(STALE_ONE);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(0);
   });
 });

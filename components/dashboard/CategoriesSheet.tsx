@@ -65,15 +65,25 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   const capture = (id: string, fallback: number) => ({ version: shownVersion(id) ?? fallback, own: ownBumps.current.get(id) ?? 0 });
   const versionFrom = (id: string, base: { version: number; own: number }) => base.version + ((ownBumps.current.get(id) ?? 0) - base.own);
   const countOwnBump = (id: string, by: number) => { if (by > 0) ownBumps.current.set(id, (ownBumps.current.get(id) ?? 0) + by); };
+  // Rows a reorder whose answer was lost may have bumped: a refusal over one of them is the person's own unconfirmed
+  // move, not somebody else's change, and says so (review B3-1, N3).
+  const unconfirmed = useRef(new Set<string>());
+  // Bumped by every conflict: a move that waited for renames does not go ahead after one of them was refused (B3-7).
+  const conflicts = useRef(0);
   const focusNext = useRef<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
+    // What this sheet had counted when the read went out: a version it counts while the read is on its way is newer
+    // than the read, and the read must not take it back (review B3-1, N2).
+    const countedBefore = new Map(ownBumps.current);
     try {
       const res = await fetch("/api/class-categories", { cache: "no-store" });
       if (!res.ok) { setCats({ state: "error" }); return; }
       const body = (await res.json()) as { categories: Category[] };
-      setCats({ state: "ready", value: body.categories });
+      const shownNow = catsRef.current.state === "ready" ? new Map(catsRef.current.value.map((c) => [c.id, c.version])) : new Map<string, number>();
+      const value = body.categories.map((c) => ((ownBumps.current.get(c.id) ?? 0) > (countedBefore.get(c.id) ?? 0) ? { ...c, version: Math.max(c.version, shownNow.get(c.id) ?? c.version) } : c));
+      setCats({ state: "ready", value });
     } catch {
       setCats({ state: "error" });
     }
@@ -83,6 +93,9 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     if (!open) return;
     setCats({ state: "loading" });
     setDrafts({}); setRowError({}); setNotice(null); setNewName(null); setNewError(null);
+    // The sheet stays mounted while closed: what was captured before it closed is not what is on screen now (S1).
+    seen.current.clear();
+    unconfirmed.current.clear();
     void load();
   }, [open, load, setCats]);
 
@@ -99,6 +112,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
 
   /** A 409 means someone else changed the categories: read them again and say so, keeping nothing stale. */
   async function conflict(message: string) {
+    conflicts.current++;
     await load();
     setDrafts({});
     seen.current.clear();
@@ -135,7 +149,8 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
         // A name that clashes is the typist's to fix: keep the draft. A stale version (code "stale"): show what is
         // there now. The error paragraph beside the field is the announcement (role="alert"), not the live region too.
         if (body.name !== undefined && refusal?.code !== "stale") { setRowError((e) => ({ ...e, [cat.id]: message })); return false; }
-        await conflict(message);
+        const ownMove = unconfirmed.current.delete(cat.id);
+        await conflict(ownMove ? "Your earlier move wasn't confirmed, so this change wasn't saved. Make it again." : message);
         return false;
       }
       if (!res.ok) {
@@ -197,8 +212,14 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   }
 
   async function moveOnce(movedId: string, by: -1 | 1) {
+    // Focus follows the moved row only if it was on the pressed button: a person who went on typing in a name while
+    // this move waited keeps their place (review B3-2).
+    const pressed = typeof document !== "undefined" ? document.activeElement : null;
+    const conflictsBefore = conflicts.current;
     // Renames still on their way finish first, so the reorder carries the versions they produced (review B-N2).
     if (pending.current.size > 0) await Promise.allSettled([...pending.current]);
+    // One of them was refused and the list reloaded: the person has not seen this move's starting point (B3-7).
+    if (conflicts.current !== conflictsBefore) return;
     const now = catsRef.current.state === "ready" ? catsRef.current.value : [];
     const nowActive = now.filter((c) => !c.archived);
     const nowArchived = now.filter((c) => c.archived);
@@ -210,7 +231,8 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     // The order on screen, with the versions on screen: a reload that brought another person's change was shown.
     const items = [...order, ...nowArchived].map((c) => ({ id: c.id, version: c.version }));
     setCats({ state: "ready", value: [...order, ...nowArchived] });
-    focusNext.current = `${by === -1 ? "up" : "down"}:${movedId}`;
+    const focusHere = typeof document === "undefined" || document.activeElement === pressed || document.activeElement === document.body;
+    if (focusHere) focusNext.current = `${by === -1 ? "up" : "down"}:${movedId}`;
     try {
       const res = await fetch("/api/class-categories/order", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) });
       if (res.status === 409) { await conflict((await readError(res)) ?? "Your categories have changed."); return; }
@@ -228,6 +250,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       // Counted and shown in the same step: an edit begun before the reload below lands must not pair the old
       // version on screen with a bump already counted (that sends one version short and is refused as stale).
       for (const [id, version] of movedTo) countOwnBump(id, version - (sentVersion.get(id) ?? version));
+      for (const id of movedTo.keys()) unconfirmed.current.delete(id);
       setCats((c) => (c.state === "ready" ? { state: "ready", value: c.value.map((x) => (movedTo.has(x.id) ? { ...x, version: movedTo.get(x.id)! } : x)) } : c));
       await load();
       setLive(`${order[to].name} is now ${to + 1} of ${order.length}`);
@@ -235,7 +258,9 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     } catch {
       // No answer (a dropped connection): the move may or may not have been saved. Show what is saved rather than
       // guess; the person can press again. Its version bumps are not counted as this sheet's, so an edit started
-      // before it on a row it moved is refused (409) rather than applied over a version it cannot account for.
+      // before it on a row it moved is refused (409) rather than applied over a version it cannot account for, and
+      // that refusal says it was the unconfirmed move (N3).
+      for (const i of items) unconfirmed.current.add(i.id);
       await load();
       setNotice("Couldn't confirm that move. This is the order as saved; move it again if it isn't right.");
     }
@@ -308,6 +333,8 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
                           if (e.key === "Enter") { e.preventDefault(); void saveName(cat); }
                           if (e.key === "Escape" && drafts[cat.id] !== undefined && cleanCategoryName(drafts[cat.id]) !== cat.name) {
                             e.stopPropagation();
+                            // A cancelled rename's starting version is not the next rename's (S1).
+                            seen.current.delete(cat.id);
                             setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; });
                             setRowError((r) => { const next = { ...r }; delete next[cat.id]; return next; });
                           }
