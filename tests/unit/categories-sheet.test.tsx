@@ -18,6 +18,8 @@ let orderFault: null | "hold" | "lose" = null;
 let releaseHeld: (() => void) | null = null;
 /** When set, the next category list read after a reorder waits until released (a slow reload). */
 let holdReload = false;
+/** When set, the next category list read (any) waits until released. */
+let holdAnyReload = false;
 let releaseReload: (() => void) | null = null;
 
 const STALE_ONE = "This category was changed in another tab or by someone else. Close this and open Categories again.";
@@ -38,6 +40,7 @@ beforeEach(() => {
   orderFault = null;
   releaseHeld = null;
   holdReload = false;
+  holdAnyReload = false;
   releaseReload = null;
   rows = ["Kids", "Beginners", "Gi", "No-Gi", "Competition", "Open Mat"].map((name, i) => ({ id: `c${i}`, name, legacyKey: null, archived: false, version: 3, classCount: 0, sortOrder: i * 10 }));
   vi.stubGlobal(
@@ -49,6 +52,12 @@ beforeEach(() => {
       calls.push(call);
       if (method === "GET" && url.startsWith("/api/class-categories")) {
         if (holdReload && calls.some((c) => c.method === "PUT" && c.status === 200)) { holdReload = false; await new Promise<void>((res) => { releaseReload = res; }); }
+        if (holdAnyReload) {
+          holdAnyReload = false;
+          const snapshot = list();
+          await new Promise<void>((res) => { releaseReload = res; });
+          return ok({ categories: snapshot, managementEnabled: true });
+        }
         return ok({ categories: list(), managementEnabled: true });
       }
       if (method === "PUT" && url === "/api/class-categories/order") {
@@ -187,7 +196,50 @@ describe("Categories sheet: the version a write carries (B3-1)", () => {
     expect(patches()[0].status).toBe(409);
     expect(rows.find((r) => r.id === "c2")!.name).toBe("Gi");
     // It was this person's own unconfirmed move, and the sheet says so (N3).
-    await screen.findByText(/Your earlier move wasn't confirmed/);
+    await screen.findByText(/your earlier move wasn't confirmed, or someone else changed this category/);
+  });
+
+  it("after a lost move and its reload, another admin's later change is not blamed on the move (F1)", async () => {
+    await open();
+    orderFault = "lose";
+    moveDown("Gi");
+    await screen.findByText(/Couldn't confirm that move/);
+    orderFault = null;
+    otherAdminRenames("c0", "Kids Club");
+    rename("Kids", "Kids (Sat)");
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].status).toBe(409);
+    await screen.findByText(STALE_ONE);
+    expect(screen.queryByText(/earlier move wasn't confirmed/)).toBeNull();
+  });
+
+  it("a reload whose read predates this sheet's own rename keeps the rename on screen, and the next rename lands (F2)", async () => {
+    await open();
+    // A conflict on another row starts a reload; hold its read's answer while this sheet's rename of Gi succeeds.
+    otherAdminRenames("c0", "Kids Club");
+    holdAnyReload = true;
+    rename("Kids", "Kids (Sat)");
+    await waitFor(() => expect(releaseReload).not.toBeNull());
+    rename("Gi", "Gi Adults");
+    await waitFor(() => expect(patches().filter((c) => c.url.endsWith("/c2"))).toHaveLength(1));
+    await act(async () => { releaseReload!(); });
+    await screen.findByLabelText("Gi Adults name");
+    rename("Gi Adults", "Gi Adults (Mon)");
+    await waitFor(() => expect(patches().filter((c) => c.url.endsWith("/c2"))).toHaveLength(2));
+    expect(patches().filter((c) => c.url.endsWith("/c2")).map((c) => c.status)).toEqual([200, 200]);
+  });
+
+  it("reopening the sheet leaves no stale starting version: a rename after another admin's change lands (S1, reopen)", async () => {
+    const view = render(<CategoriesSheet open onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByLabelText("Gi name");
+    fireEvent.change(screen.getByLabelText("Gi name"), { target: { value: "Gi (draft)" } });
+    view.rerender(<CategoriesSheet open={false} onClose={() => {}} onChanged={() => {}} />);
+    otherAdminRenames("c2", "Gi Adults");
+    view.rerender(<CategoriesSheet open onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByLabelText("Gi Adults name");
+    rename("Gi Adults", "Gi Adults (Mon)");
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].status).toBe(200);
   });
 
   it("a rename cancelled with Escape leaves nothing behind: after another admin's rename is shown, a new rename lands (S1)", async () => {

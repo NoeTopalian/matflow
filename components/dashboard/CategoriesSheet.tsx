@@ -65,9 +65,11 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   const capture = (id: string, fallback: number) => ({ version: shownVersion(id) ?? fallback, own: ownBumps.current.get(id) ?? 0 });
   const versionFrom = (id: string, base: { version: number; own: number }) => base.version + ((ownBumps.current.get(id) ?? 0) - base.own);
   const countOwnBump = (id: string, by: number) => { if (by > 0) ownBumps.current.set(id, (ownBumps.current.get(id) ?? 0) + by); };
-  // Rows a reorder whose answer was lost may have bumped: a refusal over one of them is the person's own unconfirmed
-  // move, not somebody else's change, and says so (review B3-1, N3).
+  // Edits begun before a reorder whose answer was lost, on rows it may have bumped: a refusal of one of them may be the
+  // person's own unconfirmed move, or someone else's change, and the message says both (review F1). The mark ends with
+  // the edit it was for.
   const unconfirmed = useRef(new Set<string>());
+  const forget = (id: string) => { seen.current.delete(id); unconfirmed.current.delete(id); };
   // Bumped by every conflict: a move that waited for renames does not go ahead after one of them was refused (B3-7).
   const conflicts = useRef(0);
   const focusNext = useRef<string | null>(null);
@@ -81,8 +83,13 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       const res = await fetch("/api/class-categories", { cache: "no-store" });
       if (!res.ok) { setCats({ state: "error" }); return; }
       const body = (await res.json()) as { categories: Category[] };
-      const shownNow = catsRef.current.state === "ready" ? new Map(catsRef.current.value.map((c) => [c.id, c.version])) : new Map<string, number>();
-      const value = body.categories.map((c) => ((ownBumps.current.get(c.id) ?? 0) > (countedBefore.get(c.id) ?? 0) ? { ...c, version: Math.max(c.version, shownNow.get(c.id) ?? c.version) } : c));
+      const shownNow = catsRef.current.state === "ready" ? new Map(catsRef.current.value.map((c) => [c.id, c])) : new Map<string, Category>();
+      // Where this sheet counted a write after the read went out and the screen is newer, keep the screen's row whole:
+      // its name, archived state and version come from one server answer (review F2).
+      const value = body.categories.map((c) => {
+        const shownRow = shownNow.get(c.id);
+        return (ownBumps.current.get(c.id) ?? 0) > (countedBefore.get(c.id) ?? 0) && shownRow && shownRow.version > c.version ? shownRow : c;
+      });
       setCats({ state: "ready", value });
     } catch {
       setCats({ state: "error" });
@@ -116,6 +123,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     await load();
     setDrafts({});
     seen.current.clear();
+    unconfirmed.current.clear();
     // The notice is announced by its own role="alert"; the polite live region is for successes (review B-N3).
     setNotice(message);
   }
@@ -149,8 +157,8 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
         // A name that clashes is the typist's to fix: keep the draft. A stale version (code "stale"): show what is
         // there now. The error paragraph beside the field is the announcement (role="alert"), not the live region too.
         if (body.name !== undefined && refusal?.code !== "stale") { setRowError((e) => ({ ...e, [cat.id]: message })); return false; }
-        const ownMove = unconfirmed.current.delete(cat.id);
-        await conflict(ownMove ? "Your earlier move wasn't confirmed, so this change wasn't saved. Make it again." : message);
+        const ownMove = unconfirmed.current.has(cat.id);
+        await conflict(ownMove ? "This change wasn't saved: your earlier move wasn't confirmed, or someone else changed this category. This is what's saved now; make it again if you still want it." : message);
         return false;
       }
       if (!res.ok) {
@@ -175,12 +183,12 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     const draft = drafts[cat.id];
     if (draft === undefined) return;
     const name = cleanCategoryName(draft);
-    if (name === cat.name) { seen.current.delete(cat.id); setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; }); return; }
+    if (name === cat.name) { forget(cat.id); setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; }); return; }
     if (!name) { setRowError((e) => ({ ...e, [cat.id]: "Give the category a name." })); return; }
     // The version the person saw when they started typing (captured at the first keystroke).
     const base = seen.current.get(cat.id) ?? capture(cat.id, cat.version);
     if (await patch(cat, { name }, `Couldn't rename ${cat.name}. Try again.`, base)) {
-      seen.current.delete(cat.id);
+      forget(cat.id);
       setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; });
       setLive(`Renamed to ${name}`);
     }
@@ -219,7 +227,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     // Renames still on their way finish first, so the reorder carries the versions they produced (review B-N2).
     if (pending.current.size > 0) await Promise.allSettled([...pending.current]);
     // One of them was refused and the list reloaded: the person has not seen this move's starting point (B3-7).
-    if (conflicts.current !== conflictsBefore) return;
+    if (conflicts.current !== conflictsBefore) { setLive("Your move wasn't made."); return; }
     const now = catsRef.current.state === "ready" ? catsRef.current.value : [];
     const nowActive = now.filter((c) => !c.archived);
     const nowArchived = now.filter((c) => c.archived);
@@ -233,6 +241,11 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     setCats({ state: "ready", value: [...order, ...nowArchived] });
     const focusHere = typeof document === "undefined" || document.activeElement === pressed || document.activeElement === document.body;
     if (focusHere) focusNext.current = `${by === -1 ? "up" : "down"}:${movedId}`;
+    else {
+      // The person is working elsewhere in the list: the swap may re-insert their row, so keep their place (N-a).
+      const typingIn = (document.activeElement as HTMLElement | null)?.getAttribute?.("data-cat-focus");
+      if (typingIn) focusNext.current = typingIn;
+    }
     try {
       const res = await fetch("/api/class-categories/order", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) });
       if (res.status === 409) { await conflict((await readError(res)) ?? "Your categories have changed."); return; }
@@ -250,7 +263,6 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       // Counted and shown in the same step: an edit begun before the reload below lands must not pair the old
       // version on screen with a bump already counted (that sends one version short and is refused as stale).
       for (const [id, version] of movedTo) countOwnBump(id, version - (sentVersion.get(id) ?? version));
-      for (const id of movedTo.keys()) unconfirmed.current.delete(id);
       setCats((c) => (c.state === "ready" ? { state: "ready", value: c.value.map((x) => (movedTo.has(x.id) ? { ...x, version: movedTo.get(x.id)! } : x)) } : c));
       await load();
       setLive(`${order[to].name} is now ${to + 1} of ${order.length}`);
@@ -260,7 +272,8 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       // guess; the person can press again. Its version bumps are not counted as this sheet's, so an edit started
       // before it on a row it moved is refused (409) rather than applied over a version it cannot account for, and
       // that refusal says it was the unconfirmed move (N3).
-      for (const i of items) unconfirmed.current.add(i.id);
+      // Only edits that were already under way: anything begun after the reload below captures the saved versions.
+      for (const i of items) if (seen.current.has(i.id) || inFlight.current.has(i.id)) unconfirmed.current.add(i.id);
       await load();
       setNotice("Couldn't confirm that move. This is the order as saved; move it again if it isn't right.");
     }
@@ -334,7 +347,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
                           if (e.key === "Escape" && drafts[cat.id] !== undefined && cleanCategoryName(drafts[cat.id]) !== cat.name) {
                             e.stopPropagation();
                             // A cancelled rename's starting version is not the next rename's (S1).
-                            seen.current.delete(cat.id);
+                            forget(cat.id);
                             setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; });
                             setRowError((r) => { const next = { ...r }; delete next[cat.id]; return next; });
                           }
