@@ -49,6 +49,7 @@ import { POST as postAnnouncement } from "@/app/api/announcements/route";
 import { DELETE as deleteAnnouncement } from "@/app/api/announcements/[id]/route";
 import { POST as dsarErase } from "@/app/api/admin/dsar/erase/route";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
+import { applyUndo, UndoStale } from "@/lib/undo-registry";
 
 const mockAuth = vi.mocked(auth);
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -233,6 +234,35 @@ describe.skipIf(!HAS_DB)("file ownership at attach, read and delete", () => {
       expect((await patchSettings(req("PATCH", { logoUrl }))).status).toBe(400);
     }
     expect((await patchSettings(req("PATCH", { logoUrl: root("new-logo.webp") }))).status).toBe(200);
+    await withRlsBypass((tx) => tx.tenant.update({ where: { id: tenantId }, data: { logoUrl: root("logo.webp") } }));
+  });
+
+  it("attach: a variant spelling of a member's legacy photo (query, fragment, upper-case host) is refused as an announcement image, as the logo, and by an undo that would put it back as the logo", async () => {
+    // Re-review of 12 Nov 2026: rows are matched to files by URL string, so "?v=1", "#x" or "HTTPS://ABC123…" named
+    // Ada's photo under a string no photo row holds, and passed the "is this a member's photo?" check.
+    const legacy = root(`legacy-variant-${STAMP}.webp`);
+    await photo(ada, legacy, "evidence", new Date("2026-01-02T00:00:00Z"));
+    asStaff("owner", ownerId);
+    gate.tenantId = tenantId;
+    gate.userId = ownerId;
+    const variants = [`${legacy}?v=1`, `${legacy}#x`, legacy.replace(STORE, STORE.toUpperCase().replace("HTTPS://", "https://"))];
+    for (const v of variants) {
+      expect((await postAnnouncement(req("POST", { title: "T", body: "B", imageUrl: v }))).status, v).toBe(400);
+      expect((await patchSettings(req("PATCH", { logoUrl: v }))).status, v).toBe(400);
+    }
+    // Undo of a settings change whose "before" logo is the member's photo (or a variant of it): refused, nothing written.
+    for (const before of [legacy, ...variants]) {
+      const row = { id: `${STAMP}-undo`, tenantId, userId: ownerId, action: "tenant.settings.update", entityType: "Tenant", entityId: tenantId,
+        metadata: { before: { logoUrl: before }, after: { logoUrl: root("logo.webp") } }, createdAt: new Date() };
+      await expect(withRlsBypass((tx) => applyUndo(tx, row as never))).rejects.toBeInstanceOf(UndoStale);
+      const now = await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { logoUrl: true } }));
+      expect(now?.logoUrl, before).toBe(root("logo.webp"));
+    }
+    // A genuine club file is still put back.
+    const ok = { id: `${STAMP}-undo-ok`, tenantId, userId: ownerId, action: "tenant.settings.update", entityType: "Tenant", entityId: tenantId,
+      metadata: { before: { logoUrl: root("old-logo.webp") }, after: { logoUrl: root("logo.webp") } }, createdAt: new Date() };
+    await withRlsBypass((tx) => applyUndo(tx, ok as never));
+    expect((await withRlsBypass((tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { logoUrl: true } })))?.logoUrl).toBe(root("old-logo.webp"));
     await withRlsBypass((tx) => tx.tenant.update({ where: { id: tenantId }, data: { logoUrl: root("logo.webp") } }));
   });
 });

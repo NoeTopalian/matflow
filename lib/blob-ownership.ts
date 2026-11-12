@@ -24,26 +24,31 @@
  *     (mayDeleteClubAssetBlob). So the logo, an announcement image or another member's photo is never deleted because
  *     some other row also pointed at it.
  *
+ * One spelling. Rows are matched to files by comparing URL strings, so every rule here accepts only a stored file's
+ * canonical URL (lib/blob-url isCanonicalBlobUrl): a variant ("?v=1", "#x", an upper-case host) names the same file
+ * under another string and would slip past "is this a member's photo?" (re-review of 12 Nov 2026). A variant is
+ * not attachable, not readable by a member and never deleted here.
+ *
  * Legacy photos (club root, uploaded before the per-member paths): they keep working. Existing rows are untouched and
  * are still served to their owner (earliest reference); removing one deletes the file only when nothing else uses it;
  * new references to them are refused, so the old hole cannot be used again.
  */
 import type { Prisma } from "@prisma/client";
-import { isMemberBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
+import { isCanonicalBlobUrl, isMemberBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** A file at the root of the club's namespace (`tenants/<club>/<file>`): a club asset, or a pre-11-Nov member photo. */
 export function isClubRootBlobUrl(url: string, tenantId: string): boolean {
-  if (!isTenantBlobUrl(url, tenantId)) return false;
+  if (!isCanonicalBlobUrl(url) || !isTenantBlobUrl(url, tenantId)) return false;
   const rest = new URL(url).pathname.slice(`/tenants/${tenantId}/`.length);
   return rest.length > 0 && !rest.includes("/");
 }
 
 /** The member whose path the file sits under (`tenants/<club>/members/<member>/…`), or null. */
 export function memberPathOwner(url: string, tenantId: string): string | null {
-  if (!isTenantBlobUrl(url, tenantId)) return null;
+  if (!isCanonicalBlobUrl(url) || !isTenantBlobUrl(url, tenantId)) return null;
   const m = new URL(url).pathname.match(new RegExp(`^/tenants/${escapeRe(tenantId)}/members/([^/]+)/[^/]+$`));
   return m ? m[1] : null;
 }

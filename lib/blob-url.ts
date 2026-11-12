@@ -89,8 +89,25 @@ export function isTenantBlobUrl(url: string, tenantId: string): boolean {
  * image proxy. Every member-photo write accepts only this (or an inline
  * image), and every member-photo delete only ever deletes this.
  */
+/**
+ * The one spelling of a stored file's URL: exactly what the URL parser gives back (lower-case host, no default port),
+ * with no query, fragment, credentials or port. The upload route stores the blob's own URL, which is always in this
+ * form. Ownership is decided by comparing stored URLs as strings, so a variant of a stored URL ("?v=1", "#x", an
+ * upper-case host) names the same file under a different string and slipped past "is this a member's photo?" checks
+ * (re-review of 12 Nov 2026). Every ownership rule accepts only this form.
+ */
+export function isCanonicalBlobUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  return u.href === url && !u.search && !u.hash && !u.username && !u.password && !u.port;
+}
+
 export function isMemberBlobUrl(url: string, tenantId: string, memberId: string): boolean {
-  if (!memberId || /[/%.]/.test(memberId) || !isTenantBlobUrl(url, tenantId)) return false;
+  if (!memberId || /[/%.]/.test(memberId) || !isCanonicalBlobUrl(url) || !isTenantBlobUrl(url, tenantId)) return false;
   return new URL(url).pathname.startsWith(`/tenants/${tenantId}/members/${memberId}/`);
 }
 
