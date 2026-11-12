@@ -13,7 +13,12 @@
 //   B10 phone 390 px: the sheet opens, no sideways scroll;
 //   B11 a coach has no Categories button;
 //   B12 an editor left open: another tab gives the class a category; this form's change is refused beside the
-//       buttons, the other tab's choice is kept, and the request carried the category the form saw.
+//       buttons, the other tab's choice is kept, and the request carried the category the form saw;
+//   B13 reorder then rename at once (the reorder held 6 s): both land; the rename counts the reorder's own bump;
+//   B14 two admins: the owner's rename waits behind a reorder whose answer is held while the manager renames the same category; the
+//       owner's rename is refused (stale), the sheet says so, and the manager's name is kept (B3-1);
+//   B15 a lost response: the reorder reaches the server but its answer is dropped; the sheet says it could not confirm
+//       the move and shows the saved order; a retry and a rename then land, and the screen matches the database.
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn } from "../lib.mjs";
@@ -202,6 +207,90 @@ try {
     await page.keyboard.press("Escape");
     return bodies[0];
   });
+
+  // ── B3-1: reorder and rename, one admin and two, a held request and a lost response ──
+  const manager = await seedStaff(club, "manager");
+  const mc = await context(browser, "10.96.6.4", { viewport: { width: 1440, height: 900 }, timezoneId: "Europe/London" });
+  const mp = await mc.newPage();
+  await staffSignIn(mp, club, manager);
+  const activeNames = async () => (await catRows()).filter((r) => !r.archivedAt).map((r) => r.name);
+  const shownNames = async () => (await sheet().getByTestId("categories-row").locator("input").evaluateAll((els) => els.map((e) => e.value)));
+  const reopen = async () => {
+    await page.goto("/dashboard/timetable");
+    await page.waitForLoadState("networkidle");
+    await open();
+  };
+  // The reorder reaches the server at once (it is saved), and its answer is held back: the window in which another
+  // admin can change a category after the reorder landed but before this sheet hears of it (B3-1).
+  const hold = (ms) => page.route("**/api/class-categories/order", async (r) => { const resp = await r.fetch(); await new Promise((res) => setTimeout(res, ms)); await r.fulfill({ response: resp }); });
+  const release = () => page.unroute("**/api/class-categories/order");
+
+  await section("B13", "reorder then rename at once, the reorder's answer held 6 s: both land, nothing refused", async () => {
+    await reopen();
+    const names = await activeNames();
+    const x = names[1];
+    await hold(6000);
+    await sheet().getByRole("button", { name: `Move ${x} down`, exact: true }).click();
+    const field = sheet().getByLabel(`${x} name`, { exact: true });
+    await field.fill(`${x} (B13)`);
+    await field.press("Enter");
+    await expect.poll(async () => (await catRows()).find((r) => r.name === `${x} (B13)`) !== undefined, { timeout: 60_000 }).toBe(true);
+    await release();
+    const after = await activeNames();
+    expect(after.indexOf(`${x} (B13)`)).toBe(2);
+    await expect(sheet().getByTestId("categories-notice")).toHaveCount(0);
+    return after;
+  });
+
+  await section("B14", "two admins: the owner's rename waits behind a reorder whose answer is held while the manager renames the same category; the owner's is refused and the manager's kept", async () => {
+    await reopen();
+    const names = await activeNames();
+    const y = names[0];
+    const z = names[3];
+    await hold(15000);
+    await sheet().getByRole("button", { name: `Move ${y} down`, exact: true }).click();
+    const field = sheet().getByLabel(`${z} name`, { exact: true });
+    await field.fill(`${z} (owner)`);
+    await field.press("Enter");
+    // Once the reorder is saved (its answer still held), the manager, in their own session, renames the same category
+    // while the owner's rename waits behind it.
+    await expect.poll(async () => (await activeNames())[1], { timeout: 30_000 }).toBe(y);
+    const row = (await catRows()).find((r) => r.name === z);
+    const managerSave = await mp.evaluate(async ([id, v, n]) => (await fetch(`/api/class-categories/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: v, name: n }) })).status, [row.id, row.version, `${z} (manager)`]);
+    expect(managerSave).toBe(200);
+    await expect(sheet().getByTestId("categories-notice")).toContainText("changed in another tab", { timeout: 60_000 });
+    await release();
+    const stored = (await catRows()).find((r) => r.id === row.id);
+    expect(stored.name).toBe(`${z} (manager)`);
+    await expect(sheet().getByLabel(`${z} (manager) name`, { exact: true })).toBeVisible({ timeout: 30_000 });
+    return { stored: stored.name };
+  });
+
+  await section("B15", "a lost response: the reorder reaches the server, its answer is dropped; the sheet says so and shows the saved order; a retry and a rename then land", async () => {
+    await reopen();
+    const before = await activeNames();
+    const w = before[4];
+    let reached = 0;
+    await page.route("**/api/class-categories/order", async (r) => { reached++; await r.fetch(); await r.abort("failed"); });
+    await sheet().getByRole("button", { name: `Move ${w} down`, exact: true }).click();
+    await expect(sheet().getByTestId("categories-notice")).toContainText("Couldn't confirm that move", { timeout: 60_000 });
+    await page.unroute("**/api/class-categories/order");
+    expect(reached).toBe(1);
+    const saved = await activeNames();
+    expect(saved.indexOf(w)).toBe(5);
+    await expect.poll(shownNames, { timeout: 30_000 }).toEqual(saved);
+    // The retry: one more step, exactly.
+    await sheet().getByRole("button", { name: `Move ${w} down`, exact: true }).click();
+    await expect.poll(async () => (await activeNames()).indexOf(w), { timeout: 60_000 }).toBe(6);
+    // A rename begun after the reload carries what was on screen: it lands.
+    const field = sheet().getByLabel(`${w} name`, { exact: true });
+    await field.fill(`${w} (B15)`);
+    await field.press("Enter");
+    await expect.poll(async () => (await activeNames()).includes(`${w} (B15)`), { timeout: 60_000 }).toBe(true);
+    await expect.poll(shownNames, { timeout: 30_000 }).toEqual(await activeNames());
+    return await activeNames();
+  });
+  await mc.close();
 
   await section("B10", "phone 390 px: the sheet opens and nothing scrolls sideways", async () => {
     const ph = await context(browser, "10.96.6.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: "Europe/London" });

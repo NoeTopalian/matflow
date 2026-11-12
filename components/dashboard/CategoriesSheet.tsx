@@ -50,17 +50,21 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState("");
   const inFlight = useRef(new Set<string>());
-  // Saves still on their way, and the version each one came back with: a move waits for them and sends the newest
-  // versions, so a rename followed at once by a move is not refused as somebody else's change (review B-N2).
+  // Saves still on their way: a move waits for them (review B-N2).
   const pending = useRef(new Set<Promise<unknown>>());
-  const latestVersion = useRef(new Map<string, number>());
-  // A reorder still on its way (its PUT and the reload after it): a rename waits for it, so it carries the version
-  // the reorder produced instead of being refused as somebody else's change.
+  // A reorder still on its way (its PUT and the reload after it): a rename waits for it.
   const reorderInFlight = useRef<Promise<unknown> | null>(null);
-  const versionOf = (c: Category) => {
-    const now = catsRef.current.state === "ready" ? catsRef.current.value.find((x) => x.id === c.id) : undefined;
-    return latestVersion.current.get(c.id) ?? now?.version ?? c.version;
-  };
+  // Which version a write carries (B3-1). A write must carry the version the person SAW when they started it, plus
+  // only the version bumps this sheet's own writes made since (counted from the server's answers). Never a version
+  // read from a reload: a reload can carry another person's change the person never saw, and sending its version
+  // would let the write overwrite that change silently. A stale base is refused by the server (409) and the sheet
+  // then reloads and says so.
+  const ownBumps = useRef(new Map<string, number>());
+  const seen = useRef(new Map<string, { version: number; own: number }>());
+  const shownVersion = (id: string) => (catsRef.current.state === "ready" ? catsRef.current.value.find((x) => x.id === id)?.version : undefined);
+  const capture = (id: string, fallback: number) => ({ version: shownVersion(id) ?? fallback, own: ownBumps.current.get(id) ?? 0 });
+  const versionFrom = (id: string, base: { version: number; own: number }) => base.version + ((ownBumps.current.get(id) ?? 0) - base.own);
+  const countOwnBump = (id: string, by: number) => { if (by > 0) ownBumps.current.set(id, (ownBumps.current.get(id) ?? 0) + by); };
   const focusNext = useRef<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -69,7 +73,6 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
       const res = await fetch("/api/class-categories", { cache: "no-store" });
       if (!res.ok) { setCats({ state: "error" }); return; }
       const body = (await res.json()) as { categories: Category[] };
-      latestVersion.current.clear();
       setCats({ state: "ready", value: body.categories });
     } catch {
       setCats({ state: "error" });
@@ -98,14 +101,15 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
   async function conflict(message: string) {
     await load();
     setDrafts({});
+    seen.current.clear();
     // The notice is announced by its own role="alert"; the polite live region is for successes (review B-N3).
     setNotice(message);
   }
 
-  async function patch(cat: Category, body: { name?: string; archived?: boolean }, failed: string): Promise<boolean> {
+  async function patch(cat: Category, body: { name?: string; archived?: boolean }, failed: string, base: { version: number; own: number }): Promise<boolean> {
     if (inFlight.current.has(cat.id)) return false;
     inFlight.current.add(cat.id);
-    const run = patchOnce(cat, body, failed);
+    const run = patchOnce(cat, body, failed, base);
     pending.current.add(run);
     try {
       return await run;
@@ -115,13 +119,15 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     }
   }
 
-  async function patchOnce(cat: Category, body: { name?: string; archived?: boolean }, failed: string): Promise<boolean> {
+  async function patchOnce(cat: Category, body: { name?: string; archived?: boolean }, failed: string, base: { version: number; own: number }): Promise<boolean> {
     if (reorderInFlight.current) await reorderInFlight.current.catch(() => {});
+    // Read after the wait: a reorder this sheet made in the meantime has been counted by then.
+    const sent = versionFrom(cat.id, base);
     try {
       const res = await fetch(`/api/class-categories/${cat.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version: versionOf(cat), ...body }),
+        body: JSON.stringify({ version: sent, ...body }),
       });
       if (res.status === 409) {
         const refusal = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
@@ -138,7 +144,7 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
         return false;
       }
       const saved = (await res.json()) as { id: string; name: string; archived: boolean; version: number };
-      latestVersion.current.set(saved.id, saved.version);
+      countOwnBump(saved.id, saved.version - sent);
       setCats((c) => (c.state === "ready" ? { state: "ready", value: c.value.map((x) => (x.id === cat.id ? { ...x, name: saved.name, archived: saved.archived, version: saved.version } : x)) } : c));
       setRowError((e) => { const next = { ...e }; delete next[cat.id]; return next; });
       setNotice(null);
@@ -154,16 +160,21 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     const draft = drafts[cat.id];
     if (draft === undefined) return;
     const name = cleanCategoryName(draft);
-    if (name === cat.name) { setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; }); return; }
+    if (name === cat.name) { seen.current.delete(cat.id); setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; }); return; }
     if (!name) { setRowError((e) => ({ ...e, [cat.id]: "Give the category a name." })); return; }
-    if (await patch(cat, { name }, `Couldn't rename ${cat.name}. Try again.`)) {
+    // The version the person saw when they started typing (captured at the first keystroke).
+    const base = seen.current.get(cat.id) ?? capture(cat.id, cat.version);
+    if (await patch(cat, { name }, `Couldn't rename ${cat.name}. Try again.`, base)) {
+      seen.current.delete(cat.id);
       setDrafts((d) => { const next = { ...d }; delete next[cat.id]; return next; });
       setLive(`Renamed to ${name}`);
     }
   }
 
   async function setArchived(cat: Category, archive: boolean) {
-    const ok = await patch(cat, { archived: archive }, archive ? `Couldn't archive ${cat.name}. Try again.` : `Couldn't restore ${cat.name}. Try again.`);
+    // The version on screen when the button was pressed.
+    const base = capture(cat.id, cat.version);
+    const ok = await patch(cat, { archived: archive }, archive ? `Couldn't archive ${cat.name}. Try again.` : `Couldn't restore ${cat.name}. Try again.`, base);
     if (ok) {
       setLive(archive ? `${cat.name} archived; its classes keep it` : `${cat.name} restored`);
       focusNext.current = archive ? `restore:${cat.id}` : `archive:${cat.id}`;
@@ -196,7 +207,8 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
     if (from < 0 || to < 0 || to >= nowActive.length) return;
     const order = [...nowActive];
     [order[from], order[to]] = [order[to], order[from]];
-    const items = [...order, ...nowArchived].map((c) => ({ id: c.id, version: versionOf(c) }));
+    // The order on screen, with the versions on screen: a reload that brought another person's change was shown.
+    const items = [...order, ...nowArchived].map((c) => ({ id: c.id, version: c.version }));
     setCats({ state: "ready", value: [...order, ...nowArchived] });
     focusNext.current = `${by === -1 ? "up" : "down"}:${movedId}`;
     try {
@@ -208,13 +220,20 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
         setNotice(message);
         return;
       }
-      // A moved row's version went up by one: read the list again so the next write carries the new versions.
+      // The rows this reorder moved went up by one version each: counted as this sheet's own, then the list is read
+      // again (it may also bring another person's change, which an edit started earlier will then be refused over).
+      const done = (await res.json().catch(() => null)) as { moved?: { id: string; version: number }[] } | null;
+      const sentVersion = new Map(items.map((i) => [i.id, i.version]));
+      for (const m of done?.moved ?? []) countOwnBump(m.id, m.version - (sentVersion.get(m.id) ?? m.version));
       await load();
       setLive(`${order[to].name} is now ${to + 1} of ${order.length}`);
       onChanged();
     } catch {
-      setCats({ state: "ready", value: now });
-      setNotice("Couldn't move that. Try again.");
+      // No answer (a dropped connection): the move may or may not have been saved. Show what is saved rather than
+      // guess; the person can press again. Its version bumps are not counted as this sheet's, so an edit started
+      // before it on a row it moved is refused (409) rather than applied over a version it cannot account for.
+      await load();
+      setNotice("Couldn't confirm that move. This is the order as saved; move it again if it isn't right.");
     }
   }
 
@@ -275,7 +294,11 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
                         className="min-w-0"
                         maxLength={CATEGORY_NAME_MAX}
                         value={drafts[cat.id] ?? cat.name}
-                        onChange={(e) => setDrafts((d) => ({ ...d, [cat.id]: e.target.value }))}
+                        onChange={(e) => {
+                          if (!seen.current.has(cat.id)) seen.current.set(cat.id, capture(cat.id, cat.version));
+                          const value = e.target.value;
+                          setDrafts((d) => ({ ...d, [cat.id]: value }));
+                        }}
                         onBlur={() => void saveName(cat)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") { e.preventDefault(); void saveName(cat); }

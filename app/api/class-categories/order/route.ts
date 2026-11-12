@@ -49,14 +49,16 @@ export async function PUT(req: Request) {
     const same = ids.length === rows.length && new Set(ids).size === ids.length && items.every((i) => byId.get(i.id)?.version === i.version);
     if (!same) return { ok: false as const, status: 409, error: STALE, code: "stale" as const };
     const before = [...rows].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map((r) => r.id);
-    if (ids.every((id, i) => id === before[i])) return { ok: true as const, changed: false };
+    if (ids.every((id, i) => id === before[i])) return { ok: true as const, changed: false, moved: [] as { id: string; version: number }[] };
     const moved = items.map((it, i) => ({ id: it.id, sortOrder: i })).filter((m) => byId.get(m.id)!.sortOrder !== m.sortOrder).sort((a, b) => a.id.localeCompare(b.id));
     for (const m of moved) {
       await tx.classCategory.updateMany({ where: { id: m.id, tenantId }, data: { sortOrder: m.sortOrder, version: { increment: 1 } } });
     }
     await logAudit({ tenantId, userId, action: "class_category.reorder", entityType: "Tenant", entityId: tenantId, metadata: { before, after: ids }, req, tx });
-    return { ok: true as const, changed: true };
+    // The rows this reorder moved and their new versions, so the caller can tell its own version bumps from another
+    // person's change (B3-1).
+    return { ok: true as const, changed: true, moved: moved.map((m) => ({ id: m.id, version: byId.get(m.id)!.version + 1 })) };
   });
   if (!result.ok) return NextResponse.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, { status: result.status });
-  return NextResponse.json({ ok: true, changed: result.changed });
+  return NextResponse.json({ ok: true, changed: result.changed, moved: result.moved });
 }

@@ -82,22 +82,35 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release B — real data
     });
   });
 
-  it("switched off: create, rename, archive and reorder are refused (404) and change nothing; the list still reads", async () => {
+  it("switched off (unset, or any value but on): create, rename, archive, restore and reorder are each refused server-side (404) and change nothing; the list still reads", async () => {
     const T = await club("off");
-    const [first] = await cats(T);
-    process.env.CLASS_CATEGORY_MANAGEMENT = "off";
-    try {
-      expect((await create(T, "Intermediate")).status).toBe(404);
-      expect((await patch(T, first.id, { version: first.version, name: "Beginners" })).status).toBe(404);
-      as("owner", T);
-      expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: [{ id: first.id, version: first.version }] }))).status).toBe(404);
-      const list = await (await listGET()).json();
-      expect(list.managementEnabled).toBe(false);
-      expect(list.categories).toHaveLength(8);
-      expect((await cats(T)).some((c) => c.name === "Beginners" || c.name === "Intermediate")).toBe(false);
-    } finally {
-      process.env.CLASS_CATEGORY_MANAGEMENT = "on";
+    const [first, second] = await cats(T);
+    // One archived while on, so its restore can be tried while off.
+    expect((await patch(T, second.id, { version: second.version, archived: true })).status).toBe(200);
+    const snapshot = async () => (await cats(T)).map((c) => ({ id: c.id, name: c.name, sortOrder: c.sortOrder, archivedAt: c.archivedAt?.toISOString() ?? null, version: c.version }));
+    const before = await snapshot();
+    for (const value of [undefined, "off", "true", "ON"]) {
+      if (value === undefined) delete process.env.CLASS_CATEGORY_MANAGEMENT; else process.env.CLASS_CATEGORY_MANAGEMENT = value;
+      try {
+        const now = await cats(T);
+        const f = now.find((c) => c.id === first.id)!;
+        const a = now.find((c) => c.id === second.id)!;
+        expect((await create(T, "Intermediate")).status, `create, ${value}`).toBe(404);
+        expect((await patch(T, f.id, { version: f.version, name: "Beginners" })).status, `rename, ${value}`).toBe(404);
+        expect((await patch(T, f.id, { version: f.version, archived: true })).status, `archive, ${value}`).toBe(404);
+        expect((await patch(T, a.id, { version: a.version, archived: false })).status, `restore, ${value}`).toBe(404);
+        as("owner", T);
+        const items = now.map((c) => ({ id: c.id, version: c.version })).reverse();
+        expect((await orderPUT(request("/api/class-categories/order", "PUT", { items }))).status, `reorder, ${value}`).toBe(404);
+        const list = await (await listGET()).json();
+        expect(list.managementEnabled).toBe(false);
+        expect(list.categories).toHaveLength(8);
+      } finally {
+        process.env.CLASS_CATEGORY_MANAGEMENT = "on";
+      }
     }
+    expect(await snapshot()).toEqual(before);
+    expect(await audits(T, "class_category.create")).toHaveLength(0);
   });
 
   it("create: owner or manager adds a category at the end; a coach is refused; the name is unique whatever its capitals and spacing (archived names too), 32 characters at most; recorded in Activity, with no Undo", async () => {
@@ -176,9 +189,15 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release B — real data
     const rows = await cats(T);
     const reversed = [...rows].reverse().map((r) => ({ id: r.id, version: r.version }));
     as("manager", T);
-    expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: reversed }))).status).toBe(200);
+    const res = await orderPUT(request("/api/class-categories/order", "PUT", { items: reversed }));
+    expect(res.status).toBe(200);
     expect((await cats(T)).map((r) => r.id)).toEqual(reversed.map((r) => r.id));
     const now = await cats(T);
+    // It names exactly the rows it moved, with their new stored versions (B3-1: the sheet counts these as its own).
+    const moved = ((await res.json()) as { moved: { id: string; version: number }[] }).moved;
+    const changed = now.filter((r) => rows.find((o) => o.id === r.id)!.sortOrder !== r.sortOrder);
+    expect([...moved].sort((x, y) => x.id.localeCompare(y.id))).toEqual(changed.map((r) => ({ id: r.id, version: r.version })).sort((x, y) => x.id.localeCompare(y.id)));
+    expect(moved.every((m) => m.version === rows.find((o) => o.id === m.id)!.version + 1)).toBe(true);
     const missing = now.slice(1).map((r) => ({ id: r.id, version: r.version }));
     expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: missing }))).status).toBe(409);
     const old = now.map((r, i) => ({ id: r.id, version: i === 0 ? r.version - 1 : r.version }));
