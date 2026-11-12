@@ -118,11 +118,32 @@ The same holds on day 1 and on day 100. **Elapsed time is not the control:** the
   2. Noe runs `prisma migrate resolve --rolled-back 20261112120000_class_category_stale_writer`.
   3. Redeploy.
   4. Check with `SELECT prosrc LIKE '%STALE_WRITER%' FROM pg_proc WHERE proname = 'matflow_class_category_bridge'`.
-- **Rehearsal:** RESULTS_REHEARSAL
+- **Rehearsal:** Two throwaway databases on the TEST endpoint, both dropped afterwards. Durations were measured from this machine (226 ms per database round trip). They are rehearsal evidence, not a guarantee of production duration.
+  - **`matflow_rehearsal_20261112035750`**: every migration through Release B applied. This migration took 1,942 ms (Release A's took 1,212 ms).
+  - **`matflow_rehearsal_20261112042451`**:
+    - migrated to Release A from Release A's own checkout (1,125 ms);
+    - then another session took ACCESS EXCLUSIVE on `Class` and held it for 25 s;
+    - Release B's migration then applied in 1,895 ms and finished before the holder released (holder 04:30:42–04:31:07 UTC; the whole `migrate` command took 20.5 s).
+  - Had the migration needed a `Class` lock, its 5 s `lock_timeout` would have failed it. It takes none.
 
 ## 6. Results
 
-RESULTS_TABLE
+Code `8d080073`. Later commits change journeys only (`b57a47bf`, `00f1be86`).
+
+| Gate | Result |
+|---|---|
+| Type-check | clean |
+| Lint (eslint and the UI-RULES ratchet) | passed |
+| Full unit suite | 655 files passed. Two guard files failed on the new routes and the new raw SQL (`journeys-manifest`, `sec-c-static-guards`); both were updated and pass (18/18). |
+| DB suites on rehearsal database `matflow_rehearsal_20261112035750`, owner role | `class-categories-b-db` and `class-categories-bridge-db`: 34/34 |
+| The same, `matflow_app` with RLS enforced | 34/34 |
+| Journey `class-categories-b` (switch on) | 12 PASS / 0 FAIL. Earlier runs failed on the journey itself: substring name matches, 5 s waits on 8–12 s saves, and opening the form before the page refresh landed. |
+| Journey `class-categories-a` (switch on) | 13 PASS / 0 FAIL. It is updated for the new rule: C8 failed 11/2 against the old expectation, which was the intended refusal. |
+| Journey `classes-lifecycle` (switch on) | 56 PASS / 0 FAIL / 4 NOTE |
+| CI | none: not pushed |
+| Independent review | not run (§8) |
+
+The journeys ran on the shared test branch, where Release B's migration is **not** applied: the database refusal is proved on the rehearsal database only. The route-level refusal is proved on both.
 
 ## 7. Sean's setup and acceptance checklist (after activation; with Sean, never inferred)
 
@@ -141,5 +162,4 @@ RESULTS_TABLE
 ## 8. Open items
 
 - The independent review of Release B has not run. Subagent launches are blocked by the context-mode hook. Noe chose a separate review session; the brief is in `.omc/reviews/2026-11-12/`.
-- A browser journey for the Categories sheet has not run (§6).
 - Release B is not integrated with colours PR #80. #80 touches `app/member/schedule/page.tsx` and `TimetableManager.tsx`, and Release B touches the latter. A trial merge is needed when either lands.
