@@ -10,6 +10,8 @@ import { logAudit } from "@/lib/audit-log";
 import { updateMetadata } from "@/lib/audit-snapshot";
 import { assertSameOrigin } from "@/lib/csrf";
 import { requireApiOwner } from "@/lib/api-authz";
+import { isBlobStoreHost } from "@/lib/blob-url";
+import { isAttachableClubAsset } from "@/lib/blob-ownership";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
 
@@ -221,6 +223,18 @@ export async function PATCH(req: Request) {
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+  }
+  // Round 5 remediation (review F3): a stored logo is a club file (club root), never a member's photo, an import file
+  // or another club's file (lib/blob-ownership.ts).
+  // A logo re-sent exactly as stored makes no new reference, so a settings save never fails on a logo the club
+  // already has (round 2, A-R3): only a changed logo is judged.
+  const logoUrl = parsed.data.logoUrl;
+  if (logoUrl && isBlobStoreHost(logoUrl)) {
+    const ok = await withTenantContext(session.user.tenantId, async (tx) => {
+      const current = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { logoUrl: true } });
+      return current?.logoUrl === logoUrl || isAttachableClubAsset(tx, session.user.tenantId, logoUrl);
+    });
+    if (!ok) return NextResponse.json({ error: "Logo must be uploaded through MatFlow for this club" }, { status: 400 });
   }
 
   try {

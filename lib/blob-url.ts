@@ -81,6 +81,59 @@ export function isTenantBlobUrl(url: string, tenantId: string): boolean {
 }
 
 /**
+ * The one spelling of a stored file's URL: its origin and path and nothing else (lower-case host, no port, no
+ * credentials, no query, no fragment, no trailing dot on the host). The upload route stores the blob's own URL, which is always in this form.
+ * Ownership is decided by comparing stored URLs as strings, so a variant of a stored URL ("?v=1", "#x", an upper-case
+ * host) names the same file under a different string and slipped past "is this a member's photo?" checks (re-review
+ * of 12 Nov 2026). Comparing against `origin + pathname` also refuses an EMPTY query or fragment ("…webp?",
+ * "…webp#"), which the URL parser keeps in `href` but reports as an empty `search`/`hash` (fix re-review 4, A1).
+ * Every ownership rule accepts only this form.
+ */
+export function isCanonicalBlobUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  return !u.port && !u.hostname.endsWith(".") && u.origin + u.pathname === url;
+}
+
+/**
+ * Any spelling of a blob-store host, including ones the strict matcher above does not recognise (an explicit
+ * ":443", a trailing dot, a protocol-relative "//host/..." or "/\\host/..." that a browser resolves against the
+ * page). The club-asset rules run on these too, so an odd spelling is refused rather than stored unchecked (fix
+ * re-review 4, A3; round 2, A-R2). Parsed against a placeholder base so a relative spelling still yields its host.
+ */
+export function isBlobStoreHost(url: string): boolean {
+  try {
+    const host = new URL(url, "https://base.invalid").hostname.toLowerCase().replace(/\.$/, "");
+    return host === "blob.vercel-storage.com" || host.endsWith(".blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Round 5 (11 Nov 2026): a blob uploaded FOR this member (profile picture or
+ * member photo: `/api/upload` writes those under
+ * `tenants/<club>/members/<member>/`). Club-namespace membership alone is not
+ * ownership: a member could otherwise point their own picture at the club
+ * logo or another member's photo and have it deleted, or read it through the
+ * image proxy. Every member-photo write accepts only this (or an inline
+ * image), and every member-photo delete only ever deletes this.
+ */
+export function isMemberBlobUrl(url: string, tenantId: string, memberId: string): boolean {
+  if (!memberId || /[/%.]/.test(memberId) || !isCanonicalBlobUrl(url) || !isTenantBlobUrl(url, tenantId)) return false;
+  return new URL(url).pathname.startsWith(`/tenants/${tenantId}/members/${memberId}/`);
+}
+
+/** An inline image the routes accept in place of a blob (the upload route's no-store fallback). */
+export function isInlineImageUrl(url: string): boolean {
+  return /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url);
+}
+
+/**
  * A blob-store URL (any scheme/host case, so "HTTPS://" cannot slip past a
  * case-sensitive prefix test) that is NOT under this club's namespace. The
  * accept-time refusal for every client-supplied photo/picture URL; data: and

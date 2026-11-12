@@ -2087,7 +2087,10 @@ export default function MemberProfile({
                     const shrunk = await downscaleImage(f, IMAGE_MAX_EDGE_PX);
                     const fd = new FormData();
                     fd.append("file", shrunk);
-                    const up = await fetch("/api/upload", { method: "POST", body: fd });
+                    // Round 5: stored under this member's own path, the only
+                    // place the rank route accepts a promotion photo from.
+                    fd.append("targetMemberId", member.id);
+                    const up = await fetch("/api/upload?purpose=member-photo", { method: "POST", body: fd });
                     if (up.ok) {
                       const data = await up.json() as { url: string };
                       setRankForm((s) => ({ ...s, photoUrl: data.url }));
