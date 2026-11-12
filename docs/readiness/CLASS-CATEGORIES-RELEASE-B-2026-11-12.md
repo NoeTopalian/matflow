@@ -51,56 +51,112 @@
 - Release A applied an old client's explicit choice as genuine, so a person on an old page could replace "Intermediate" with "Gi" without ever seeing "Intermediate" (Release A evidence §4–§5).
 - An unrelated save from an old page never sends `category` (main's form sends it only when its select changed). That is safe already.
 
-**The control, in two places. Both refuse; neither guesses.**
+**The control, in three places. Each refuses; none guesses. None reads the activation switch.**
 
-1. **Route** (`lib/class-category-store.ts` `categoryIdToWrite`, every class create and edit). A request carrying the old `category` key, on a class whose current category is club-made, is a 409. This covers a key or null. The message: "This page is out of date: the club's categories have changed. Reload the page and choose again."
-2. **Database** (migration `20261112120000_class_category_stale_writer`). The bridge trigger refuses an old-key-only UPDATE on a class whose current category is club-made (`MF_CLASS_CATEGORY_STALE_WRITER`). This covers writers that bypass the route: a server from before Release A that is still answering, and any script.
+1. **Route, old pages** (`lib/class-category-store.ts` `categoryIdToWrite`, every class create and edit). A request carrying the old `category` key, on a class whose current category is club-made, is a 409. This covers a key or null. The message: "This page is out of date: the club's categories have changed. Reload the page and choose again."
+2. **Route, current forms left open** (same function; added 12 Nov after the first review brief). On an edit, this release's class form sends `categoryBaseId`, the category it saw on the class, with any category change. If the class's category has changed since, judged under the Class row lock, the change is a 409: "Someone else changed this class's category since you opened it. Reload the page and choose again." Before this, a form left open overwrote another person's category choice (last writer wins).
+3. **Database** (migration `20261112120000_class_category_stale_writer`). The bridge trigger refuses an old-key-only UPDATE on a class whose current category is club-made (`MF_CLASS_CATEGORY_STALE_WRITER`). This covers writers that bypass the route: a server from before Release A that is still answering, and any script.
 
-**Still allowed, because the old client can see it:**
-- an old client's choice on a class whose category is one of the eight starting ones, including a renamed one, which keeps its old key;
-- an unrelated edit;
+**Still allowed:**
+- an old client's choice on a class whose category is one of the eight starting ones, including a renamed one, which keeps its old key (the old client shows it under its old name);
+- an unrelated edit, from any writer: no category is sent, so the class keeps its current one;
 - re-sending the key a class already has, which is a no-op in the trigger.
+
+**The limit that remains.** An old page carries no record of what it saw. On a class whose category is a starting one, its explicit change applies even if someone changed that class since. This is the same as Release A and main today. It cannot be closed for pages that already exist, and it ends when they are reloaded. A test pins this limit, so a change to it is seen.
 
 **This tightens Release A's documented behaviour.** Release A applied the explicit old choice. This was an implementation choice made for Release B, not an instruction from Noe. The Release A bridge suite's case is updated to expect the refusal.
 
-## 3. The seven-day gate: what it is, and what it is not
+### 2a. Editors left open while the club's categories change: what each writer gets
 
-**What expires after seven days? Nothing.**
-- No token, cache or session is timed out by the gate. It is an observation window over two signals.
-- Release A's evidence §6 defines it:
-  - no `categoryKeyWrittenAt` stamp newer than the Release A deployment;
-  - no `[class-category] legacy key write` log line for 7 consecutive days.
-- It shows that old clients have stopped writing old keys. It does not stop them.
+Proved in `tests/integration/class-categories-b-stale-editors-db.test.ts`. Every case runs with management switched on **and** switched off. "Old page" = a page from before club-managed categories (old key). "Current form" = this release's form opened before the change (`categoryId` with `categoryBaseId`). "Direct" = a writer of the old key column only (a pre-Release-A server, or a script).
 
-**Which writers does it cover?**
+| Change while the editor is open | Old page | Current form | Direct old-key writer |
+|---|---|---|---|
+| **Fundamentals renamed to Beginners** | Unrelated save keeps it. Choosing another starting category applies. Choosing "Fundamentals" lands on Beginners, the same row. | Its choice is by id, so it lands on Beginners. | Same as the old page. |
+| **A starting category archived** (Competition) | Choosing it: 409 (archived). A class already on it keeps it through unrelated saves and re-sends. | Choosing it: 409 (archived). | Choosing it: `MF_CLASS_CATEGORY_ARCHIVED`. Re-writing the key the class has: no change. |
+| **A category the club made** (Advanced) | Any change to a class on it (key or null): 409 (stale). Unrelated save keeps it. | Saw it, so its change applies. | Any key: `MF_CLASS_CATEGORY_STALE_WRITER`. NULL, the key the class already has: no change. |
+| **Someone else changed the class's category** | Club-made category now: 409 (stale). Starting category now: applied (the limit above). | Explicit change or clear: 409 (changed), nothing changes. Unrelated save keeps theirs. After reload: applied. | Club-made: refused. Starting: applied. |
 
-| Writer | Old-key writes possible? | Seen by |
-|---|---|---|
-| A Vercel deployment from before Release A, still answering (its own URL; production traffic moves to the new deployment) | Yes: writes `Class.category` directly | `categoryKeyWrittenAt` stamp |
-| A browser tab or kiosk holding a page loaded before Release A (its JavaScript posts the old key to the current server) | Yes: the route translates it and logs the line | the log line |
-| A script, cron, import or other API writer | None found (grep of `scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers; Release A evidence §6) | Release B repeats the grep (§6 below) |
-| Sessions and tokens | Not writers of categories | — |
+The browser journey `class-categories-b` step B12 shows the current-form refusal in the form, beside the buttons, and checks that the other tab's choice is kept.
+
+## 3. Activation: the technical safety gate, and the seven-day observation period
+
+These are two different things.
+- **The safety gate** is a set of checks that the protections are in production. Each passes or fails now; none waits for time to pass. It is what makes every write safe.
+- **The observation period** is seven days of watching for old writers. It makes nothing safe. It shows whether anyone would meet the refusals, and confirms that no old server or script is writing.
+
+**Both block activation.** `CLASS_CATEGORY_MANAGEMENT` stays off until every safety-gate check has passed and the observation period has ended clean. The dated results go in §6 before Noe sets the switch.
+
+### 3.1 The technical safety gate (required; deterministic)
+
+| # | Check | How | Who | Blocks activation when |
+|---|---|---|---|---|
+| G1 | Production runs Release B | The production deployment's SHA (GitHub deployments API) contains the Release B merge, and `/api/health` returns 200 `db: ok` | Agent (read-only, the established checks) | Any other SHA, or health not ok |
+| G2 | The database refusal is in production | `SELECT prosrc LIKE '%MF_CLASS_CATEGORY_STALE_WRITER%' FROM pg_proc WHERE proname = 'matflow_class_category_bridge'` returns true, and `_prisma_migrations` shows `20261112120000_class_category_stale_writer` finished and not rolled back | Noe (read-only production query) | False, missing, or rolled back |
+| G3 | No server from before Release A can answer | Vercel lists no production deployment older than Release A: each was deleted | Noe (Vercel) | Any such deployment still exists |
+| G4 | The data agrees | The read-only consistency query in Release A evidence §6 item 4 returns 0 for: a class with a key but no reference; a reference whose row's key differs | Noe (read-only production query) | Any row |
+| G5 | No new category writer | Repeat the grep on the merged head (`scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers), and record it | Agent | Any writer of `Class.category` or `Class.categoryId` outside the class routes and undo |
+
+The route refusals need no production check of their own: they ship in the code that G1 verifies. They are proved by the suites in §6.
+
+### 3.2 The observation period (seven days; blocks activation; does not make anything safe)
+
+**What expires after seven days? Nothing.** No token, cache, session or page is timed out. Nothing bounds how long an open tab keeps its old code: a tablet left open at the desk can hold a page from before Release A for weeks. The period only watches.
+
+**It starts** when Release B is deployed with the switch off (§4 step 2). **It restarts** after any blocking signal is resolved.
+
+| Signal | What it shows | Where it is kept | Who reads it | Blocks activation when |
+|---|---|---|---|---|
+| O1 `SELECT max("categoryKeyWrittenAt") FROM "Class"` | A pre-Release-A server or a script wrote the old key column directly. This release's code never does. | The database (durable) | Noe | Any stamp later than the Release A deployment. Find the writer, delete the deployment or stop the script, then restart the period. |
+| O2 `class.updated` / `class.created` audit rows with `metadata.categoryOldKey = true` in the last 7 days, with who made each (`userId`, or `metadata.actorId`) | A page from before club-managed categories is still open and saving. **New in Release B.** | The audit log (durable, kept permanently) | Noe | Any row. That person reloads every MatFlow tab and device they edit classes from, then the period restarts. Without this, they would meet the 409 after activation. That is safe, but it is avoidable confusion. |
+| The `[class-category] legacy key write` runtime log line (Release A) | The same as O2 | Vercel runtime logs: **1 hour** on the Hobby plan (Vercel docs, checked 12 Nov 2026) | — | Not used. It cannot cover seven days on Hobby, so Release A §6 item 2 could not have been collected as written. O2 replaces it. |
+
+A create made by this release's form, in a club that has no category rows yet, also sets `categoryOldKey`. All production clubs are seeded by Release A's migration, so in practice this needs a club created by an older build during the changeover. Such a row names a current user and is read as a false alarm.
+
+**Why seven days.**
+- A club's timetable repeats weekly. Staff edit a class around the day it runs.
+- A page that is kept open and used for edits (a desk tablet, a coach's phone tab) is used on at least one day of any week it is used at all.
+- Seven days covers every weekday once, so every such weekly editor is seen at least once.
+- **Shorter** would miss someone who only edits one day's classes, for example the Saturday coach.
+- **Longer** adds little. A page used less often than weekly is not reliably caught by any fixed window, and the refusals in §2 cover it anyway.
+- This is a judgement from how the product is used, not a measurement. Seven days is kept on that basis, not because Release A chose it.
+
+### 3.3 Which writers the protections and signals cover
+
+| Writer | Old-key writes possible? | Protected by | Seen by |
+|---|---|---|---|
+| A Vercel deployment from before Release A, still answering (its own URL; production traffic moves to the new deployment) | Yes: writes `Class.category` directly | The trigger (§2, control 3); and G3 deletes it | O1 |
+| A browser tab or kiosk holding a page loaded before Release A | Yes: posts the old key to the current server | The route (§2, control 1) | O2 |
+| This release's class form, left open | No: posts `categoryId` with `categoryBaseId` | The route (§2, control 2) | — (not an old writer) |
+| A script, cron, import or other API writer | None found (grep of `scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers; Release A evidence §6) | The trigger, if one ever writes the old key | O1; G5 repeats the grep |
+| Undo of a class edit | Writes the reference (Release A §7) | The trigger's archived and tenant rules; Release A's undo refusals | — |
+| Sessions and tokens | Not writers of categories | — | — |
 
 **An old browser that submits after the seven days:**
 
 | Case | Result |
 |---|---|
-| Unrelated save | Accepted; `category` is not sent |
-| Choosing an old category for a class on a starting category | Accepted, as before |
+| Unrelated save | Accepted; `category` is not sent; the class keeps its category |
+| Choosing an old category for a class on a starting category | Accepted, as before (the limit in §2) |
 | Changing the category of a class on a club-made category | **409**, "This page is out of date… Reload"; nothing changes |
 
-The same holds on day 1 and on day 100. **Elapsed time is not the control:** the route and trigger refusals in §2 are.
-
-**What the gate is still for.** It lowers the number of people who meet that 409, and confirms no old server is still answering. It is no longer what makes a write safe.
+The same holds on day 1 and on day 100. **Elapsed time is not the control:** the refusals in §2 are.
 
 ## 4. Activation (Noe's steps; not done)
 
-1. Release A is deployed, with its post-deploy checks recorded (Release A evidence §13).
-2. Release B is deployed with the switch off. Its migration runs on deploy: only `CREATE OR REPLACE FUNCTION`, rehearsal in §5.
-3. The Release A gate signals are read and recorded. They are recommended, not required for safety (§3).
-4. Every production deployment older than Release A is deleted in Vercel, so no old server can answer.
-5. Set `CLASS_CATEGORY_MANAGEMENT=on` in the production environment and redeploy. That is a Vercel action, so it is Noe's step.
-6. Sean's setup session (§7). Never inferred from class titles, and nothing archived unless Sean names it.
+Each step needs Noe's approval; one approval does not cover the next.
+
+1. Release A is merged and deployed, with its post-deploy checks recorded (Release A evidence §13).
+2. Release B is merged and deployed **with the switch off**. Its migration runs on deploy: only `CREATE OR REPLACE FUNCTION`, rehearsal in §5. Deploying it changes behaviour for every club at once, even with the switch off:
+   - an old page's change to a class on a club-made category is refused (no club has one until activation, so this cannot fire yet);
+   - an open form's category change is refused when another person changed that class's category since;
+   - old-key saves are marked in the audit log.
+3. Every production deployment older than Release A is deleted in Vercel (G3).
+4. The safety gate G1–G5 (§3.1) passes, with each result and its date recorded in §6.
+5. The seven-day observation period (§3.2) ends clean: O1 and O2 have shown nothing for seven consecutive days since step 2, or since the last restart. Recorded in §6 with dates.
+6. Noe sets `CLASS_CATEGORY_MANAGEMENT=on` for production and redeploys (a Vercel action).
+7. Post-activation check, read-only. The Categories button shows for an owner on the Timetable page, and `GET /api/class-categories` reports `managementEnabled: true`. **No category is created, renamed or archived to test it:** that is Sean's club's data (§7).
+8. Sean's setup session (§7). Never inferred from class titles, and nothing archived unless Sean names it.
 
 ## 5. Migration `20261112120000_class_category_stale_writer`
 
@@ -108,11 +164,35 @@ The same holds on day 1 and on day 100. **Elapsed time is not the control:** the
   - It takes no table lock.
   - The triggers keep pointing at the function.
   - The function stays `SECURITY INVOKER` with `search_path` pinned.
-- **Rollback boundary.**
-  - The migration is never reverted (fix forward).
-  - Code rolled back to Release A is not refused by this function for its own writes, because it writes the reference. But Release A's route still applies an old page's explicit choice.
-  - **After activation, Release A code is not a supported fallback.** Fix forward.
-  - Builds from before Release A stay prohibited, as Release A evidence §5 says.
+- **The migration is never reverted** (fix forward). It only refuses more, so leaving it in place is safe whichever code runs.
+
+## 5a. Switching management off, and rolling back
+
+**Switching management off** (`CLASS_CATEGORY_MANAGEMENT` unset or not `on`, then redeploy; Noe's Vercel action).
+
+- **What stops:**
+  - adding, renaming, archiving, restoring and reordering categories (each is a 404 that changes nothing);
+  - the Categories button.
+- **What stays exactly as it was:**
+  - every category's name, archived state and order;
+  - every class's category;
+  - the class form, which still offers the club's active categories (club-made and renamed ones included) and still has Undo.
+- **What stays protected.** None of the protections reads the switch:
+  - the old-page refusal on club-made categories;
+  - the open-form refusal;
+  - the archived refusal (route and trigger);
+  - the trigger's stale-writer refusal.
+
+  The scenario suite (§2a) runs every case with the switch on and with it off, to prove it.
+- **The cost:** an archived category cannot be restored, and a mistaken name cannot be corrected, until the switch is on again. Classes keep showing them meanwhile.
+
+**Rolling back the code.**
+
+| Roll back to | Before activation | After activation (any club-made, renamed or archived category exists) |
+|---|---|---|
+| An earlier Release B deployment | Supported | Supported, with the switch on or off |
+| **Release A** | Supported. It writes references, which this function accepts. It drops two things: the open-form refusal (back to last writer wins) and the old-key audit marker. The stale-writer rule cannot fire, because no club-made category exists yet. Evidence: Release A's own category suites, run against a database carrying this migration (§6). | **Not a supported fallback, and not demonstrated safe.** It is unsafe in one known case. Release A's route turns an old page's key into a reference write, which the trigger's old-key refusal does not see, and Release A has no route refusal. So an old page can replace or clear a club-made category it never saw. Release A also has no open-form refusal. **If Release B's code must be withdrawn after activation, deploy Release B with the switch off; never Release A.** |
+| A build from before Release A | Prohibited (Release A evidence §5) | Prohibited. This function would refuse its old-key writes on club-made categories, but it remains prohibited. |
 - **Recovery from a failed migration.** As in Release A evidence §9:
   1. The deploy stops at P3009.
   2. Noe runs `prisma migrate resolve --rolled-back 20261112120000_class_category_stale_writer`.
