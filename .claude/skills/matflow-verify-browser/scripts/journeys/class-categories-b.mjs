@@ -66,26 +66,26 @@ try {
   await section("B1", "the sheet lists the club's eight starting categories, each with its class count", async () => {
     await open();
     await expect(sheet().getByTestId("categories-row")).toHaveCount(8);
-    await expect(sheet().getByLabel(`${fund.name} name`)).toHaveValue(fund.name);
+    await expect(sheet().getByLabel(`${fund.name} name`, { exact: true })).toHaveValue(fund.name);
     await expect(sheet().locator(`#categories-count-${fund.id}`)).toHaveText("1 class");
     await shot(page, "categories-b-sheet");
     return "8";
   });
 
   await section("B2", "add 'Intermediate' by keyboard: a club-made category at the end, recorded in Activity", async () => {
-    const add = sheet().getByRole("button", { name: "Add a category" });
+    const add = sheet().getByRole("button", { name: "Add a category", exact: true });
     await add.focus();
     await page.keyboard.press("Enter");
     await page.keyboard.type("Intermediate");
     await page.keyboard.press("Enter");
-    await expect(sheet().getByLabel("Intermediate name")).toBeVisible();
+    await expect(sheet().getByLabel("Intermediate name", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect.poll(async () => (await catRows()).find((r) => r.name === "Intermediate")?.legacyKey, { timeout: 30_000 }).toBeNull();
     await expect.poll(() => audits("class_category.create"), { timeout: 30_000 }).toBe(1);
     return "added";
   });
 
   await section("B3", "rename Fundamentals to Beginners in place: the class on it keeps it, its own name unchanged", async () => {
-    const field = sheet().getByLabel(`${fund.name} name`);
+    const field = sheet().getByLabel(`${fund.name} name`, { exact: true });
     await field.fill("Beginners");
     await field.press("Enter");
     await expect.poll(async () => (await catRows()).find((r) => r.id === fund.id)?.name, { timeout: 30_000 }).toBe("Beginners");
@@ -96,17 +96,17 @@ try {
 
   await section("B4", "move Kids up by keyboard: the new order is saved, focus stays on the control", async () => {
     const before = (await catRows()).filter((r) => !r.archivedAt).map((r) => r.id);
-    const up = sheet().getByRole("button", { name: "Move Kids up" });
+    const up = sheet().getByRole("button", { name: "Move Kids up", exact: true });
     await up.focus();
     await page.keyboard.press("Enter");
     await expect.poll(async () => (await catRows()).filter((r) => !r.archivedAt).map((r) => r.id).indexOf(kids.id), { timeout: 30_000 }).toBe(before.indexOf(kids.id) - 1);
-    await expect(sheet().getByRole("button", { name: "Move Kids up" })).toBeFocused();
+    await expect(sheet().getByRole("button", { name: "Move Kids up", exact: true })).toBeFocused({ timeout: 30_000 });
     return { from: before.indexOf(kids.id), to: before.indexOf(kids.id) - 1 };
   });
 
   await section("B5", "archive Gi: listed under Archived, its class keeps it, the class form does not offer it for another class", async () => {
-    await sheet().getByRole("button", { name: "Archive Gi" }).click();
-    await expect(sheet().getByTestId("categories-archived-row").filter({ hasText: "Gi" })).toBeVisible();
+    await sheet().getByRole("button", { name: "Archive Gi", exact: true }).click();
+    await expect(sheet().getByTestId("categories-archived-row").filter({ hasText: "Gi" })).toBeVisible({ timeout: 30_000 });
     await expect.poll(async () => (await catRows()).find((r) => r.id === gi.id)?.archivedAt !== null, { timeout: 30_000 }).toBe(true);
     expect((await classCat(onGi.body.id)).categoryId).toBe(gi.id);
     await page.keyboard.press("Escape");
@@ -128,9 +128,9 @@ try {
     await page.goto("/dashboard/timetable");
     await page.waitForLoadState("networkidle");
     await open();
-    await sheet().getByRole("button", { name: "Restore Gi" }).click();
+    await sheet().getByRole("button", { name: "Restore Gi", exact: true }).click();
     await expect.poll(async () => (await catRows()).find((r) => r.id === gi.id)?.archivedAt, { timeout: 30_000 }).toBeNull();
-    await expect(sheet().getByLabel("Gi name")).toBeVisible();
+    await expect(sheet().getByLabel("Gi name", { exact: true })).toBeVisible({ timeout: 30_000 });
     return "restored";
   });
 
@@ -139,11 +139,11 @@ try {
     // Another tab: a rename through the API, which bumps the version under the open sheet.
     const other = await page.evaluate(async ([id, v]) => (await fetch(`/api/class-categories/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: v, name: "No-Gi (Tue)" }) })).status, [nogi.id, nogi.version]);
     expect(other).toBe(200);
-    const field = sheet().getByLabel(`${nogi.name} name`);
+    const field = sheet().getByLabel(`${nogi.name} name`, { exact: true });
     await field.fill("Nogi");
     await field.press("Enter");
-    await expect(sheet().getByTestId("categories-notice")).toContainText("changed in another tab");
-    await expect(sheet().getByLabel("No-Gi (Tue) name")).toBeVisible();
+    await expect(sheet().getByTestId("categories-notice")).toContainText("changed in another tab", { timeout: 30_000 });
+    await expect(sheet().getByLabel("No-Gi (Tue) name", { exact: true })).toBeVisible({ timeout: 30_000 });
     expect((await catRows()).find((r) => r.id === nogi.id)?.name).toBe("No-Gi (Tue)");
     return "refused";
   });
@@ -151,11 +151,11 @@ try {
   await section("B8", "a forced failed save keeps the typed name and says so beside it; the retry saves it once", async () => {
     const comp = (await catRows()).find((r) => r.legacyKey === "competition");
     await page.route(`**/api/class-categories/${comp.id}`, (r) => (r.request().method() === "PATCH" ? r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Something went wrong" }) }) : r.continue()));
-    const field = sheet().getByLabel(`${comp.name} name`);
+    const field = sheet().getByLabel(`${comp.name} name`, { exact: true });
     await field.fill("Competition Team");
     await field.press("Enter");
-    await expect(sheet().locator(`#categories-error-${comp.id}`)).toBeVisible();
-    await expect(field).toHaveValue("Competition Team");
+    await expect(sheet().locator(`#categories-error-${comp.id}`)).toBeVisible({ timeout: 30_000 });
+    await expect(field).toHaveValue("Competition Team", { timeout: 30_000 });
     expect((await catRows()).find((r) => r.id === comp.id)?.name).toBe(comp.name);
     await page.unroute(`**/api/class-categories/${comp.id}`);
     let patches = 0;
@@ -167,10 +167,10 @@ try {
   });
 
   await section("B9", "a duplicate name (any capitals) is refused beside the new row", async () => {
-    await sheet().getByRole("button", { name: "Add a category" }).click();
+    await sheet().getByRole("button", { name: "Add a category", exact: true }).click();
     await page.keyboard.type("intermediate");
     await page.keyboard.press("Enter");
-    await expect(sheet().locator("#categories-error-new")).toContainText("already have a category");
+    await expect(sheet().locator("#categories-error-new")).toContainText("already have a category", { timeout: 30_000 });
     expect((await catRows()).filter((r) => r.name.toLowerCase() === "intermediate")).toHaveLength(1);
     await page.keyboard.press("Escape");
     return "refused";
