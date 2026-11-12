@@ -75,7 +75,7 @@ A row trigger sees values, not which columns a statement named. So two marker tr
 | names only `categoryId`, changed to NULL | Sets `category` to NULL. | "reference only" |
 | names only `category`, changed to a key | Stamps `categoryKeyWrittenAt`. Finds this club's row for that key `FOR SHARE`; if the club has no rows yet, seeds the eight first. Refuses if the row is archived, otherwise sets `categoryId`. | "old key only"; "seeded by its first class"; "an old-key-only write is stamped" |
 | names only `category`, changed to NULL | Stamps `categoryKeyWrittenAt` and sets `categoryId` to NULL. | "old key only" |
-| names one column but leaves it unchanged | Does nothing. | "a column named in one statement is not carried into the next" |
+| names one column but leaves it unchanged | Does nothing. (With both named and unchanged, it still takes the category row `FOR SHARE`.) | "a class keeps the archived category it has through any other edit, and through the route" (the reference re-sent unchanged); for the old key re-sent unchanged, Release B's stale-database case "writing the key it already has (NULL) is no change". *(Citation corrected 12 Nov 2026.)* |
 
 The `FOR SHARE` read makes an archive of a category and an assignment to it wait for each other, whichever comes first:
 
@@ -131,23 +131,24 @@ Rollback is fix-forward only: deploy a build of the chosen commit. Never use Ver
 
 ## 6. Activation gate for Release B
 
-Release B's controls must not be enabled until all of these are observed and recorded with their dates. A successful deployment of A is not enough.
+*Rewritten 12 Nov 2026 to agree with Release B's readiness record (`docs/readiness/CLASS-CATEGORIES-RELEASE-B-2026-11-12.md` §3 and §4), after its independent review. That record is the operative gate; this section maps onto it.*
 
-1. **No pre-A server is serving.**
-   - The database signal is `SELECT max("categoryKeyWrittenAt") FROM "Class"`. It must be older than the A deployment and stay so for 7 days.
-   - Only a pre-A server, or a script, writes the old key by itself. This release's code never does: the route translates an old key into a reference write, and undo converts keys before writing. So any stamp after A is live means a pre-A server or a script wrote.
-   - In addition: every Vercel production deployment older than A is deleted, or Vercel shows no request served by one for 7 days.
-   - Noe reads this. It is a read-only production query, and agents never touch production.
-2. **No old browser page or API client is writing.** No `[class-category] legacy key write` line in the production logs for 7 consecutive days, long enough for a kiosk tablet or a phone left open for days. Noe reads this.
-   - *Correction, 12 Nov 2026:* Vercel keeps runtime logs for 1 hour on the Hobby plan (Vercel docs, checked 12 Nov 2026), so this signal cannot cover 7 days.
-   - Release B replaces it with a durable audit marker (`categoryOldKey`). Its readiness §3 separates the technical safety gate from the seven-day observation period.
-3. **No other writer.** A grep of `scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers found no cron, import or script writing a class's category (11 Nov 2026, on this branch). Release B's PR repeats the grep; a new writer resets the gate.
-4. **The data agrees.** A read-only production query, adapted from `scripts/readiness/class-categories-rehearsal.mjs verify`, returns 0 for:
-   - a class with a key but no reference;
-   - a reference whose row's key differs.
+**What this gate blocks.**
+- It blocks Release B's **activation** (`CLASS_CATEGORY_MANAGEMENT=on`), not Release B's deployment.
+- Release B's refusals of stale writers are live as soon as it is deployed, switch off or on.
+- Its observation period starts at that deployment, so it cannot be recorded before it.
 
-   Noe runs it.
-5. **Recorded.** The dates and evidence for 1–4 go into Release B's readiness record before its first deploy.
+**Who runs the production reads.**
+- They are read-only and made by `scripts/readiness/class-categories-prod-check.mjs` on the Release B branch.
+- Noe authorised the agent to run them on 12 Nov 2026 ("documented read-only production compatibility and post-migration checks, returning only the minimum necessary results"). Before that, they were Noe's.
+
+| This record (11 Nov) | Release B §3 | What it is now |
+|---|---|---|
+| 1. No pre-A server is serving | **G3** (every production deployment older than A deleted, in Vercel, by Noe) and **O1** (`categoryKeyWrittenAt`) | Deletion is the control. The alternative "Vercel shows no request served by one for 7 days" is **dropped**: request logs on the Hobby plan are not kept for 7 days. O1 watches for stragglers. Release A's trigger stamps only a *change* of key; Release B's function stamps every old-key-only write, so O1 is read from Release B's deployment onwards. |
+| 2. No old page or API client writing | **O2** (the durable `categoryOldKey` audit marker) | The `[class-category] legacy key write` log line cannot cover 7 days on Hobby (runtime logs: 1 hour, Vercel docs checked 12 Nov 2026). It is not used. |
+| 3. No other writer | **G5** (the grep, repeated on Release B's merged head) | Unchanged; a new writer resets the gate |
+| 4. The data agrees | **G4** (`gate-b`: both consistency counts 0) | Unchanged |
+| 5. Recorded | Release B §6, with dates | Recorded **after** Release B's deployment and before activation |
 
 ## 7. Undo compatibility
 
@@ -296,10 +297,12 @@ Each step needs its own approval from Noe:
 
 1. **Push** `feat/class-categories-a` and open a draft PR. CI's six checks run on it.
 2. **Merge to `main`** at the exact head. That deploys and **migrates production** (this migration: about 1.5 s of exclusive locks on `Class` and `Tenant`), at a quiet time.
-3. **After the deploy,** Noe confirms:
-   - the deployment and health check;
-   - `SELECT count(*) FROM "ClassCategory"` equals 8 × clubs;
-   - the §6 consistency query returns 0.
-4. **The §6 clock starts** for Release B's activation gate.
+3. **After the deploy** (read-only; the agent may run it, authorised 12 Nov 2026):
+   - the deployment's SHA and the health check;
+   - `class-categories-prod-check.mjs post-a`:
+     - every club has exactly its eight starting rows;
+     - both consistency counts are 0;
+     - `matflow_app` has its rights on `ClassCategory`.
+4. **Release B's observation period starts at Release B's deployment,** not at this one (§6).
 
 Sean's records are not touched by Release A: his existing categories carry over exactly as they are.
