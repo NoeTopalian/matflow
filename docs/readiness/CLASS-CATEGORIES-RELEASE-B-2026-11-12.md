@@ -92,10 +92,12 @@ These are two different things.
 | # | Check | How | Who | Blocks activation when |
 |---|---|---|---|---|
 | G1 | Production runs Release B | The production deployment's SHA (GitHub deployments API) contains the Release B merge, and `/api/health` returns 200 `db: ok` | Agent (read-only, the established checks) | Any other SHA, or health not ok |
-| G2 | The database refusal is in production | `SELECT prosrc LIKE '%MF_CLASS_CATEGORY_STALE_WRITER%' FROM pg_proc WHERE proname = 'matflow_class_category_bridge'` returns true, and `_prisma_migrations` shows `20261112120000_class_category_stale_writer` finished and not rolled back | Noe (read-only production query) | False, missing, or rolled back |
+| G2 | The database refusal is in production | `class-categories-prod-check.mjs gate-b`: `staleWriterRefusalPresent` true; migration `20261112120000_class_category_stale_writer` finished, not rolled back | Agent, read-only (authorised 12 Nov 2026) | False, missing, or rolled back |
 | G3 | No server from before Release A can answer | Vercel lists no production deployment older than Release A: each was deleted | Noe (Vercel) | Any such deployment still exists |
-| G4 | The data agrees | The read-only consistency query in Release A evidence §6 item 4 returns 0 for: a class with a key but no reference; a reference whose row's key differs | Noe (read-only production query) | Any row |
+| G4 | The data agrees | `gate-b`: `classesWithKeyButNoReference` and `referencesWhoseKeyDiffers` both 0 (Release A evidence §6 item 4) | Agent, read-only | Any row |
 | G5 | No new category writer | Repeat the grep on the merged head (`scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers), and record it | Agent | Any writer of `Class.category` or `Class.categoryId` outside the class routes and undo |
+
+Every database read in G2, G4, O1 and O2 is made by `scripts/readiness/class-categories-prod-check.mjs`. It runs in one READ ONLY transaction with a 15 s statement timeout and a host guard. It prints counts, booleans and timestamps only, never a name, email or id. Its `post-a` check is Release A's post-deploy read: every club has exactly its eight starting rows, and the two consistency counts are 0. On the test branch, fixture clubs inserted directly by the journey harness have no rows until first use; clubs made in the app are seeded on creation (`create-tenant`, application approval).
 
 The route refusals need no production check of their own: they ship in the code that G1 verifies. They are proved by the suites in §6.
 
@@ -107,8 +109,8 @@ The route refusals need no production check of their own: they ship in the code 
 
 | Signal | What it shows | Where it is kept | Who reads it | Blocks activation when |
 |---|---|---|---|---|
-| O1 `SELECT max("categoryKeyWrittenAt") FROM "Class"` | A pre-Release-A server or a script wrote the old key column directly. This release's code never does. | The database (durable) | Noe | Any stamp later than the Release A deployment. Find the writer, delete the deployment or stop the script, then restart the period. |
-| O2 `class.updated` / `class.created` audit rows with `metadata.categoryOldKey = true` in the last 7 days, with who made each (`userId`, or `metadata.actorId`) | A page from before club-managed categories is still open and saving. **New in Release B.** | The audit log (durable, kept permanently) | Noe | Any row. That person reloads every MatFlow tab and device they edit classes from, then the period restarts. Without this, they would meet the 409 after activation. That is safe, but it is avoidable confusion. |
+| O1 `observe <since>`: the latest `categoryKeyWrittenAt` | A pre-Release-A server or a script wrote the old key column directly. This release's code never does. | The database (durable) | Agent, read-only | Any stamp later than the Release A deployment. Find the writer, delete the deployment or stop the script, then restart the period. |
+| O2 `observe <since>`: `class.updated` / `class.created` audit rows with `metadata.categoryOldKey = true`, and how many people made them | A page from before club-managed categories is still open and saving. **New in Release B.** | The audit log; the row is written durably | Agent, read-only. Who they are is read only if the count is not 0 | Any row. That person reloads every MatFlow tab and device they edit classes from, then the period restarts. Without this, they would meet the 409 after activation. That is safe, but it is avoidable confusion. |
 | The `[class-category] legacy key write` runtime log line (Release A) | The same as O2 | Vercel runtime logs: **1 hour** on the Hobby plan (Vercel docs, checked 12 Nov 2026) | — | Not used. It cannot cover seven days on Hobby, so Release A §6 item 2 could not have been collected as written. O2 replaces it. |
 
 A create made by this release's form, in a club that has no category rows yet, also sets `categoryOldKey`. All production clubs are seeded by Release A's migration, so in practice this needs a club created by an older build during the changeover. Such a row names a current user and is read as a false alarm.
