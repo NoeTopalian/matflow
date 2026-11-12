@@ -37,7 +37,7 @@
 //      response is immutable. `private` keeps it out of shared caches, because
 //      the auth and tenant checks above are per-user.
 
-import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
+import { memberMayReadBlob } from "@/lib/blob-ownership";
 import { NextResponse } from "next/server";
 import { get } from "@vercel/blob";
 import { auth } from "@/auth";
@@ -132,20 +132,16 @@ export async function GET(req: Request) {
     // whose exposure actually matters, so it gets its own refusal.
     if (pathname.startsWith(`${expectedPathPrefix}imports/`)) return blobForbidden();
 
-    // The blob must be referenced by a row belonging to this member or to one
-    // of their children (a parent manages their kids' accounts and sees their
-    // photographs). Matched on the exact URL — a prefix match would re-open
-    // the hole one directory down.
+    // The file must be OWNED by this member or one of their confirmed children
+    // (a parent sees their kids' photographs; a suggested link grants nothing):
+    // a file under a member's path, through a photo row of that member; a
+    // legacy club-root file, when the EARLIEST photo row referencing it is
+    // theirs, so a row planted later through the old attach hole never reads
+    // someone else's photo (Round 5 remediation, lib/blob-ownership.ts).
+    // Exact URL throughout: a prefix match would re-open the hole one
+    // directory down.
     const owned = await withTenantContext(session.user.tenantId, (tx) =>
-      tx.memberPhoto.findFirst({
-        where: {
-          url,
-          tenantId: session.user.tenantId,
-          // A suggested (unconfirmed) guardian link grants no view of the child.
-          OR: [{ memberId }, { member: { parentMemberId: memberId, ...CONFIRMED_GUARDIAN } }],
-        },
-        select: { id: true },
-      }),
+      memberMayReadBlob(tx, session.user.tenantId, memberId, url),
     );
     // The same body and status as the namespace refusal above, on purpose: a
     // distinct answer here would tell a prober which blobs exist.

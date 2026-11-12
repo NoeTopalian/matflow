@@ -1,10 +1,11 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { mayDeleteMemberPhotoBlob } from "@/lib/blob-ownership";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError } from "@/lib/api-error";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { logAudit } from "@/lib/audit-log";
 import { refuseSupportSession } from "@/lib/support-session";
 import { refuseArchivedMember } from "@/lib/archived-member-guard";
@@ -93,6 +94,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return apiError("Invalid JSON", 400);
   }
   const parsed = postSchema.safeParse(body);
+  // Round 5: a blob must have been uploaded for this member (not the logo or
+  // another member's photo), so a later delete can never remove a club file.
+  if (parsed.success && isVercelBlobUrl(parsed.data.url) && !isMemberBlobUrl(parsed.data.url, tenantId, memberId)) {
+    return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this member" }, { status: 400 });
+  }
   if (parsed.success && isForeignBlobUrl(parsed.data.url, tenantId)) {
     return apiError("Photo must be uploaded through MatFlow for this club", 400);
   }
@@ -163,7 +169,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const removed = await withTenantContext(tenantId, async (tx) => {
       const p = await tx.memberPhoto.findFirst({
         where: { id: photoId, memberId, tenantId },
-        select: { id: true, url: true, kind: true },
+        select: { id: true, url: true, kind: true, uploadedAt: true },
       });
       if (!p) return null;
       if (p.kind === "profile") throw new Error("use_profile_route");
@@ -172,9 +178,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     });
     if (!removed) return apiError("Not found", 404);
 
-    // Best-effort blob cleanup (no-op for inline data: URLs); only this
-    // club's own store files are ever deleted.
-    if (isTenantBlobUrl(removed.url, tenantId)) {
+    // Best-effort blob cleanup (no-op for inline data: URLs). Round 5: only
+    // this member's own file, or a legacy club-root file no other row still
+    // uses, is ever deleted (lib/blob-ownership.ts).
+    if (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url, removed.uploadedAt))) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

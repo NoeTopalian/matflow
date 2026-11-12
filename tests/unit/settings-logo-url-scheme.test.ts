@@ -36,7 +36,8 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 // findUnique: the route reads the row before writing so the audit row can carry
 // before/after for the owner’s Undo (1 Oct 2026). Null here = no diff recorded.
-vi.mock("@/lib/prisma", () => ({ prisma: { tenant: { update, findUnique: vi.fn().mockResolvedValue(null) } } }));
+// memberPhoto: a stored logo must not be a member's photo (Round 5 remediation, lib/blob-ownership.ts); none is here.
+vi.mock("@/lib/prisma", () => ({ prisma: { tenant: { update, findUnique: vi.fn().mockResolvedValue(null) }, memberPhoto: { findFirst: vi.fn().mockResolvedValue(null) } } }));
 vi.mock("@/auth", () => ({
   auth: async () => ({ user: { id: "u-1", tenantId: "t-A", role: "owner" } }),
 }));

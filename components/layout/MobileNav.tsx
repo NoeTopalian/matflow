@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { MoreHorizontal, LogOut, X } from "lucide-react";
 import { STAFF_NAV, isNavActive, type StaffRole } from "@/components/layout/routes";
+import { useToast } from "@/components/ui/Toast";
 
 interface Props {
   role: string;
@@ -20,6 +21,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const { toast } = useToast();
 
   // Audit R9: normalise like Sidebar (H13) — a role of "Owner" previously
   // produced a completely empty bottom nav while the desktop sidebar worked.
@@ -106,10 +108,22 @@ export default function MobileNav({ role, primaryColor }: Props) {
             onClick={async () => {
               if (revoking) return;
               setRevoking(true);
+              // Round 5: sign this device out only once the other sessions
+              // are revoked; a failure says so and leaves the button usable.
+              let revoked = false;
+              let reason: string | null = null;
               try {
-                await fetch("/api/auth/logout-all", { method: "POST" });
+                const res = await fetch("/api/auth/logout-all", { method: "POST" });
+                // 401: this session is already gone, so there is nothing left to keep.
+                revoked = res.ok || res.status === 401;
+                if (!revoked) reason = ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? null;
               } catch {
-                /* proceed to sign-out regardless — local session still ends */
+                /* network failure: revoked stays false */
+              }
+              if (!revoked) {
+                setRevoking(false);
+                toast(reason ? `Your other devices are still signed in. ${reason}` : "Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
+                return;
               }
               void signOut({ callbackUrl: "/login" });
             }}

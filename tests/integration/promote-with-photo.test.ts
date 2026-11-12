@@ -24,8 +24,10 @@ const STAMP = Date.now();
 // The path must sit under THIS club's `/tenants/<tenantId>/` namespace: the
 // route refuses a blob URL that belongs to another club (isForeignBlobUrl,
 // cross-tenant blob ownership fix), so the URL is built once the tenant exists.
-const promoPhotoUrl = (tenantId: string) =>
-  `https://abc123store.blob.vercel-storage.com/tenants/${tenantId}/promo.png`;
+// Round 5 remediation: and under the MEMBER's own path (members/<member>/), where the profile's promotion upload
+// now stores it; a club-root file is refused (lib/blob-ownership.ts).
+const promoPhotoUrl = (tenantId: string, memberId: string) =>
+  `https://abc123store.blob.vercel-storage.com/tenants/${tenantId}/members/${memberId}/promo.png`;
 
 function jsonReq(body: unknown): Request {
   return new Request("https://test.local/", { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: JSON.stringify(body) });
@@ -64,7 +66,7 @@ describe.skipIf(!HAS_DB)("Promote with photo", () => {
 
   it("creates MemberPhoto kind='promotion' linked to the new MemberRank when photoUrl present", async () => {
     mockAuth.mockResolvedValue({ user: { id: ownerUserId, tenantId, role: "owner", email: "owner" } } as never);
-    const photoUrl = promoPhotoUrl(tenantId);
+    const photoUrl = promoPhotoUrl(tenantId, memberId);
     const res = await promoteRank(
       jsonReq({ rankSystemId, stripes: 1, photoUrl, photoCaption: "Mat shot" }),
       { params: Promise.resolve({ id: memberId }) },

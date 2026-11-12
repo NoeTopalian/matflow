@@ -26,6 +26,8 @@ import { mintUpcomingSessions } from "@/lib/class-lifecycle";
 import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { BILLING_BASIS_AVAILABLE } from "@/lib/class-allowance";
 import { recordStatusEvent } from "@/lib/member-status";
+import { isBlobStoreHost } from "@/lib/blob-url";
+import { isAttachableClubAsset } from "@/lib/blob-ownership";
 
 /** What the owner reads when an undo would switch a plan to the billing-period basis while it ships dark. */
 export const BILLING_BASIS_UNDO_REFUSAL =
@@ -411,6 +413,14 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
     },
   },
   "tenant.settings.update": snapshotHandler("Tenant", {
+    // Putting a logo back is attaching it again: the same rule as the settings save (a club-root file that is no
+    // member's photo), or an undo could make a member's photo the club logo (re-review of 12 Nov 2026).
+    async prepare(tx, row, _current, restore) {
+      const logo = restore.logoUrl;
+      if (typeof logo === "string" && logo && isBlobStoreHost(logo) && !(await isAttachableClubAsset(tx, row.tenantId ?? "", logo))) {
+        throw new UndoStale("The previous logo can't be put back: that file is not one of the club's own images.");
+      }
+    },
     after(row) {
       // Outside a Next request store (unit tests) revalidateTag throws; the
       // 60 s cache then expires on its own clock — same as the settings PATCH.
