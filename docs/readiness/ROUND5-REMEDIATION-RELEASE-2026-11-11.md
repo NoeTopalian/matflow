@@ -7,7 +7,7 @@
 | Packet | Branch | Head | Code head | What |
 |---|---|---|---|---|
 | 1 | `hotfix/member-notes-preserved` | `5a2d1896` | `5a2d1896` | Member internal notes erased by every profile, plan or status edit since 1 Jun 2026 |
-| 2 | `security/round5-remediation` | the branch head (the commit after `cd7894f4`, docs only) | `6cad2568` (build `cb107b57`, docs only after it) | Round 5 security fixes, file-ownership remediation, owner Recovery Codes card |
+| 2 | `security/round5-remediation` | the branch head (the commit that adds this revision, docs only) | `46d2dd6c` (built and tested at `46d2dd6c`; docs only after it) | Round 5 security fixes, file-ownership remediation, owner Recovery Codes card |
 | 3 | `chore/migrate-test-direct-host` | `3243e38b` | `3243e38b` | Test-only tooling: Prisma Migrate lock handling on the shared test branch |
 
 **Recommended order:** 1, then 2, then 3. Packet 1 is the data-loss stop and the smallest change.
@@ -101,7 +101,9 @@ On main's erasure, her details are still in the `ImportJob` row, the job view an
   - member notes 8/8;
   - attribution 5/5;
 - `login-identity-claims-db` exceeds the runner's limit, on main as well;
-- independent review: APPROVE WITH NITS (nits fixed).
+- independent review: APPROVE WITH NITS (nits fixed);
+- rerun 12 Nov 2026 on `5a2d1896`: member-notes DB suite 8/8 under both roles. It covers omitted notes kept on profile, plan and status saves; explicit edit and clear still working; sanitising; a coach refused; another club refused; and the audit listing notes only when they changed;
+- CI: none yet (not pushed).
 
 **Deploy (Noe)**
 1. `git push -u origin hotfix/member-notes-preserved`.
@@ -136,40 +138,53 @@ On main's erasure, her details are still in the `ImportJob` row, the job view an
 | `bd1fa8a0` | owner Recovery Codes card |
 | `6cad2568` | remediation review follow-ups F1–F6 |
 | `cb107b57` | design and decision documents |
-| `cd7894f4` and the branch head | this document (docs only) |
+| `cd7894f4`, `5aecda33` | this document (docs only) |
+| `08e84d27` | recovery codes keep focus in their drawer (re-review N2); re-review record |
+| `46d2dd6c` | ownership rules accept only a stored file's canonical URL; the settings undo cannot restore a member's photo as the logo (second re-review) |
+| the branch head | this revision of the document (docs only) |
 
 **Migration:** none.
 
 **Reviews**
 - Round 5 commits: CHANGES REQUIRED, then APPROVE WITH NITS.
 - Remediation commits: APPROVE WITH NITS. F1–F6 were fixed in `6cad2568`, and each new case fails on the previous code under both roles.
+- Re-review of `6cad2568` (12 Nov): APPROVE WITH NITS. N2 fixed in `08e84d27`.
+- Re-review of `08e84d27` (12 Nov): CHANGES REQUIRED.
+  - The focus code is correct on every path.
+  - It found that a variant spelling of a member's legacy photo URL passed the club-asset check. Proved under both roles: `?v=1` was accepted as an announcement image, 201.
+  - It found that the settings undo restored a logo unchecked.
+  - Both are fixed in `46d2dd6c`. The new DB case fails on `08e84d27` and passes on `46d2dd6c`, under both roles.
+- **Not yet independently re-reviewed: `46d2dd6c`.** The reviewer launch was refused twice: a context-mode hook rewrites the call after auto mode has checked it, so the classifier gave no verdict. The brief is ready. This is an open release gate for packet 2, not a pass.
 
-**Verification on the final candidate** (code `6cad2568`, build and suite at `cb107b57`):
+**Verification on the final code head `46d2dd6c`** (12 Nov 2026; built and tested on that commit):
 
 | Gate | Result |
 |---|---|
-| Full suite (`npm test`, no database) | 9,361 passed, 0 failed, 927 skipped (database-backed files, run below), 3 todo |
+| Full suite (`npm test`, no database) | 9,361 passed, 0 failed, 928 skipped (database-backed files, run below), 3 todo |
 | Lint (eslint plus UI-RULES ratchet) | passed, ratchets at baseline |
 | Type-check | clean |
-| Production build | `BUILD EXIT 0 commit cb107b57 tree clean` |
-| Journey `round5-recovery-codes-card` | 9 PASS / 0 FAIL: wrong code, forced 500, network failure, fresh code, a11y focus and description, 390 px, keyboard |
-| Journey `round5-sign-out-everywhere` | 6 PASS / 0 FAIL / 1 NOTE (48 Tab presses to the control, the More sheet's existing focus order) |
+| Production build | `BUILD EXIT 0 commit 46d2dd6c tree clean` |
+| Journey `round5-recovery-codes-card` | 11 PASS / 0 FAIL. It covers the wrong code, a forced 500, a network failure, a fresh code, the field's accessible state, 390 px and the keyboard. **A3** (focus stays inside the codes drawer) and **A4** (Done returns focus to "Generate new") failed on the old build `cb107b57` and pass here. |
+| Journey `round5-sign-out-everywhere` | 6 PASS / 0 FAIL / 1 NOTE (48 Tab presses reach the control, through the More sheet's existing focus order) |
 | Database suites, both roles | see below |
 
-Database suites on the Neon test branch, commit `cb107b57`, each batch under `neondb_owner` and `matflow_app`:
+Database suites on the Neon test branch, each batch under `neondb_owner` and `matflow_app`. Commit `46d2dd6c` for the suites this branch's later commits touch; `cb107b57` for the rest (marked).
 
-| Batch | Owner | Restricted |
-|---|---|---|
-| round5-blob-ownership, round5-erase-manifest, round5-member-recovery-codes, push-subscribe, member-children-photos | 20/20 pass | 20/20 pass |
-| round5-file-ownership, promote-with-photo, staff-photo-viewer | 14/14 pass | 14/14 pass |
-| round5-erase-then-rollback | 2/2 pass | 2/2 pass |
-| erase-import-data, erase-large-club | 8/8 pass | 8/8 pass |
-| cross-tenant-authorisation-matrix | 63/63 pass | 63/63 pass |
-| sec-b-role-matrix | 59/59 pass | 59/59 pass |
-| member-archive, t8a-status-history | 16/16 pass | 16/16 pass |
-| sec-d3-deletion-race, security, tenant-isolation | 17/17 pass | 17/17 pass |
-| support-session-binding, operator-member-totp-reset, totp-login-paths | 27/27 pass | 27/27 pass |
-| sec-d2-deletion-provenance | **7 pass, 3 timed out (30 s)** | **7 pass, 3 timed out (30 s)** |
+| Batch | Commit | Owner | Restricted |
+|---|---|---|---|
+| round5-blob-ownership, round5-erase-manifest, round5-member-recovery-codes, push-subscribe, member-children-photos | `46d2dd6c` | **19/20 on the first run, 1 failure**: "a new enrolment replaces recovery codes kept from an earlier one", 7.4 s. The file rerun alone passed 6/6. The cause is not diagnosed. | 20/20 pass |
+| round5-file-ownership (11 cases, including the variant-URL and undo case), promote-with-photo, staff-photo-viewer | `46d2dd6c` | 15/15 pass | 15/15 pass |
+| round5-erase-then-rollback | `46d2dd6c` | 2/2 pass | 2/2 pass |
+| erase-import-data, erase-large-club | `46d2dd6c` | 8/8 pass | 8/8 pass |
+| sec-pre-resend-packs-settings-imports (settings undo), class-lifecycle (undo) | `46d2dd6c` | 16/16 pass | 16/16 pass |
+| cross-tenant-authorisation-matrix | `46d2dd6c` | 63/63 pass | 63/63 pass |
+| sec-b-role-matrix | `cb107b57` | 59/59 pass | 59/59 pass |
+| member-archive, t8a-status-history | `cb107b57` | 16/16 pass | 16/16 pass |
+| sec-d3-deletion-race, security, tenant-isolation | `cb107b57` | 17/17 pass | 17/17 pass |
+| support-session-binding, operator-member-totp-reset, totp-login-paths | `cb107b57` | 27/27 pass | 27/27 pass |
+| sec-d2-deletion-provenance | `cb107b57` | **7 pass, 3 timed out (30 s)** | **7 pass, 3 timed out (30 s)** |
+
+The `cb107b57` rows were not rerun on `46d2dd6c`. The later commits change `lib/blob-url.ts`, `lib/blob-ownership.ts`, the settings undo handler and the owner card. Those suites exercise none of them directly; the role matrix reaches photo routes only with canonical URLs.
 
 **The `sec-d2` timeouts are an existing failure,** not a pass, and this branch did not cause them.
 - All three are the import-based cases.
@@ -267,12 +282,17 @@ If D1 to D4 return no rows, no exploitation of the file holes is visible in stor
 
 **Packet 2 findings, and what was done:**
 
+- **Variant URL spellings and the settings undo (fixed in `46d2dd6c`, from the re-review of `08e84d27`).**
+  - Rows are matched to files by URL string, so `?v=1`, `#x` or an upper-case host named a member's legacy photo under a string no photo row held.
+  - Every ownership rule now accepts only the canonical URL (`isCanonicalBlobUrl`). The app stores only `blob.url` from Vercel's `put`, which is canonical, and percent-encoding was already refused.
+  - Restoring a logo by undo applies the same club-asset rule as the settings save.
+  - A non-canonical URL stored before this release fails closed: a member can't read it, and these rules never delete it. Staff still see it.
 - **N2 (fixed, the one regression).** The F6 fix moved focus to "Generate new" whenever the code field closed, including after a successful generation. That pulled focus out of the codes drawer, onto a button behind it.
   - Fix: focus returns only after Cancel, or after the drawer is closed with Done or Escape.
   - Journey checks: **A3**, codes issued, focus is inside the drawer; **A4**, Done returns focus to "Generate new".
   - A3 failed on the previous build; results are in the verification table.
 - **N1 and N4 (historical, not changed in code).** Take a legacy club-root photo that has a row planted by another member *before this release*. When the owner replaces the photo (PUT), the file is not deleted, by the keep-everything rule (#72). The planter's row then becomes the earliest, so the planter can read it.
-  - After this release no new reference to a legacy file can be made, so the exposure is limited to rows planted before deploy.
+  - After this release no new reference to a legacy file can be made, in any spelling (`46d2dd6c`). The exposure is therefore limited to rows planted before deploy.
   - Detection query **D2** finds them.
   - Removing planted rows would be a production data write. It needs Noe's separate approval, after he has run D2. Nothing is prepared to run automatically.
 - **N3 (open, nit).** A branding save resends the current logo. If a planted row points at that logo (D1 finds these), every settings save is refused with 400 until the row is removed. It fails closed; no data is exposed.
