@@ -15,12 +15,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Archive, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { CATEGORY_NAME_MAX, cleanCategoryName } from "@/lib/class-category";
 
 type Category = { id: string; name: string; legacyKey: string | null; archived: boolean; version: number; classCount: number };
 type Loaded = { state: "loading" } | { state: "error" } | { state: "ready"; value: Category[] };
 
-const FIELD = "h-10 w-full min-w-0 rounded-[var(--r-md)] border border-bd-default bg-sf-1 px-3 text-sm text-tx-1 placeholder:text-tx-3 hover:border-bd-hover";
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 async function readError(res: Response): Promise<string | null> {
@@ -236,12 +236,12 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
                 return (
                   <li key={cat.id} data-testid="categories-row">
                     <div className="flex items-center gap-1.5">
-                      <input
+                      <Input
                         aria-label={`${cat.name} name`}
                         aria-invalid={error ? true : undefined}
                         aria-describedby={error ? `categories-error-${cat.id}` : `categories-count-${cat.id}`}
                         data-cat-focus={`name:${cat.id}`}
-                        className={FIELD}
+                        className="min-w-0"
                         maxLength={CATEGORY_NAME_MAX}
                         value={drafts[cat.id] ?? cat.name}
                         onChange={(e) => setDrafts((d) => ({ ...d, [cat.id]: e.target.value }))}
@@ -272,12 +272,12 @@ export function CategoriesSheet({ open, onClose, onChanged }: { open: boolean; o
               })}
               {newName !== null ? (
                 <li data-testid="categories-new-row">
-                  <input
+                  <Input
                     autoFocus
                     aria-label="New category name"
                     aria-invalid={newError ? true : undefined}
                     aria-describedby={newError ? "categories-error-new" : undefined}
-                    className={FIELD}
+                    className="min-w-0"
                     maxLength={CATEGORY_NAME_MAX}
                     placeholder="Intermediate"
                     value={newName}
