@@ -123,13 +123,29 @@ describe("notesField(maxLength)", () => {
     if (r.success) expect(r.data).toBe("helloworld");
   });
 
-  it("returns null for null, undefined, missing, and whitespace-only", () => {
+  it("returns null for null and whitespace-only", () => {
     const schema = notesField(50);
-    for (const input of [null, undefined, "", "   ", "\t\n"]) {
+    for (const input of [null, "", "   ", "\t\n"]) {
       const r = schema.safeParse(input);
       expect(r.success).toBe(true);
       if (r.success) expect(r.data).toBeNull();
     }
+  });
+
+  // 10 Nov 2026: an absent value stays absent. It used to become null, so a
+  // member PATCH that never mentioned notes (a profile save) erased them.
+  it("leaves undefined as undefined, so an absent key is not a clear", () => {
+    const r = notesField(50).safeParse(undefined);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data).toBeUndefined();
+  });
+
+  it("a member update without notes does not carry notes: null", async () => {
+    const { memberUpdateSchema } = await import("@/lib/schemas/member");
+    const r = memberUpdateSchema.safeParse({ name: "Sam", phone: "07700900123" });
+    expect(r.success).toBe(true);
+    // The key must be absent (the audit lists Object.keys of the parsed body), not merely undefined.
+    if (r.success) expect(r.data).not.toHaveProperty("notes");
   });
 
   it("preserves legitimate multi-line content within the limit", () => {
