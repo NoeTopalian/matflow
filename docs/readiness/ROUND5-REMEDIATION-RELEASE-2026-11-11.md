@@ -312,6 +312,20 @@ If D1 to D4 return no rows, no exploitation of the file holes is visible in stor
 
 The tag is a naming convention, not authentication. A refused lock is cleared by its owner, or by Noe.
 
+### Fix re-review 4 (12 Nov 2026): the canonical-URL gap, fixed
+
+The independent re-review of `46d2dd6c` returned CHANGES REQUIRED.
+- **A1, BLOCKER, fixed.** `isCanonicalBlobUrl` accepted an EMPTY query or fragment (`…webp?`, `…webp#`): the URL parser keeps them in `href` but reports `search` and `hash` as empty. Such a spelling named a member's legacy photo under a string no photo row holds, so it could be attached as an announcement image or the logo, and deleting the announcement could delete the member's file.
+  - The check is now `origin + pathname` equal to the URL, with no port and no trailing dot on the host (`lib/blob-url.ts`).
+  - The earlier sentence "no new reference to a legacy file can be made, in any spelling" holds only from this fix.
+- **A2, should-fix, fixed.** Staff orphan clean-up compared stored URLs as strings after a namespace check only. Every caller must now name the canonical spelling (`app/api/upload/delete-orphan/route.ts`).
+- **A3, nit, fixed.** Host spellings the strict matcher does not recognise (`:443`, a trailing dot) skipped the club-asset rule. The logo, announcement and undo checks now run on any blob-store host (`isBlobStoreHost`), and refuse those spellings.
+- **A4, nit, fixed.** Docblock order.
+- **Tests.**
+  - `tests/unit/blob-url-canonical.test.ts`: 22 cases.
+  - `round5-file-ownership-db` adds `?`, `#`, `:443` and the trailing dot to its variant list, for announcement, logo and undo.
+  - Results are in the table below, with their commit.
+
 ### The recovery-codes test: cause and stabilisation (12 Nov 2026)
 
 - **Cause.** The test generated an authenticator code and then called the route. The route makes several database round trips before it checks the code: 1–2 s against the test branch, at 226 ms per round trip from Bali. A 30-second step boundary falling in that gap made the code one step older than the test meant.
@@ -325,12 +339,15 @@ The tag is a naming convention, not authentication. A refused lock is cleared by
 - **Latent elsewhere, not changed here.** `account-editing-db`, `login-email-change-db`, `operator-step-up-db` and `sec-a2-verify-disown-db` also generate a code and then verify it across database round trips. None has been seen to fail.
 - **The policy difference, for decision #11.** The app is not consistent about which steps it accepts:
 
-  | Check | Steps accepted | Where |
-  |---|---|---|
-  | Staff and operator sign-in | Current only, with `afterTimeStep` replay protection | `lib/login-email.ts`, `lib/operator-auth.ts` |
-  | Member sign-in | Current only | `app/api/member/totp/verify/route.ts` |
-  | Member enrolment | Current only | `app/api/member/totp/setup/route.ts` |
-  | Member recovery-codes step-up | **Current and previous** (`epochTolerance: [30, 0]`, added in Round 5), no single-use tracking | `app/api/member/totp/recovery-codes/route.ts` |
+  | Check | Steps accepted | Single-use (a seen code cannot be replayed) | Where |
+  |---|---|---|---|
+  | Staff and operator sign-in | Current only | Yes (`afterTimeStep`) | `lib/login-email.ts` (`verifyUserTotpCode`, `consumeUserTotp`), `lib/operator-auth.ts` (`consumeOperatorTotp`) |
+  | Staff and operator step-ups and enrolments | Current only | Yes | `app/api/account/login-email/route.ts`, `app/api/account/password/route.ts`, `app/api/auth/totp/recovery-codes/route.ts`, `app/api/auth/totp/setup/route.ts`, `app/api/admin/auth/operator-totp/setup/route.ts`, `app/api/admin/auth/step-up/route.ts` |
+  | Member sign-in | Current only | **No** | `app/api/member/totp/verify/route.ts` |
+  | Member enrolment | Current only | **No** | `app/api/member/totp/setup/route.ts` |
+  | Member recovery-codes step-up | **Current and previous** (`epochTolerance: [30, 0]`, added in Round 5) | **No** | `app/api/member/totp/recovery-codes/route.ts` |
+
+  In short: staff and operators are single-use everywhere; members are single-use nowhere (fix re-review 4 delta, A-N1).
 
   - The cost of current-only: a person who types a code as it rolls over is refused and must type the next one. That is friction, not exposure.
   - The cost of current-and-previous without single-use tracking: a seen code stays usable for up to about 60 s instead of up to 30 s.
