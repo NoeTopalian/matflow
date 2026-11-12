@@ -172,7 +172,7 @@ Database suites on the Neon test branch, each batch under `neondb_owner` and `ma
 
 | Batch | Commit | Owner | Restricted |
 |---|---|---|---|
-| round5-blob-ownership, round5-erase-manifest, round5-member-recovery-codes, push-subscribe, member-children-photos | `46d2dd6c` | **19/20 on the first run, 1 failure**: "a new enrolment replaces recovery codes kept from an earlier one", 7.4 s. The file rerun alone passed 6/6. The cause is not diagnosed. | 20/20 pass |
+| round5-blob-ownership, round5-erase-manifest, round5-member-recovery-codes, push-subscribe, member-children-photos | `46d2dd6c` | **19/20 on the first run, 1 failure**: "a new enrolment replaces recovery codes kept from an earlier one", 7.4 s. The file rerun alone passed 6/6. **Cause found 12 Nov: test timing, not isolation and not an application defect.** See "The recovery-codes test" below. | 20/20 pass |
 | round5-file-ownership (11 cases, including the variant-URL and undo case), promote-with-photo, staff-photo-viewer | `46d2dd6c` | 15/15 pass | 15/15 pass |
 | round5-erase-then-rollback | `46d2dd6c` | 2/2 pass | 2/2 pass |
 | erase-import-data, erase-large-club | `46d2dd6c` | 8/8 pass | 8/8 pass |
@@ -311,6 +311,33 @@ If D1 to D4 return no rows, no exploitation of the file holes is visible in stor
 - **N12.** The guards do not parse `host=` or `hostaddr=`; this is theoretical.
 
 The tag is a naming convention, not authentication. A refused lock is cleared by its owner, or by Noe.
+
+### The recovery-codes test: cause and stabilisation (12 Nov 2026)
+
+- **Cause.** The test generated an authenticator code and then called the route. The route makes several database round trips before it checks the code: 1–2 s against the test branch, at 226 ms per round trip from Bali. A 30-second step boundary falling in that gap made the code one step older than the test meant.
+  - Enrolment accepts the current step only, so it refused the "current" code (12 Nov, 46d2dd6c, owner role).
+  - The recovery-codes route accepts the current and previous steps, so it refused the "previous" code, by then two steps old. Seen 12 Nov on the restricted role, in the third of three repeat runs.
+  - Deterministic proof with otplib: a code made 1 s before a boundary is refused 2 s later with the default tolerance, and accepted with `[30, 0]`.
+  - **Not isolation:** each case makes its own member, and the rate-limit key is per member.
+- **Stabilisation, `c3539434` (test only).** Each such code is generated with at least 10 s left in its step, waiting for the next step otherwise.
+  - No expectation changed, and no acceptance rule.
+  - Afterwards the file passed 6 of 6 role runs (three repeats, both roles). That is consistent with the fix, not proof of it; the arithmetic above is the proof.
+- **Latent elsewhere, not changed here.** `account-editing-db`, `login-email-change-db`, `operator-step-up-db` and `sec-a2-verify-disown-db` also generate a code and then verify it across database round trips. None has been seen to fail.
+- **The policy difference, for decision #11.** The app is not consistent about which steps it accepts:
+
+  | Check | Steps accepted | Where |
+  |---|---|---|
+  | Staff and operator sign-in | Current only, with `afterTimeStep` replay protection | `lib/login-email.ts`, `lib/operator-auth.ts` |
+  | Member sign-in | Current only | `app/api/member/totp/verify/route.ts` |
+  | Member enrolment | Current only | `app/api/member/totp/setup/route.ts` |
+  | Member recovery-codes step-up | **Current and previous** (`epochTolerance: [30, 0]`, added in Round 5), no single-use tracking | `app/api/member/totp/recovery-codes/route.ts` |
+
+  - The cost of current-only: a person who types a code as it rolls over is refused and must type the next one. That is friction, not exposure.
+  - The cost of current-and-previous without single-use tracking: a seen code stays usable for up to about 60 s instead of up to 30 s.
+  - Noe chooses one rule with #11:
+    - either current-only everywhere, and the recovery-codes route goes back to the default;
+    - or current-and-previous everywhere, together with the single-use step tracking in `MEMBER-TOTP-REPLAY-DESIGN-2026-11-11.md`.
+  - This record does not adopt either.
 
 ## Existing failures and open items (unchanged by this release)
 
