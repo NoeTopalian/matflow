@@ -7,7 +7,7 @@
 | Packet | Branch | Head | Code head | What |
 |---|---|---|---|---|
 | 1 | `hotfix/member-notes-preserved` | `5a2d1896` | `5a2d1896` | Member internal notes erased by every profile, plan or status edit since 1 Jun 2026 |
-| 2 | `security/round5-remediation` | the branch head (the commit that adds this revision, docs only) | `46d2dd6c` (built and tested at `46d2dd6c`; docs only after it) | Round 5 security fixes, file-ownership remediation, owner Recovery Codes card |
+| 2 | `security/round5-remediation` (PR #83) | the branch head (the commit that adds this revision, docs only) | `bf8cff57` (after `46d2dd6c`: `c3539434` test, `88048bcd` and `bf8cff57` fixes from the 12 Nov reviews; results below name their commits) | Round 5 security fixes, file-ownership remediation, owner Recovery Codes card |
 | 3 | `chore/migrate-test-direct-host` | `3243e38b` | `3243e38b` | Test-only tooling: Prisma Migrate lock handling on the shared test branch |
 
 **Recommended order:** 1, then 2, then 3. Packet 1 is the data-loss stop and the smallest change.
@@ -154,9 +154,14 @@ On main's erasure, her details are still in the `ImportJob` row, the job view an
   - It found that a variant spelling of a member's legacy photo URL passed the club-asset check. Proved under both roles: `?v=1` was accepted as an announcement image, 201.
   - It found that the settings undo restored a logo unchecked.
   - Both are fixed in `46d2dd6c`. The new DB case fails on `08e84d27` and passes on `46d2dd6c`, under both roles.
-- **Not yet independently re-reviewed: `46d2dd6c`.** The reviewer launch was refused twice: a context-mode hook rewrites the call after auto mode has checked it, so the classifier gave no verdict. The brief is ready. This is an open release gate for packet 2, not a pass.
+- **Independent re-reviews, 12 Nov 2026,** in separate sessions:
+  - `46d2dd6c`: CHANGES REQUIRED, A1 (blocker);
+  - `062f4e9c` → `aeae5214` (`88048bcd`): APPROVE WITH NITS;
+  - `aeae5214` → `bf8cff57`: APPROVE WITH NITS, nothing blocking. Its nits are recorded below.
 
-**Verification on the final code head `46d2dd6c`** (12 Nov 2026; built and tested on that commit):
+  Each finding and its fix is in "Fix re-review 4" below.
+
+**Verification at `46d2dd6c`** (12 Nov 2026; superseded by the fixes after it, whose results are in "Results on the fixes" below):
 
 | Gate | Result |
 |---|---|
@@ -292,7 +297,7 @@ If D1 to D4 return no rows, no exploitation of the file holes is visible in stor
   - Journey checks: **A3**, codes issued, focus is inside the drawer; **A4**, Done returns focus to "Generate new".
   - A3 failed on the previous build; results are in the verification table.
 - **N1 and N4 (historical, not changed in code).** Take a legacy club-root photo that has a row planted by another member *before this release*. When the owner replaces the photo (PUT), the file is not deleted, by the keep-everything rule (#72). The planter's row then becomes the earliest, so the planter can read it.
-  - After this release no new reference to a legacy file can be made, in any spelling (`46d2dd6c`). The exposure is therefore limited to rows planted before deploy.
+  - After this release no new reference to a legacy file can be made, in any spelling. This holds from `88048bcd` and `bf8cff57`, not `46d2dd6c`, which still accepted an empty query or fragment (fix re-review 4, A1). The exposure is therefore limited to rows planted before deploy.
   - Detection query **D2** finds them.
   - Removing planted rows would be a production data write. It needs Noe's separate approval, after he has run D2. Nothing is prepared to run automatically.
 - **N3 (open, nit).** A branding save resends the current logo. If a planted row points at that logo (D1 finds these), every settings save is refused with 400 until the row is removed. It fails closed; no data is exposed.
@@ -325,6 +330,29 @@ The independent re-review of `46d2dd6c` returned CHANGES REQUIRED.
   - `tests/unit/blob-url-canonical.test.ts`: 22 cases.
   - `round5-file-ownership-db` adds `?`, `#`, `:443` and the trailing dot to its variant list, for announcement, logo and undo.
   - Results are in the table below, with their commit.
+
+### Round 3 nits, not fixed in this release (none blocks it)
+
+- **A3-1: logos stored before this release are grandfathered.** A settings save re-sending a club's stored logo is not re-judged (A-R3). A variant planted before deploy stays until someone changes the logo. No production count of such logos has been taken.
+- **A3-2:** the logo judgement could move inside the write transaction.
+- **A3-3, A3-4, A-R4:** more unit negatives, a precise test title, and a test for the delete-orphan variant refusal.
+
+### Results on the fixes (12 Nov 2026)
+
+Neon test branch, under `neondb_owner` and `matflow_app`; unit runs with no database URL.
+
+| Check | Commit | Result |
+|---|---|---|
+| Full unit suite | `88048bcd` (head `aeae5214`) | 658 files passed, 128 skipped (database files), 0 failed; 9,383 tests. The route-canary sweep passed. The full JSON report is kept for diagnostics. |
+| Lint (`npm run lint`) | `88048bcd` | passed |
+| Type-check | `88048bcd`, `bf8cff57` | clean |
+| `round5-file-ownership`, `round5-blob-ownership`, `promote-with-photo`, `staff-photo-viewer`, `member-children-photos` | `88048bcd` | 26/26 under each role |
+| `class-lifecycle` (4), `class-location` (16), `lock-order-contention` (8), `mats` (23; one owner-only skip), `sec-pre-resend-packs-settings-imports` (12), `security` (13), `tenant-isolation` (2) | `88048bcd` | all pass under each role, one file at a time (a seven-file batch overran the runner's 10-minute limit and reported nothing) |
+| Unit files touching blob URLs, ownership, settings and announcements | `bf8cff57` | 49 files, 987 tests passed |
+| `round5-file-ownership` and `round5-blob-ownership` (with the A-R2 variant and the A-R3 case) | `bf8cff57` | 18/18 under each role |
+| `sec-pre-resend-packs-settings-imports` (settings undo) | `bf8cff57` | 12/12 under each role |
+| `round5-member-recovery-codes` after stabilisation | `c3539434` | 6 of 6 role runs passed |
+| Production build | `bf8cff57` | the Vercel preview build of PR #83 at `bf8cff57` succeeded; CI's required check runs the full unit suite on the merge head |
 
 ### The recovery-codes test: cause and stabilisation (12 Nov 2026)
 
