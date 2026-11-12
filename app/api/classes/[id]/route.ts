@@ -82,6 +82,9 @@ const updateSchema = z.object({
   // categories, translated to the club's category with that key. A key outside
   // lib/class-category.ts CLASS_CATEGORIES is a 400. Not with `categoryId`.
   category: classCategorySchema.optional(),
+  // Release B: the category the form saw on the class (null = uncategorised), sent with an explicit category change.
+  // A class whose category has changed since is a 409 (lib/class-category-store.ts categoryIdToWrite).
+  categoryBaseId: classCategoryIdSchema.optional(),
   // Task 5: optional roster array; mutually exclusive with rank fields at the API layer.
   roster: z.array(rosterEntrySchema).optional(),
   // Task 3c. TimetableManager has been sending this since it was written and
@@ -601,7 +604,8 @@ export async function PATCH(req: Request, { params }: Params) {
       // trigger repeats both checks in the write itself (and holds the category
       // row FOR SHARE), so a category archived after this read still refuses.
       const categoryIdWrite = await categoryIdToWrite(
-        tx, tenantId, { categoryId: parsed.data.categoryId, category: parsed.data.category }, owned[0].categoryId ?? null,
+        tx, tenantId, { categoryId: parsed.data.categoryId, category: parsed.data.category, categoryBaseId: parsed.data.categoryBaseId },
+        owned[0].categoryId ?? null,
       );
       // The write-through rule (lib/mats.ts). Naming a mat: read its name now,
       // under the mats lock, before any other write; a mat that is not this
@@ -849,52 +853,65 @@ export async function PATCH(req: Request, { params }: Params) {
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    await logAudit({
-      tenantId,
-      userId: session.user.id,
-      action: "class.updated",
-      entityType: "Class",
-      entityId: id,
-      metadata: {
-        // `baseScheduleIds` is the client's freshness check, not a field of the class.
-        // A Location by name (`matName`) is recorded as the columns it sets.
-        // An old category key is recorded as the reference it was written as.
-        fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
-        // D2: no booking is cancelled by an edit any more. The members it newly
-        // turns away (bookings kept) are on the durable
-        // class.bookings.kept_ineligible rows written inside the transaction;
-        // repeated here, by trigger, so this row reads whole on its own.
-        ...(Object.keys(updated.keptBookings).length > 0 ? { bookingsKeptIneligible: updated.keptBookings } : {}),
-        // T6a: the membership list before and after. The class.updated undo
-        // stays scalar: tier ids are recorded, not undone.
-        ...(wantsTiers ? { allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter } } : {}),
-        // Same rule for the timetable cascade: the ids of every upcoming
-        // session the schedule edit deleted, not just how many (RULES §5 — a
-        // count cannot restore anything).
-        ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
-        ...(updated.sessionsCreatedOnResume > 0 ? { sessionsCreatedOnResume: updated.sessionsCreatedOnResume } : {}),
-        ...(updated.lifecycleChange ? { lifecycle: updated.lifecycleChange } : {}),
-        // `isActive` and `deletedAt` before and after (T6b): undoing a Resume
-        // or Restore puts the class back exactly as paused or archived.
-        ...(() => {
-          const { before: b, after: a, changed } = snapshotDiff(
-            updated.before as unknown as Record<string, unknown> | null,
-            updated.cls as unknown as Record<string, unknown>,
-            // `categoryId`, not the old `category` key: undo restores the reference (lib/undo-registry.ts).
-            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "matId", "duration", "maxCapacity", "isKids", "categoryId", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
-          );
-          // A pre-T6b archive carried no deletedAt; record the archive date
-          // it is read by, so undoing this Restore puts it back as archived
-          // (with deletedAt set) rather than as paused.
-          if (updated.legacyArchivedOn && changed.includes("isActive")) {
-            b.deletedAt = updated.legacyArchivedOn.toISOString();
-            a.deletedAt = null;
-          }
-          return changed.length > 0 ? { before: b, after: a } : {};
-        })(),
-      },
-      req,
-    });
+    // Release B's activation signal must not be lost: a save from an old page (old key, no `categoryBaseId`) writes
+    // its row durably, awaited before the answer, instead of best-effort. A failure to write it is logged; it never
+    // turns the committed save into an error.
+    const fromOldPage = parsed.data.category !== undefined && parsed.data.categoryBaseId === undefined;
+    try {
+      await logAudit({
+        ...(fromOldPage ? { durable: true } : {}),
+        tenantId,
+        userId: session.user.id,
+        action: "class.updated",
+        entityType: "Class",
+        entityId: id,
+        metadata: {
+          // `baseScheduleIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
+          // A Location by name (`matName`) is recorded as the columns it sets.
+          // An old category key is recorded as the reference it was written as.
+          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
+          // Release B's activation signal, durable (runtime logs are not kept long enough to cover the observation
+          // window): this save came from a page that knows only the old category keys. This release's form sends
+          // `categoryBaseId` with any key it sends on an edit, so only an old page matches.
+          ...(fromOldPage ? { categoryOldKey: true } : {}),
+          // D2: no booking is cancelled by an edit any more. The members it newly
+          // turns away (bookings kept) are on the durable
+          // class.bookings.kept_ineligible rows written inside the transaction;
+          // repeated here, by trigger, so this row reads whole on its own.
+          ...(Object.keys(updated.keptBookings).length > 0 ? { bookingsKeptIneligible: updated.keptBookings } : {}),
+          // T6a: the membership list before and after. The class.updated undo
+          // stays scalar: tier ids are recorded, not undone.
+          ...(wantsTiers ? { allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter } } : {}),
+          // Same rule for the timetable cascade: the ids of every upcoming
+          // session the schedule edit deleted, not just how many (RULES §5 — a
+          // count cannot restore anything).
+          ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
+          ...(updated.sessionsCreatedOnResume > 0 ? { sessionsCreatedOnResume: updated.sessionsCreatedOnResume } : {}),
+          ...(updated.lifecycleChange ? { lifecycle: updated.lifecycleChange } : {}),
+          // `isActive` and `deletedAt` before and after (T6b): undoing a Resume
+          // or Restore puts the class back exactly as paused or archived.
+          ...(() => {
+            const { before: b, after: a, changed } = snapshotDiff(
+              updated.before as unknown as Record<string, unknown> | null,
+              updated.cls as unknown as Record<string, unknown>,
+              // `categoryId`, not the old `category` key: undo restores the reference (lib/undo-registry.ts).
+              ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "matId", "duration", "maxCapacity", "isKids", "categoryId", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
+            );
+            // A pre-T6b archive carried no deletedAt; record the archive date
+            // it is read by, so undoing this Restore puts it back as archived
+            // (with deletedAt set) rather than as paused.
+            if (updated.legacyArchivedOn && changed.includes("isActive")) {
+              b.deletedAt = updated.legacyArchivedOn.toISOString();
+              a.deletedAt = null;
+            }
+            return changed.length > 0 ? { before: b, after: a } : {};
+          })(),
+        },
+        req,
+      });
+    } catch (e) {
+      console.error("[class-category] old-page audit row not written", e instanceof Error ? e.message : e);
+    }
 
     // `scheduleChange` rides alongside the class so the client can say what
     // actually happened instead of an unconditional "Class updated".

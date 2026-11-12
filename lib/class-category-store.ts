@@ -95,6 +95,9 @@ export const CATEGORY_ERRORS = {
   notFound: "That category isn't one of this club's. Reload the page and choose again.",
   archived: "That category has been archived. Choose another, or leave the class uncategorised.",
   conflict: "That category changed while you were saving. Reload the page and try again.",
+  // Release B: this release's form says which category it saw on the class (`categoryBaseId`). Someone else changed
+  // the class's category since, so this choice was made without seeing theirs. Refused, never last-writer-wins.
+  changed: "Someone else changed this class's category since you opened it. Reload the page and choose again.",
 } as const;
 
 /** A category the write refused before touching anything; the route answers with it. */
@@ -115,13 +118,20 @@ export class ClassCategoryRefusal extends Error {
 export async function categoryIdToWrite(
   tx: Tx,
   tenantId: string,
-  input: { categoryId?: string | null; category?: string | null },
+  input: { categoryId?: string | null; category?: string | null; categoryBaseId?: string | null },
   currentCategoryId: string | null,
 ): Promise<string | null | undefined> {
   const hasId = input.categoryId !== undefined;
   const hasKey = input.category !== undefined;
   if (hasId && hasKey) throw new ClassCategoryRefusal(400, CATEGORY_ERRORS.both);
   if (!hasId && !hasKey) return undefined;
+
+  // The category this release's form saw on the class when it opened (null: uncategorised). Judged under the Class
+  // lock: if the class's category has changed since, this explicit choice was made without seeing that change.
+  // Omitted by pages from before Release B; for them the rule below is what applies.
+  if (input.categoryBaseId !== undefined && input.categoryBaseId !== currentCategoryId) {
+    throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.changed);
+  }
 
   // Release B's stale-client control. An old key is all a page from before club-managed categories can send, and
   // such a page cannot show a category the club made (it has no old key). So when the class is on a club-made

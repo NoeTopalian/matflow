@@ -28,6 +28,9 @@ import { CATEGORY_ERRORS, seedClassCategories } from "@/lib/class-category-store
 import { decideUndo } from "@/lib/undo-registry";
 
 const HAS_DB = !!process.env.TEST_DATABASE_URL;
+// Several cases make 20-40 database round trips; measured alone against the test endpoint from Bali (about 226 ms
+// each) two ran 29.3 s and 32.0 s, over the 30 s default (12 Nov 2026). A harness limit, not an assertion.
+vi.setConfig({ testTimeout: 180_000 });
 const request = (path: string, method = "GET", body?: unknown) =>
   new Request(`https://test.local${path}`, {
     method,

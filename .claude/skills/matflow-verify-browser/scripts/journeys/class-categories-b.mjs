@@ -11,7 +11,9 @@
 //   B8 a forced failed save keeps the typed name and says so beside it; the retry saves it once;
 //   B9 a duplicate name is refused beside the new row;
 //   B10 phone 390 px: the sheet opens, no sideways scroll;
-//   B11 a coach has no Categories button.
+//   B11 a coach has no Categories button;
+//   B12 an editor left open: another tab gives the class a category; this form's change is refused beside the
+//       buttons, the other tab's choice is kept, and the request carried the category the form saw.
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, staffSignIn } from "../lib.mjs";
@@ -174,6 +176,31 @@ try {
     expect((await catRows()).filter((r) => r.name.toLowerCase() === "intermediate")).toHaveLength(1);
     await page.keyboard.press("Escape");
     return "refused";
+  });
+
+  await section("B12", "an editor left open: another tab gives the class a category; this form's change is refused beside the buttons and theirs is kept", async () => {
+    const intermediate = (await catRows()).find((r) => r.name === "Intermediate");
+    await page.goto("/dashboard/timetable");
+    await page.waitForLoadState("networkidle");
+    await page.locator(`button[aria-label^="Edit Plain ${TAG}, "]:visible`).first().click();
+    const select = page.getByTestId("class-category-select");
+    await select.waitFor();
+    // Another tab, after this form opened on an uncategorised class.
+    const other = await page.evaluate(async ([id, c]) => (await fetch(`/api/classes/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ categoryId: c, categoryBaseId: null }) })).status, [plain.body.id, intermediate.id]);
+    expect(other).toBe(200);
+    const bodies = [];
+    const listen = (r) => { if (r.method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${plain.body.id}`) bodies.push(r.postDataJSON()); };
+    page.on("request", listen);
+    await select.selectOption(`id:${kids.id}`);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByTestId("class-form-save-error")).toHaveText("Someone else changed this class's category since you opened it. Reload the page and choose again.", { timeout: 30_000 });
+    page.off("request", listen);
+    expect(await select.inputValue()).toBe(`id:${kids.id}`);
+    expect((await classCat(plain.body.id)).categoryId).toBe(intermediate.id);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ categoryId: kids.id, categoryBaseId: null });
+    await page.keyboard.press("Escape");
+    return bodies[0];
   });
 
   await section("B10", "phone 390 px: the sheet opens and nothing scrolls sideways", async () => {

@@ -914,8 +914,11 @@ function ClassForm({
   function categoryFields(): Record<string, unknown> {
     // Sent on create, and on edit only when changed, so an unrelated edit never rewrites it.
     if (initial?.id && category === initialCategory) return {};
-    if (category.startsWith("key:")) return { category: category.slice(4) };
-    return { categoryId: category.startsWith("id:") ? category.slice(3) : null };
+    // On an edit, the category this form saw on the class: the server refuses the change (409) if someone else has
+    // changed the class's category since, instead of overwriting a choice this form never showed.
+    const base = initial?.id ? { categoryBaseId: initial.categoryId ?? null } : {};
+    if (category.startsWith("key:")) return { category: category.slice(4), ...base };
+    return { categoryId: category.startsWith("id:") ? category.slice(3) : null, ...base };
   }
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
