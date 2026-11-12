@@ -241,22 +241,33 @@ Under Noe's authority of 12 Nov 2026, the agent merges, deploys and runs the rea
 
 ## 6. Results
 
-Code `8d080073`. Later commits change journeys only (`b57a47bf`, `00f1be86`).
+**Final code:** `53669a7d`. After it come `ef891708` (this record) and `ad20e942` (the read-only check script only). Results on earlier code are kept below for history and do not describe what ships.
 
-| Gate | Result |
-|---|---|
-| Type-check | clean |
-| Lint (eslint and the UI-RULES ratchet) | passed |
-| Full unit suite | 655 files passed. Two guard files failed on the new routes and the new raw SQL (`journeys-manifest`, `sec-c-static-guards`); both were updated and pass (18/18). |
-| DB suites on rehearsal database `matflow_rehearsal_20261112035750`, owner role | `class-categories-b-db` and `class-categories-bridge-db`: 34/34 |
-| The same, `matflow_app` with RLS enforced | 34/34 |
-| Journey `class-categories-b` (switch on) | 12 PASS / 0 FAIL. Earlier runs failed on the journey itself: substring name matches, 5 s waits on 8–12 s saves, and opening the form before the page refresh landed. |
-| Journey `class-categories-a` (switch on) | 13 PASS / 0 FAIL. It is updated for the new rule: C8 failed 11/2 against the old expectation, which was the intended refusal. |
-| Journey `classes-lifecycle` (switch on) | 56 PASS / 0 FAIL / 4 NOTE |
-| CI | none: not pushed |
-| Independent review | not run (§8) |
+| Gate | Commit | Result |
+|---|---|---|
+| Type-check | `53669a7d` | clean |
+| Lint (eslint and the UI-RULES ratchet) | `ad20e942` | passed |
+| Full unit suite | `ad20e942` | 657 files passed, 126 skipped (database files), 0 failed; 9,393 tests. The full JSON report is kept for diagnostics. |
+| Production build | `ad20e942` | passed (clean tree) |
+| DB suites `class-categories-b-stale-editors`, `class-categories-b`, `class-categories-bridge`, owner role | `ad20e942`, rehearsal database with the final migration | 46/46 |
+| The same, `matflow_app` with RLS enforced | same | 46/46 |
+| Release A's own `class-categories-bridge` suite against the final migration (§5a) | Release A `82c2cb59` code (`9712e19e`), same rehearsal database | 24/25 under each role. The one failure is the intended tightening: a direct old-key write replacing a club-made category is refused. |
+| The migration on a fresh rehearsal database | `3a3dc9dc` migration text (unchanged since) | applied in 1,821 ms (Release A's: 1,048 ms). Rehearsal evidence, not a production duration. |
+| Journey `class-categories-b` (switch on), including B12 | build of `ad20e942` | 13 PASS / 0 FAIL |
+| Journey `class-categories-a` (switch on), C8 updated for Release A pages | build of `ad20e942` | 13 PASS / 0 FAIL |
+| Journey `classes-lifecycle` (switch on) | build of `ad20e942` | 56 PASS / 0 FAIL / 4 NOTE |
+| CI | PR #84 | required to be green on the merge head before merge (the branch protection's strict check) |
+| Independent review | three rounds, 12 Nov 2026 (separate sessions) | round 3: APPROVE WITH NITS to merge and deploy with the switch off. **B3-1 must be fixed before activation** (below). |
 
-The journeys ran on the shared test branch, where Release B's migration is **not** applied: the database refusal is proved on the rehearsal database only. The route-level refusal is proved on both.
+The journeys ran on the shared test branch, where Release B's migration is **not** applied. The database refusals are proved on the rehearsal database; the route refusals on both.
+
+**Open before activation (review round 3).**
+- **B3-1:** in the Categories sheet, a rename or archive that waited behind a slow reorder is sent with the version from the reloaded list. So it can overwrite another tab's change unseen.
+  - It is reachable only with management switched on.
+  - It is fixed in its own PR, with its own tests and review, before step 6 of §4.
+- **Nits B3-2 to B3-7:** focus after a waited move, a lost unit case, the placement of the O2 cost bullet, the O2 follow-up's precision, `ownerOfMat` as a boolean, and a move going ahead after a conflict. They go into the same PR.
+
+**History (earlier code, superseded):** code `8d080073`: unit 655 files passed; DB 34/34 under each role; journeys 12/0, 13/0, 56/0/4. Code `32aa3da1`: journeys 13/0, 13/0, 56/0/4.
 
 ## 7. Sean's setup and acceptance checklist (after activation; with Sean, never inferred)
 
