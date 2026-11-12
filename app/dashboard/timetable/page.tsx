@@ -5,7 +5,7 @@ import { classLifecycle, inactiveClassWhere, liveClassWhere, type ClassLifecycle
 import { legacyArchivedAt } from "@/lib/class-lifecycle";
 import { readMatsForTimetable } from "@/lib/mats-store";
 import { isSupportSession } from "@/lib/support-session";
-import { CATEGORY_REF_SELECT, categoryFields, listClassCategories } from "@/lib/class-category-store";
+import { CATEGORY_REF_SELECT, categoryFields, categoryManagementEnabled, listClassCategories } from "@/lib/class-category-store";
 import type { ClassCategoryOption } from "@/lib/class-category";
 
 export type ClassRow = {
@@ -196,6 +196,7 @@ export default async function TimetablePage() {
       coachUsers={coachUsers}
       membershipTiers={membershipTiers}
       categories={categories}
+      categoryManagement={categoryManagementEnabled()}
       mats={matsAndLayout.mats}
       storedLayout={matsAndLayout.storedLayout}
       matsLoadFailed={matsAndLayout.failed}

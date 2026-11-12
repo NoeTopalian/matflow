@@ -45,6 +45,8 @@ describe("SEC-033 raw SQL is parameterised", () => {
   it("the reviewed raw-SQL call sites are exactly these (values interpolated as bind parameters only)", () => {
     expect(hits(/\$(queryRaw|executeRaw)\s*(<[^`]*>)?\s*`/).sort()).toEqual([
       "app/api/admin/dsar/erase/route.ts", // lane D3: SELECT … FOR UPDATE re-read of the subject inside the erase transaction; ids are bind parameters
+      "app/api/class-categories/[id]/route.ts", // categories Release B: the category row lock (SELECT … FOR UPDATE) before a rename, archive or restore; id and tenantId are bind parameters
+      "app/api/class-categories/order/route.ts", // categories Release B: the club's category rows locked FOR UPDATE in id order before a reorder; tenantId is a bind parameter
       "app/api/classes/[id]/roster/[memberId]/route.ts", // D2: Class row lock (SELECT … FOR UPDATE) before a single squad removal; id and tenantId are bind parameters
       "app/api/classes/[id]/route.ts", // T6a: Class row lock (SELECT … FOR UPDATE) opening the edit transaction; id and tenantId are bind parameters
       "app/api/health/route.ts",
@@ -56,7 +58,7 @@ describe("SEC-033 raw SQL is parameterised", () => {
       "lib/auth-lockout.ts", // lane A4 (R6-N1): failure-slot reservation, C3's advisory lock + conditional insert; buckets, ids, caps, window, exempt flag and lock namespace are bind parameters
       "lib/checkin.ts",
       "lib/class-allowance-count.ts", // T7: statement C, the allowance read after the Member lock; tenantId, memberId, session id and the date range are bind parameters
-      "lib/class-category-store.ts", // club-managed categories, Release A: SELECT matflow_seed_class_categories(tenantId); the tenant id is a bind parameter
+      "lib/class-category-store.ts", // club-managed categories: SELECT matflow_seed_class_categories(tenantId) (Release A), and the per-club categories advisory lock (Release B); the namespace and tenant id are bind parameters
       "lib/login-email.ts",
       "lib/mats.ts", // per-club mats advisory lock (pg_advisory_xact_lock) opening every mats write, and the FOR UPDATE read of the club's typed classes under it; the namespace and tenantId are bind parameters
       "lib/member-delete.ts", // T7: Member row lock (SELECT … FOR UPDATE) opening the deletion cascade; id and tenantId are bind parameters

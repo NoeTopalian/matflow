@@ -149,6 +149,7 @@ export const ACTIVITY_TYPES: ActivityType[] = [
     actions: [
       "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.bookings.kept_ineligible", "class.instances_generated",
       "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
+      "class_category.create", "class_category.rename", "class_category.archive", "class_category.restore", "class_category.reorder",
     ],
     roles: BOTH,
     defaultOn: true,

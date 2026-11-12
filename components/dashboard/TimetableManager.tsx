@@ -25,6 +25,7 @@ import { MoreChip, MoreRow, WeekChip } from "@/components/schedule/WeekChip";
 import { buildTimetableGrid } from "@/lib/timetable-grid";
 import type { ClassRow, CoachUserOption, MatOption, TierOption } from "@/app/dashboard/timetable/page";
 import { MatsSheet } from "@/components/dashboard/MatsSheet";
+import { CategoriesSheet } from "@/components/dashboard/CategoriesSheet";
 import { effectiveLayout, matsInUse, type TimetableLayout } from "@/lib/timetable-layout";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, categoryTag, type ClassCategoryOption } from "@/lib/class-category";
@@ -56,6 +57,8 @@ interface Props {
   storedLayout?: TimetableLayout | null;
   /** The mats could not be read: the timetable is drawn by time and says so. */
   matsLoadFailed?: boolean;
+  /** Release B: category management is switched on for this deployment (CLASS_CATEGORY_MANAGEMENT). */
+  categoryManagement?: boolean;
   /** A read-only (view) MatFlow support session: the split is shown as text and there is no Mats button (UI-RULES §7). */
   supportReadOnly?: boolean;
   /** When the server began reading this page's mats (ISO time): tells a list read after a save from one read before it. */
@@ -1664,7 +1667,7 @@ const NO_CLASSES: ClassRow[] = [];
 
 export default function TimetableManager({
   initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [], categories = NO_CATEGORIES,
-  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt,
+  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt, categoryManagement = false,
   primaryColor, role, currentUserId,
 }: Props) {
   // A class saved with a new Location adds a mat: it is used at once, before the refresh brings the server's list.
@@ -1767,6 +1770,9 @@ export default function TimetableManager({
   // The choice somebody pressed follows the server's: a refresh brings a new
   // prop, and a press shows at once and is put back if the save fails.
   const [matsOpen, setMatsOpen] = useState(false);
+  // Release B: owners and managers manage the club's categories, when switched on, and never in a support session.
+  const canManageCategories = canManage && categoryManagement && !supportReadOnly;
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [choice, setChoice] = useState<{ from: TimetableLayout | null; stored: TimetableLayout | null }>({ from: storedLayout, stored: storedLayout });
   if (choice.from !== storedLayout) setChoice({ from: storedLayout, stored: storedLayout });
   const [savingLayout, setSavingLayout] = useState(false);
@@ -2547,6 +2553,11 @@ export default function TimetableManager({
                         </Button>
                       </>
                     )}
+                    {canManageCategories && (
+                      <Button variant="secondary" size="compact" onClick={() => setCategoriesOpen(true)} data-testid="timetable-categories">
+                        Categories
+                      </Button>
+                    )}
                     <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-expand" aria-pressed={expanded} onClick={() => setExpanded((v) => !v)}>
                       {expanded ? "Shrink timetable" : "Expand timetable"}
                     </Button>
@@ -2956,6 +2967,10 @@ export default function TimetableManager({
           </div>
         )}
       </Sheet>
+
+      {canManageCategories && (
+        <CategoriesSheet open={categoriesOpen} onClose={() => setCategoriesOpen(false)} onChanged={() => router.refresh()} />
+      )}
 
       {canSetUpMats && (
         <MatsSheet
