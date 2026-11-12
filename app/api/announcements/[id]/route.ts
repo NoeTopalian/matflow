@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { isTenantBlobUrl } from "@/lib/blob-url";
+import { mayDeleteClubAssetBlob } from "@/lib/blob-ownership";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit-log";
@@ -114,7 +114,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (existing?.imageUrl && isTenantBlobUrl(existing.imageUrl, session.user.tenantId)) {
+    // Round 5 remediation: only a club-root file that no other row still uses
+    // (not the logo, not a member's photo, not another announcement's image).
+    if (existing?.imageUrl && (await withTenantContext(session.user.tenantId, (tx) => mayDeleteClubAssetBlob(tx, session.user.tenantId, existing.imageUrl!)))) {
       try {
         await del(existing.imageUrl);
       } catch (e) {

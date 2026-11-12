@@ -43,7 +43,7 @@
  *   - Stored import files — every kept file of the club rewritten without the
  *     rows whose email or source key is the member's (6 Nov 2026: files are
  *     kept, so the erasure must reach them); ImportJob.errorLog and
- *     dryRunSummary — every entry naming the member removed, by id, source
+ *     dryRunSummary and manifest (manifest: Round 5, 11 Nov 2026) — every entry naming the member removed, by id, source
  *     key, email or name (lib/importers/import-erasure.ts)
  *
  * Audit-logged as `member.dsar_erase`. Owner retains the audit row as
@@ -59,6 +59,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { emailDigest } from "@/lib/login-email";
 import { isTenantBlobUrl } from "@/lib/blob-url";
+import { mayDeleteMemberPhotoBlob } from "@/lib/blob-ownership";
 import { hashToken } from "@/lib/token-hash";
 import { deleteMemberCascade } from "@/lib/member-delete";
 import { scrubImportConflictsFor } from "@/lib/importers/import-conflicts-scrub";
@@ -385,7 +386,7 @@ export async function POST(req: Request) {
       ] = await Promise.all([
         tx.memberPhoto.findMany({
           where: { memberId, tenantId },
-          select: { id: true, url: true },
+          select: { id: true, url: true, uploadedAt: true },
         }),
         tx.signedWaiver.findMany({
           where: { memberId, tenantId },
@@ -461,7 +462,7 @@ export async function POST(req: Request) {
       const holders = addressHolders(members, history);
       const subjects = subjectRows.map((m) => toSubject(m, edits, holders));
       // One read of the club's import jobs serves the file list and the diagnostics.
-      const jobs = await tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true, errorLog: true, dryRunSummary: true } });
+      const jobs = await tx.importJob.findMany({ where: { tenantId }, select: { id: true, fileBlobUrl: true, errorLog: true, dryRunSummary: true, manifest: true } });
       const uploads = await tx.importUpload.findMany({ where: { tenantId }, select: { id: true, status: true, expiresAt: true } });
       return {
         subjects,
@@ -818,6 +819,15 @@ export async function POST(req: Request) {
   // surviving PII linked to the member. Never abort the erase for it — the
   // warning names the row so an operator can clean up by hand.
   for (const photo of scope.photos) {
+    // Round 5 remediation: the member's own file, or a legacy club-root file no
+    // other row still uses. A row planted through the old attach hole (their
+    // picture pointed at the logo or someone else's photo) must not make the
+    // erasure delete that file (lib/blob-ownership.ts).
+    const mine = await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, photo.url, photo.uploadedAt)).catch(() => false);
+    if (!mine) {
+      if (/^https:\/\//i.test(photo.url)) console.warn(`[dsar/erase] blob for MemberPhoto ${photo.id} is not the member's own or is still used elsewhere; left in place`);
+      continue;
+    }
     await deleteBlobBestEffort(photo.url, `MemberPhoto ${photo.id}`, tenantId);
   }
   for (const waiver of scope.waivers) {

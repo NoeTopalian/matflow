@@ -257,6 +257,25 @@ describe("/api/upload — input limits before the body is read", () => {
     const ok = await POST(upReq(form([["file", file(PNG, "a.png", "image/png")], ["targetMemberId", "m-c2-self"]]), "?purpose=profile-pic"));
     expect(ok.status).toBe(200);
   });
+
+  // Round 5 review L-1: the photo routes accept only a blob under the member's own path (lib/blob-url isMemberBlobUrl),
+  // so the upload route must write member-scoped uploads there, or every real picture save would be refused.
+  it("member-scoped: the upload is stored under the target member's own path, which the photo routes accept", async () => {
+    const { isMemberBlobUrl } = await import("@/lib/blob-url");
+    const POST = await uploadRoute();
+    h.session = { user: { id: "user-m", tenantId: "tenant-c2", role: "member", memberId: "m-c2-self" } };
+    const before = h.put.length;
+    for (const purpose of ["profile-pic", "member-photo"]) {
+      const res = await POST(upReq(form([["file", file(PNG, "a.png", "image/png")], ["targetMemberId", "m-c2-self"]]), `?purpose=${purpose}`));
+      expect(res.status).toBe(200);
+    }
+    const paths = h.put.slice(before).map((p) => p.path);
+    expect(paths).toHaveLength(2);
+    for (const path of paths) {
+      expect(path).toMatch(/^tenants\/tenant-c2\/members\/m-c2-self\/[0-9a-f]{24}\.webp$/);
+      expect(isMemberBlobUrl(`https://secc2store.public.blob.vercel-storage.com/${path}`, "tenant-c2", "m-c2-self") /* this file's own store (BLOB_READ_WRITE_TOKEN) */).toBe(true);
+    }
+  });
 });
 
 describe("/api/upload — per-user and per-tenant rate limits (shared DB path)", () => {

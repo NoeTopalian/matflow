@@ -50,6 +50,8 @@ import { POST as rankAward } from "@/app/api/members/[id]/rank/route";
 
 const OWN = "https://abc123.private.blob.vercel-storage.com/tenants/t-A/photo-1.jpg";
 const FOREIGN = "https://abc123.private.blob.vercel-storage.com/tenants/t-B/photo-9.jpg";
+// Round 5 remediation: a promotion photo is the member's own upload (members/<member>/), never a club-root file.
+const OWN_MEMBER = "https://abc123.private.blob.vercel-storage.com/tenants/t-A/members/m-1/photo-1.jpg";
 const UNPREFIXED = "https://abc123.private.blob.vercel-storage.com/photo-legacy.jpg";
 
 function req(body: unknown): Request {
@@ -102,15 +104,21 @@ describe("rank award — foreign blob URLs", () => {
     expect(m.photoCreate).not.toHaveBeenCalled();
   });
 
-  it("our own blob URL is accepted (unchanged behaviour)", async () => {
-    const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN }), params);
+  it("this member's own upload is accepted", async () => {
+    const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN_MEMBER }), params);
     expect(res.status).toBe(200);
     expect(m.photoCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("a club file that is not this member's upload (the logo, another member's legacy photo) is refused; nothing written", async () => {
+    const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN }), params);
+    expect(res.status).toBe(400);
+    expect(m.photoCreate).not.toHaveBeenCalled();
+  });
+
   it("no stored URL, foreign or own, is passed to del() when photos are replaced (files are kept, 6 Nov 2026)", async () => {
     m.oldPhotos = [{ id: "p1", url: FOREIGN }, { id: "p2", url: OWN }, { id: "p3", url: "data:image/png;base64,AAAA" }];
-    const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN }), params);
+    const res = await rankAward(req({ rankSystemId: "r1", photoUrl: OWN_MEMBER }), params);
     expect(res.status).toBe(200);
     expect(m.del).not.toHaveBeenCalled();
     expect(m.photoDeleteMany).not.toHaveBeenCalled();
