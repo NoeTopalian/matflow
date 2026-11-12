@@ -121,7 +121,12 @@ Rollback is fix-forward only: deploy a build of the chosen commit. Never use Ver
   - It shows renamed categories by their old label and club-made ones as uncategorised.
   - An explicit old choice replaces a club-made category (DB test, proved).
   - Its undo of an old "cleared category" row can overwrite a club-made category.
-- **A builds stay supported after B** (§4).
+- **Release A builds after Release B: supported only until Release B is activated.** *(Corrected 12 Nov 2026. This line used to say "A builds stay supported after B".)*
+  - Once Release B is activated, Release A code is not a supported fallback (Release B readiness §5a).
+    - Its route turns an old page's key into a reference write, which Release B's stale-writer refusal in the database does not see.
+    - It has no route refusal, so an old page could replace or clear a club-made category.
+    - It lacks Release B's open-form refusal.
+  - To withdraw Release B's code after activation, deploy Release B with management switched off; never Release A.
 - **Builds older than `20261017035912_class_category`,** from before `Class.category` existed, were already unsupported and stay so.
 
 ## 6. Activation gate for Release B
@@ -134,6 +139,8 @@ Release B's controls must not be enabled until all of these are observed and rec
    - In addition: every Vercel production deployment older than A is deleted, or Vercel shows no request served by one for 7 days.
    - Noe reads this. It is a read-only production query, and agents never touch production.
 2. **No old browser page or API client is writing.** No `[class-category] legacy key write` line in the production logs for 7 consecutive days, long enough for a kiosk tablet or a phone left open for days. Noe reads this.
+   - *Correction, 12 Nov 2026:* Vercel keeps runtime logs for 1 hour on the Hobby plan (Vercel docs, checked 12 Nov 2026), so this signal cannot cover 7 days.
+   - Release B replaces it with a durable audit marker (`categoryOldKey`). Its readiness §3 separates the technical safety gate from the seven-day observation period.
 3. **No other writer.** A grep of `scripts/`, `app/api/cron`, `lib/importers`, the attendance import, mats and lifecycle writers found no cron, import or script writing a class's category (11 Nov 2026, on this branch). Release B's PR repeats the grep; a new writer resets the gate.
 4. **The data agrees.** A read-only production query, adapted from `scripts/readiness/class-categories-rehearsal.mjs verify`, returns 0 for:
    - a class with a key but no reference;
