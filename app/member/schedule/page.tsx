@@ -6,7 +6,7 @@ import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage } from "@/lib/checkin-outcome";
 import { classCategoryTag } from "@/lib/class-category";
 import { readableOn } from "@/lib/color";
-import { memberClassMark } from "@/lib/class-colours";
+import { memberBookedFill, memberClassMark } from "@/lib/class-colours";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -513,6 +513,8 @@ function SessionBlock({
   // UI-RULES §2a: the house helper picks the ink with the higher WCAG contrast; the local luma threshold it
   // replaces picked the weaker ink across the mid-tones (green 2.28:1, orange 2.80:1 on a booked block).
   const text   = readableOn(color);
+  // A booked block's fill: opaque at both stops, so its ink reads 4.5:1 on either shell (lib/class-colours.ts).
+  const booked = memberBookedFill(color);
   // Subscribed blocks are filled with the class colour, so the ink is whatever
   // reads on it. Unsubscribed blocks are a tint of that colour over the member
   // shell, so their ink is the shell's own text, never a hard-coded dark navy
@@ -552,7 +554,7 @@ function SessionBlock({
         // Under the tint, and in the edge, a little of the shell's own text colour: a class coloured like the shell
         // (a black class on the dark shell, a white one on a light shell) still reads as a card, not floating text.
         background: isSub
-          ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
+          ? `linear-gradient(135deg, ${booked.from}, ${booked.to})`
           : `linear-gradient(135deg, ${hex(color, ended ? 0.16 : 0.32)}, ${hex(color, ended ? 0.1 : 0.2)}), color-mix(in srgb, var(--member-text) 6%, transparent)`,
         border: `1px solid ${isSub
           ? `color-mix(in srgb, ${color} 70%, var(--member-text) 30%)`

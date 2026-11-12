@@ -115,7 +115,7 @@ const BASELINE = {
   // 17 Oct 2026: 718 → 713 — Settings member-status rows on hue tokens (T1).
   // 17 Oct 2026: 713 → 707 — dead primaryColor ternaries on the Reports health tiles removed (T2b).
   // 6 Nov 2026 merge: 707 → 701 measured on the merged tree — DsarActions and the old member DSAR page removed (PR 3) and the Activity page reshaped (activity-simpler); the two lowerings overlap by one.
-  hexLiteral: 691, // 11 Nov 2026: 701 → 691, the class colour palette moved to lib/class-colours.ts.
+  hexLiteral: 689, // 12 Nov 2026: 691 → 689 (review nit: the count after the palette move). 11 Nov 2026: 701 → 691, the class colour palette moved to lib/class-colours.ts.
   // D3: 31 → 25. Six hand-rolled overlays became Dialog/Sheet — three in
   // MemberProfile (rank drawer, add-payment drawer, waiver-share modal) plus
   // RemoveMemberModal, AdhocChargeDrawer and MarkPaidDrawer.

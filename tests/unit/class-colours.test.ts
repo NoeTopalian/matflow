@@ -1,8 +1,8 @@
 // The class colour palette (11 Nov 2026: grey, light yellow, navy and light blue added) and how a class colour is
 // made readable where it is painted. Contrast floors: 4.5:1 for text, 3:1 for marks and edges (WCAG 1.4.3, 1.4.11).
 import { describe, it, expect } from "vitest";
-import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, MEMBER_MARK_SHARE, classColourName, classDotStyle, classEdge, classInk, memberClassMark } from "@/lib/class-colours";
-import { contrastRatio, legibleInk, markNeedsOutline, mixHex, tintOver } from "@/lib/color";
+import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, MEMBER_MARK_SHARE, classColourName, classDotStyle, classEdge, classInk, memberBookedFill, memberClassMark } from "@/lib/class-colours";
+import { contrastRatio, legibleInk, markNeedsOutline, mixHex, readableOn, tintOver } from "@/lib/color";
 
 const WHITE = "#ffffff";
 
@@ -100,3 +100,36 @@ describe("colour maths", () => {
     expect(tintOver("#fde68a", 0, WHITE)).toBe("#ffffff");
   });
 });
+
+describe("member schedule: a booked block's fill (memberBookedFill)", () => {
+  const shells = ["#111111", "#ffffff"];
+  it("is opaque at both stops, so the shell never shows through, and its ink reads 4.5:1 on both stops", () => {
+    for (const { value, name } of CLASS_COLOURS) {
+      const f = memberBookedFill(value);
+      expect(f.from, name).toMatch(/^#[0-9a-f]{6}$/);
+      expect(f.to, name).toMatch(/^#[0-9a-f]{6}$/);
+      expect(f.ink, name).toBe(readableOn(value));
+      // Opaque stops paint the same on any shell: measure each stop as painted over each shell.
+      for (const shell of shells) {
+        for (const stop of [f.from, f.to]) {
+          expect(contrastRatio(f.ink, tintOver(stop, 1, shell)), `${name} on ${shell}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+  it("keeps a colour that already reads exactly as it is; moves only the ones that cannot (purple)", () => {
+    for (const { value, name } of CLASS_COLOURS) {
+      const passes = (contrastRatio(readableOn(value), value) ?? 0) >= 4.5;
+      if (passes) expect(memberBookedFill(value).from, name).toBe(value);
+      else expect(memberBookedFill(value).from, name).not.toBe(value);
+    }
+    expect(memberBookedFill("#8b5cf6").from).not.toBe("#8b5cf6");
+  });
+  it("the 82 % stop it replaces failed on the dark shell: blue 3.62, red 3.50 (the review's cases)", () => {
+    for (const [colour, worst] of [["#3b82f6", 3.62], ["#ef4444", 3.5]] as const) {
+      const seeThrough = tintOver(colour, 0.82, "#111111");
+      expect(contrastRatio(readableOn(colour), seeThrough)).toBeCloseTo(worst, 1);
+    }
+  });
+});
+

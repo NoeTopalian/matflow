@@ -13,7 +13,7 @@
  * class colour goes through lib/color.ts legibleInk, and a small mark gets an
  * outline when lib/color.ts markNeedsOutline says it would vanish.
  */
-import { legibleInk, markNeedsOutline, tintOver } from "@/lib/color";
+import { contrastRatio, legibleInk, markNeedsOutline, mixHex, readableOn, tintOver } from "@/lib/color";
 
 export const CLASS_COLOURS: readonly { value: string; name: string }[] = [
   { value: "#3b82f6", name: "Blue" },
@@ -77,6 +77,22 @@ export function classDotStyle(colour: string): { background: string; boxShadow?:
 export const MEMBER_MARK_SHARE = 0.5;
 export function memberClassMark(colour: string): string {
   return `color-mix(in srgb, ${colour} ${MEMBER_MARK_SHARE * 100}%, var(--member-text) ${(1 - MEMBER_MARK_SHARE) * 100}%)`;
+}
+
+/**
+ * The fill of a BOOKED session block on the member schedule, and its ink. Both gradient stops are opaque, so the
+ * shell never shows through: the second stop used to be the colour at 82 % opacity, and over the dark shell that
+ * took blue's text to 3.62:1 and red's to 3.50 (review of 12 Nov 2026). The ink is the house dark or white, whichever
+ * reads better on the colour (`readableOn`). Where even that ink misses 4.5:1 on the colour itself (purple, 4.27),
+ * the fill moves away from the ink only as far as 4.5:1 needs; a colour that already passes keeps its exact value.
+ * The second stop is 12 % further from the ink, so it can only gain contrast.
+ */
+export function memberBookedFill(colour: string): { from: string; to: string; ink: string } {
+  const ink = readableOn(colour);
+  const away = ink === "#ffffff" ? "#000000" : "#ffffff";
+  let from = colour;
+  for (let t = 0.02; (contrastRatio(ink, from) ?? 21) < 4.5 && t <= 1.0001; t += 0.02) from = mixHex(away, colour, t);
+  return { from, to: mixHex(away, from, 0.12), ink };
 }
 
 /** The default colour of a new class: the first of the palette, as before. */

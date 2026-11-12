@@ -51,6 +51,25 @@ const lastColour = (shadow) => (String(shadow).match(/rgba?\([^)]*\)|oklab\([^)]
 const london = (plusMin) => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(Date.now() + plusMin * 60_000));
 const londonDow = () => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short" }).format(new Date()));
 
+// Booked block text against each gradient stop, composited over the shell; the weaker stop counts.
+const bookedInk = (block) => block.evaluate((el) => {
+  const name = el.querySelector("[data-block-part='name']");
+  // Resolve --member-bg to a colour by painting it on a probe beside the block (the token may itself be a var()).
+  const probe = document.createElement("div");
+  probe.style.background = "var(--member-bg, #ffffff)";
+  el.parentElement.appendChild(probe);
+  const shellCss = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  const px = (under, top) => { c.clearRect(0, 0, 1, 1); c.fillStyle = under; c.fillRect(0, 0, 1, 1); c.fillStyle = top; c.fillRect(0, 0, 1, 1); return Array.from(c.getImageData(0, 0, 1, 1).data.slice(0, 3)); };
+  const lum = (rgb) => rgb.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  const stops = getComputedStyle(el).backgroundImage.match(/rgba?\([^)]*\)/g) ?? [];
+  const text = px(shellCss, getComputedStyle(name).color);
+  const each = stops.map((s) => Math.round(ratio(text, px(shellCss, s)) * 100) / 100);
+  return { min: each.length ? Math.min(...each) : 0, each, stops, shell: shellCss };
+});
+
 const browser = await launchWithScrollbars();
 const errors = [];
 try {
@@ -69,6 +88,15 @@ try {
   const sunrise = await create(SUNRISE, LIGHT_YELLOW, "23:00", "23:50");
   if (sunrise.status !== 201) throw new Error(`create returned ${sunrise.status}`);
   const classId = sunrise.body.id;
+  // Saturated colours booked too: blue (the default) and red read 3.62 and 3.50 on the dark shell when the block's
+  // second stop let the shell through; purple misses 4.5:1 with either ink on its own colour (review of 12 Nov 2026).
+  const BOOKED_EXTRA = [["#3b82f6", `Booked blue ${TAG}`, "21:00", "21:50"], ["#ef4444", `Booked red ${TAG}`, "22:00", "22:50"], ["#8b5cf6", `Booked purple ${TAG}`, "20:00", "20:50"]];
+  const extraIds = [];
+  for (const [colour, name, start, end] of BOOKED_EXTRA) {
+    const r = await create(name, colour, start, end);
+    if (r.status !== 201) throw new Error(`create (${name}) returned ${r.status}`);
+    extraIds.push(r.body.id);
+  }
   const liveStart = london(-5);
   const liveEnd = london(45);
   const liveCan = liveStart < liveEnd; // not across midnight
@@ -203,7 +231,9 @@ try {
 
   // ── Member schedule: booked light yellow; live grey unbooked ──
   const member = await memberLogin(club);
-  await q(`insert into "ClassSubscription" (id, "memberId", "classId") values ($1, $2, $3) on conflict do nothing`, [randomUUID(), member.id, classId]);
+  for (const id of [classId, ...extraIds]) {
+    await q(`insert into "ClassSubscription" (id, "memberId", "classId") values ($1, $2, $3) on conflict do nothing`, [randomUUID(), member.id, id]);
+  }
   const memberRuns = [
     ["K10", "phone, dark shell", "#111111", { width: 390, height: 844, isMobile: true, hasTouch: true }],
     ["K11", "phone, light shell", "#ffffff", { width: 390, height: 844, isMobile: true, hasTouch: true }],
@@ -220,7 +250,7 @@ try {
     mpage.on("pageerror", (e) => errors.push(e.message));
     await memberSignIn(mpage, club, member);
     await mpage.goto("/member/schedule");
-    await section(id, `member schedule, ${label}: booked light-yellow text 4.5:1; its selection ring 3:1 against the gap beside it and the shell; a live pale block's edge 3:1`, async () => {
+    await section(id, `member schedule, ${label}: booked light-yellow, blue, red and purple text 4.5:1 against every gradient stop; its selection ring 3:1 against the gap beside it and the shell; a live pale block's edge 3:1`, async () => {
       const block = mpage.locator("button[data-booked]").filter({ hasText: SUNRISE }).first();
       await expect(block).toBeVisible({ timeout: 30_000 });
       // The shell renders dark first and takes the club's background when /api/me/gym answers (app/member/layout.tsx):
@@ -230,25 +260,18 @@ try {
       // A booked block is painted with a gradient (background-image), which the harness's measureInk does not
       // see: it would measure the ink against the shell behind the block. Measure against each gradient stop,
       // composited over the shell, and keep the weaker.
-      const ink = await block.evaluate((el) => {
-        const name = el.querySelector("[data-block-part='name']");
-        // Resolve --member-bg to a colour by painting it on a probe beside the block (the token may itself be a var()).
-        const probe = document.createElement("div");
-        probe.style.background = "var(--member-bg, #ffffff)";
-        el.parentElement.appendChild(probe);
-        const shellCss = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
-        const px = (under, top) => { c.clearRect(0, 0, 1, 1); c.fillStyle = under; c.fillRect(0, 0, 1, 1); c.fillStyle = top; c.fillRect(0, 0, 1, 1); return Array.from(c.getImageData(0, 0, 1, 1).data.slice(0, 3)); };
-        const lum = (rgb) => rgb.map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
-        const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
-        const stops = getComputedStyle(el).backgroundImage.match(/rgba?\([^)]*\)/g) ?? [];
-        const text = px(shellCss, getComputedStyle(name).color);
-        const each = stops.map((s) => Math.round(ratio(text, px(shellCss, s)) * 100) / 100);
-        return { min: each.length ? Math.min(...each) : 0, each, stops, shell: shellCss };
-      });
+      const ink = await bookedInk(block);
       expect(ink.stops.length).toBeGreaterThanOrEqual(2);
       expect(ink.min).toBeGreaterThanOrEqual(4.5);
+      const extra = {};
+      for (const [, name] of BOOKED_EXTRA) {
+        const b = mpage.locator("button[data-booked]").filter({ hasText: name }).first();
+        await expect(b).toBeVisible({ timeout: 30_000 });
+        const m = await bookedInk(b);
+        extra[name.split(" ")[1]] = m.each;
+        expect(m.stops.length, name).toBeGreaterThanOrEqual(2);
+        expect(m.min, name).toBeGreaterThanOrEqual(4.5);
+      }
       await block.click();
       const shadow = await block.evaluate((el) => getComputedStyle(el).boxShadow);
       const ringCss = lastColour(shadow);
@@ -274,7 +297,7 @@ try {
         expect(liveEdge).toBeGreaterThanOrEqual(3);
       }
       await shot(mpage, `class-colours-member-${id}`);
-      return { ink, ringVsGap, ringVsShell, liveEdge };
+      return { ink, extra, ringVsGap, ringVsShell, liveEdge };
     });
     await mctx.close();
   }
