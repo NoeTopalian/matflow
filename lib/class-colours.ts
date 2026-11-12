@@ -83,8 +83,9 @@ export function memberClassMark(colour: string): string {
  * The fill of a BOOKED session block on the member schedule, and its ink. Both gradient stops are opaque, so the
  * shell never shows through: the second stop used to be the colour at 82 % opacity, and over the dark shell that
  * took blue's text to 3.62:1 and red's to 3.50 (review of 12 Nov 2026). The ink is the house dark or white, whichever
- * reads better on the colour (`readableOn`). Where even that ink misses 4.5:1 on the colour itself (purple, 4.27),
- * the fill moves away from the ink only as far as 4.5:1 needs; a colour that already passes keeps its exact value.
+ * reads better on the colour (`readableOn`). Where even that ink misses 4.5:1 on the colour itself, the fill moves
+ * away from the ink only as far as 4.5:1 needs; a colour that already passes keeps its exact value. In the palette two
+ * move: purple #8b5cf6 (4.23:1) to #8558ec, and indigo #6366f1 (4.47:1) to #6164ec (re-review of b4f9888b).
  * The second stop is 12 % further from the ink, so it can only gain contrast.
  */
 export function memberBookedFill(colour: string): { from: string; to: string; ink: string } {

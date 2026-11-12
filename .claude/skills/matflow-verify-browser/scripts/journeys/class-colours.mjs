@@ -89,8 +89,9 @@ try {
   if (sunrise.status !== 201) throw new Error(`create returned ${sunrise.status}`);
   const classId = sunrise.body.id;
   // Saturated colours booked too: blue (the default) and red read 3.62 and 3.50 on the dark shell when the block's
-  // second stop let the shell through; purple misses 4.5:1 with either ink on its own colour (review of 12 Nov 2026).
-  const BOOKED_EXTRA = [["#3b82f6", `Booked blue ${TAG}`, "21:00", "21:50"], ["#ef4444", `Booked red ${TAG}`, "22:00", "22:50"], ["#8b5cf6", `Booked purple ${TAG}`, "20:00", "20:50"]];
+  // second stop let the shell through; purple and indigo miss 4.5:1 with either ink on their own colour (review of 12 Nov
+  // 2026). Run before 19:00 London time, or the earliest of these has ended and is measured greyed (saturate filter).
+  const BOOKED_EXTRA = [["#3b82f6", `Booked blue ${TAG}`, "21:00", "21:50"], ["#ef4444", `Booked red ${TAG}`, "22:00", "22:50"], ["#8b5cf6", `Booked purple ${TAG}`, "20:00", "20:50"], ["#6366f1", `Booked indigo ${TAG}`, "19:00", "19:50"]];
   const extraIds = [];
   for (const [colour, name, start, end] of BOOKED_EXTRA) {
     const r = await create(name, colour, start, end);
@@ -250,7 +251,7 @@ try {
     mpage.on("pageerror", (e) => errors.push(e.message));
     await memberSignIn(mpage, club, member);
     await mpage.goto("/member/schedule");
-    await section(id, `member schedule, ${label}: booked light-yellow, blue, red and purple text 4.5:1 against every gradient stop; its selection ring 3:1 against the gap beside it and the shell; a live pale block's edge 3:1`, async () => {
+    await section(id, `member schedule, ${label}: booked light-yellow, blue, red, purple and indigo text 4.5:1 against every gradient stop; its selection ring 3:1 against the gap beside it and the shell; a live pale block's edge 3:1`, async () => {
       const block = mpage.locator("button[data-booked]").filter({ hasText: SUNRISE }).first();
       await expect(block).toBeVisible({ timeout: 30_000 });
       // The shell renders dark first and takes the club's background when /api/me/gym answers (app/member/layout.tsx):
