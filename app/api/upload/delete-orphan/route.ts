@@ -20,7 +20,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isTenantBlobUrl } from "@/lib/blob-url";
+import { isCanonicalBlobUrl, isVercelBlobUrl, isTenantBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { withTenantContext } from "@/lib/prisma-tenant";
 
 export const runtime = "nodejs";
@@ -59,7 +59,23 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+  // Round 5 (11 Nov 2026): a member (not staff) may only clear an unsaved
+  // upload of their own (lib/blob-url isMemberBlobUrl), never another club
+  // file that happens to be unreferenced (an import hand-off CSV, a chunk).
+  const STAFF = ["owner", "manager", "coach", "admin"];
+  if (!STAFF.includes(session.user.role)) {
+    const memberId = (session.user as { memberId?: string }).memberId;
+    if (!memberId || !isMemberBlobUrl(parsed.data.url, session.user.tenantId, memberId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
   const { url } = parsed.data;
+  // Fix re-review 4, A2: the "still referenced?" checks below compare stored URLs as strings, so a variant spelling of
+  // a stored file ("?v=1", "#x", an upper-case host) would read as unreferenced and be deleted. Every caller, staff
+  // included, may name only the one stored spelling (lib/blob-url.ts isCanonicalBlobUrl).
+  if (!isCanonicalBlobUrl(url)) {
+    return NextResponse.json({ error: "That is not the stored address of an uploaded file" }, { status: 403 });
+  }
 
   // Defence in depth: the upload route stores at `tenants/<tenantId>/<id>.<ext>`.
   // Refuse cleanup of blobs that don't carry the caller's tenant prefix in

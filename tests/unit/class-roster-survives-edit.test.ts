@@ -41,6 +41,8 @@ const mockPrisma = {
   ),
   classMembershipTier: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn(), createMany: vi.fn() },
   membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
+  // Club-managed categories: the timetable page reads the club's categories for the class form.
+  classCategory: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

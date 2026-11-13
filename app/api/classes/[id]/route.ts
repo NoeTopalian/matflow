@@ -6,7 +6,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
 import { scheduleSchema, allowedTierIdsSchema, matNameSchema } from "@/lib/schemas/class";
-import { classCategorySchema } from "@/lib/class-category";
+import { classCategoryIdSchema, classCategorySchema } from "@/lib/class-category";
+import { CATEGORY_ERRORS, CATEGORY_REF_SELECT, ClassCategoryRefusal, categoryFields, categoryIdToWrite, classCategoryDbError } from "@/lib/class-category-store";
 import { rulesAfterEdit, type ClassAccessRules, type RestrictionPreview } from "@/lib/booking-eligibility";
 import {
   newlyRefusedByTrigger,
@@ -73,9 +74,17 @@ const updateSchema = z.object({
   isActive: z.boolean().optional(),
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts).
   isKids: z.boolean().optional(),
-  // T6c: omitted = unchanged; null = uncategorised; a key outside
-  // lib/class-category.ts is a 400 and nothing is written.
+  // The club's category (a ClassCategory id): omitted = unchanged; null =
+  // uncategorised. Another club's id or an unknown one is a 400; choosing an
+  // archived category is a 409; a class may keep the archived one it has.
+  categoryId: classCategoryIdSchema.optional(),
+  // LEGACY: an old key from a browser holding a page from before club-managed
+  // categories, translated to the club's category with that key. A key outside
+  // lib/class-category.ts CLASS_CATEGORIES is a 400. Not with `categoryId`.
   category: classCategorySchema.optional(),
+  // Release B: the category the form saw on the class (null = uncategorised), sent with an explicit category change.
+  // A class whose category has changed since is a 409 (lib/class-category-store.ts categoryIdToWrite).
+  categoryBaseId: classCategoryIdSchema.optional(),
   // Task 5: optional roster array; mutually exclusive with rank fields at the API layer.
   roster: z.array(rosterEntrySchema).optional(),
   // Task 3c. TimetableManager has been sending this since it was written and
@@ -398,12 +407,13 @@ export async function GET(_req: Request, { params }: Params) {
           maxRank: true,
           coachUser: { select: { id: true, name: true } },
           allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
+          categoryRef: { select: CATEGORY_REF_SELECT },
         },
       }),
     );
     if (!cls) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const { allowedTiers, ...rest } = cls;
-    return NextResponse.json({ ...rest, allowedTiers: allowedTiers.map((t) => t.tier) });
+    const { allowedTiers, categoryRef, ...rest } = cls;
+    return NextResponse.json({ ...rest, ...categoryFields(categoryRef), allowedTiers: allowedTiers.map((t) => t.tier) });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
@@ -434,6 +444,10 @@ export async function PATCH(req: Request, { params }: Params) {
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+  }
+  // A category by id and an old key together: refused before anything is read.
+  if (parsed.data.categoryId !== undefined && parsed.data.category !== undefined) {
+    return NextResponse.json({ error: CATEGORY_ERRORS.both, reason: "category" }, { status: 400 });
   }
 
   // TRUTHY, not merely present. This used to be `!== undefined`, which made
@@ -580,11 +594,19 @@ export async function PATCH(req: Request, { params }: Params) {
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
       const owned = await tx.$queryRaw<{
-        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null;
+        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null;
       }[]>`
-        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
+      // The category, judged under the Class lock against the class's category
+      // now: keeping an archived category is allowed, choosing one is not. The
+      // trigger repeats both checks in the write itself (and holds the category
+      // row FOR SHARE), so a category archived after this read still refuses.
+      const categoryIdWrite = await categoryIdToWrite(
+        tx, tenantId, { categoryId: parsed.data.categoryId, category: parsed.data.category, categoryBaseId: parsed.data.categoryBaseId },
+        owned[0].categoryId ?? null,
+      );
       // The write-through rule (lib/mats.ts). Naming a mat: read its name now,
       // under the mats lock, before any other write; a mat that is not this
       // club's (or went since the pre-flight) refuses the whole edit. Not
@@ -770,7 +792,8 @@ export async function PATCH(req: Request, { params }: Params) {
         // archived class archived.
         deletedAt: parsed.data.isActive === true ? null : undefined,
         isKids: parsed.data.isKids,
-        category: parsed.data.category,
+        // The reference only; the trigger writes the old key to match.
+        categoryId: categoryIdWrite,
         locationId: parsed.data.locationId,
       };
       // locationId, requiredRankId, maxRankId and coachUserId were proved to be
@@ -812,12 +835,14 @@ export async function PATCH(req: Request, { params }: Params) {
           // kept the row's old roster, so a just-saved squad class reopened
           // showing no squad until the next page load.
           rosterMembers: { where: { member: { archivedAt: null } }, select: { memberId: true, member: { select: { name: true } } } },
+          categoryRef: { select: CATEGORY_REF_SELECT },
         },
       });
       if (!found) return null;
-      const { allowedTiers, rosterMembers, ...rest } = found;
+      const { allowedTiers, rosterMembers, categoryRef, ...rest } = found;
       const cls = {
         ...rest,
+        ...categoryFields(categoryRef),
         allowedTiers: (allowedTiers ?? []).map((t) => t.tier),
         roster: (rosterMembers ?? []).map((r) => ({ memberId: r.memberId, name: r.member?.name })),
       };
@@ -828,50 +853,66 @@ export async function PATCH(req: Request, { params }: Params) {
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    await logAudit({
-      tenantId,
-      userId: session.user.id,
-      action: "class.updated",
-      entityType: "Class",
-      entityId: id,
-      metadata: {
-        // `baseScheduleIds` is the client's freshness check, not a field of the class.
-        // A Location by name (`matName`) is recorded as the columns it sets.
-        fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" ? [] : k === "matName" ? ["matId", "location"] : [k])))],
-        // D2: no booking is cancelled by an edit any more. The members it newly
-        // turns away (bookings kept) are on the durable
-        // class.bookings.kept_ineligible rows written inside the transaction;
-        // repeated here, by trigger, so this row reads whole on its own.
-        ...(Object.keys(updated.keptBookings).length > 0 ? { bookingsKeptIneligible: updated.keptBookings } : {}),
-        // T6a: the membership list before and after. The class.updated undo
-        // stays scalar: tier ids are recorded, not undone.
-        ...(wantsTiers ? { allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter } } : {}),
-        // Same rule for the timetable cascade: the ids of every upcoming
-        // session the schedule edit deleted, not just how many (RULES §5 — a
-        // count cannot restore anything).
-        ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
-        ...(updated.sessionsCreatedOnResume > 0 ? { sessionsCreatedOnResume: updated.sessionsCreatedOnResume } : {}),
-        ...(updated.lifecycleChange ? { lifecycle: updated.lifecycleChange } : {}),
-        // `isActive` and `deletedAt` before and after (T6b): undoing a Resume
-        // or Restore puts the class back exactly as paused or archived.
-        ...(() => {
-          const { before: b, after: a, changed } = snapshotDiff(
-            updated.before as unknown as Record<string, unknown> | null,
-            updated.cls as unknown as Record<string, unknown>,
-            ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "matId", "duration", "maxCapacity", "isKids", "category", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
-          );
-          // A pre-T6b archive carried no deletedAt; record the archive date
-          // it is read by, so undoing this Restore puts it back as archived
-          // (with deletedAt set) rather than as paused.
-          if (updated.legacyArchivedOn && changed.includes("isActive")) {
-            b.deletedAt = updated.legacyArchivedOn.toISOString();
-            a.deletedAt = null;
-          }
-          return changed.length > 0 ? { before: b, after: a } : {};
-        })(),
-      },
-      req,
-    });
+    // Release B's observation signal (readiness §3.2): a category change from a page older than Release B (an old key,
+    // or a Release A page's `categoryId`, either way without `categoryBaseId`) marks its row, written awaited before
+    // the answer rather than best-effort. It is lost only if that audit write itself fails, which is logged; it never
+    // turns the committed save into an error.
+    const fromOldPage = (parsed.data.category !== undefined || parsed.data.categoryId !== undefined) && parsed.data.categoryBaseId === undefined;
+    try {
+      await logAudit({
+        ...(fromOldPage ? { durable: true } : {}),
+        tenantId,
+        userId: session.user.id,
+        action: "class.updated",
+        entityType: "Class",
+        entityId: id,
+        metadata: {
+          // `baseScheduleIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
+          // A Location by name (`matName`) is recorded as the columns it sets.
+          // An old category key is recorded as the reference it was written as.
+          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
+          // Release B's activation signal, durable (runtime logs are not kept long enough to cover the observation
+          // window): this save came from a page that knows only the old category keys. This release's form sends
+          // `categoryBaseId` with any key it sends on an edit, so only an old page matches.
+          ...(fromOldPage ? { categoryOldKey: true } : {}),
+          // D2: no booking is cancelled by an edit any more. The members it newly
+          // turns away (bookings kept) are on the durable
+          // class.bookings.kept_ineligible rows written inside the transaction;
+          // repeated here, by trigger, so this row reads whole on its own.
+          ...(Object.keys(updated.keptBookings).length > 0 ? { bookingsKeptIneligible: updated.keptBookings } : {}),
+          // T6a: the membership list before and after. The class.updated undo
+          // stays scalar: tier ids are recorded, not undone.
+          ...(wantsTiers ? { allowedTierIds: { before: updated.tiersBefore, after: updated.tiersAfter } } : {}),
+          // Same rule for the timetable cascade: the ids of every upcoming
+          // session the schedule edit deleted, not just how many (RULES §5 — a
+          // count cannot restore anything).
+          ...(updated.scheduleChange ? { scheduleChange: updated.scheduleChange } : {}),
+          ...(updated.sessionsCreatedOnResume > 0 ? { sessionsCreatedOnResume: updated.sessionsCreatedOnResume } : {}),
+          ...(updated.lifecycleChange ? { lifecycle: updated.lifecycleChange } : {}),
+          // `isActive` and `deletedAt` before and after (T6b): undoing a Resume
+          // or Restore puts the class back exactly as paused or archived.
+          ...(() => {
+            const { before: b, after: a, changed } = snapshotDiff(
+              updated.before as unknown as Record<string, unknown> | null,
+              updated.cls as unknown as Record<string, unknown>,
+              // `categoryId`, not the old `category` key: undo restores the reference (lib/undo-registry.ts).
+              ["name", "description", "instructorId", "coachName", "coachUserId", "location", "locationId", "matId", "duration", "maxCapacity", "isKids", "categoryId", "requiredRankId", "maxRankId", "color", "isActive", "deletedAt"],
+            );
+            // A pre-T6b archive carried no deletedAt; record the archive date
+            // it is read by, so undoing this Restore puts it back as archived
+            // (with deletedAt set) rather than as paused.
+            if (updated.legacyArchivedOn && changed.includes("isActive")) {
+              b.deletedAt = updated.legacyArchivedOn.toISOString();
+              a.deletedAt = null;
+            }
+            return changed.length > 0 ? { before: b, after: a } : {};
+          })(),
+        },
+        req,
+      });
+    } catch (e) {
+      console.error("[class-category] old-page audit row not written", e instanceof Error ? e.message : e);
+    }
 
     // `scheduleChange` rides alongside the class so the client can say what
     // actually happened instead of an unconditional "Class updated".
@@ -886,6 +927,12 @@ export async function PATCH(req: Request, { params }: Params) {
       locationAdded: updated.locationAdded ? { ...updated.locationAdded, savedAt: new Date().toISOString() } : null,
     });
   } catch (e) {
+    // A refused category rolls the whole edit back, like a refused tier list.
+    if (e instanceof ClassCategoryRefusal) {
+      return NextResponse.json({ error: e.message, reason: "category" }, { status: e.status });
+    }
+    const categoryRefused = classCategoryDbError(e);
+    if (categoryRefused) return NextResponse.json({ error: categoryRefused.error, reason: "category" }, { status: categoryRefused.status });
     // Thrown, not returned, so the transaction rolls back: no roster, tier or
     // booking change survives a refused tier list.
     if (e instanceof TierRefError) {

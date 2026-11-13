@@ -26,9 +26,10 @@ import { MoreChip, MoreRow, WeekChip } from "@/components/schedule/WeekChip";
 import { buildTimetableGrid } from "@/lib/timetable-grid";
 import type { ClassRow, CoachUserOption, MatOption, TierOption } from "@/app/dashboard/timetable/page";
 import { MatsSheet } from "@/components/dashboard/MatsSheet";
+import { CategoriesSheet } from "@/components/dashboard/CategoriesSheet";
 import { effectiveLayout, matsInUse, type TimetableLayout } from "@/lib/timetable-layout";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, classCategoryTag } from "@/lib/class-category";
+import { CLASS_CATEGORIES, CLASS_CATEGORY_LABELS, categoryTag, type ClassCategoryOption } from "@/lib/class-category";
 import type { RestrictionPreview } from "@/lib/booking-eligibility";
 import { RestrictionPreviewBody, previewHasRefusals } from "@/components/dashboard/RestrictionPreview";
 
@@ -49,12 +50,16 @@ interface Props {
   coachUsers: CoachUserOption[];
   /** T6a: every membership tier of the club, for "Who can attend". */
   membershipTiers?: TierOption[];
+  /** The club's categories for the class form: active first in the club's order, then archived. */
+  categories?: ClassCategoryOption[];
   /** The club's mats, in the club's order (the order of the columns). */
   mats?: MatOption[];
   /** How same-time classes are split, if somebody has chosen: "mat" | "time". null = nobody has. */
   storedLayout?: TimetableLayout | null;
   /** The mats could not be read: the timetable is drawn by time and says so. */
   matsLoadFailed?: boolean;
+  /** Release B: category management is switched on for this deployment (CLASS_CATEGORY_MANAGEMENT). */
+  categoryManagement?: boolean;
   /** A read-only (view) MatFlow support session: the split is shown as text and there is no Mats button (UI-RULES §7). */
   supportReadOnly?: boolean;
   /** When the server began reading this page's mats (ISO time): tells a list read after a save from one read before it. */
@@ -67,6 +72,7 @@ interface Props {
 }
 
 const NO_MATS: MatOption[] = [];
+const NO_CATEGORIES: ClassCategoryOption[] = [];
 
 /** A place typed on the club's classes that is not one of its mats yet. */
 type PlaceOption = { key: string; name: string };
@@ -415,14 +421,14 @@ function ClassCard({
             Kids
           </span>
         )}
-        {classCategoryTag(cls) && (
+        {categoryTag(cls) && (
           // T6c: what kind of class this is. Absent = uncategorised.
           <span
             className="flex items-center text-xs px-2 py-0.5 rounded-full font-medium"
             style={{ background: "var(--sf-2)", border: "1px solid var(--bd-default)", color: "var(--tx-2)" }}
             data-testid="class-card-category"
           >
-            {classCategoryTag(cls)}
+            {categoryTag(cls)}
           </span>
         )}
         {cls.allowedTiers && cls.allowedTiers.length > 0 && (
@@ -793,6 +799,7 @@ function ClassForm({
   rankSystems,
   coachUsers,
   membershipTiers = [],
+  categories = NO_CATEGORIES,
   mats = NO_MATS,
   places = NO_PLACES,
   primaryColor,
@@ -805,6 +812,8 @@ function ClassForm({
   rankSystems: RankOption[];
   coachUsers: CoachUserOption[];
   membershipTiers?: TierOption[];
+  /** The club's categories, active first in the club's order, then archived. */
+  categories?: ClassCategoryOption[];
   /** The club's mats (its saved locations), in the club's order. */
   mats?: MatOption[];
   /** Places typed on the club's classes that are not mats yet, in name order. */
@@ -885,9 +894,30 @@ function ClassForm({
   const [duration, setDuration] = useState(String(initial?.duration ?? 60));
   const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
   const [isKids, setIsKids] = useState<boolean>(initial?.isKids ?? false);
-  // T6c: "" = uncategorised (sent as null).
-  const initialCategory = initial?.category ?? "";
+  // The class's category. Values: "" uncategorised (sent as categoryId null), "id:<id>" one of the club's
+  // categories, and "key:<old key>" only when the club has no category rows yet (a club created by an older build
+  // during the changeover): the server turns the old key into the club's category with that key.
+  const ownCategory = initial?.categoryId ? categories.find((c) => c.id === initial.categoryId) ?? null : null;
+  // A new class copied from one on an archived category starts uncategorised: choosing an archived category is
+  // refused, only keeping one is allowed.
+  const initialCategory = initial?.categoryId && !(ownCategory?.archived && !initial.id) ? `id:${initial.categoryId}` : "";
   const [category, setCategory] = useState<string>(initialCategory);
+  // Offered: the club's active categories, then, on an edit, the class's own one when it is archived (it may keep
+  // it, never choose it again, so it says so) or when the list does not hold it yet (its name alone: a category the
+  // server made since this page loaded).
+  const activeCategories = categories.filter((c) => !c.archived);
+  const keepCategory = initial?.categoryId && (initial.id ? !ownCategory || ownCategory.archived : !ownCategory)
+    ? { id: initial.categoryId, name: ownCategory?.name ?? initial.categoryName ?? "Current category", archived: ownCategory?.archived === true }
+    : null;
+  function categoryFields(): Record<string, unknown> {
+    // Sent on create, and on edit only when changed, so an unrelated edit never rewrites it.
+    if (initial?.id && category === initialCategory) return {};
+    // On an edit, the category this form saw on the class: the server refuses the change (409) if someone else has
+    // changed the class's category since, instead of overwriting a choice this form never showed.
+    const base = initial?.id ? { categoryBaseId: initial.categoryId ?? null } : {};
+    if (category.startsWith("key:")) return { category: category.slice(4), ...base };
+    return { categoryId: category.startsWith("id:") ? category.slice(3) : null, ...base };
+  }
   const [description, setDescription] = useState(initial?.description ?? "");
   const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
   const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
@@ -1004,9 +1034,7 @@ function ClassForm({
       duration: durationNum,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
       isKids,
-      // T6c: sent on create, and on edit only when changed, so an unrelated
-      // edit never rewrites it. "" (Uncategorised) clears it to null.
-      ...(!initial?.id || category !== initialCategory ? { category: category || null } : {}),
+      ...categoryFields(),
       description: description.trim() || null,
       requiredRankId: useRoster ? null : (requiredRankId || null),
       maxRankId: useRoster ? null : (maxRankId || null),
@@ -1147,8 +1175,14 @@ function ClassForm({
           data-testid="class-category-select"
         >
           <option value="">Uncategorised</option>
-          {CLASS_CATEGORIES.map((key) => (
-            <option key={key} value={key}>{CLASS_CATEGORY_LABELS[key]}</option>
+          {activeCategories.map((c) => (
+            <option key={c.id} value={`id:${c.id}`}>{c.name}</option>
+          ))}
+          {keepCategory && (
+            <option value={`id:${keepCategory.id}`}>{keepCategory.archived ? `${keepCategory.name} (archived)` : keepCategory.name}</option>
+          )}
+          {categories.length === 0 && CLASS_CATEGORIES.map((key) => (
+            <option key={key} value={`key:${key}`}>{CLASS_CATEGORY_LABELS[key]}</option>
           ))}
         </Select>
         <p id="class-category-hint" className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }}>
@@ -1655,8 +1689,8 @@ function ClassForm({
 const NO_CLASSES: ClassRow[] = [];
 
 export default function TimetableManager({
-  initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [],
-  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt,
+  initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [], categories = NO_CATEGORIES,
+  mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt, categoryManagement = false,
   primaryColor, role, currentUserId,
 }: Props) {
   // A class saved with a new Location adds a mat: it is used at once, before the refresh brings the server's list.
@@ -1759,6 +1793,9 @@ export default function TimetableManager({
   // The choice somebody pressed follows the server's: a refresh brings a new
   // prop, and a press shows at once and is put back if the save fails.
   const [matsOpen, setMatsOpen] = useState(false);
+  // Release B: owners and managers manage the club's categories, when switched on, and never in a support session.
+  const canManageCategories = canManage && categoryManagement && !supportReadOnly;
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [choice, setChoice] = useState<{ from: TimetableLayout | null; stored: TimetableLayout | null }>({ from: storedLayout, stored: storedLayout });
   if (choice.from !== storedLayout) setChoice({ from: storedLayout, stored: storedLayout });
   const [savingLayout, setSavingLayout] = useState(false);
@@ -2539,6 +2576,11 @@ export default function TimetableManager({
                         </Button>
                       </>
                     )}
+                    {canManageCategories && (
+                      <Button variant="secondary" size="compact" onClick={() => setCategoriesOpen(true)} data-testid="timetable-categories">
+                        Categories
+                      </Button>
+                    )}
                     <Button variant="secondary" size="compact" className="hidden md:inline-flex" data-needs-has data-testid="timetable-expand" aria-pressed={expanded} onClick={() => setExpanded((v) => !v)}>
                       {expanded ? "Shrink timetable" : "Expand timetable"}
                     </Button>
@@ -2655,7 +2697,7 @@ export default function TimetableManager({
                                   state={stateOf.get(slot.id) ?? null}
                                   duplicate={duplicates.has(slot.id)}
                                   kids={cls.isKids}
-                                  category={classCategoryTag(cls)}
+                                  category={categoryTag(cls)}
                                   canManage={canManage}
                                   onEdit={() => openEdit(cls)}
                                 />
@@ -2814,7 +2856,7 @@ export default function TimetableManager({
                               state={stateByKey.get(slot.id) ?? null}
                               duplicate={duplicates.has(slot.id)}
                               kids={cls.isKids}
-                              category={classCategoryTag(cls)}
+                              category={categoryTag(cls)}
                               canManage={canManage}
                               onEdit={() => openEdit(cls)}
                             />
@@ -2903,6 +2945,7 @@ export default function TimetableManager({
           rankSystems={rankSystems}
           coachUsers={coachUsers}
           membershipTiers={membershipTiers}
+          categories={categories}
           mats={mats}
           places={places}
           primaryColor={primaryColor}
@@ -2947,6 +2990,10 @@ export default function TimetableManager({
           </div>
         )}
       </Sheet>
+
+      {canManageCategories && (
+        <CategoriesSheet open={categoriesOpen} onClose={() => setCategoriesOpen(false)} onChanged={() => router.refresh()} />
+      )}
 
       {canSetUpMats && (
         <MatsSheet

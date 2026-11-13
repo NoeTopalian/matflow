@@ -13,6 +13,7 @@
  * header/cookie) and v1.5 (matflow_op_session HMAC cookie).
  */
 import { withRlsBypass } from "@/lib/prisma-tenant";
+import { seedClassCategories } from "@/lib/class-category-store";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -82,8 +83,9 @@ export async function POST(req: Request) {
   try {
     // Tenant creation: by definition cross-tenant — there is no current
     // tenant context until this row exists. Bypass is intentional.
-    const tenant = await withRlsBypass((tx) =>
-      tx.tenant.create({
+    // The club's eight starting class categories are made in the same transaction (lib/class-category-store.ts).
+    const tenant = await withRlsBypass(async (tx) => {
+      const created = await tx.tenant.create({
         data: {
           name: gymName,
           slug: slug.toLowerCase(),
@@ -107,8 +109,10 @@ export async function POST(req: Request) {
           },
         },
         include: { users: { select: { id: true, email: true, role: true } } },
-      }),
-    );
+      });
+      await seedClassCategories(tx, created.id);
+      return created;
+    });
 
     await logAudit({
       tenantId: tenant.id,

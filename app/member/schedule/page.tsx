@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage } from "@/lib/checkin-outcome";
-import { classCategoryTag } from "@/lib/class-category";
+import { categoryTag } from "@/lib/class-category";
 import { readableOn } from "@/lib/color";
 import { memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
@@ -48,8 +48,10 @@ type ScheduleClass = {
   isKids?: boolean;
   /** A kids class and the viewer is an adult or parent: never badged "Next". */
   kidsClassForAdult?: boolean;
-  /** T6c: the category key (lib/class-category.ts); null = uncategorised. */
+  /** The legacy key (lib/class-category.ts); only an older server sends nothing else. */
   category?: string | null;
+  /** The club's name for the class's category; null = uncategorised; absent from an older server. */
+  categoryName?: string | null;
   color?: string | null;
   dow: number; // 1=Mon…7=Sun internal convention
   classInstanceId?: string | null;
@@ -160,14 +162,14 @@ function EventSheet({
                 Kids
               </span>
             )}
-            {classCategoryTag(cls) && (
+            {categoryTag(cls) && (
               // T6c: what kind of class this is.
               <span
                 data-testid="schedule-sheet-category"
                 className="rounded-full px-2 text-[10px] font-semibold tracking-wide leading-5"
                 style={{ color: "var(--member-text-muted)", border: "1px solid var(--member-border)" }}
               >
-                {classCategoryTag(cls)}
+                {categoryTag(cls)}
               </span>
             )}
           </div>
@@ -535,7 +537,7 @@ function SessionBlock({
   const where  = matName ?? (cls.location || null);
   const large  = size === "large";
   const pill   = "inline-flex items-center rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide leading-4";
-  const category = classCategoryTag(cls);
+  const category = categoryTag(cls);
 
   return (
     <Button
@@ -848,6 +850,7 @@ export default function MemberSchedulePage() {
         isKids?: boolean;
         kidsClassForAdult?: boolean;
         category?: string | null;
+        categoryName?: string | null;
         eligibility?: "ok" | "rank_below" | "rank_above" | "roster_ok" | "tier_not_included";
         requiredRankName?: string | null; maxRankName?: string | null;
         dayOfWeek: number; classInstanceId?: string | null; cancelled?: boolean;
@@ -875,6 +878,8 @@ export default function MemberSchedulePage() {
           isKids: c.isKids === true,
           kidsClassForAdult: c.kidsClassForAdult === true,
           category: c.category ?? null,
+          // Absent (not null) from a server older than club-managed categories: categoryNameOf falls back to the key.
+          ...(c.categoryName !== undefined ? { categoryName: c.categoryName } : {}),
           color: c.color ?? null,
           // API: 0=Sun…6=Sat (JS getDay). Internal: 1=Mon…7=Sun.
           dow: c.dayOfWeek === 0 ? 7 : c.dayOfWeek,

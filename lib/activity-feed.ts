@@ -45,6 +45,7 @@ import { parseIdParam } from "@/lib/id-param";
 import { ERASED_EMAIL } from "@/lib/login-email";
 import { formatMoney } from "@/lib/payment-totals";
 import { sessionLabel } from "@/lib/session-label";
+import { classCategoryLabel } from "@/lib/class-category";
 import type { UndoDecision } from "@/lib/undo-registry";
 
 /**
@@ -318,6 +319,8 @@ export type ActivityLookups = {
   venues: Map<string, { name: string }>;
   staff: Map<string, { name: string }>;
   ranks: Map<string, { name: string }>;
+  /** Club-managed class categories, by id: a class edit's `categoryId` reads as the category's name today. */
+  categories: Map<string, { name: string }>;
 };
 
 export function emptyLookups(): ActivityLookups {
@@ -334,10 +337,11 @@ export function emptyLookups(): ActivityLookups {
     venues: new Map(),
     staff: new Map(),
     ranks: new Map(),
+    categories: new Map(),
   };
 }
 
-type RefKind = "member" | "class" | "session" | "payment" | "invoice" | "order" | "tier" | "pack" | "venue" | "staff" | "rank";
+type RefKind = "member" | "class" | "session" | "payment" | "invoice" | "order" | "tier" | "pack" | "venue" | "staff" | "rank" | "category";
 export type SubjectRefs = Record<RefKind, Set<string>>;
 
 /** What an entity row points at. `AttendanceRecord`, `ClassRoster`, `Task` and the rest name nothing linkable themselves. */
@@ -422,7 +426,8 @@ export const IGNORED_ID_KEYS = new Set([
 ]);
 
 /** Changed fields whose value is the id of a named record. */
-const ID_FIELD_KIND: Record<string, "tier" | "venue" | "staff" | "rank"> = {
+const ID_FIELD_KIND: Record<string, "tier" | "venue" | "staff" | "rank" | "category"> = {
+  categoryId: "category",
   membershipTierId: "tier",
   locationId: "venue",
   instructorId: "staff",
@@ -449,7 +454,7 @@ const SCAN_MEMBERS_RESOLVED = 5;
  * the twentieth card scanned, so they are always looked up.
  */
 export function subjectRefs(rows: FeedRow[], focusMemberId?: string | null): SubjectRefs {
-  const refs: SubjectRefs = { member: new Set(), class: new Set(), session: new Set(), payment: new Set(), invoice: new Set(), order: new Set(), tier: new Set(), pack: new Set(), venue: new Set(), staff: new Set(), rank: new Set() };
+  const refs: SubjectRefs = { member: new Set(), class: new Set(), session: new Set(), payment: new Set(), invoice: new Set(), order: new Set(), tier: new Set(), pack: new Set(), venue: new Set(), staff: new Set(), rank: new Set(), category: new Set() };
   const add = (kind: RefKind | undefined, value: unknown) => {
     const id = kind === "invoice" ? str(value) : idOf(value);
     if (kind && id) refs[kind].add(id);
@@ -473,7 +478,7 @@ export function subjectRefs(rows: FeedRow[], focusMemberId?: string | null): Sub
 /** At most this many ids of one kind are looked up for a page. */
 export const LOOKUP_CAP = 300;
 
-type LookupTx = Pick<Prisma.TransactionClient, "member" | "class" | "classInstance" | "payment" | "order" | "membershipTier" | "classPack" | "location" | "user" | "rankSystem" | "auditLog">;
+type LookupTx = Pick<Prisma.TransactionClient, "member" | "class" | "classInstance" | "payment" | "order" | "membershipTier" | "classPack" | "location" | "user" | "rankSystem" | "auditLog" | "classCategory">;
 
 /**
  * Names for everything a page of rows points at. Each lookup runs only when
@@ -542,6 +547,10 @@ export async function loadLookups(tx: LookupTx, tenantId: string, rows: FeedRow[
   if (refs.venue.size) {
     const venues = await tx.location.findMany({ where: { tenantId, id: { in: list(refs.venue) } }, select: { id: true, name: true } });
     for (const v of venues) out.venues.set(v.id, { name: v.name });
+  }
+  if (refs.category.size) {
+    const categories = await tx.classCategory.findMany({ where: { tenantId, id: { in: list(refs.category) } }, select: { id: true, name: true } });
+    for (const c of categories) out.categories.set(c.id, { name: c.name });
   }
   const unknownStaff = list(refs.staff).filter((id) => !out.staff.has(id));
   if (unknownStaff.length) {
@@ -1092,6 +1101,25 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
     }
     case "mat.reorder":
       return who ? sentence(who, " reordered the mats") : null;
+    // Class categories, Release B: recorded in Activity, no Undo (Noe, 11 Nov 2026). The name as the row recorded it.
+    case "class_category.create": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` added the category “${name}”`) : null;
+    }
+    case "class_category.rename": {
+      const from = str(record(m.before)?.name), to = str(record(m.after)?.name);
+      return who && from && to ? sentence(who, ` renamed the category “${from}” to “${to}”`) : null;
+    }
+    case "class_category.archive": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` archived the category “${name}” (its classes keep it)`) : null;
+    }
+    case "class_category.restore": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` restored the category “${name}”`) : null;
+    }
+    case "class_category.reorder":
+      return who ? sentence(who, " reordered the class categories") : null;
     case "mat.adopt": {
       const made = Array.isArray(m.mats) ? m.mats.map(record).filter((x) => x && x.created === true).map((x) => str(x?.name)).filter((x): x is string => !!x) : [];
       if (!who) return null;
@@ -1173,6 +1201,10 @@ const EXCEPTION_TEXT: Record<string, string> = {
 function display(field: string, value: unknown, r: Reader, ctx: FeedContext, currency: string): string {
   if (value == null || value === "") return "—";
   const kind = ID_FIELD_KIND[field];
+  // A category has no page to open: its name today, from this club's rows only.
+  if (kind === "category") return ctx.lookups.categories.get(String(value))?.name ?? "a removed category";
+  // An old key, on a class edit recorded before club-managed categories: the label it had.
+  if (field === "category" && typeof value === "string") return classCategoryLabel(value) ?? tidy(value, 80);
   if (kind) {
     const part = kind === "tier" ? r.tier(value) : kind === "venue" ? r.venue(value) : kind === "rank" ? r.rank(value) : r.staff(value);
     return part && isSubject(part) ? part.subject.name : "—";
@@ -1374,6 +1406,7 @@ const STAFF_ONLY_ACTIONS = new Set([
   "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
   "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",
   "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
+  "class_category.create", "class_category.rename", "class_category.archive", "class_category.restore", "class_category.reorder",
   "waiver.sign.supervised", "task.member_note.create", "task.staff_task.create",
 ]);
 

@@ -6,9 +6,10 @@
  * a single stale row rolls the whole batch back and names itself.
  */
 import type { AuditRowLike, TxLike, UndoDecision } from "@/lib/undo-registry";
-import { decideUndo, applyUndo, UndoStale } from "@/lib/undo-registry";
+import { decideUndo, applyUndo, REASON, UndoStale } from "@/lib/undo-registry";
 import { UNDO_PREFIX, classLifecycleOf } from "@/lib/audit-labels";
 import { lockClubMats } from "@/lib/mats";
+import { classCategoryDbError, CATEGORY_ERRORS } from "@/lib/class-category-store";
 
 const lifecycleOf = (row: AuditRowLike) => (row.action === "class.updated" ? classLifecycleOf(row.metadata) : null);
 
@@ -132,6 +133,10 @@ export async function executeUndo(
       await applyUndo(tx, row, { userId: actor.userId });
     } catch (e) {
       if (e instanceof UndoStale) throw new UndoBatchFailed(row, e.message);
+      // A category archived (or gone) between the undo's own check and the write: the database trigger refused it.
+      // Said as the same refusal, not a server error; the transaction is aborted either way, so nothing is applied.
+      const category = classCategoryDbError(e);
+      if (category) throw new UndoBatchFailed(row, category.error === CATEGORY_ERRORS.archived ? REASON.categoryArchived : REASON.categoryGone);
       throw e;
     }
     await tx.auditLog.create({

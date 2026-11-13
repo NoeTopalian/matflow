@@ -51,7 +51,11 @@ the check-in engine answers it as `{ kind: "error" }`).
 3. **Member rows**, `FOR NO KEY UPDATE` (check-in, undo batch, every member
    UPDATE) or `FOR UPDATE` (member deletion); several Member rows in id order.
 4. **Rows that hang off them**: the member's pack, roster rows, bookings,
-   attendance, rank rows.
+   attendance, rank rows, and (11 Nov 2026, club-managed categories) the
+   class's **ClassCategory row `FOR SHARE`**, taken by the trigger
+   `matflow_class_category_bridge` inside the Class `INSERT`/`UPDATE` that
+   names a category, so while the Class row (and in a PATCH or an undo batch,
+   Member rows) are already held.
 5. **Audit rows** (insert only; KEY SHARE on Tenant and User).
 
 A transaction may skip a level but never go back up: nothing that holds a
@@ -74,6 +78,8 @@ Locks in the order taken. "Plain reads" take no row lock.
 | Mat add, rename, remove, reorder (5 Nov 2026) | MATS advisory → Mat rows → (rename) Class `UPDATE` of every class on the mat, (remove) the foreign key's `SET NULL` on them, in no particular order → audit `INSERT` in the same transaction. Several Class rows are updated, so every other holder of several Class rows (the undo batch) takes MATS first | `app/api/mats/route.ts`, `app/api/mats/[id]/route.ts`, `app/api/mats/order/route.ts` |
 | Mats from typed places (adopt) (5 Nov 2026; locked read 7 Nov 2026) | MATS advisory → the club's typed classes on no mat `FOR NO KEY UPDATE` in id order (`lockTypedClasses`, so an edit clearing one of them is not overwritten, and no wait on a bulk ClassInstance insert's `FOR KEY SHARE`) → Mat plain reads → Mat `INSERT` → Class `UPDATE` (mat and place) for the classes whose place, as now read, matches → audit `INSERT` | `app/api/mats/adopt/route.ts`, `lib/mats-store.ts` `adoptPlaces` |
 | The same-time split (5 Nov 2026) | MATS advisory → plain reads → Tenant `UPDATE` (one column) → audit `INSERT` | `app/api/timetable/layout/route.ts` |
+| Class create or PATCH **naming a category** (11 Nov 2026) | as above; in the Class `INSERT`/`UPDATE` itself the trigger reads the category row `FOR SHARE` (level 4), and for a club with no category rows yet (an old key from an older build) inserts the eight starting rows first (`ON CONFLICT DO NOTHING`, which waits only on another inserter of the same rows) | `app/api/classes/route.ts`, `app/api/classes/[id]/route.ts`; migration `20261111120000_class_categories` |
+| Category archive or rename (Release B, not built; the rule it must keep) | ClassCategory `UPDATE` only. It waits for every open assignment of that category (their `FOR SHARE`) and they wait for it; it takes no Class or Member row before or after | — |
 | Class archive | Class `UPDATE` (one statement) | same file, DELETE |
 | Single squad removal | (D2, 24 Oct) Class `FOR UPDATE` → roster row `DELETE` → plain booking read → durable audit `INSERT`. Before: roster `DELETE` → booking `DELETE`, no Class lock | `app/api/classes/[id]/roster/[memberId]/route.ts` |
 | Squad add | roster `INSERT` (KEY SHARE Class, Member) | `app/api/classes/[id]/roster/route.ts` |
@@ -82,7 +88,7 @@ Locks in the order taken. "Plain reads" take no row lock.
 | Member PATCH (plan, status, hold, details) | LGID advisory (address change only) → Member `UPDATE` → token retirement → status event `INSERT` → audit `INSERT` (durable) | `app/api/members/[id]/route.ts` |
 | Member deletion | Member `FOR UPDATE` → imported bookings, mappings, rank history, ranks, redemptions, packs, attendance, bookings, waitlist, login events `DELETE` → Member `DELETE` (cascades: roster rows, status events) | `lib/member-delete.ts` |
 | Undo to a point (≥ 2 rows) | (5 Nov 2026, when any row touches a class) MATS advisory → Class rows `FOR NO KEY UPDATE` in id order → Member rows `FOR NO KEY UPDATE` in id order → handlers (snapshot `UPDATE`s, roster `INSERT`/`DELETE`, attendance `DELETE` with pack restore) → audit `INSERT`s | `lib/undo-batch.ts` `lockBatchRows` |
-| Undo of one row | (5 Nov 2026, when the row touches a class) MATS advisory → that handler's statements only; undoing a class edit may read a Mat and write its name as the class's place | `lib/undo-batch.ts` `executeUndo`, `lib/undo-registry.ts` |
+| Undo of one row | (5 Nov 2026, when the row touches a class) MATS advisory → that handler's statements only; undoing a class edit may read a Mat and write its name as the class's place, and (11 Nov 2026) its Class `UPDATE` of `categoryId` takes the category row `FOR SHARE` through the trigger | `lib/undo-batch.ts` `executeUndo`, `lib/undo-registry.ts` |
 | TeamUp import, create | per 25 rows: Member `INSERT`, ledger `INSERT`; job `UPDATE` | `app/api/admin/import/[id]/commit/route.ts` |
 | TeamUp status refresh | (since the 25 Oct later-upload rule) no Member `UPDATE` and no status event: the differences are listed for review → job `UPDATE` only. Before: per 25 members, Member `UPDATE` × 25 (id order from 24 Oct, file order before) → status events → job `UPDATE` | same file, `commitRefresh` |
 | Refresh rollback | ONE transaction: Member `UPDATE` for every changed member (**id order since 24 Oct**) → status events → job `UPDATE` → audit. Writes only for a refresh recorded before 25 Oct; a later refresh changed nobody, so its rollback restores nobody | `app/api/admin/import/[id]/rollback/route.ts` |
@@ -157,3 +163,13 @@ the Member lock).
 3. Keep transactions that hold Member rows short; batch bulk writers.
 4. A new door into attendance goes through `performCheckin` (or the coach
    tick's `lockedClassEligibility`), never a bare insert.
+5. (11 Nov 2026, club-managed categories) Never lock a Class or Member row
+   after a ClassCategory row. A category rename, archive, restore or reorder
+   writes ClassCategory rows only, in id order when several, and nothing else
+   in that transaction except its audit row. A transaction that assigns a class
+   to a category (which takes the category row `FOR SHARE` through the trigger)
+   must not then rename or archive that category: two such transactions would
+   deadlock on the share-to-exclusive upgrade. Moving many classes off a
+   category is a separate transaction from changing the category. Tests:
+   `tests/integration/class-categories-bridge-db.test.ts` ("archive against
+   assignment, on two connections").
