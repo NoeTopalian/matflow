@@ -17,13 +17,17 @@ const errors = [];
 // Today's slot in the club's (and this machine's) day, late enough to sit below the sticky header (as member-booking-notice).
 const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((p) => [p.type, p.value]));
 const todayMarker = new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00.000Z`);
-const START = `${String(Math.min(22, Math.max(Number(parts.hour) + 1, 10))).padStart(2, "0")}:00`;
+const startHour = Math.min(22, Math.max(Number(parts.hour) + 1, 10));
+const START = `${String(startHour).padStart(2, "0")}:00`;
+const END = `${String(startHour + 1).padStart(2, "0")}:00`;
+// The member schedule's today is the device's date: the browser runs on the London date the slot is placed on.
+const ZONE = { timezoneId: "Europe/London" };
 const NAME = "Lost Reply Mat";
 
 const member = await memberLogin(club);
 const cls = randomUUID();
 await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, $3, 60, 50)`, [cls, tenantId, NAME]);
-await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, $3, $4, $4)`, [randomUUID(), cls, todayMarker.getUTCDay(), START]);
+await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, $3, $4, $5)`, [randomUUID(), cls, todayMarker.getUTCDay(), START, END]);
 const rows = async () => Number((await q(`select count(*)::int as n from "ClassSubscription" where "memberId" = $1 and "classId" = $2`, [member.id, cls]))[0].n);
 const BOOK = (u) => new URL(u).pathname === `/api/member/class-subscriptions/${cls}`;
 
@@ -37,7 +41,7 @@ async function section(id, desc, fn) {
 
 const browser = await chromium.launch();
 try {
-  const ctx = await context(browser, "10.94.7.1");
+  const ctx = await context(browser, "10.94.7.1", ZONE);
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
   await memberSignIn(page, club, member);
@@ -129,7 +133,7 @@ try {
   await shot(page, "member-booking-lost-reply-desktop");
 
   await section("phone", "390 x 844: a lost booking reply shows booked; no sideways scroll", async () => {
-    const mobile = await context(browser, "10.94.7.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });
+    const mobile = await context(browser, "10.94.7.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, ...ZONE, storageState: await ctx.storageState() });
     const p2 = await mobile.newPage();
     p2.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
     try {
