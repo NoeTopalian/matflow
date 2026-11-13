@@ -66,8 +66,9 @@ try {
   main = await ctx.newPage();
   main.on("pageerror", (e) => errors.push(e.message));
   await ownerSignIn(main, club);
+  // A fresh fixture has no classes, so the timetable shows its empty state (no week navigation) until they exist.
   await main.goto("/dashboard/timetable");
-  await main.getByRole("button", { name: "Next week" }).waitFor();
+  await main.waitForLoadState("load");
 
   // Through the real routes, from the signed-in page: a class on the club's day AND the browser's day at the same
   // time; Sean's Monday/Tuesday shape; an overnight session on the club's day.
@@ -92,6 +93,7 @@ try {
   if (cancel.status !== 200) throw new Error(`cancel: ${cancel.status}`);
 
   await main.reload();
+  await main.getByRole("button", { name: "Next week" }).waitFor();
   const grid = main.getByTestId("week-grid");
   const todayHead = () => grid.locator('[aria-label$=", today"], [aria-label*=", today,"]');
 
