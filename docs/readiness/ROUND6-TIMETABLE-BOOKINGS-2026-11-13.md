@@ -8,7 +8,7 @@ deployed. Brief: the programme brief's Round 6 ("Sean's missing class"; "Preserv
 | | State |
 |---|---|
 | Implemented | yes, local commits on `programme/rounds` (below) |
-| Independently reviewed | merge resolutions: APPROVE WITH NITS; Round 6 commits: APPROVE WITH NITS, findings fixed (below) |
+| Independently reviewed | merge resolutions: APPROVE WITH NITS; Round 6 commits: APPROVE WITH NITS, re-review of the follow-up: APPROVE WITH NITS. Findings fixed or accepted (Review follow-up, below) |
 | Tested locally | see Verification |
 | Pushed / merged / deployed | no |
 | Activated / configured for Sean | not applicable; nothing here touches category activation or Sean's records |
@@ -72,7 +72,7 @@ that class's active timetable slots and lifecycle, and whether "My classes" was 
 | Selected week | R6-1 |
 | Filters | "My classes" persists per browser and is shown on screen; not a defect |
 | Multi-day vs separate classes | covered by #59 and journeys |
-| Effective dates | neither view hides a slot by its dates; no in-app path writes an end date |
+| Effective dates | neither view hides a slot by its dates; no screen sends an end date (the class APIs accept `schedules[].endDate`) |
 | Cancellations | never hide a class; today's now lands on the club's day (R6-1) |
 | Paused / archived | covered by `classes-lifecycle` |
 | Overnight | one rule shared with the door; on its start day |
@@ -117,6 +117,48 @@ The timetable page adds one small tenant read inside its existing parallel reads
 only when a booking's outcome is unknown. Existing class-save round trips are recorded in the programme's Round 8
 backlog. Timings on the test branch are not production timings.
 
+## Review follow-up
+
+The independent review of the Round 6 commits found one MEDIUM: after a lost reply the re-read replaced the whole set
+of booked classes, so another class's booking still in flight was shown as not booked. Fixed in `1ba90574` (this class
+only), with a unit case that fails on `4c43459d`; so is the case where a reply never came and the re-read showed
+nothing (now "couldn't confirm", since the request may still land). Accepted and not changed:
+- with no reply and no re-read either, the button returns to its last known state (UI-RULES §7) under a "couldn't
+  confirm … reload" message;
+- a booking recovered by the re-read shows no allowance notice (R6-2 limitation);
+- the timetable page's zone read is one more small read beside the seven it already runs in parallel against a pool
+  of five per instance (recorded in the Round 8 backlog);
+- an overnight session is not shown live after the club's midnight (R6-1 limitation);
+- two quick taps on the same class while its first request hangs can leave the button showing the opposite of the
+  server until reload (no in-flight guard on the button; existed before Round 6). Recorded for the UI round.
+
 ## Verification
 
-Recorded against the final application-code head in the commit that follows this document.
+All on `programme/rounds`. Application code is final at `1ba90574`; later commits change tests, journeys and
+documentation only (`64e1269c`'s DB test file, `824b93ba` two unit mocks, `0665ab5d`/`67934ed7`/`a9cd5b9c` journeys).
+
+| Check | Commit | Result |
+|---|---|---|
+| Type check | `f18df70e` | 0 errors |
+| Lint (eslint + UI-RULES ratchet) | `f18df70e` | passed, ratchet at or below baseline |
+| Full unit suite | `f18df70e` | **3 failed** in 2 files: page mocks without `tenant` (cause: R6-1 adds the tenant read). Fixed in `824b93ba` |
+| Full unit suite | `824b93ba` | 9,673 passed, 0 failed, 1,053 skipped (database files without a URL), 3 todo |
+| Production build | `824b93ba`, `0665ab5d`, `67934ed7`, `a9cd5b9c` | clean, each a build of that commit |
+| Database suites, `neondb_owner` and `matflow_app` | `f18df70e` (integration files identical at the final head) | round6-bookings-checkin 6/6, round4-class-edits 13/13, class-categories-b-stale-editors 13/13, booking-preservation 8/8, sec-pre-resend-checkin-doors 27/27, each under both roles |
+| Journeys (`CLASS_CATEGORY_MANAGEMENT=on`) | `824b93ba` | timetable-sessions 7/0, timetable-multiday 11/0, timetable-lost-update 6/0, classes-lifecycle 56/0, class-colours 13/0, class-categories-b 16/0, member-booking-notice 8/0 |
+| Journey member-booking-lost-reply | `824b93ba` | **5/2 failed**: fixed 3 s waits read the screen before the page's re-read had returned. Journey fixed in `0665ab5d` |
+| Journey member-booking-lost-reply | `0665ab5d` | 7/0; every re-read answered 200 |
+| Journey timetable-club-zone | `824b93ba`, `0665ab5d`, `67934ed7` | **failed**: a fixture field name, then waiting for week navigation before any class existed, then checking the Cancelled chip before the page's today read had returned. Journey fixed each time |
+| Journey timetable-club-zone | `a9cd5b9c` | 6/0, Bali browser, club in Pago Pago (club Thursday 12, browser Friday 13): Today marker, week, cancellation on the club's day, Monday/Tuesday and overnight placement, keyboard week navigation, phone, no hydration error. The page's `/api/coach/today` took 16 s on the test branch from Bali (not a production timing) |
+
+A first journey run on `824b93ba` was refused by the harness because the unit suite's processes were running; it was
+re-run afterwards, not overridden.
+
+Behavioural checks against the defect restored:
+- unfixed timetable: 4 of 5 component cases fail;
+- unfixed member schedule: 3 of 4 lost-reply cases fail; `4c43459d`'s page: 2 of the 6 later cases fail (also
+  reproduced by the reviewer);
+- route audit filter reverted: `round4-class-edits-db`'s new case fails with `['baseRosterIds', 'maxCapacity']`
+  (owner role, 13 Nov);
+- booking route without `FOR UPDATE`: the last-place case fails with both members booked (`[201, 201]`, owner role,
+  13 Nov; the route was restored from git).
