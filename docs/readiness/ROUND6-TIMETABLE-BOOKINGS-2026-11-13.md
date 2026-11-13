@@ -132,6 +132,44 @@ nothing (now "couldn't confirm", since the request may still land). Accepted and
 - two quick taps on the same class while its first request hangs can leave the button showing the opposite of the
   server until reload (no in-flight guard on the button; existed before Round 6). Recorded for the UI round.
 
+## Close-out (13 Nov 2026, after the owner's review instruction)
+
+### Deferrals resolved
+
+| Item | Severity | User impact | Disposition | Destination |
+|---|---|---|---|---|
+| Member home check-in on the phone's date | **High (behavioural)** | The member home (where members check themselves in) asked for sessions on the UTC date and listed the device's weekday. Where those differ from the club's day (a club east of UTC every morning before UTC midnight; London 00:00–01:00 in summer) a self check-in went to another date's session and the door refused it, or the app wrongly said the session "may have been cancelled". No wrong attendance could be written: the door judges its own window. | **Fixed** `679dd9a5`: the home read pairs sessions with the club's today and returns it; the page lists that weekday. Reproduced first (real route, both roles; page test) | done |
+| Member schedule page on the phone's date | Low (presentation) | The schedule page's Today marker, Live/Next and the day's Cancelled flag follow the phone. Bookings there are standing per class, and its session id is not used for any action, so no one can book or check in to the wrong session from it. | Deferred | Round 11 (visual quality) |
+| Overnight session after the club's midnight | Medium (behavioural, narrow) | The door admits a session past midnight (its window runs to the end plus the grace), but after the club's midnight the member home lists only the new day, so a member arriving late to a running overnight session cannot check in from the app; the desk, coach register and scanner can. The staff grid also stops showing it live (presentation). | **Explicit blocker, not fixed**: listing the previous day's still-open sessions on the member home is a change to what "today's classes" means to a member, so it needs the owner's choice of wording and placement. No eligibility or window rule changes either way. | Owner choice, then Round 11 |
+| Two quick taps on one booking button | Medium (behavioural) | A second tap while the first request or its re-read was out could, with the lost-reply recovery, leave the button showing the opposite of the server once both settled. | **Fixed** `bf1cdd78`: one request per class at a time (button disabled and busy until it settles). Fails on the previous page | done |
+| Recovered booking without its allowance notice | Low (information) | After a lost reply, a booking found by the re-read showed no "period already used" notice. | **Fixed** `bf1cdd78`: a read-only `GET` on the booking route returns the same notice through the same code (`bookingAllowance`, `allowanceBookingNotice`); no rule changed. Both database roles | done |
+| No Reload button on a category refusal | Low (usability) | The refusal says "Reload the page"; an installed app has no reload control, so recovery meant closing the app. | **Fixed** `4d0902f0` (one condition). | done |
+
+### Merge-review findings, by name
+
+1. **Audit fields listed `baseRosterIds`** (Round 4 origin): fixed `0bb9fd83`.
+2. **No test for one save with `expected` and `categoryBaseId`**: test added `0bb9fd83`.
+3. **No Reload button on a category 409**: fixed `4d0902f0` (above).
+4. **Settings logo ownership checked before the write lock** (`app/api/settings/route.ts`): non-blocking. The race needs a
+   save that re-sends the stored logo without `expected.logoUrl` while another save changes it; the app's settings form
+   sends only changed fields, each with its `expected` value, so only a hand-made owner request can do it, and then it
+   can only re-write a logo the club already owns. Recorded for Round 9 hardening.
+5. **Class field list written in two places** (`CLASS_PRECONDITION_FIELDS` in the route, `CLASS_EDIT_FIELDS` in the
+   form): non-blocking. Both lists are equal today and the server refuses an `expected` for any field outside its own
+   list (400), so drift fails loudly rather than silently. Recorded as maintenance.
+
+### Journeys (all fixtures torn down: nothing left behind in any run)
+
+| Journey | Tested commit | Result |
+|---|---|---|
+| timetable-sessions, timetable-multiday, timetable-lost-update, classes-lifecycle, class-colours, class-categories-b, member-booking-notice | `824b93ba` | 7/0, 11/0, 6/0, 56/0, 13/0, 16/0, 8/0 |
+| member-booking-lost-reply | `824b93ba` (failed 5/2, journey waits), `0665ab5d` | 7/0 |
+| timetable-club-zone | `824b93ba`, `0665ab5d`, `67934ed7` (journey faults), `a9cd5b9c` | 6/0 |
+
+Equivalence: application code is identical at `1ba90574`, `824b93ba`, `0665ab5d`, `67934ed7` and `a9cd5b9c` (the
+commits between them change tests, journeys and documentation only). The close-out commits change application code,
+so the affected journeys and gates are re-run on the close-out head (below).
+
 ## Verification
 
 All on `programme/rounds`. Application code is final at `1ba90574`; later commits change tests, journeys and
