@@ -1101,6 +1101,25 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
     }
     case "mat.reorder":
       return who ? sentence(who, " reordered the mats") : null;
+    // Class categories, Release B: recorded in Activity, no Undo (Noe, 11 Nov 2026). The name as the row recorded it.
+    case "class_category.create": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` added the category “${name}”`) : null;
+    }
+    case "class_category.rename": {
+      const from = str(record(m.before)?.name), to = str(record(m.after)?.name);
+      return who && from && to ? sentence(who, ` renamed the category “${from}” to “${to}”`) : null;
+    }
+    case "class_category.archive": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` archived the category “${name}” (its classes keep it)`) : null;
+    }
+    case "class_category.restore": {
+      const name = str(m.name);
+      return who && name ? sentence(who, ` restored the category “${name}”`) : null;
+    }
+    case "class_category.reorder":
+      return who ? sentence(who, " reordered the class categories") : null;
     case "mat.adopt": {
       const made = Array.isArray(m.mats) ? m.mats.map(record).filter((x) => x && x.created === true).map((x) => str(x?.name)).filter((x): x is string => !!x) : [];
       if (!who) return null;
@@ -1387,6 +1406,7 @@ const STAFF_ONLY_ACTIONS = new Set([
   "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
   "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",
   "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
+  "class_category.create", "class_category.rename", "class_category.archive", "class_category.restore", "class_category.reorder",
   "waiver.sign.supervised", "task.member_note.create", "task.staff_task.create",
 ]);
 

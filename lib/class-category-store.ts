@@ -34,6 +34,48 @@ export async function seedClassCategories(tx: Tx, tenantId: string): Promise<voi
   await tx.$executeRaw`SELECT matflow_seed_class_categories(${tenantId})`;
 }
 
+/**
+ * Release B, the activation switch: category management (create, rename, reorder, archive, restore) is offered
+ * and accepted only when CLASS_CATEGORY_MANAGEMENT is "on" in this deployment's environment. Off by default.
+ * Noe sets it, in production, once the conditions in docs/readiness/CLASS-CATEGORIES-RELEASE-B-2026-11-12.md hold.
+ */
+export function categoryManagementEnabled(): boolean {
+  return process.env.CLASS_CATEGORY_MANAGEMENT === "on";
+}
+
+/** A club's categories, at most. Sean's club needs six; eight start every club. */
+export const CATEGORY_LIMIT = 40;
+
+/** The namespace of the one lock per club that makes category creates and reorders serial (key 2: the club). */
+export const CATEGORIES_LOCK_NS = 0x43415447; // "CATG"
+
+/**
+ * Category creates and reorders run one at a time per club. The lock holds no row, so it sits outside the row
+ * lock order (docs/design/LOCK-ORDER-2026-10-24.md); after it a category write touches ClassCategory rows only.
+ * Both keys are bind parameters (tests/unit/sec-c-static-guards.test.ts).
+ */
+export async function lockClubCategories(tx: Tx, tenantId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${CATEGORIES_LOCK_NS}::int4, hashtext(${tenantId}))`;
+}
+
+/** One category as the management sheet needs it: its version (for stale checks) and how many classes use it. */
+export type ManagedCategory = { id: string; name: string; legacyKey: string | null; archived: boolean; version: number; classCount: number };
+
+/** The club's categories for management: active first in the club's order, then archived; classes on the timetable or paused counted. */
+export async function listManagedCategories(tx: Tx, tenantId: string): Promise<ManagedCategory[]> {
+  const [rows, counts] = await Promise.all([
+    tx.classCategory.findMany({
+      where: { tenantId },
+      select: { id: true, name: true, legacyKey: true, archivedAt: true, version: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    }),
+    tx.class.groupBy({ by: ["categoryId"], where: { tenantId, categoryId: { not: null }, deletedAt: null, sourceImportJobId: null }, _count: { _all: true } }),
+  ]);
+  const countOf = new Map(counts.map((c) => [c.categoryId, c._count._all]));
+  const all = rows.map((r) => ({ id: r.id, name: r.name, legacyKey: r.legacyKey, archived: r.archivedAt !== null, version: r.version, classCount: countOf.get(r.id) ?? 0 }));
+  return [...all.filter((c) => !c.archived), ...all.filter((c) => c.archived)];
+}
+
 /** The club's categories: active first in the club's order, then archived. */
 export async function listClassCategories(tx: Tx, tenantId: string): Promise<ClassCategoryOption[]> {
   const rows = await tx.classCategory.findMany({
@@ -47,9 +89,15 @@ export async function listClassCategories(tx: Tx, tenantId: string): Promise<Cla
 
 export const CATEGORY_ERRORS = {
   both: "Send a category or an old category key, not both.",
+  // Release B: an old page (one from before club-managed categories) choosing a category for a class whose category
+  // it cannot show. Refused, never guessed: the old page would replace a category it did not know was there.
+  stale: "This page is out of date: the club's categories have changed. Reload the page and choose again.",
   notFound: "That category isn't one of this club's. Reload the page and choose again.",
   archived: "That category has been archived. Choose another, or leave the class uncategorised.",
   conflict: "That category changed while you were saving. Reload the page and try again.",
+  // Release B: this release's form says which category it saw on the class (`categoryBaseId`). Someone else changed
+  // the class's category since, so this choice was made without seeing theirs. Refused, never last-writer-wins.
+  changed: "Someone else changed this class's category since you opened it. Reload the page and choose again.",
 } as const;
 
 /** A category the write refused before touching anything; the route answers with it. */
@@ -70,13 +118,35 @@ export class ClassCategoryRefusal extends Error {
 export async function categoryIdToWrite(
   tx: Tx,
   tenantId: string,
-  input: { categoryId?: string | null; category?: string | null },
+  input: { categoryId?: string | null; category?: string | null; categoryBaseId?: string | null },
   currentCategoryId: string | null,
 ): Promise<string | null | undefined> {
   const hasId = input.categoryId !== undefined;
   const hasKey = input.category !== undefined;
   if (hasId && hasKey) throw new ClassCategoryRefusal(400, CATEGORY_ERRORS.both);
   if (!hasId && !hasKey) return undefined;
+
+  // The category this release's form saw on the class when it opened (null: uncategorised). Judged under the Class
+  // lock: if the class's category has changed since, this explicit choice was made without seeing that change.
+  // Choosing the category the class already has changes nothing, so it is never refused (review B-N1).
+  // Omitted by pages from before Release B; for them the rule below is what applies.
+  const choosesCurrent = hasId && input.categoryId === currentCategoryId;
+  if (input.categoryBaseId !== undefined && input.categoryBaseId !== currentCategoryId && !choosesCurrent) {
+    throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.changed);
+  }
+
+  // Release B's stale-client control. A page from before Release B cannot have shown a category the club made:
+  //  - a page from before club-managed categories sends only an old key, and a club-made category has none;
+  //  - a Release A page sends `categoryId` but no `categoryBaseId`, and no club-made category existed while Release A
+  //    was served (review B-2).
+  // So when the class is on a club-made category, such a write was chosen without seeing it: refused, whatever it
+  // names (or null). Only on an edit (a new class has no current category). The database repeats the old-key half
+  // for writers that bypass this route (migration 20261112120000_class_category_stale_writer).
+  if (currentCategoryId && !choosesCurrent && (hasKey || input.categoryBaseId === undefined)) {
+    const current = await tx.classCategory.findFirst({ where: { id: currentCategoryId, tenantId }, select: { legacyKey: true } });
+    // Not visible (the foreign key guarantees it exists): refused, as the trigger refuses (round 2, B-R8).
+    if (!current || current.legacyKey === null) throw new ClassCategoryRefusal(409, CATEGORY_ERRORS.stale);
+  }
 
   let row: { id: string; archivedAt: Date | null } | null;
   if (hasId) {
@@ -86,9 +156,8 @@ export async function categoryIdToWrite(
     if (input.category === null) return null;
     const key = input.category as string;
     if (!(CLASS_CATEGORIES as readonly string[]).includes(key)) throw new ClassCategoryRefusal(400, CATEGORY_ERRORS.notFound);
-    // Counted, never logged with the club or person: the activation gate for
-    // Release B is a run of days with no such line (docs/readiness/
-    // CLASS-CATEGORIES-RELEASE-A-EVIDENCE-2026-11-11.md §6).
+    // Counted, never logged with the club or person. Runtime logs are kept for one hour on the Hobby plan, so this
+    // line is not the observation signal: the durable audit marker `categoryOldKey` is (Release B readiness §3.2).
     console.info("[class-category] legacy key write");
     row = await tx.classCategory.findFirst({ where: { tenantId, legacyKey: key }, select: { id: true, archivedAt: true } });
     if (!row) {
@@ -120,6 +189,7 @@ export function classCategoryDbError(e: unknown): { status: 400 | 409; error: st
   if (text.includes("MF_CLASS_CATEGORY_ARCHIVED")) return { status: 409, error: CATEGORY_ERRORS.archived };
   if (text.includes("MF_CLASS_CATEGORY_NOT_FOUND")) return { status: 400, error: CATEGORY_ERRORS.notFound };
   if (text.includes("MF_CLASS_CATEGORY_CONFLICT")) return { status: 409, error: CATEGORY_ERRORS.conflict };
+  if (text.includes("MF_CLASS_CATEGORY_STALE_WRITER")) return { status: 409, error: CATEGORY_ERRORS.stale };
   if (text.includes("Class_categoryId_tenantId_fkey")) return { status: 400, error: CATEGORY_ERRORS.notFound };
   return null;
 }

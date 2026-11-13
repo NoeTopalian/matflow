@@ -277,15 +277,24 @@ export async function POST(req: Request) {
       const minted = rows.length > 0 ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
       return { cls, instancesCreated: minted.count, tierIdsWritten, tiersWritten, rosterWritten, locationAdded };
     });
-    await logAudit({
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "class.created",
-      entityType: "Class",
-      entityId: cls.id,
-      metadata: { name: cls.name, instancesCreated, allowedTierIds: { before: [], after: tierIdsWritten } },
-      req,
-    });
+    // `categoryOldKey`: Release B's activation signal (docs/readiness/CLASS-CATEGORIES-RELEASE-B-2026-11-12.md §3.2),
+    // set when the old key was sent: an old page, or this release's form in a club with no category rows yet. That
+    // row is written durably (awaited) rather than best-effort; a failure to write it is logged, never an error.
+    const oldKey = categoryKeyIn !== undefined;
+    try {
+      await logAudit({
+        ...(oldKey ? { durable: true } : {}),
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "class.created",
+        entityType: "Class",
+        entityId: cls.id,
+        metadata: { name: cls.name, instancesCreated, allowedTierIds: { before: [], after: tierIdsWritten }, ...(oldKey ? { categoryOldKey: true } : {}) },
+        req,
+      });
+    } catch (e) {
+      console.error("[class-category] old-page audit row not written", e instanceof Error ? e.message : e);
+    }
     const { categoryRef, ...created } = cls;
     return NextResponse.json(
       // `locationAdded`: the mat this save added from a typed Location, the club's other classes it took with it, and

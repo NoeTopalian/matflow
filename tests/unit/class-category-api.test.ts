@@ -105,11 +105,11 @@ describe("PATCH /api/classes/[id] — category", () => {
     expect(audit.metadata).toMatchObject({ fields: ["categoryId"], before: { categoryId: null }, after: { categoryId: BEGINNERS.id } });
   });
 
-  it("null clears it back to uncategorised without a lookup", async () => {
+  it("null clears it back to uncategorised without a lookup (the form sends the category it saw, Release B)", async () => {
     lockedWith(BEGINNERS.id);
     classStates({ categoryId: BEGINNERS.id }, { categoryId: null, categoryRef: null });
     const { PATCH } = await import("@/app/api/classes/[id]/route");
-    const res = await PATCH(patch({ categoryId: null }), params);
+    const res = await PATCH(patch({ categoryId: null, categoryBaseId: BEGINNERS.id }), params);
     expect(res.status).toBe(200);
     expect(mockPrisma.classCategory.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.class.updateMany.mock.calls[0][0].data.categoryId).toBeNull();

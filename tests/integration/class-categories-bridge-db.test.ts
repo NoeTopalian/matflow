@@ -263,7 +263,7 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
   });
 
   describe("a build from before this release, after the club made its own category", () => {
-    it("an old edit form's save (no category sent) keeps the club-made category; an explicit old choice replaces it", async () => {
+    it("an old edit form's save (no category sent) keeps the club-made category; an explicit old choice is refused (Release B)", async () => {
       const T = await club("old-build");
       const own = await madeByClub(T, "Beginners");
       const fund = await byKey(T, "fundamentals");
@@ -275,9 +275,12 @@ describe.skipIf(!HAS_DB)("club-managed class categories, Release A — real data
       // "Uncategorised" again is no change to the old column, so the trigger does not fire and nothing moves.
       await oldBuildWrite(T, c.id, null);
       expect(await read(T, c.id)).toMatchObject({ category: null, categoryId: own.id });
-      // A person on the old page explicitly picking "Fundamentals" is a real choice and is applied.
-      await oldBuildWrite(T, c.id, "fundamentals");
-      expect(await read(T, c.id)).toMatchObject({ category: "fundamentals", categoryId: fund.id });
+      // Release B (migration 20261112120000_class_category_stale_writer): the old page showed "Uncategorised" for a
+      // class on a club-made category, so picking "Fundamentals" there was chosen without seeing "Beginners". Refused,
+      // and nothing moves; on the current page the choice is made seeing the real category.
+      expect(await errorText(oldBuildWrite(T, c.id, "fundamentals"))).toContain("MF_CLASS_CATEGORY_STALE_WRITER");
+      expect(await read(T, c.id)).toMatchObject({ category: null, categoryId: own.id });
+      expect(fund.id).not.toBe(own.id);
     });
   });
 
