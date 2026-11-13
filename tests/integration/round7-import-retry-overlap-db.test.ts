@@ -122,6 +122,10 @@ describe.skipIf(!HAS_DB)("members import: retry, overlap and concurrent staff ed
     expect(after.manifest).toMatchObject({ resumedWith: 25, reconciles: true, created: { total: 30 } });
     // The preview said 30 new; the run made 30 (25 before the interruption, 5 now): no change is claimed.
     expect((after.manifest as { sincePreview?: unknown }).sincePreview).toEqual({ changed: false, counts: [] });
+    // Review P1: everyone this job created carries their imported membership history, including the five created on
+    // the retry (the interrupted run had written their rows with no member).
+    expect(await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId, importJobId: j.id, memberId: null } }))).toBe(0);
+    expect(await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId, importJobId: j.id } }))).toBe(30);
     // Each person's import status event is recorded once, not once per attempt.
     const events = await withRlsBypass((tx) => tx.memberStatusEvent.count({ where: { tenantId, member: { email: { startsWith: `${STAMP}-r` } } } }));
     expect(events).toBe(30);

@@ -140,6 +140,12 @@ describe.skipIf(!HAS_DB)("erasure, then the import is retried or rolled back: no
     expect(await traces(zed.name, zed.email, zed.phone)).toEqual({ members: 0, inDiagnostics: false });
     // Everyone else is there once.
     expect(await withRlsBypass((tx) => tx.member.count({ where: { tenantId, email: { startsWith: `${STAMP}-keep` } } }))).toBe(29);
+    // Review P2: the job adds up over the file as it now is (the erased person counted apart), and everyone it
+    // created has their history linked (review P1), even after the erasure renumbered the stored file's rows.
+    const after = await withRlsBypass((tx) => tx.importJob.findUniqueOrThrow({ where: { id: j.id }, select: { manifest: true, importedRows: true } }));
+    expect(after.manifest).toMatchObject({ reconciles: true, erasedSinceImport: 1, created: { total: 29 } });
+    expect(after.importedRows).toBe(29);
+    expect(await withRlsBypass((tx) => tx.importedMembership.count({ where: { tenantId, importJobId: j.id, memberId: null } }))).toBe(0);
   });
 
   it("an import, one person erased, then the import rolled back: nothing of the erased person comes back, the others are removed", async () => {
@@ -147,6 +153,12 @@ describe.skipIf(!HAS_DB)("erasure, then the import is retried or rolled back: no
     const j = await storedJob([T_HEADER, tRow(yan.name, yan.email, yan.phone), tRow("Other One", E("other1"), ""), tRow("Other Two", E("other2"), "")].join("\n"));
     expect((await post(j.id, "commit")).status).toBe(200);
     const yanRow = await withRlsBypass((tx) => tx.member.findFirstOrThrow({ where: { tenantId, email: yan.email }, select: { id: true } }));
+    // A later upload names Yan with a different phone: that job lists Yan for review, so job diagnostics now really
+    // hold Yan's name (review P4: the erasure must have something to scrub).
+    const later = await storedJob([T_HEADER, tRow(yan.name, yan.email, "07700900665")].join("\n"));
+    expect((await post(later.id, "commit")).status).toBe(200);
+    const listed = await withRlsBypass((tx) => tx.importJob.findUniqueOrThrow({ where: { id: later.id }, select: { manifest: true } }));
+    expect(JSON.stringify(listed.manifest)).toContain(yan.name);
     expect((await erase(yanRow.id)).status).toBe(200);
 
     const rb = await post(j.id, "rollback");

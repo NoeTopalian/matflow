@@ -26,6 +26,9 @@ import { type Classification, type ImportConflict } from "@/lib/importers/import
 import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
 import { blockedParents, classifyAdults, classifyChildren, fileRepeats, needsParent } from "@/lib/importers/import-match";
 import { sincePreview } from "@/lib/importers/since-preview";
+
+/** Not a member an erasure anonymised (its sentinel address; the same test as lib/member-delete.ts). */
+const NOT_ERASED = { NOT: { AND: [{ email: { startsWith: "deleted-" } }, { email: { endsWith: "@deleted.invalid" } }] } };
 import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview, type PlanDecision } from "@/lib/importers/plan-match";
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
@@ -155,7 +158,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   // A resumed run finds the people it created before it stopped; those are its
   // own work, not "already in the club" (functional review F2, 30 Sep 2026).
-  const ownRowsBeforeRun = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }));
+  // Erased members stay on their row, anonymised, with this job's id; the erasure also took them out of the stored
+  // file. They are no longer this file's people (Round 7 review P2), so they are counted apart.
+  const ownRowsBeforeRun = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id, ...NOT_ERASED } }));
   const resumed = statusSaysResumed || ownRowsBeforeRun > 0;
 
   try {
@@ -553,14 +558,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true });
         });
       }
+      // Round 7 review P1: an interrupted run wrote every ledger row, those of people it had not created yet with no
+      // member; this run's inserts of the same rows are skipped as duplicates, so those people would never get their
+      // history. Link them now: a row with no member whose source row (by content, which survives an erasure
+      // rewriting the stored file and renumbering its rows) and disposition belong to a person this job created.
+      const memberOf = new Map<string, string>();
+      for (const r of ledgerRows) {
+        const m = r.sourceKey ? byKey.get(r.sourceKey) : undefined;
+        if (m) memberOf.set(`${r.sourceFingerprint}|${r.disposition}`, m);
+      }
+      if (memberOf.size > 0) {
+        await withTenantContext(tenantId, async (tx) => {
+          await holdOffMigrations(tx);
+          const unlinked = await tx.importedMembership.findMany({
+            where: { tenantId, importJobId: job.id, memberId: null },
+            select: { id: true, sourceFingerprint: true, disposition: true },
+          });
+          const toLink = new Map<string, string[]>();
+          for (const u of unlinked) {
+            const m = memberOf.get(`${u.sourceFingerprint}|${u.disposition}`);
+            if (m) toLink.set(m, [...(toLink.get(m) ?? []), u.id]);
+          }
+          for (const [memberId, ids] of toLink) {
+            await tx.importedMembership.updateMany({ where: { tenantId, id: { in: ids }, memberId: null }, data: { memberId } });
+          }
+        });
+      }
     }
 
     const manifest = await withTenantContext(tenantId, async (tx) => {
+      // This file's people this job created; anyone erased since is counted apart (no longer in the stored file).
       const created = await tx.member.findMany({
-        where: { tenantId, importJobId: job.id },
+        where: { tenantId, importJobId: job.id, ...NOT_ERASED },
         select: { status: true, accountType: true, membershipType: true, paymentStatus: true, membershipTierId: true },
       });
-      const ledgerCount = ledgerRows ? await tx.importedMembership.count({ where: { tenantId, importJobId: job.id } }) : null;
+      const erasedSinceImport = await tx.member.count({ where: { tenantId, importJobId: job.id, NOT: NOT_ERASED } });
+      const ledgerCount = ledgerRows
+        ? await tx.importedMembership.count({ where: { tenantId, importJobId: job.id, OR: [{ memberId: null }, { member: NOT_ERASED }] } })
+        : null;
       const tally2 = (xs: string[]) => xs.reduce<Record<string, number>>((acc, k) => ((acc[k] = (acc[k] ?? 0) + 1), acc), {});
       // Same rule as the preview: live labels with no tier, history-only apart.
       const unmatched = unmatchedPlanLabels(drafts, new Set(tierByName.keys()));
@@ -648,6 +683,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           created.length + skippedExisting + commitErrors.length === drafts.length &&
           (teamup2 === null || teamup2.ledger.persisted === teamup2.ledger.rows),
         ...(ownRowsBeforeRun > 0 ? { resumedWith: ownRowsBeforeRun } : {}),
+        ...(erasedSinceImport > 0 ? { erasedSinceImport } : {}),
         ...(teamup2 ? { teamup2 } : {}),
         // Round 7: each count that changed since the preview the owner approved (MatFlow changed in between; the
         // commit re-classified everyone, so these are true now). Absent when there was no preview.
