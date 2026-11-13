@@ -57,6 +57,8 @@ type Job = {
     teamup2?: TeamUp2Facts;
     /** Owner decision 25 Oct 2026: people not written because they differ or could not be matched with certainty. */
     conflicts?: unknown[];
+    /** Round 7: counts that changed between the preview and the commit (MatFlow changed in between). */
+    sincePreview?: { changed: boolean; counts: { what: string; preview: number; now: number }[] };
   } | null;
 };
 
@@ -814,6 +816,22 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
                     ? ` ${job.manifest.created.unmatchedPlan === 1 ? "1 member was" : `${job.manifest.created.unmatchedPlan.toLocaleString("en-GB")} members were`} imported without a plan and ${job.manifest.created.unmatchedPlan === 1 ? "is" : "are"} listed in the import history below. ${PLAN_RESTRICTED_SENTENCE}`
                     : ""}
                 </p>
+              )}
+              {job.manifest?.sincePreview?.changed && (
+                // Round 7: the commit checked everyone again; say which of the preview's counts no longer held, and why.
+                <div className="mt-2 text-xs text-tx-2" role="status" data-testid="import-since-preview">
+                  <p>
+                    Some results differ from the preview, because MatFlow changed between the preview and the import
+                    (for example, someone was added or edited by hand). Everyone was checked again when importing:
+                  </p>
+                  <ul className="mt-1 list-disc pl-5">
+                    {job.manifest.sincePreview.counts.map((c) => (
+                      <li key={c.what}>
+                        {c.what[0].toUpperCase() + c.what.slice(1)}: {c.preview.toLocaleString("en-GB")} in the preview, {c.now.toLocaleString("en-GB")} now.
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               <div className="grid grid-cols-3 gap-3 mt-3">
                 <Stat label="Imported" value={job.importedRows} tone="success" />

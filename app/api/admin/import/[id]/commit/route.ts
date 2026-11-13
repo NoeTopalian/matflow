@@ -25,6 +25,7 @@ import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE
 import { type Classification, type ImportConflict } from "@/lib/importers/import-conflicts";
 import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
 import { blockedParents, classifyAdults, classifyChildren, fileRepeats, needsParent } from "@/lib/importers/import-match";
+import { sincePreview } from "@/lib/importers/since-preview";
 import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview, type PlanDecision } from "@/lib/importers/plan-match";
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
@@ -219,6 +220,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // People this run created or had created (resumed): their plan decisions are the run's to report.
     const newOrOwn = new Set<MemberDraft>();
     let repeatedInFile = 0;
+    // Round 7: the counts the preview also reported, so the manifest can say which no longer hold (sincePreview).
+    let staffLoginRefused = 0;
+    let childrenWithoutParent = 0;
 
     let imported = 0;
     let skippedExisting = 0;
@@ -399,6 +403,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
         imported += inserted;
         skippedExisting += slice.length - inserted - refused.length;
+        staffLoginRefused += refused.length;
         for (const d of refused) {
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
@@ -449,6 +454,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               continue;
             }
             if (!o.classification || !o.parentId) {
+              childrenWithoutParent += 1;
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
               continue;
             }
@@ -477,6 +483,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return { inserted: result.count, refused };
         });
         imported += inserted;
+        staffLoginRefused += refused.length;
         for (const d of refused) {
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
@@ -641,6 +648,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           (teamup2 === null || teamup2.ledger.persisted === teamup2.ledger.rows),
         ...(ownRowsBeforeRun > 0 ? { resumedWith: ownRowsBeforeRun } : {}),
         ...(teamup2 ? { teamup2 } : {}),
+        // Round 7: each count that changed since the preview the owner approved (MatFlow changed in between; the
+        // commit re-classified everyone, so these are true now). Absent when there was no preview.
+        ...(() => {
+          const s = sincePreview(job.dryRunSummary, {
+            created: created.length,
+            duplicates,
+            conflicts: conflicts.filter((c) => c.kind === "conflict").length,
+            ambiguous: conflicts.filter((c) => c.kind === "ambiguous").length,
+            repeatedInFile,
+            staffLoginRefused,
+            childrenWithoutParent,
+          });
+          return s ? { sincePreview: s } : {};
+        })(),
       };
     });
     await withTenantContext(tenantId, (tx) =>
