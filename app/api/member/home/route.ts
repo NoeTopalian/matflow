@@ -132,7 +132,7 @@ function demoHome(name?: string | null) {
   };
 }
 
-export async function GET(req: Request) {
+export async function GET() {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -141,7 +141,6 @@ export async function GET(req: Request) {
   // `?date=` is still accepted from older pages but no longer decides "today": the page sent the UTC date while
   // listing the device's weekday, so wherever those differ from the club's day a check-in reached another date's
   // session (Round 6, 13 Nov 2026). Today is the club's day, the one the door and the register use.
-  void req;
 
   const memberId = session.user.memberId as string | undefined;
 

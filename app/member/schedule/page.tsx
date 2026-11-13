@@ -259,9 +259,12 @@ function EventSheet({
           <button
             onClick={onToggle}
             // A booked member can always cancel their own booking, eligible or not (D2).
-            disabled={busy || (!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included"))}
+            // While this class's request is out the button waits but stays focusable (aria-disabled, not disabled), so a
+            // keyboard user keeps their place; the page's guard ignores a press meanwhile.
+            disabled={!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included")}
+            aria-disabled={busy || undefined}
             aria-busy={busy || undefined}
-            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed aria-disabled:opacity-60 aria-disabled:cursor-progress"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
               color: isSub ? primaryColor : "var(--tx-on-accent)",
@@ -273,7 +276,12 @@ function EventSheet({
               : <><Bell className="w-4 h-4" />Subscribe to class</>
             }
           </button>
-          {isSub && (
+          {busy && (
+            <p role="status" className="text-xs text-center" style={{ color: "var(--member-text-muted)" }}>
+              Waiting for MatFlow to answer…
+            </p>
+          )}
+          {isSub && !busy && (
             <p className="text-gray-600 text-xs text-center">
               Subscribed classes appear on your home screen
             </p>
@@ -969,6 +977,10 @@ export default function MemberSchedulePage() {
     }
   };
 
+  // A stalled request must not hold the button for ever (review, 13 Nov 2026): after this long it counts as no
+  // reply, which re-reads what the server holds and says it could not be confirmed.
+  const patience = () => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15_000) : undefined);
+
   // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
   const runToggle = async (classId: string) => {
     const id = classId; // the Class id — never the composite grid-row id
@@ -988,6 +1000,7 @@ export default function MemberSchedulePage() {
     try {
       const res = await fetch(`/api/member/class-subscriptions/${id}`, {
         method: wasSubscribed ? "DELETE" : "POST",
+        signal: patience(),
       });
       if (!res.ok && res.status >= 500) {
         unknownOutcome = "server-error";
@@ -1009,7 +1022,7 @@ export default function MemberSchedulePage() {
     }
     if (unknownOutcome) {
       // A failed re-read leaves the outcome unknown (null), said as such below.
-      const truth = await fetch("/api/member/me/subscriptions", { cache: "no-store" })
+      const truth = await fetch("/api/member/me/subscriptions", { cache: "no-store", signal: patience() })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then((d: { classIds?: unknown }) => (Array.isArray(d?.classIds) ? new Set(d.classIds.filter((c): c is string => typeof c === "string")) : null))
         .catch(() => null);
@@ -1029,7 +1042,7 @@ export default function MemberSchedulePage() {
         } else if (booked) {
           // The booking landed: the member still hears the allowance notice the lost answer carried (T7), read back
           // from the same server rule. Informational: a failed read leaves it unsaid, never an error.
-          const notice = await fetch(`/api/member/class-subscriptions/${id}`, { cache: "no-store" })
+          const notice = await fetch(`/api/member/class-subscriptions/${id}`, { cache: "no-store", signal: patience() })
             .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
             .then((d: { allowanceNotice?: unknown }) => (typeof d?.allowanceNotice === "string" && d.allowanceNotice ? d.allowanceNotice : null))
             .catch(() => null);

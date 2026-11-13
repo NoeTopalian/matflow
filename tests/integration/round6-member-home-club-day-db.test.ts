@@ -67,7 +67,9 @@ describe.skipIf(!HAS_DB)("member home: today's check-in list is the club's day",
 
   it("asked with the UTC date the page sends, the answer says the club's today and pairs today's class with the club's session", async () => {
     vi.mocked(auth).mockResolvedValue({ user: { id: `user-${memberId}`, memberId, tenantId, role: "member", primaryColor: "#3b82f6" } } as never);
-    const res = (await homeGET(new Request(`http://test/api/member/home?date=${utcDate}`))) as unknown as { status: number; json: () => Promise<Record<string, unknown>> };
+    // The page still sends `?date=` (the UTC date); the route takes no request any more, which is the point: it is ignored.
+    const asNextCallsIt = homeGET as unknown as (req: Request) => Promise<unknown>;
+    const res = (await asNextCallsIt(new Request(`http://test/api/member/home?date=${utcDate}`))) as { status: number; json: () => Promise<Record<string, unknown>> };
     expect(res.status).toBe(200);
     const body = await res.json();
     // The behaviour first: the club's today's class carries the club's session, never the UTC date's.

@@ -243,23 +243,28 @@ export async function GET(_req: Request, ctx: { params: Promise<{ classId: strin
   const { classId } = await ctx.params;
   const r = await resolveMember();
   if ("error" in r) return r.error;
-  const result = await withTenantContext(r.tenantId, async (tx) => {
-    const held = await tx.classSubscription.findFirst({
-      where: { classId, memberId: r.memberId, class: { tenantId: r.tenantId } },
-      select: { id: true },
+  try {
+    const result = await withTenantContext(r.tenantId, async (tx) => {
+      const held = await tx.classSubscription.findFirst({
+        where: { classId, memberId: r.memberId, class: { tenantId: r.tenantId } },
+        select: { id: true },
+      });
+      if (!held) return { booked: false, allowanceNotice: null as string | null };
+      // As POST: the notice is information, never a reason to fail; a fault computing it is logged.
+      let allowanceNotice: string | null = null;
+      try {
+        const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
+        allowanceNotice = allowance ? allowanceBookingNotice(allowance) : null;
+      } catch (e) {
+        console.error("[booking] allowance notice failed", e);
+      }
+      return { booked: true, allowanceNotice };
     });
-    if (!held) return { booked: false, allowanceNotice: null as string | null };
-    // As POST: the notice is information, never a reason to fail; a fault computing it is logged.
-    let allowanceNotice: string | null = null;
-    try {
-      const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
-      allowanceNotice = allowance ? allowanceBookingNotice(allowance) : null;
-    } catch (e) {
-      console.error("[booking] allowance notice failed", e);
-    }
-    return { booked: true, allowanceNotice };
-  });
-  return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
+    return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (e) {
+    console.error("[booking] read failed", e);
+    return NextResponse.json({ error: "Failed to read booking" }, { status: 500 });
+  }
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ classId: string }> }) {

@@ -183,9 +183,12 @@ describe("member schedule: a booking whose answer is lost", () => {
     await load();
     openClass(/Beginner BJJ/i);
     fireEvent.click(await screen.findByRole("button", { name: /subscribe to class/i }));
-    // The first request is out: the button waits, and a second tap (now "Unsubscribe") sends nothing.
+    // The first request is out: the button waits (still focusable, for a keyboard user), and a second tap (now
+    // "Unsubscribe") sends nothing; the guard, not a disabled attribute, refuses it.
     const waiting = await screen.findByRole("button", { name: /unsubscribe/i });
-    expect((waiting as HTMLButtonElement).disabled).toBe(true);
+    expect((waiting as HTMLButtonElement).disabled).toBe(false);
+    expect(waiting.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("status").textContent).toMatch(/waiting for matflow/i);
     fireEvent.click(waiting);
     await settle();
     expect(bookingRequests).toEqual(["POST"]);
@@ -196,6 +199,52 @@ describe("member schedule: a booking whose answer is lost", () => {
     expect(after.disabled).toBe(false);
     expect(serverBooked.has(A)).toBe(true);
     expect(bookingRequests).toEqual(["POST"]);
+  });
+
+  it("two taps in the same frame, before any re-render: one request (the guard itself, not the button's state)", async () => {
+    mode = "hang";
+    stubFetch();
+    await load();
+    openClass(/Beginner BJJ/i);
+    const btn = await screen.findByRole("button", { name: /subscribe to class/i });
+    act(() => { btn.click(); btn.click(); });
+    await settle();
+    expect(bookingRequests).toEqual(["POST"]);
+    await act(async () => { releaseA?.(); });
+    await settle();
+  });
+
+  it("a request that stalls is cut off by its time limit and handled as no reply: re-read, shown as the server holds it", async () => {
+    // The page's time limit, made controllable: the test decides when "15 seconds" are up.
+    const limits: AbortController[] = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => { const c = new AbortController(); limits.push(c); return c.signal; });
+    try {
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : String(input);
+        if (url.startsWith("/api/member/schedule")) return { ok: true, status: 200, json: async () => [row(A, "Beginner BJJ", "18:00")] } as Response;
+        if (url.startsWith("/api/member/me/subscriptions")) return { ok: true, status: 200, json: async () => ({ classIds: [...serverBooked] }) } as Response;
+        if (url.startsWith("/api/member/class-subscriptions/") && init?.method === "POST") {
+          bookingRequests.push("POST");
+          // Stalls until its signal aborts (the page's time limit).
+          await new Promise<void>((_, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("timed out", "TimeoutError"))));
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }));
+      await load();
+      openClass(/Beginner BJJ/i);
+      fireEvent.click(await screen.findByRole("button", { name: /subscribe to class/i }));
+      await settle();
+      expect(screen.getByRole("button", { name: /unsubscribe/i }).getAttribute("aria-disabled")).toBe("true");
+      // Time is up: the request is abandoned; nothing was booked, so the re-read shows not booked, said as unconfirmed.
+      await act(async () => { limits[0]?.abort(); });
+      await settle();
+      expect(bookingRequests).toEqual(["POST"]);
+      const after = screen.getByRole("button", { name: /subscribe to class/i });
+      expect(after.getAttribute("aria-disabled")).toBeNull();
+      expect(errorsShown().map((t) => t.text)).toEqual([expect.stringMatching(/couldn't confirm the booking/i)]);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("another class's booking in flight is not undone by this class's re-read (review finding, 13 Nov)", async () => {

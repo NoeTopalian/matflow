@@ -168,7 +168,7 @@ describe.skipIf(!HAS_DB)("Round 6: bookings and check-in under concurrency", () 
     const c = await newClass("Notice read", 20);
     const club = clubWallClock(new Date(), "Europe/London");
     const day = new Date(Date.UTC(club.year, club.month - 1, club.day));
-    const { limited, member, other } = await withRlsBypass(async (tx) => {
+    const { member, other } = await withRlsBypass(async (tx) => {
       const limited = (await tx.membershipTier.create({ data: { tenantId, name: "Limited W", classLimit: 1, classLimitBasis: "week", maxClassesPerWeek: 1 } })).id;
       const member = (await tx.member.create({ data: { tenantId, name: `${STAMP} limited`, email: `${STAMP}-limited@example.test`, membershipTierId: limited, waiverAccepted: true, paymentStatus: "paid" } })).id;
       const used = await tx.classInstance.create({ data: { classId: c, date: day, startTime: "00:00", endTime: "00:30" } });
@@ -176,9 +176,8 @@ describe.skipIf(!HAS_DB)("Round 6: bookings and check-in under concurrency", () 
       await tx.attendanceRecord.create({ data: { tenantId, memberId: member, classInstanceId: used.id, checkInMethod: "admin" } });
       const otherClub = (await tx.tenant.create({ data: { name: `${STAMP} other`, slug: `${STAMP}-other` } })).id;
       const other = (await tx.member.create({ data: { tenantId: otherClub, name: `${STAMP} other`, email: `${STAMP}-other@example.test` } })).id;
-      return { limited, member, other: { id: other, tenantId: otherClub } };
+      return { member, other: { id: other, tenantId: otherClub } };
     });
-    void limited;
     const read = (session: unknown) => answer(session, () => bookingGET(new Request(`http://test/api/member/class-subscriptions/${c}`), { params: Promise.resolve({ classId: c }) }));
     const rowsBefore = await bookingsOf(c);
 
