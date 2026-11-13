@@ -47,12 +47,12 @@ async function section(id, desc, fn) {
 
 const h = new Date().getUTCHours();
 const CLUB_ZONE = h >= 10 && h < 16 ? "Pacific/Kiritimati" : "Pacific/Pago_Pago";
-const [{ timezone: originalZone }] = await q(`select "timezone" from "Tenant" where "id" = $1`, [club.id]);
+const [{ timezone: originalZone }] = await q(`select "timezone" from "Tenant" where "id" = $1`, [club.tenantId]);
 const created = [];
 const browser = await chromium.launch();
 let main;
 try {
-  await q(`update "Tenant" set "timezone" = $1 where "id" = $2`, [CLUB_ZONE, club.id]);
+  await q(`update "Tenant" set "timezone" = $1 where "id" = $2`, [CLUB_ZONE, club.tenantId]);
   const now = new Date();
   const clubDay = wall(now, CLUB_ZONE);
   const baliDay = wall(now, BROWSER_ZONE);
@@ -163,7 +163,7 @@ try {
 } finally {
   await browser.close();
   // Leave the fixture as found: the club's zone back, this run's classes gone (synthetic rows only).
-  await q(`update "Tenant" set "timezone" = $1 where "id" = $2`, [originalZone, club.id]);
+  await q(`update "Tenant" set "timezone" = $1 where "id" = $2`, [originalZone, club.tenantId]);
   for (const id of created) {
     await q(`delete from "ClassInstance" where "classId" = $1`, [id]);
     await q(`delete from "ClassSchedule" where "classId" = $1`, [id]);

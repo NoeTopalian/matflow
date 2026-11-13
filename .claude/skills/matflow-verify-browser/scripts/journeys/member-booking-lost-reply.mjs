@@ -58,6 +58,28 @@ try {
   };
   const label = async (p) => (await sheetButton(p).first().textContent())?.trim();
   const errorToast = (p, re) => p.getByRole("alert").filter({ hasText: re });
+  const REREAD = (r) => new URL(r.url()).pathname === "/api/member/me/subscriptions" && r.request().method() === "GET";
+  /**
+   * Press the sheet's button and wait for the page's own re-read of the member's bookings (the test branch is slow
+   * from far away; a fixed wait read the optimistic state). Returns the re-read's status and the alerts then shown.
+   */
+  const pressAndReread = async (p) => {
+    const reread = p.waitForResponse(REREAD, { timeout: 60000 });
+    await sheetButton(p).first().click();
+    const res = await reread;
+    await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    return { rereadStatus: res.status(), alerts: await p.getByRole("alert").allTextContents() };
+  };
+  /** The label once it settles on `want`, or what it still says after 15 s. */
+  const settledLabel = async (p, want) => {
+    for (let i = 0; i < 30; i++) {
+      await open(p);
+      const now = await label(p);
+      if (now === want) return now;
+      await p.waitForTimeout(500);
+    }
+    return label(p);
+  };
   /** The request reaches the server; its answer never reaches the page. */
   const loseReply = (p, method) => p.route((u) => BOOK(u.toString()), async (r) => {
     if (r.request().method() !== method) return r.continue();
@@ -69,40 +91,38 @@ try {
     await open(page);
     if ((await label(page)) !== "Subscribe to class") throw new Error(`starts as ${await label(page)}`);
     await loseReply(page, "POST");
-    await sheetButton(page).first().click();
-    await page.waitForTimeout(3000);
+    const seen = await pressAndReread(page);
     await page.unrouteAll({ behavior: "wait" });
-    await open(page);
-    const shown = await label(page);
-    const claimedFailure = await errorToast(page, /Couldn't book/).count();
+    const shown = await settledLabel(page, "Unsubscribe");
+    const claimedFailure = seen.alerts.filter((a) => /Couldn't book/.test(a)).length;
     const n = await rows();
-    if (shown !== "Unsubscribe" || claimedFailure !== 0 || n !== 1) throw new Error(JSON.stringify({ shown, claimedFailure, rows: n }));
-    return { shown, rows: n };
+    if (shown !== "Unsubscribe" || claimedFailure !== 0 || n !== 1 || seen.rereadStatus !== 200) throw new Error(JSON.stringify({ shown, rows: n, ...seen }));
+    return { shown, rows: n, ...seen };
   });
 
   await section("lost-unbooking", "an un-booking that commits but whose reply is lost: shown as not booked, no row", async () => {
     await open(page);
+    if ((await label(page)) !== "Unsubscribe") throw new Error(`starts as ${await label(page)}`);
     await loseReply(page, "DELETE");
-    await sheetButton(page).first().click();
-    await page.waitForTimeout(3000);
+    const seen = await pressAndReread(page);
     await page.unrouteAll({ behavior: "wait" });
-    await open(page);
-    const shown = await label(page);
+    const shown = await settledLabel(page, "Subscribe to class");
     const n = await rows();
-    if (shown !== "Subscribe to class" || n !== 0) throw new Error(JSON.stringify({ shown, rows: n }));
-    return { shown, rows: n };
+    if (shown !== "Subscribe to class" || n !== 0 || seen.rereadStatus !== 200) throw new Error(JSON.stringify({ shown, rows: n, ...seen }));
+    return { shown, rows: n, ...seen };
   });
 
   await section("server-error", "a 503 that changed nothing: told it did not go through, shown as not booked, no row", async () => {
     await open(page);
+    if ((await label(page)) !== "Subscribe to class") throw new Error(`starts as ${await label(page)}`);
     await page.route((u) => BOOK(u.toString()), (r) => (r.request().method() === "POST" ? r.fulfill({ status: 503, contentType: "application/json", body: "{}" }) : r.continue()));
-    await sheetButton(page).first().click();
+    const seen = await pressAndReread(page);
     await errorToast(page, /Couldn't book this class/).first().waitFor({ timeout: 15000 });
     await page.unrouteAll({ behavior: "wait" });
-    const shown = await label(page);
+    const shown = await settledLabel(page, "Subscribe to class");
     const n = await rows();
-    if (shown !== "Subscribe to class" || n !== 0) throw new Error(JSON.stringify({ shown, rows: n }));
-    return { shown, rows: n };
+    if (shown !== "Subscribe to class" || n !== 0) throw new Error(JSON.stringify({ shown, rows: n, ...seen }));
+    return { shown, rows: n, ...seen };
   });
 
   await section("offline", "no answer and no re-read: told it could not be confirmed, never that it failed", async () => {
@@ -139,17 +159,16 @@ try {
     try {
       await p2.goto("/member/schedule");
       await open(p2);
+      if ((await label(p2)) !== "Subscribe to class") throw new Error(`starts as ${await label(p2)}`);
       await loseReply(p2, "POST");
-      await sheetButton(p2).first().click();
-      await p2.waitForTimeout(3000);
+      const seen = await pressAndReread(p2);
       await p2.unrouteAll({ behavior: "wait" });
-      await open(p2);
-      const shown = await label(p2);
+      const shown = await settledLabel(p2, "Unsubscribe");
       const n = await rows();
       const m = await p2.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
       await shot(p2, "member-booking-lost-reply-phone");
-      if (shown !== "Unsubscribe" || n !== 1 || m.scroll > m.width + 1) throw new Error(JSON.stringify({ shown, rows: n, ...m }));
-      return { shown, rows: n, ...m };
+      if (shown !== "Unsubscribe" || n !== 1 || m.scroll > m.width + 1 || seen.rereadStatus !== 200) throw new Error(JSON.stringify({ shown, rows: n, ...m, ...seen }));
+      return { shown, rows: n, ...m, ...seen };
     } finally { await mobile.close(); }
   });
 
