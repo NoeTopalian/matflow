@@ -1408,6 +1408,8 @@ export default function MemberHomePage() {
           }>;
         }> | null;
         announcements: { announcements: Array<{ id: string; title: string; body: string; pinned: boolean; imageUrl?: string | null; createdAt: string; unseen?: boolean }> } | null;
+        /** The club's date and weekday the schedule's sessions are for (Round 6). Absent from an older server. */
+        today?: { date: string; dayOfWeek: number } | null;
       } | null) => {
         // ── Member profile (former /api/member/me) ──
         const me = data?.me;
@@ -1441,7 +1443,9 @@ export default function MemberHomePage() {
 
         // ── Today's classes (former /api/member/schedule?date=) ──
         if (Array.isArray(data?.schedule)) {
-          const dow = todayDow();
+          // The club's weekday, the day the server paired the sessions with: the device's day can be another one
+          // (a phone in another zone, or the hours either side of the club's midnight).
+          const dow = typeof data?.today?.dayOfWeek === "number" ? data.today.dayOfWeek : todayDow();
           const filtered: TodayClass[] = data.schedule
             .filter((c) => c.dayOfWeek === dow)
             .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null, eligibility: c.eligibility }))
