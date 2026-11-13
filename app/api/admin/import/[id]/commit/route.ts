@@ -26,10 +26,10 @@ import { type Classification, type ImportConflict } from "@/lib/importers/import
 import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
 import { blockedParents, classifyAdults, classifyChildren, fileRepeats, needsParent } from "@/lib/importers/import-match";
 import { sincePreview } from "@/lib/importers/since-preview";
+import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview, type PlanDecision } from "@/lib/importers/plan-match";
 
 /** Not a member an erasure anonymised (its sentinel address; the same test as lib/member-delete.ts). */
 const NOT_ERASED = { NOT: { AND: [{ email: { startsWith: "deleted-" } }, { email: { endsWith: "@deleted.invalid" } }] } };
-import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview, type PlanDecision } from "@/lib/importers/plan-match";
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
 function migrationInProgress() {
@@ -568,21 +568,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (m) memberOf.set(`${r.sourceFingerprint}|${r.disposition}`, m);
       }
       if (memberOf.size > 0) {
-        await withTenantContext(tenantId, async (tx) => {
-          await holdOffMigrations(tx);
-          const unlinked = await tx.importedMembership.findMany({
+        const unlinked = await withTenantContext(tenantId, (tx) =>
+          tx.importedMembership.findMany({
             where: { tenantId, importJobId: job.id, memberId: null },
             select: { id: true, sourceFingerprint: true, disposition: true },
+          }),
+        );
+        const toLink = new Map<string, string[]>();
+        for (const u of unlinked) {
+          const m = memberOf.get(`${u.sourceFingerprint}|${u.disposition}`);
+          if (m) toLink.set(m, [...(toLink.get(m) ?? []), u.id]);
+        }
+        // In short transactions of 100 people each (review Q1): one long one could pass the transaction time limit on
+        // a large retry, and every later retry would then stop at the same place. Each update is idempotent
+        // (`memberId: null` in its where), so a batch that fails leaves nothing half-linked and the next run carries on.
+        const pairs = [...toLink];
+        for (let i = 0; i < pairs.length; i += 100) {
+          await withTenantContext(tenantId, async (tx) => {
+            await holdOffMigrations(tx);
+            for (const [memberId, ids] of pairs.slice(i, i + 100)) {
+              await tx.importedMembership.updateMany({ where: { tenantId, id: { in: ids }, memberId: null }, data: { memberId } });
+            }
           });
-          const toLink = new Map<string, string[]>();
-          for (const u of unlinked) {
-            const m = memberOf.get(`${u.sourceFingerprint}|${u.disposition}`);
-            if (m) toLink.set(m, [...(toLink.get(m) ?? []), u.id]);
-          }
-          for (const [memberId, ids] of toLink) {
-            await tx.importedMembership.updateMany({ where: { tenantId, id: { in: ids }, memberId: null }, data: { memberId } });
-          }
-        });
+        }
       }
     }
 
