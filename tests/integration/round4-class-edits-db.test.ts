@@ -179,6 +179,19 @@ describe.skipIf(!HAS_DB)("class edits: no silent overwrite", () => {
     expect((await squadState()).squad).toEqual([squadMembers[0]]);
   });
 
+  // Round 6 merge review (13 Nov 2026), finding 1: every edit carries the squad and the slots it loaded; those are
+  // freshness checks, not fields of the class, and the Activity row must not list them as changed.
+  it("the activity row lists only the class's own fields, never the freshness checks the editor sends", async () => {
+    as("A");
+    await reset();
+    await clearGates();
+    audit.calls.length = 0;
+    expect((await patch({ maxCapacity: 31, expected: { maxCapacity: 20 }, baseRosterIds: [], baseScheduleIds: [] })).status).toBe(200);
+    const updated = audit.calls.filter((c) => c.action === "class.updated");
+    expect(updated).toHaveLength(1);
+    expect((updated[0].metadata as { fields: string[] }).fields).toEqual(["maxCapacity"]);
+  });
+
   it("an up-to-date tab can still switch squad to rank gate and back (the business rule is unchanged)", async () => {
     as("A");
     await clearGates();

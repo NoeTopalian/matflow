@@ -920,10 +920,10 @@ export async function PATCH(req: Request, { params }: Params) {
         entityType: "Class",
         entityId: id,
         metadata: {
-          // `baseScheduleIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
+          // `baseScheduleIds`, `baseRosterIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
           // A Location by name (`matName`) is recorded as the columns it sets.
           // An old category key is recorded as the reference it was written as.
-          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
+          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "baseRosterIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
           // Release B's activation signal, durable (runtime logs are not kept long enough to cover the observation
           // window): this save came from a page that knows only the old category keys. This release's form sends
           // `categoryBaseId` with any key it sends on an edit, so only an old page matches.
