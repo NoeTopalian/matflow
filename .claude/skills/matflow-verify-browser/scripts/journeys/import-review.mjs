@@ -143,17 +143,22 @@ try {
       && /no price, billing period or currency/.test(withoutText) && /Until staff assign a plan, they can't check themselves in from the member app unless they hold a class pack\. The desk and the kiosk can still check them into classes open to everyone; classes limited to certain plans refuse them at every door\./.test(withoutText),
     { buttons: n, text: withoutText.slice(0, 300) });
 
-  // 7. Ada is deleted: the refresh's review list shows no name or values for her.
-  // The member page's delete: a confirmed second call (the first, unconfirmed call is only a probe).
+  // 7. Ada's personal data is erased: the refresh's review list shows no name or values for her.
+  // Since 399ca89c (member archive) the member page's Remove archives and keeps the person, so her name in the list
+  // is then correct; erasure (owner Settings → Data requests) is the only delete. Remove first (as a club would),
+  // then erase. Ada has no children, so the erase needs no strategy.
   const t0 = Date.now();
-  const del = await page.request.delete(`/api/members/${ada.id}?confirm=1`, { headers: { origin: new URL(page.url()).origin }, timeout: 120000 });
-  L.note("privacy", "N2 member delete response", { status: del.status(), ms: Date.now() - t0, body: (await del.text()).slice(0, 160) });
+  const origin = new URL(page.url()).origin;
+  const removed = await page.request.delete(`/api/members/${ada.id}?confirm=1`, { headers: { origin }, timeout: 120000 });
+  L.note("privacy", "N2 member remove (archive) response", { status: removed.status(), ms: Date.now() - t0, body: (await removed.text()).slice(0, 160) });
+  const del = await page.request.post(`/api/admin/dsar/erase?memberId=${ada.id}`, { headers: { origin }, timeout: 180000 });
+  L.note("privacy", "N3 erasure response", { status: del.status(), ms: Date.now() - t0 });
   await page.goto("/dashboard/settings?tab=import");
   await page.getByRole("button", { name: /^Review \d+ (person|people)$/ }).first().click({ timeout: 60000 }).catch(async (e) => { await shot(page, "import-review-after-delete"); throw e; });
   const afterDel = page.getByTestId("import-review").first();
   await afterDel.getByText(/since deleted|Nobody is left/).first().waitFor({ timeout: 30000 }).catch(() => {});
   const afterText = (await afterDel.textContent()) ?? "";
-  L.check("privacy", "P1 after Ada is deleted, the review list shows no name or value of hers",
+  L.check("privacy", "P1 after Ada's data is erased, the review list shows no name or value of hers",
     del.status() < 300 && !/Ada Field/.test(afterText), { del: del.status(), text: afterText.slice(0, 160) });
 
   // 8. Phone width.
