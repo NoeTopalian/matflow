@@ -154,10 +154,16 @@ describe.skipIf(!HAS_DB)("import: changes between preview and commit are revalid
     const again = (await (await previewPOST(req("preview"), { params: Promise.resolve({ id: job.id }) })).json()) as { willImport: number; ownAtPreview: number };
     expect(again).toMatchObject({ willImport: 5, ownAtPreview: 25 });
     const cm = await commit(req("commit"), { params: Promise.resolve({ id: job.id }) });
-    const done = (await cm.json()) as { manifest: { sincePreview?: unknown; created: { total: number } } };
+    const done = (await cm.json()) as { imported: number; manifest: { sincePreview?: unknown; created: { total: number } } };
     expect(cm.status).toBe(200);
     expect(done.manifest.created.total).toBe(30);
     expect(done.manifest.sincePreview).toEqual({ changed: false, counts: [] });
+    // Review N1: the commit after a re-preview is still a resume (the people it created decide, not the status), so
+    // the job reconciles and reports everyone it created, not just this call's five.
+    expect(done.imported).toBe(5);
+    expect(done.manifest).toMatchObject({ reconciles: true, resumedWith: 25, resumed: true });
+    const stored = await withRlsBypass((tx) => tx.importJob.findUniqueOrThrow({ where: { id: job.id }, select: { importedRows: true, skippedRows: true, status: true } }));
+    expect(stored).toEqual({ importedRows: 30, skippedRows: 0, status: "complete" });
   });
 
   it("nothing changed between preview and commit: the commit says the preview held", async () => {

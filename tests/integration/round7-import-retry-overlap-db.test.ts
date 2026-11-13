@@ -33,6 +33,7 @@ vi.mock("@/lib/member-status", async (importOriginal) => {
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { POST as commit } from "@/app/api/admin/import/[id]/commit/route";
+import { POST as previewPOST } from "@/app/api/admin/import/[id]/preview/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = `r7r${Date.now().toString(36)}`;
@@ -95,6 +96,12 @@ describe.skipIf(!HAS_DB)("members import: retry, overlap and concurrent staff ed
   it("a run interrupted after its first 25 people, then run again: everyone once, the retry reports its own share, the job reconciles", async () => {
     const people = Array.from({ length: 30 }, (_, i) => person(i + 1, "r"));
     const j = await job(fileOf(people));
+    // Previewed first, as the panel does (review N3): the resume is then compared with that preview too.
+    const pv = await previewPOST(
+      new Request(`https://test.local/api/admin/import/${j.id}/preview`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: "{}" }),
+      { params: Promise.resolve({ id: j.id }) },
+    );
+    expect(pv.status).toBe(200);
     fault.calls = 0;
     fault.failOnCall = 2; // the second slice's write fails and rolls back
     const first = await run(j.id);
@@ -113,6 +120,8 @@ describe.skipIf(!HAS_DB)("members import: retry, overlap and concurrent staff ed
     expect(after.status).toBe("complete");
     expect(after.importedRows).toBe(30);
     expect(after.manifest).toMatchObject({ resumedWith: 25, reconciles: true, created: { total: 30 } });
+    // The preview said 30 new; the run made 30 (25 before the interruption, 5 now): no change is claimed.
+    expect((after.manifest as { sincePreview?: unknown }).sincePreview).toEqual({ changed: false, counts: [] });
     // Each person's import status event is recorded once, not once per attempt.
     const events = await withRlsBypass((tx) => tx.memberStatusEvent.count({ where: { tenantId, member: { email: { startsWith: `${STAMP}-r` } } } }));
     expect(events).toBe(30);
@@ -139,7 +148,9 @@ describe.skipIf(!HAS_DB)("members import: retry, overlap and concurrent staff ed
     expect(createdBy).toHaveLength(1);
   });
 
-  it("a staff edit racing a commit that names the same member: the staff values stand, the import writes nothing to them", async () => {
+  // Concurrent, but the order of the edit and the commit's read is not controlled: this guards "an import never writes
+  // to an existing member" whichever lands first, not a specific interleaving.
+  it("a staff edit sent alongside a commit that names the same member: the staff values stand, the import writes nothing to them", async () => {
     const existing = person(1, "x");
     const fresh = Array.from({ length: 20 }, (_, i) => person(i + 2, "x"));
     // The member is already in the club (an earlier import), then the club edits them while a later file is committed.

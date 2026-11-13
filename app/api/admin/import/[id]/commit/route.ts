@@ -93,8 +93,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
   // A run that stopped part-way ("running" if it died, "failed" if it was stopped,
-  // e.g. by a schema migration) is resumed: what it saved is its own work.
-  const resumed = job.status === "running" || job.status === "failed";
+  // e.g. by a schema migration) is resumed: what it saved is its own work. So is a
+  // job previewed again after such a run (its status is "preview" again): the people
+  // it already created decide, not the status (Round 7 review N1).
+  const statusSaysResumed = job.status === "running" || job.status === "failed";
   const jobId = job.id;
   const jobSource = job.source;
   const jobExportedAt = job.sourceExportedAt ?? null;
@@ -153,9 +155,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   // A resumed run finds the people it created before it stopped; those are its
   // own work, not "already in the club" (functional review F2, 30 Sep 2026).
-  const ownRowsBeforeRun = resumed
-    ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }))
-    : 0;
+  const ownRowsBeforeRun = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }));
+  const resumed = statusSaysResumed || ownRowsBeforeRun > 0;
 
   try {
     // Import blobs are written `access: "private"` (app/api/admin/import/upload,
