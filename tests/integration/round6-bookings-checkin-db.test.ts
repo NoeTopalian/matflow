@@ -162,7 +162,9 @@ describe.skipIf(!HAS_DB)("Round 6: bookings and check-in under concurrency", () 
     }
   });
 
-  it("a booking racing a pause, five rounds: the answer always matches the database, and nothing is booked onto a class after its pause", async () => {
+  // Ordering itself (a booking either commits before the pause or is refused) comes from the Class FOR UPDATE and the
+  // lifecycle read after it (route); this case checks the answers against the rows and a booking after the pause.
+  it("a booking racing a pause, five rounds: the answer always matches the database, and once the pause has committed a booking is refused", async () => {
     for (let round = 0; round < 5; round++) {
       const c = await newClass(`Pause race ${round}`, 10);
       const [booked, paused] = await Promise.all([book(c, members[5]), patch(c, { isActive: false })]);

@@ -45,22 +45,22 @@ export function classifyCheckinResponse(status: number, body: unknown): CheckinO
 }
 
 /**
+ * Round 6: a booking (or un-booking) whose outcome is not known: no answer and no re-read, or no answer and a re-read
+ * that may have come before the request landed. It never says it failed, and never that it worked.
+ */
+export function bookingUnconfirmedMessage(wasSubscribed: boolean): string {
+  return wasSubscribed
+    ? "Couldn't confirm that you're no longer booked. Reload to see where you stand."
+    : "Couldn't confirm the booking. Reload to see whether it went through.";
+}
+
+/**
  * What the member schedule says when a booking (or un-booking) fails. A
  * refusal the server explains (403 tier_not_included, 409 class_paused, 403
  * roster_not_listed, 409 full) is shown in the server's own words, which name
  * the class and the plan; only a failure with no sentence (network, 5xx, an
  * unreadable body) falls back to the generic line. Status 0 = no response.
  */
-/**
- * Round 6: a booking (or un-booking) with no answer, whose outcome a re-read could not settle either. The request
- * may have reached the server, so this never says it failed, and never that it worked.
- */
-export function bookingUnconfirmedMessage(wasSubscribed: boolean): string {
-  return wasSubscribed
-    ? "Couldn't confirm that you're no longer booked. Check your connection, then reload to see where you stand."
-    : "Couldn't confirm the booking. Check your connection, then reload to see whether it went through.";
-}
-
 export function bookingFailureMessage(status: number, body: unknown, wasSubscribed: boolean): string {
   const b = (body && typeof body === "object" ? body : {}) as { error?: unknown };
   if (status >= 400 && status < 500 && status !== 401 && typeof b.error === "string" && b.error.trim()) return b.error;

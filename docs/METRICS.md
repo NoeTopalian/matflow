@@ -115,7 +115,7 @@ Revenue counts only `Payment` rows with status `succeeded`. Money billed by anot
 
 - **Member Progress:** "this week", "this month" and "this year", the heat strip and streaks (`lib/member-stats.ts`) use the server's clock. Round 10.
 - **Birthdays and anniversaries:** birthday and joining-anniversary days (`lib/dashboard-action-items.ts`, `app/member/home/page.tsx`) use the server's day. Round 10.
-- **Timetable week:** the timetable editor's week (`components/dashboard/TimetableManager.tsx`) uses the browser's clock. Round 6.
+- **Timetable week:** fixed in Round 6 (13 Nov 2026). The staff timetable's today, week and Live / Next / Cancelled follow the club's zone, the same day as `/api/coach/today` and check-in. The member schedule still uses the member's device date (`app/member/schedule/page.tsx`); deliberate, recorded in `docs/readiness/ROUND6-TIMETABLE-BOOKINGS-2026-11-13.md`.
 - **Unused stats route:** `GET /api/dashboard/stats` has no caller in the app and still uses the server's clock.
 - **Sessions nobody attended:** Top classes, their averages and fill rates, and the club fill rate are computed from attendance records, so a session with no check-ins is left out. Counting empty sessions would change the figures, so it needs Noe's decision.
 - **Survival cohort:** joined before the 1st of the club month five months back (5 to 6 months). The wording now names that date; whether the cohort should be a true 6 months is a definition question for Noe.

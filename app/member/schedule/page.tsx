@@ -962,13 +962,14 @@ export default function MemberSchedulePage() {
     // Round 6: no answer, or a server error, says nothing about what the
     // server did. The booking route is idempotent, so the request may well have
     // committed; what is true is read back below, not guessed.
-    let unknownOutcome = false;
+    // "no-reply": the request may still be in flight on the server. "server-error": it answered, and rolled back.
+    let unknownOutcome: "no-reply" | "server-error" | null = null;
     try {
       const res = await fetch(`/api/member/class-subscriptions/${id}`, {
         method: wasSubscribed ? "DELETE" : "POST",
       });
       if (!res.ok && res.status >= 500) {
-        unknownOutcome = true;
+        unknownOutcome = "server-error";
       } else if (!res.ok) {
         // T6a/T6b: the refusal names the class and the plan (or says the
         // class is paused) — show that, not a guess (the list may be stale).
@@ -983,7 +984,7 @@ export default function MemberSchedulePage() {
         if (typeof body?.allowanceNotice === "string" && body.allowanceNotice) toast(body.allowanceNotice, "warning", 8000);
       }
     } catch {
-      unknownOutcome = true;
+      unknownOutcome = "no-reply";
     }
     if (unknownOutcome) {
       // A failed re-read leaves the outcome unknown (null), said as such below.
@@ -992,9 +993,19 @@ export default function MemberSchedulePage() {
         .then((d: { classIds?: unknown }) => (Array.isArray(d?.classIds) ? new Set(d.classIds.filter((c): c is string => typeof c === "string")) : null))
         .catch(() => null);
       if (truth) {
-        // The server's own list: shown as it is, and a failure claimed only when it says the change did not happen.
-        setSubscribed(truth);
-        if (truth.has(id) === wasSubscribed) toast(bookingFailureMessage(0, null, wasSubscribed), "error");
+        // This class only, as the server holds it: another class's booking may be in flight and is not this answer's.
+        const booked = truth.has(id);
+        setSubscribed((prev) => {
+          const n = new Set(prev);
+          if (booked) n.add(id);
+          else n.delete(id);
+          return n;
+        });
+        // Not done: after a server error it rolled back, so say so; with no reply it may still land, so say only
+        // that it could not be confirmed.
+        if (booked === wasSubscribed) {
+          toast(unknownOutcome === "server-error" ? bookingFailureMessage(0, null, wasSubscribed) : bookingUnconfirmedMessage(wasSubscribed), "error");
+        }
         return;
       }
       failure = bookingUnconfirmedMessage(wasSubscribed);

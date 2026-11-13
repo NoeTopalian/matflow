@@ -135,7 +135,10 @@ describe("the staff timetable's today is the club's day, not the browser's", () 
     render(<TimetableManager {...PROPS} timeZone="Europe/London" initialClasses={CLASSES} />);
     await waitFor(() => expect(document.querySelector('[data-session-state="cancelled"]')).not.toBeNull());
 
-    // The club's cancellation is Friday's session, not Saturday's.
+    // The club's cancellation is Friday's session, not Saturday's. (Each chip is drawn: an empty list would pass.)
+    for (const [n, d, t] of [["Evening Gi", "Saturday", "19:00"], ["Evening Gi", "Friday", "19:00"], ["Sat Morning", "Saturday", "07:00"]]) {
+      expect(chip(n, d, t).length).toBeGreaterThan(0);
+    }
     for (const b of chip("Evening Gi", "Saturday", "19:00")) expect(b.getAttribute("data-session-state")).toBeNull();
     for (const b of chip("Evening Gi", "Friday", "19:00")) expect(b.getAttribute("data-session-state")).toBe("cancelled");
     expect(todayTab()).toMatch(/^Friday 13, today/);
@@ -187,6 +190,7 @@ describe("the staff timetable's today is the club's day, not the browser's", () 
       const night = base({ id: "c5", name: "Night Owls", schedules: [slot("s-sun", 0, "01:00", "02:00")] });
       const { unmount } = render(<TimetableManager {...PROPS} timeZone="Europe/London" initialClasses={[night]} />);
       expect(todayTab()).toMatch(/^Sunday 25, today/);
+      expect(chip("Night Owls", "Sunday", "01:00").length).toBeGreaterThan(0);
       for (const b of chip("Night Owls", "Sunday", "01:00")) expect(b.getAttribute("data-session-state")).toBe("live");
       unmount();
       vi.unstubAllGlobals();
