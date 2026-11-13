@@ -22,6 +22,19 @@ vi.mock("@/lib/import-storage", async (importOriginal) => ({
   readImportFile: vi.fn(async (url: string) => FILES.get(url) ?? null),
   deleteImportFile: vi.fn(async () => {}),
 }));
+// One slice's status events can be made to fail, which rolls that slice back (an interrupted run).
+const fault = vi.hoisted(() => ({ failOnCall: 0, calls: 0 }));
+vi.mock("@/lib/member-status", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/member-status")>();
+  return {
+    ...real,
+    recordStatusEventsBulk: async (...args: Parameters<typeof real.recordStatusEventsBulk>) => {
+      fault.calls += 1;
+      if (fault.failOnCall && fault.calls === fault.failOnCall) throw new Error("injected: the run stops here");
+      return real.recordStatusEventsBulk(...args);
+    },
+  };
+});
 
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
@@ -93,9 +106,58 @@ describe.skipIf(!HAS_DB)("import: changes between preview and commit are revalid
     expect(bo).toEqual([{ phone: "07700900001", importJobId: null }]);
     expect(done.manifest.existing.conflicts + done.manifest.existing.ambiguous + done.manifest.existing.duplicates).toBe(1);
 
-    // Explained: the commit says which of the preview's counts no longer hold.
-    expect(done.manifest.sincePreview?.changed).toBe(true);
-    expect(done.manifest.sincePreview?.counts).toEqual(expect.arrayContaining([{ what: "new people", preview: 2, now: 1 }]));
+    // Explained: the commit says which of the preview's counts no longer hold, and only those.
+    expect(done.manifest.sincePreview).toEqual({
+      changed: true,
+      counts: [
+        { what: "New people", preview: 2, now: 1 },
+        { what: "To review because their details differ", preview: 0, now: 1 },
+      ],
+    });
+  });
+
+  it("two rows on one staff login's address: refused per row in the preview and at commit alike, so no change is claimed (review F1)", async () => {
+    await withRlsBypass((tx) => tx.user.create({ data: { tenantId, email: E("coach"), name: "Coach", role: "coach", passwordHash: "x" } }));
+    const csv = ["Name,Email", `Coach One,${E("coach")}`, `Coach Two,${E("coach")}`, `Di Penn,${E("di")}`].join("\n");
+    const url = `https://blob.test.local/${STAMP}/3.csv`;
+    FILES.set(url, csv);
+    const job = await withRlsBypass((tx) =>
+      tx.importJob.create({ data: { tenantId, createdById: userId, source: "generic", mode: "create", fileName: "f3.csv", fileBlobUrl: url, status: "pending", fileHash: `${STAMP}-3` } }),
+    );
+    const req = (path: string) => new Request(`https://test.local/api/admin/import/${job.id}/${path}`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: "{}" });
+    const pv = await previewPOST(req("preview"), { params: Promise.resolve({ id: job.id }) });
+    const preview = (await pv.json()) as { staffLoginRefused: number; willImport: number };
+    expect(pv.status).toBe(200);
+    expect(preview.staffLoginRefused).toBe(2);
+    const cm = await commit(req("commit"), { params: Promise.resolve({ id: job.id }) });
+    const done = (await cm.json()) as { imported: number; manifest: { sincePreview?: unknown } };
+    expect(cm.status).toBe(200);
+    expect(done.imported).toBe(1);
+    expect(done.manifest.sincePreview).toEqual({ changed: false, counts: [] });
+  });
+
+  it("a run interrupted, previewed again, then resumed: its own earlier creations are not reported as a change (review F2)", async () => {
+    const people = Array.from({ length: 30 }, (_, i) => tRow(`Res ${i + 1}`, E(`res${i + 1}`), `1980-02-${String((i % 28) + 1).padStart(2, "0")}`));
+    const url = `https://blob.test.local/${STAMP}/4.csv`;
+    FILES.set(url, [T_HEADER, ...people].join("\n"));
+    const job = await withRlsBypass((tx) =>
+      tx.importJob.create({ data: { tenantId, createdById: userId, source: "teamup", mode: "create", fileName: "f4.csv", fileBlobUrl: url, status: "pending", fileHash: `${STAMP}-4`, sourceExportedAt: new Date("2026-11-04T08:00:00Z"), sourceExportedAtProvenance: "owner_stated" } }),
+    );
+    const req = (path: string) => new Request(`https://test.local/api/admin/import/${job.id}/${path}`, { method: "POST", headers: { "Content-Type": "application/json", origin: "https://test.local", host: "test.local" }, body: "{}" });
+    expect((await previewPOST(req("preview"), { params: Promise.resolve({ id: job.id }) })).status).toBe(200);
+    fault.calls = 0;
+    fault.failOnCall = 2; // the second slice fails: 25 created, the run stops
+    const first = await commit(req("commit"), { params: Promise.resolve({ id: job.id }) });
+    fault.failOnCall = 0;
+    expect(first.status).not.toBe(200);
+    // Previewed again: 25 are this job's own, 5 are new.
+    const again = (await (await previewPOST(req("preview"), { params: Promise.resolve({ id: job.id }) })).json()) as { willImport: number; ownAtPreview: number };
+    expect(again).toMatchObject({ willImport: 5, ownAtPreview: 25 });
+    const cm = await commit(req("commit"), { params: Promise.resolve({ id: job.id }) });
+    const done = (await cm.json()) as { manifest: { sincePreview?: unknown; created: { total: number } } };
+    expect(cm.status).toBe(200);
+    expect(done.manifest.created.total).toBe(30);
+    expect(done.manifest.sincePreview).toEqual({ changed: false, counts: [] });
   });
 
   it("nothing changed between preview and commit: the commit says the preview held", async () => {

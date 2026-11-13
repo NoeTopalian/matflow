@@ -276,11 +276,10 @@ function EventSheet({
               : <><Bell className="w-4 h-4" />Subscribe to class</>
             }
           </button>
-          {busy && (
-            <p role="status" className="text-xs text-center" style={{ color: "var(--member-text-muted)" }}>
-              Waiting for MatFlow to answer…
-            </p>
-          )}
+          {/* Always mounted, filled while waiting: a live region that appears already holding its text is often not announced. */}
+          <p role="status" className="text-xs text-center empty:hidden" style={{ color: "var(--member-text-muted)" }}>
+            {busy ? "Waiting for MatFlow to answer…" : ""}
+          </p>
           {isSub && !busy && (
             <p className="text-gray-600 text-xs text-center">
               Subscribed classes appear on your home screen

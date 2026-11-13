@@ -819,15 +819,16 @@ export default function ImportPanel({ primaryColor }: { primaryColor: string }) 
               )}
               {job.manifest?.sincePreview?.changed && (
                 // Round 7: the commit checked everyone again; say which of the preview's counts no longer held, and why.
-                <div className="mt-2 text-xs text-tx-2" role="status" data-testid="import-since-preview">
+                <div className="mt-2 text-xs text-tx-2" data-testid="import-since-preview">
                   <p>
-                    Some results differ from the preview, because MatFlow changed between the preview and the import
-                    (for example, someone was added or edited by hand). Everyone was checked again when importing:
+                    Some results differ from the preview. Everyone was checked again when importing, so these are the
+                    numbers that stand. This usually means something in MatFlow changed in between, such as someone being
+                    added or edited by hand.
                   </p>
                   <ul className="mt-1 list-disc pl-5">
                     {job.manifest.sincePreview.counts.map((c) => (
                       <li key={c.what}>
-                        {c.what[0].toUpperCase() + c.what.slice(1)}: {c.preview.toLocaleString("en-GB")} in the preview, {c.now.toLocaleString("en-GB")} now.
+                        {c.what}: {c.preview.toLocaleString("en-GB")} in the preview, {c.now.toLocaleString("en-GB")} at import.
                       </li>
                     ))}
                   </ul>
