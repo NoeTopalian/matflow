@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
-import { bookingFailureMessage } from "@/lib/checkin-outcome";
+import { bookingFailureMessage, bookingUnconfirmedMessage } from "@/lib/checkin-outcome";
 import { categoryTag } from "@/lib/class-category";
 import { readableOn } from "@/lib/color";
 import { memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
@@ -959,11 +959,17 @@ export default function MemberSchedulePage() {
       return n;
     });
     let failure: string | null = null;
+    // Round 6: no answer, or a server error, says nothing about what the
+    // server did. The booking route is idempotent, so the request may well have
+    // committed; what is true is read back below, not guessed.
+    let unknownOutcome = false;
     try {
       const res = await fetch(`/api/member/class-subscriptions/${id}`, {
         method: wasSubscribed ? "DELETE" : "POST",
       });
-      if (!res.ok) {
+      if (!res.ok && res.status >= 500) {
+        unknownOutcome = true;
+      } else if (!res.ok) {
         // T6a/T6b: the refusal names the class and the plan (or says the
         // class is paused) — show that, not a guess (the list may be stale).
         const body = await res.json().catch(() => null);
@@ -977,7 +983,21 @@ export default function MemberSchedulePage() {
         if (typeof body?.allowanceNotice === "string" && body.allowanceNotice) toast(body.allowanceNotice, "warning", 8000);
       }
     } catch {
-      failure = bookingFailureMessage(0, null, wasSubscribed);
+      unknownOutcome = true;
+    }
+    if (unknownOutcome) {
+      // A failed re-read leaves the outcome unknown (null), said as such below.
+      const truth = await fetch("/api/member/me/subscriptions", { cache: "no-store" })
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then((d: { classIds?: unknown }) => (Array.isArray(d?.classIds) ? new Set(d.classIds.filter((c): c is string => typeof c === "string")) : null))
+        .catch(() => null);
+      if (truth) {
+        // The server's own list: shown as it is, and a failure claimed only when it says the change did not happen.
+        setSubscribed(truth);
+        if (truth.has(id) === wasSubscribed) toast(bookingFailureMessage(0, null, wasSubscribed), "error");
+        return;
+      }
+      failure = bookingUnconfirmedMessage(wasSubscribed);
     }
     if (failure) {
       // Audit D8: roll back AND tell the member — previously the button
