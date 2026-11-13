@@ -18,7 +18,8 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: vi.fn(() => null) }));
 
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
-import { POST as bookPOST } from "@/app/api/member/class-subscriptions/[classId]/route";
+import { POST as bookPOST, GET as bookingGET } from "@/app/api/member/class-subscriptions/[classId]/route";
+import { clubWallClock } from "@/lib/class-time";
 import { PATCH as classPATCH } from "@/app/api/classes/[id]/route";
 import { GET as scheduleGET } from "@/app/api/member/schedule/route";
 import { performCheckin } from "@/lib/checkin";
@@ -160,6 +161,46 @@ describe.skipIf(!HAS_DB)("Round 6: bookings and check-in under concurrency", () 
       expect(kinds).toEqual(["class_full", "success"].sort());
       expect(await attendanceOf(s)).toHaveLength(1);
     }
+  });
+
+  it("GET (read-only): a member's own booking and its allowance notice, read back as POST would say it; nothing written; another club's member learns nothing", async () => {
+    // A "1 each week" plan, already used today, and a later session of the class today (London, the default zone).
+    const c = await newClass("Notice read", 20);
+    const club = clubWallClock(new Date(), "Europe/London");
+    const day = new Date(Date.UTC(club.year, club.month - 1, club.day));
+    const { limited, member, other } = await withRlsBypass(async (tx) => {
+      const limited = (await tx.membershipTier.create({ data: { tenantId, name: "Limited W", classLimit: 1, classLimitBasis: "week", maxClassesPerWeek: 1 } })).id;
+      const member = (await tx.member.create({ data: { tenantId, name: `${STAMP} limited`, email: `${STAMP}-limited@example.test`, membershipTierId: limited, waiverAccepted: true, paymentStatus: "paid" } })).id;
+      const used = await tx.classInstance.create({ data: { classId: c, date: day, startTime: "00:00", endTime: "00:30" } });
+      await tx.classInstance.create({ data: { classId: c, date: day, startTime: "23:59", endTime: "23:59" } });
+      await tx.attendanceRecord.create({ data: { tenantId, memberId: member, classInstanceId: used.id, checkInMethod: "admin" } });
+      const otherClub = (await tx.tenant.create({ data: { name: `${STAMP} other`, slug: `${STAMP}-other` } })).id;
+      const other = (await tx.member.create({ data: { tenantId: otherClub, name: `${STAMP} other`, email: `${STAMP}-other@example.test` } })).id;
+      return { limited, member, other: { id: other, tenantId: otherClub } };
+    });
+    void limited;
+    const read = (session: unknown) => answer(session, () => bookingGET(new Request(`http://test/api/member/class-subscriptions/${c}`), { params: Promise.resolve({ classId: c }) }));
+    const rowsBefore = await bookingsOf(c);
+
+    // Not booked: says so, no notice.
+    expect((await read(asMember(member))).body).toEqual({ booked: false, allowanceNotice: null });
+    // Booked by POST: the POST's notice, and GET reads back the same notice.
+    const posted = await book(c, member);
+    expect(posted.status).toBe(201);
+    const got = await read(asMember(member));
+    expect(got.status).toBe(200);
+    expect(got.body.booked).toBe(true);
+    expect(typeof got.body.allowanceNotice).toBe("string");
+    expect(got.body.allowanceNotice).toBe(posted.body.allowanceNotice);
+    // Reading changed nothing: still exactly one booking for this member, the others as they were.
+    expect(await bookingsOf(c)).toEqual([...rowsBefore, member].sort());
+    // Another club's member, same class id: told nothing about this club's booking.
+    expect((await read({ user: { id: `user-${other.id}`, memberId: other.id, tenantId: other.tenantId, role: "member" } })).body).toEqual({ booked: false, allowanceNotice: null });
+
+    await withRlsBypass(async (tx) => {
+      await tx.member.deleteMany({ where: { tenantId: other.tenantId } });
+      await tx.tenant.deleteMany({ where: { id: other.tenantId } });
+    });
   });
 
   // Ordering itself (a booking either commits before the pause or is refused) comes from the Class FOR UPDATE and the

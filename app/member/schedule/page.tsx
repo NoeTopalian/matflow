@@ -121,12 +121,15 @@ function fmt(d: Date) { return d.toISOString().split("T")[0]; }
 function EventSheet({
   cls,
   isSub,
+  busy = false,
   onToggle,
   onClose,
   primaryColor,
 }: {
   cls: ScheduleClass;
   isSub: boolean;
+  /** This class's booking request is still out: the button waits for it (one request per class at a time). */
+  busy?: boolean;
   onToggle: () => void;
   onClose: () => void;
   primaryColor: string;
@@ -256,7 +259,8 @@ function EventSheet({
           <button
             onClick={onToggle}
             // A booked member can always cancel their own booking, eligible or not (D2).
-            disabled={!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included")}
+            disabled={busy || (!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included"))}
+            aria-busy={busy || undefined}
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
@@ -948,8 +952,25 @@ export default function MemberSchedulePage() {
 
   const { toast } = useToast();
 
-  // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
+  // Round 6 close-out: one request per class at a time. A second tap while the first request (or its re-read) is out
+  // could leave the button showing the opposite of what the server holds once both settled (re-review, 13 Nov 2026).
+  // The ref answers at once (two taps in one frame); the state disables the button while it waits.
+  const inFlight = useRef<Set<string>>(new Set());
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = async (classId: string) => {
+    if (inFlight.current.has(classId)) return;
+    inFlight.current.add(classId);
+    setPending(new Set(inFlight.current));
+    try {
+      await runToggle(classId);
+    } finally {
+      inFlight.current.delete(classId);
+      setPending(new Set(inFlight.current));
+    }
+  };
+
+  // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
+  const runToggle = async (classId: string) => {
     const id = classId; // the Class id — never the composite grid-row id
     const wasSubscribed = subscribed.has(id);
     setSubscribed((prev) => {
@@ -1005,6 +1026,14 @@ export default function MemberSchedulePage() {
         // that it could not be confirmed.
         if (booked === wasSubscribed) {
           toast(unknownOutcome === "server-error" ? bookingFailureMessage(0, null, wasSubscribed) : bookingUnconfirmedMessage(wasSubscribed), "error");
+        } else if (booked) {
+          // The booking landed: the member still hears the allowance notice the lost answer carried (T7), read back
+          // from the same server rule. Informational: a failed read leaves it unsaid, never an error.
+          const notice = await fetch(`/api/member/class-subscriptions/${id}`, { cache: "no-store" })
+            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+            .then((d: { allowanceNotice?: unknown }) => (typeof d?.allowanceNotice === "string" && d.allowanceNotice ? d.allowanceNotice : null))
+            .catch(() => null);
+          if (notice) toast(notice, "warning", 8000);
         }
         return;
       }
@@ -1210,6 +1239,7 @@ export default function MemberSchedulePage() {
         <EventSheet
           cls={selectedCls}
           isSub={subscribed.has(selectedCls.classId)}
+          busy={pending.has(selectedCls.classId)}
           onToggle={() => toggle(selectedCls.classId)}
           onClose={() => setSelected(null)}
           primaryColor={primaryColor}

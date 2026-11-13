@@ -39,10 +39,15 @@ let serverBooked: Set<string>;
  * "lost": it commits, then the reply never arrives. "dropped": no reply and nothing committed (re-read works).
  * "down": a 503 that changed nothing. "offline": no reply, and every request after it fails too.
  */
-let mode: "lost" | "dropped" | "down" | "offline";
+let mode: "lost" | "dropped" | "down" | "offline" | "hang";
 let offline = false;
 /** Class B's booking request hangs until released: it commits and answers 201 then. */
 let releaseB: (() => void) | null = null;
+/** What GET /api/member/class-subscriptions/A says about the allowance (the server's own notice). */
+let noticeA: string | null = null;
+/** Class A's POST hangs until released (mode "hang"); it then commits and answers 201. */
+let releaseA: (() => void) | null = null;
+let bookingRequests: string[] = [];
 
 function stubFetch() {
   offline = false;
@@ -57,7 +62,16 @@ function stubFetch() {
       serverBooked.add(B);
       return { ok: true, status: 201, json: async () => ({ success: true }) } as Response;
     }
+    if (url.startsWith(`/api/member/class-subscriptions/${A}`) && method === "GET") {
+      return { ok: true, status: 200, json: async () => ({ booked: serverBooked.has(A), allowanceNotice: serverBooked.has(A) ? noticeA : null }) } as Response;
+    }
     if (url.startsWith("/api/member/class-subscriptions/")) {
+      bookingRequests.push(method);
+      if (mode === "hang") {
+        await new Promise<void>((resolve) => { releaseA = resolve; });
+        if (method === "POST") serverBooked.add(A); else serverBooked.delete(A);
+        return { ok: true, status: 201, json: async () => ({ success: true, allowanceNotice: null }) } as Response;
+      }
       if (mode === "lost") {
         if (method === "POST") serverBooked.add(A); else serverBooked.delete(A);
         throw new TypeError("Failed to fetch");
@@ -75,6 +89,9 @@ beforeEach(() => {
   toasts.list = [];
   serverBooked = new Set();
   releaseB = null;
+  releaseA = null;
+  noticeA = null;
+  bookingRequests = [];
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = function scrollTo() {};
   Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? function scrollIntoView() {};
 });
@@ -146,6 +163,39 @@ describe("member schedule: a booking whose answer is lost", () => {
     expect(text).not.toMatch(/couldn't book/i);
     expect(text).toMatch(/couldn't confirm/i);
     expect(screen.getByRole("button", { name: /subscribe to class/i })).toBeTruthy();
+  });
+
+  it("a booking whose lost reply carried an allowance notice: once recovered, the member still hears the server's notice", async () => {
+    mode = "lost";
+    noticeA = "1 of 1 class used this week. Booking doesn't use a class, but checking in will need a class-pack credit.";
+    stubFetch();
+    await load();
+    openClass(/Beginner BJJ/i);
+    fireEvent.click(await screen.findByRole("button", { name: /subscribe to class/i }));
+    await settle();
+    expect(screen.getByRole("button", { name: /unsubscribe/i })).toBeTruthy();
+    expect(toasts.list).toEqual([{ text: noticeA, tone: "warning" }]);
+  });
+
+  it("a second tap while the first request is out sends nothing; the button then shows what the server holds (re-review, 13 Nov)", async () => {
+    mode = "hang";
+    stubFetch();
+    await load();
+    openClass(/Beginner BJJ/i);
+    fireEvent.click(await screen.findByRole("button", { name: /subscribe to class/i }));
+    // The first request is out: the button waits, and a second tap (now "Unsubscribe") sends nothing.
+    const waiting = await screen.findByRole("button", { name: /unsubscribe/i });
+    expect((waiting as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(waiting);
+    await settle();
+    expect(bookingRequests).toEqual(["POST"]);
+    // The booking lands; the button is free again and matches the server.
+    await act(async () => { releaseA?.(); });
+    await settle();
+    const after = screen.getByRole("button", { name: /unsubscribe/i }) as HTMLButtonElement;
+    expect(after.disabled).toBe(false);
+    expect(serverBooked.has(A)).toBe(true);
+    expect(bookingRequests).toEqual(["POST"]);
   });
 
   it("another class's booking in flight is not undone by this class's re-read (review finding, 13 Nov)", async () => {
