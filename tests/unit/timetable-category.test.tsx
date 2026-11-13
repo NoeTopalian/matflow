@@ -137,6 +137,28 @@ describe("class form — Category", () => {
     expect(sent()).not.toHaveProperty("category");
   });
 
+  it("one save that changes both the category and the colour sends both, with the category's base (integration with class colours)", async () => {
+    stubFetch();
+    render(<TimetableManager {...props([makeClass("c1", "Advanced", "cat-beg", { color: "#3b82f6" })])} />);
+    fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Category" }), { target: { value: "id:cat-int" } });
+    fireEvent.click(within(screen.getByRole("group", { name: "Colour" })).getByRole("button", { name: "Class colour: Navy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(sent()).toMatchObject({ categoryId: "cat-int", categoryBaseId: "cat-beg", color: "#1e3a8a" });
+    expect(sent()).not.toHaveProperty("category");
+  });
+
+  it("re-picking the stored colour in other letter case is not sent as a change", async () => {
+    stubFetch();
+    render(<TimetableManager {...props([makeClass("c1", "Advanced", "cat-beg", { color: "#3B82F6" })])} />);
+    fireEvent.click(screen.getAllByLabelText("Edit Advanced")[0]);
+    fireEvent.click(within(await screen.findByRole("group", { name: "Colour" })).getByRole("button", { name: "Class colour: Blue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(sent()).not.toHaveProperty("color");
+  });
+
   it("choosing Uncategorised sends a null category id", async () => {
     stubFetch();
     render(<TimetableManager {...props([makeClass("c1", "Advanced", "cat-beg")])} />);

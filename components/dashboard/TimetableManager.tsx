@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { matNameKey, placeSuggestions } from "@/lib/mats";
 import {
   Plus, Calendar, Clock, Users, MapPin, ChevronRight, ChevronLeft,
-  X, Edit2, RefreshCw, Tag, Pause, Archive, ArchiveRestore, Play,
+  X, Edit2, RefreshCw, Tag, Pause, Archive, ArchiveRestore, Play, Check,
 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,8 @@ import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { hex } from "@/lib/color";
+import { hex, readableOn } from "@/lib/color";
+import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, classColourName, classDotStyle, classInk } from "@/lib/class-colours";
 import { describeApiError } from "@/lib/api-field-errors";
 import { parseIdParam } from "@/lib/id-param";
 import { duplicateSessionKeys, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
@@ -196,12 +197,6 @@ function accessChanged(target: ClassRow | null, data: Record<string, unknown>): 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const CLASS_COLORS = [
-  "#3b82f6", "#8b5cf6", "#ec4899", "#ef4444",
-  "#f97316", "#eab308", "#22c55e", "#14b8a6",
-  "#06b6d4", "#6366f1",
-];
-
 // UI-RULES §2: the inline hex()/alpha-maths copy that lived here is gone —
 // lib/color.ts is the single source (imported above).
 
@@ -337,7 +332,8 @@ function ClassCard({
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-3 h-3 rounded-full shrink-0" style={{ background: color }} />
+          {/* A pale class colour gets a hairline ring so the dot does not vanish on the white card. */}
+          <div className="w-3 h-3 rounded-full shrink-0" style={classDotStyle(color)} />
           <div className="min-w-0">
             <h3 className="font-semibold text-sm truncate" style={{ color: "var(--tx-1)" }}>{cls.name}</h3>
             {cls.description && (
@@ -467,7 +463,9 @@ function ClassCard({
             <span
               key={s.id}
               className="text-xs px-2.5 py-1 rounded-lg font-medium"
-              style={{ background: hex(color, 0.12), color: color }}
+              // The class colour as text, darkened only as far as 4.5:1 on its own tint needs (light yellow
+              // measured 1.1:1 painted as itself).
+              style={{ background: hex(color, 0.12), color: classInk(color) }}
             >
               {DAYS[s.dayOfWeek]} {s.startTime}
             </span>
@@ -955,7 +953,12 @@ function ClassForm({
   function toggleTier(id: string) {
     setAllowedTierIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
-  const [color, setColor] = useState(initial?.color ?? CLASS_COLORS[0]);
+  // A new class starts on the palette's first colour. A class with no colour of its own (shown in the club's colour,
+  // e.g. one an import made) has none chosen here, and keeps having none until someone picks one.
+  const initialColour: string | null = initial?.id ? (initial.color ?? null) : (initial?.color ?? DEFAULT_CLASS_COLOUR);
+  const [color, setColor] = useState<string | null>(initialColour);
+  // A class saved with a colour the palette does not hold keeps it: offered first, as "Current colour".
+  const [ownColour] = useState(() => (initial?.color && !classColourName(initial.color) ? initial.color : null));
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
     initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
   );
@@ -1050,7 +1053,9 @@ function ClassForm({
       // an unrelated edit never rewrites the list; clearing every tick sends
       // [] and reopens the class.
       ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
-      color,
+      // Sent on create, and on edit only when changed, so an unrelated edit never rewrites a class's colour.
+      // Case-insensitive, as the swatches are: re-picking the stored colour in other letter case is not a change.
+      ...(!initial?.id || color?.toLowerCase() !== initialColour?.toLowerCase() ? { color } : {}),
       schedules,
       // P6: the slot ids this form loaded with. The server refuses the save
       // (409) if the class's days changed since, instead of taking this list
@@ -1545,28 +1550,44 @@ function ClassForm({
         </div>
       )}
 
-      {/* Color */}
+      {/* Colour: named swatches. Selected = a ring in the text colour plus a tick, so a pale swatch still shows it
+          is chosen and the choice never rests on the colour alone; keyboard focus keeps the global focus-visible ring,
+          which is drawn as an outline and so stays distinct from the selection ring. */}
       <div>
-        <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Colour</label>
-        <div className="flex gap-2 flex-wrap">
-          {CLASS_COLORS.map((c) => (
-            <button
-              key={c}
-              onClick={() => setColor(c)}
-              aria-label={`Class colour ${c}`}
-              aria-pressed={color === c}
-              className="w-7 h-7 rounded-full transition-all"
-              style={{
-                background: c,
-                // §4a.5: the selection halo used a literal `white` gap ring,
-                // which on the white drawer surface read as no ring at all
-                // once the swatch itself was pale. The gap is the surface
-                // token, so it stays a gap on whatever the drawer is.
-                boxShadow: color === c ? `0 0 0 2px var(--sf-3), 0 0 0 4px ${c}` : "none",
-              }}
-            />
-          ))}
+        <p id="class-colour-label" className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Colour</p>
+        <div role="group" aria-labelledby="class-colour-label" className="flex gap-4 flex-wrap" data-testid="class-colour-swatches">
+          {[...(ownColour ? [{ value: ownColour, name: "Current colour" }] : []), ...CLASS_COLOURS].map((c) => {
+            const selected = color !== null && color.toLowerCase() === c.value.toLowerCase();
+            return (
+              <Button
+                key={c.value}
+                type="button"
+                variant="ghost"
+                onClick={() => setColor(c.value)}
+                aria-label={`Class colour: ${c.name}`}
+                aria-pressed={selected}
+                title={c.name}
+                // Fixed size (UI-RULES §5a): a 28 px circle on every pointer, never stretched to the touch 44 px; the
+                // ::before is the 44 px hit area instead (gap-4 keeps neighbours' apart). Keyboard focus sits 6 px out,
+                // beyond the selection ring's 2-4 px band, so the two are never drawn in the same place.
+                className="ui-fixed-size relative h-7 w-7 rounded-full p-0 hover:brightness-95 before:absolute before:-inset-2 before:content-[''] focus-visible:outline-offset-[6px]"
+                style={{
+                  background: c.value,
+                  // The gap is the surface token and the ring the text tone, so the ring shows on any swatch;
+                  // an unselected pale swatch keeps a hairline edge so it does not vanish on the drawer.
+                  boxShadow: selected
+                    ? "0 0 0 2px var(--sf-3), 0 0 0 4px var(--tx-1)"
+                    : classDotStyle(c.value).boxShadow ?? "none",
+                }}
+              >
+                {selected ? <Check aria-hidden="true" className="size-4" style={{ color: readableOn(c.value) }} /> : null}
+              </Button>
+            );
+          })}
         </div>
+        <p className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }} aria-live="polite" data-testid="class-colour-name">
+          {color === null ? "The club's colour (none chosen)" : (classColourName(color) ?? "Current colour")}
+        </p>
       </div>
 
       {/* Schedules */}

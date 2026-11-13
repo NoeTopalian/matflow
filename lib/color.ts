@@ -43,8 +43,8 @@ function contrast(a: number, b: number): number {
  * 4.85:1 — the difference between failing and passing AA on every primary
  * button a tenant with that accent renders.
  *
- * Canonical home of this logic per UI-RULES §2a — inline copies (e.g. the
- * member schedule's local readableText) migrate here over time.
+ * Canonical home of this logic per UI-RULES §2a — inline copies migrate here
+ * over time (the member schedule's local readableText has).
  */
 /**
  * Deterministic per-user tone for avatar gradients: display name → hue.
@@ -94,15 +94,8 @@ export function isHexColor(s: unknown): s is string {
  * "Next class" (lf-2, 30 Sep 2026). Fixing each label exposed the next.
  */
 export function legibleInk(fgHex: string, bgHex: string, min = 4.5): string {
-  const parse = (h: string): [number, number, number] | null => {
-    let v = h.trim().replace(/^#/, "");
-    if (/^[0-9a-f]{3}$/i.test(v)) v = v.split("").map((c) => c + c).join("");
-    if (!/^[0-9a-f]{6}/i.test(v)) return null;
-    const n = parseInt(v.slice(0, 6), 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  };
-  const fg = parse(fgHex);
-  const bg = parse(bgHex);
+  const fg = parseHex(fgHex);
+  const bg = parseHex(bgHex);
   if (!fg || !bg) return fgHex;
   const lb = relativeLuminance(...bg);
   const target = lb < 0.18 ? 255 : 0;
@@ -114,6 +107,60 @@ export function legibleInk(fgHex: string, bgHex: string, min = 4.5): string {
     }
   }
   return target === 255 ? "#ffffff" : "#000000";
+}
+
+/**
+ * "#rgb", "#rrggbb" or "#rrggbbaa" (the alpha is ignored: these are opaque paints) as [r, g, b], or null. One
+ * parser for every helper here, so a colour the schema admits (`isHexColor`, up to 8 digits) reads the same in all.
+ */
+function parseHex(h: string): [number, number, number] | null {
+  let v = h.trim().replace(/^#/, "");
+  if (/^[0-9a-f]{3}$/i.test(v)) v = v.split("").map((c) => c + c).join("");
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(v)) return null;
+  const n = parseInt(v.slice(0, 6), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** WCAG contrast ratio of two hex colours (1–21), or null when either cannot be read. */
+export function contrastRatio(aHex: string, bHex: string): number | null {
+  const a = parseHex(aHex);
+  const b = parseHex(bHex);
+  if (!a || !b) return null;
+  return contrast(relativeLuminance(...a), relativeLuminance(...b));
+}
+
+/**
+ * The colour seen where `fgHex` at `alpha` is laid over an opaque `baseHex`,
+ * as hex: the background a tinted chip actually shows, which is what text on
+ * it must contrast with. Unreadable input returns the base.
+ */
+export function tintOver(fgHex: string, alpha: number, baseHex = "#ffffff"): string {
+  const fg = parseHex(fgHex);
+  const base = parseHex(baseHex);
+  if (!fg || !base) return baseHex;
+  return "#" + fg.map((c, i) => Math.round(c * alpha + base[i] * (1 - alpha)).toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * What CSS `color-mix(in srgb, a w%, b)` paints, as hex (weight `w` of `aHex`, 0..1): lets a test measure a mix
+ * the page computes from a CSS variable. Unreadable input returns `bHex`.
+ */
+export function mixHex(aHex: string, bHex: string, w: number): string {
+  const a = parseHex(aHex);
+  const b = parseHex(bHex);
+  if (!a || !b) return bHex;
+  return "#" + a.map((c, i) => Math.round(c * w + b[i] * (1 - w)).toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Whether a small mark painted in `hex` (a class's dot) needs a hairline
+ * outline to be seen on `surfaceHex`: below the WCAG non-text 3:1 floor a pale
+ * colour (light yellow on white measures 1.2:1) disappears. An unreadable
+ * colour is outlined too.
+ */
+export function markNeedsOutline(hexColour: string, surfaceHex = "#ffffff"): boolean {
+  const ratio = contrastRatio(hexColour, surfaceHex);
+  return ratio === null || ratio < 3;
 }
 
 export function readableOn(hexColour: string): typeof ON_LIGHT | typeof ON_DARK {

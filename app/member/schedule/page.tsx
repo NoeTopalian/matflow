@@ -5,6 +5,8 @@ import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react"
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage } from "@/lib/checkin-outcome";
 import { categoryTag } from "@/lib/class-category";
+import { readableOn } from "@/lib/color";
+import { memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
 import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -99,16 +101,6 @@ function hex(h: string, a: number) {
   const value = normalizeHex(h);
   const n = parseInt(value.replace("#", ""), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
-
-function readableText(color: string) {
-  const value = normalizeHex(color);
-  const n = parseInt(value.replace("#", ""), 16);
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  const luma = (r * 299 + g * 587 + b * 114) / 1000;
-  return luma > 155 ? "#0f172a" : "#ffffff";
 }
 
 function getWeekDays(anchor: Date): Date[] {
@@ -520,7 +512,13 @@ function SessionBlock({
   matName: string | null;
 }) {
   const color  = normalizeHex(cls.color ?? primaryColor);
-  const text   = readableText(color);
+  // UI-RULES §2a: the house helper picks the ink with the higher WCAG contrast; the local luma threshold it
+  // replaces picked the weaker ink across the mid-tones (green 2.28:1, orange 2.80:1 on a booked block).
+  // A booked block's fill: opaque at both stops, so its ink reads 4.5:1 on either shell (lib/class-colours.ts). A
+  // booked block that has ended is greyed in the fill itself and its ink chosen against the greyed fill: a CSS
+  // saturate filter over the whole block took blue's text to 4.35:1 (measured in Chromium, 12 Nov 2026).
+  const booked = memberBookedFill(isSub && state === "ended" ? memberEndedColour(color) : color);
+  const text   = isSub ? booked.ink : readableOn(color);
   // Subscribed blocks are filled with the class colour, so the ink is whatever
   // reads on it. Unsubscribed blocks are a tint of that colour over the member
   // shell, so their ink is the shell's own text, never a hard-coded dark navy
@@ -551,6 +549,8 @@ function SessionBlock({
       aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${where ? `, ${where}` : ""}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
       className={[
         "relative h-auto flex-col items-stretch justify-start gap-0.5 overflow-hidden whitespace-normal rounded-xl text-left font-normal transition-all active:scale-[0.98] hover:bg-transparent",
+        // Keyboard focus outside the selection ring (which fills 2-4 px out), so the two never share a band.
+        "focus-visible:outline-offset-[6px]",
         large ? "min-h-[56px] px-[7px] pb-[8px] pt-[7px]" : "min-h-[44px] px-[5px] pb-[6px] pt-[5px]",
       ].join(" ")}
       style={{
@@ -558,17 +558,16 @@ function SessionBlock({
         // Under the tint, and in the edge, a little of the shell's own text colour: a class coloured like the shell
         // (a black class on the dark shell, a white one on a light shell) still reads as a card, not floating text.
         background: isSub
-          ? `linear-gradient(135deg, ${color}, ${hex(color, 0.82)})`
+          ? `linear-gradient(135deg, ${booked.from}, ${booked.to})`
           : `linear-gradient(135deg, ${hex(color, ended ? 0.16 : 0.32)}, ${hex(color, ended ? 0.1 : 0.2)}), color-mix(in srgb, var(--member-text) 6%, transparent)`,
         border: `1px solid ${isSub
           ? `color-mix(in srgb, ${color} 70%, var(--member-text) 30%)`
           : `color-mix(in srgb, ${color} ${ended ? 30 : 55}%, var(--member-text) ${ended ? 14 : 22}%)`}`,
-        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : color}` : undefined,
-        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${hex(color, 0.75)}` : undefined,
+        // The live edge and the selection ring are the class colour mixed half and half with the shell's text
+        // colour (lib/class-colours.ts memberClassMark): 3:1 for every palette colour on the light and the dark shell.
+        borderLeft: live ? `3px solid ${isSub ? "var(--member-text)" : memberClassMark(color)}` : undefined,
+        boxShadow: isSel ? `0 0 0 2px var(--member-elevated), 0 0 0 4px ${memberClassMark(color)}` : undefined,
         color: ink,
-        // A booked class that has ended is greyed. Desaturating keeps each colour's brightness, so its ink still
-        // reads; a see-through fill would not on a light shell.
-        filter: isSub && ended ? "saturate(0.35)" : undefined,
       }}
     >
       <span className={["font-bold tabular-nums", large ? "text-xs leading-[15px]" : "text-[11px] leading-[14px]"].join(" ")} data-block-part="time">
@@ -587,7 +586,10 @@ function SessionBlock({
             <span
               className={`${pill} gap-1`}
               style={{
-                background: pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
+                // On a booked block the pill's text sits on the block's own fill (no tint under it): a tint took
+                // live-on-purple to 4.47:1 and cancelled-on-blue to 4.25 (measured 12 Nov 2026). The state keeps its
+                // colour in the border and the live dot, and its word.
+                background: isSub ? "transparent" : pillTint ? `color-mix(in srgb, ${pillTint} 18%, transparent)` : `color-mix(in srgb, ${ink} 10%, transparent)`,
                 border: `1px solid ${pillTint ? `color-mix(in srgb, ${pillTint} 55%, transparent)` : `color-mix(in srgb, ${ink} 30%, transparent)`}`,
               }}
             >
@@ -634,7 +636,7 @@ function SessionBlock({
         <span
           aria-hidden="true"
           className="absolute left-0 bottom-0 h-0.5"
-          style={{ width: `${Math.round(progress * 100)}%`, background: isSub ? text : color }}
+          style={{ width: `${Math.round(progress * 100)}%`, background: isSub ? text : memberClassMark(color) }}
         />
       )}
     </Button>
