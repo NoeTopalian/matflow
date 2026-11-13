@@ -1054,7 +1054,8 @@ function ClassForm({
       // [] and reopens the class.
       ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
       // Sent on create, and on edit only when changed, so an unrelated edit never rewrites a class's colour.
-      ...(!initial?.id || color !== initialColour ? { color } : {}),
+      // Case-insensitive, as the swatches are: re-picking the stored colour in other letter case is not a change.
+      ...(!initial?.id || color?.toLowerCase() !== initialColour?.toLowerCase() ? { color } : {}),
       schedules,
       // P6: the slot ids this form loaded with. The server refuses the save
       // (409) if the class's days changed since, instead of taking this list

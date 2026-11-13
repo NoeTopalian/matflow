@@ -43,8 +43,8 @@ function contrast(a: number, b: number): number {
  * 4.85:1 — the difference between failing and passing AA on every primary
  * button a tenant with that accent renders.
  *
- * Canonical home of this logic per UI-RULES §2a — inline copies (e.g. the
- * member schedule's local readableText) migrate here over time.
+ * Canonical home of this logic per UI-RULES §2a — inline copies migrate here
+ * over time (the member schedule's local readableText has).
  */
 /**
  * Deterministic per-user tone for avatar gradients: display name → hue.

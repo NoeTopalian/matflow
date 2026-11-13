@@ -90,7 +90,7 @@ try {
   const classId = sunrise.body.id;
   // Saturated colours booked too: blue (the default) and red read 3.62 and 3.50 on the dark shell when the block's
   // second stop let the shell through; purple and indigo miss 4.5:1 with either ink on their own colour (review of 12 Nov
-  // 2026). Run before 19:00 London time, or the earliest of these has ended and is measured greyed (saturate filter).
+  // 2026). Run before 19:00 London time, or the earliest of these has ended and is measured with its greyed fill (memberEndedColour).
   const BOOKED_EXTRA = [["#3b82f6", `Booked blue ${TAG}`, "21:00", "21:50"], ["#ef4444", `Booked red ${TAG}`, "22:00", "22:50"], ["#8b5cf6", `Booked purple ${TAG}`, "20:00", "20:50"], ["#6366f1", `Booked indigo ${TAG}`, "19:00", "19:50"]];
   const extraIds = [];
   for (const [colour, name, start, end] of BOOKED_EXTRA) {
