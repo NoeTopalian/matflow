@@ -579,14 +579,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const m = memberOf.get(`${u.sourceFingerprint}|${u.disposition}`);
           if (m) toLink.set(m, [...(toLink.get(m) ?? []), u.id]);
         }
-        // In short transactions of 100 people each (review Q1): one long one could pass the transaction time limit on
-        // a large retry, and every later retry would then stop at the same place. Each update is idempotent
-        // (`memberId: null` in its where), so a batch that fails leaves nothing half-linked and the next run carries on.
+        // In short transactions (review Q1): one long one could pass the transaction time limit (15 s) on a large
+        // retry, and every later retry would then stop at the same place. A batch is one round trip per person, so 20
+        // people stay well inside the limit even at 226 ms a round trip (Bali to the test branch; re-review of
+        // a1cef92d). Each update is idempotent (`memberId: null` in its where), so a batch that fails leaves nothing
+        // half-linked and the next run carries on.
+        const LINK_BATCH = 20;
         const pairs = [...toLink];
-        for (let i = 0; i < pairs.length; i += 100) {
+        for (let i = 0; i < pairs.length; i += LINK_BATCH) {
           await withTenantContext(tenantId, async (tx) => {
             await holdOffMigrations(tx);
-            for (const [memberId, ids] of pairs.slice(i, i + 100)) {
+            for (const [memberId, ids] of pairs.slice(i, i + LINK_BATCH)) {
               await tx.importedMembership.updateMany({ where: { tenantId, id: { in: ids }, memberId: null }, data: { memberId } });
             }
           });

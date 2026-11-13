@@ -156,10 +156,12 @@ try {
   await page.goto("/dashboard/settings?tab=import");
   await page.getByRole("button", { name: /^Review \d+ (person|people)$/ }).first().click({ timeout: 60000 }).catch(async (e) => { await shot(page, "import-review-after-delete"); throw e; });
   const afterDel = page.getByTestId("import-review").first();
-  await afterDel.getByText(/since deleted|Nobody is left/).first().waitFor({ timeout: 30000 }).catch(() => {});
-  const afterText = (await afterDel.textContent()) ?? "";
-  L.check("privacy", "P1 after Ada's data is erased, the review list shows no name or value of hers",
-    del.status() < 300 && !/Ada Field/.test(afterText), { del: del.status(), text: afterText.slice(0, 160) });
+  // The list must have loaded (its "since deleted" entry or its empty state), or the absence below proves nothing.
+  const loaded = await afterDel.getByText(/since deleted|Nobody is left/).first().waitFor({ timeout: 30000 }).then(() => true, () => false);
+  const afterText = (await afterDel.textContent().catch(() => "")) ?? "";
+  L.check("privacy", "P1 after Ada is removed and her data erased, the loaded review list shows no name or address of hers",
+    removed.status() < 300 && del.status() < 300 && loaded && !/Ada Field/.test(afterText) && !afterText.includes(E("ada")),
+    { removed: removed.status(), del: del.status(), loaded, text: afterText.slice(0, 160) });
 
   // 8. Phone width.
   const phone = await context(browser, "10.91.0.12", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });

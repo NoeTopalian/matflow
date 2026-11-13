@@ -17,14 +17,14 @@ vi.mock("@/lib/import-storage", async (importOriginal) => ({
   readImportFile: vi.fn(async (url: string) => FILES.get(url) ?? null),
   deleteImportFile: vi.fn(async () => {}),
 }));
-const fault = vi.hoisted(() => ({ failOnCall: 0, calls: 0 }));
+const fault = vi.hoisted(() => ({ failOnCall: 0, failOnCalls: [] as number[], calls: 0 }));
 vi.mock("@/lib/member-status", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/member-status")>();
   return {
     ...real,
     recordStatusEventsBulk: async (...args: Parameters<typeof real.recordStatusEventsBulk>) => {
       fault.calls += 1;
-      if (fault.failOnCall && fault.calls === fault.failOnCall) throw new Error("injected: the run stops here");
+      if ((fault.failOnCall && fault.calls === fault.failOnCall) || fault.failOnCalls.includes(fault.calls)) throw new Error("injected: the run stops here");
       return real.recordStatusEventsBulk(...args);
     },
   };
@@ -129,6 +129,33 @@ describe.skipIf(!HAS_DB)("members import: retry, overlap and concurrent staff ed
     // Each person's import status event is recorded once, not once per attempt.
     const events = await withRlsBypass((tx) => tx.memberStatusEvent.count({ where: { tenantId, member: { email: { startsWith: `${STAMP}-r` } } } }));
     expect(events).toBe(30);
+  });
+
+  it("a retry that must link more people than one batch holds (45 left by failed slices): everyone's history linked once", async () => {
+    // Re-review of a1cef92d: the linking runs in batches of 20; this crosses two batch boundaries (20, 20, 5).
+    // A failed slice does not stop the run (the next slice is still written), so slices 2 and 3 (25 + 20 people) fail
+    // and only slice 1's 25 are written; every ledger row is written, those 45 people's with no member.
+    const people = Array.from({ length: 70 }, (_, i) => person(i + 1, "b"));
+    const j = await job(fileOf(people));
+    fault.calls = 0;
+    fault.failOnCalls = [2, 3];
+    expect((await run(j.id)).status).not.toBe(200);
+    fault.failOnCalls = [];
+    expect((await emailsOf("b")).length).toBe(25);
+    const again = await run(j.id);
+    expect(again.status).toBe(200);
+    expect(again.body.imported).toBe(45);
+    const rows = await withRlsBypass((tx) => tx.importedMembership.findMany({ where: { tenantId, importJobId: j.id }, select: { memberId: true } }));
+    expect(rows.length).toBe(70);
+    expect(rows.filter((r) => r.memberId === null).length).toBe(0);
+    const members = await withRlsBypass((tx) => tx.member.findMany({ where: { tenantId, importJobId: j.id }, select: { id: true } }));
+    expect(members.length).toBe(70);
+    // One history row per person, each on its own person.
+    const perMember = new Map<string, number>();
+    for (const r of rows) perMember.set(r.memberId!, (perMember.get(r.memberId!) ?? 0) + 1);
+    expect(perMember.size).toBe(70);
+    expect([...perMember.values()].every((n) => n === 1)).toBe(true);
+    expect(new Set(members.map((m) => m.id))).toEqual(new Set(perMember.keys()));
   });
 
   it("two imports naming the same people, committed at the same moment: each person once; the other import counts them as already here; both reconcile", async () => {

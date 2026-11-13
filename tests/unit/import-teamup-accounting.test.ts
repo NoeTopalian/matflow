@@ -86,7 +86,7 @@ function makeTx() {
       // Round 7 P1: the commit links unlinked history rows to the people this job created (by content + disposition).
       findMany: async ({ where }: { where: { importJobId?: string; memberId?: null } }) =>
         h.ledger
-          .map((r, i) => ({ ...r, id: `l${i}` }))
+          .map((r, i): Record<string, unknown> => ({ ...r, id: `l${i}` }))
           .filter((r) => r.importJobId === where.importJobId && (where.memberId !== null || r.memberId == null)),
       updateMany: async ({ where, data }: { where: { id: { in: string[] } }; data: { memberId: string } }) => {
         let count = 0;
