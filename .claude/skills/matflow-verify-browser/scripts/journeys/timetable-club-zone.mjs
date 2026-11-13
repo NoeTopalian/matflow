@@ -92,7 +92,18 @@ try {
   const cancel = await api(`/api/classes/${both.id}/instances/${inst.id}`, "PATCH", { isCancelled: true, cancellationReason: "Synthetic: coach away" });
   if (cancel.status !== 200) throw new Error(`cancel: ${cancel.status}`);
 
+  // The page reads today's sessions (/api/coach/today) after it mounts; the chips' Cancelled state comes from that
+  // answer. Wait for it, and record what it said, before judging the chips.
+  const reloadedAt = Date.now();
+  const coachToday = main.waitForResponse((r) => new URL(r.url()).pathname === "/api/coach/today", { timeout: 120000 });
   await main.reload();
+  const todayAnswer = await coachToday;
+  const todayBody = await todayAnswer.json().catch(() => null);
+  L.note("setup", "the page's /api/coach/today", {
+    status: todayAnswer.status(),
+    ms: Date.now() - reloadedAt,
+    cancelledZoneEvening: Array.isArray(todayBody) ? todayBody.some((s) => s.classId === both.id && s.isCancelled === true) : null,
+  });
   await main.getByRole("button", { name: "Next week" }).waitFor();
   const grid = main.getByTestId("week-grid");
   const todayHead = () => grid.locator('[aria-label$=", today"], [aria-label*=", today,"]');
@@ -107,7 +118,7 @@ try {
 
   await section("cancelled", "the club's cancellation lands on the club's day; the same class on the browser's day carries no state", async () => {
     const chip = (dow) => grid.getByRole("button", { name: new RegExp(`^Edit Zone Evening, ${DAYS_FULL[dow]} 23:15 to `) });
-    await expect(chip(clubDay.dow)).toHaveAttribute("data-session-state", "cancelled");
+    await expect(chip(clubDay.dow)).toHaveAttribute("data-session-state", "cancelled", { timeout: 15000 });
     expect(await chip(baliDay.dow).getAttribute("data-session-state")).toBeNull();
     return { clubDay: DAYS_FULL[clubDay.dow], browserDay: DAYS_FULL[baliDay.dow] };
   });
