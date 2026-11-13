@@ -129,4 +129,24 @@ describe("class edits carry what they replace (Round 4)", () => {
     expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
     expect((screen.getByLabelText("Class Name") as HTMLInputElement).value).toBe("Gi Fundamentals");
   });
+
+  // Round 6 close-out (merge-review finding 3): a category refusal says "Reload the page"; an installed app has no
+  // reload control, so the form offers one, as for the other stale refusals.
+  it("a category refusal is shown in the form with Reload, and the draft is kept", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
+      if (url === "/api/coach/today") return { ok: true, json: async () => [] };
+      if (method === "PATCH") return { ok: false, status: 409, json: async () => ({ error: "Someone else changed this class's category since you opened it. Reload the page and choose again.", reason: "category" }) };
+      return { ok: false, json: async () => ({}) };
+    }));
+    render(<TimetableManager initialClasses={[GI]} {...PROPS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit Gi/ })[0]);
+    fireEvent.change(screen.getByLabelText("Class Name") as HTMLInputElement, { target: { value: "Gi Fundamentals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Reload the page and choose again");
+    expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+    expect((screen.getByLabelText("Class Name") as HTMLInputElement).value).toBe("Gi Fundamentals");
+  });
 });

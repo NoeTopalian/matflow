@@ -1692,8 +1692,9 @@ function ClassForm({
             <p role="alert" data-testid="class-form-save-error" className="text-xs flex-1" style={{ color: "var(--hue-danger-ink)" }}>
               {error.message}
             </p>
-            {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then). */}
-            {(error.reason === "stale_schedules" || error.reason === "stale_class") && (
+            {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then).
+                Round 6: so is a category refusal (the club's categories or this class's changed); its sentence says to reload, and an installed app has no reload control. */}
+            {(error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
               <Button variant="secondary" size="compact" onClick={() => window.location.reload()} className="shrink-0">
                 Reload
               </Button>
