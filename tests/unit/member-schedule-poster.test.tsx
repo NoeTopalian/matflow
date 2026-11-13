@@ -16,6 +16,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import MemberSchedulePage from "@/app/member/schedule/page";
+import { memberBookedFill, memberEndedColour } from "@/lib/class-colours";
 
 type Row = Record<string, unknown>;
 function row(id: string, name: string, startTime: string, endTime: string, location: string, matId: string | null, over: Row = {}): Row {
@@ -168,7 +169,7 @@ describe("the members' day by mat", () => {
     }
   });
 
-  it("a booked class that has ended is greyed, its ink unchanged", async () => {
+  it("a booked class that has ended is greyed in its fill (no filter over its text), its ink chosen against the greyed fill", async () => {
     stub([row("early", "Sunrise Gi", "00:00", "00:10", "Mat 1", "m1")], ["early"]);
     render(<MemberSchedulePage />);
     const { day } = await today();
@@ -176,8 +177,16 @@ describe("the members' day by mat", () => {
     await waitFor(() => expect(block.querySelector("svg, [data-block-part]")).not.toBeNull());
     // 00:10 has passed whenever this runs, except in its first ten minutes of the day.
     if (block.dataset.sessionState === "ended") {
-      await waitFor(() => expect(block.style.filter).toBe("saturate(0.35)"));
+      // 12 Nov 2026: a saturate filter over the whole block greyed the ink with it (blue 4.35:1, measured). The fill
+      // is greyed instead (lib/class-colours.ts memberEndedColour) and the ink picked for that fill.
+      const greyed = memberBookedFill(memberEndedColour("#3b82f6"));
+      await waitFor(() => expect(block.style.backgroundImage || block.style.background).toContain("gradient"));
+      expect(block.style.filter).toBe("");
       expect(block.style.opacity).toBe("");
+      const painted = (block.getAttribute("style") ?? "").toLowerCase();
+      const rgb = (h: string) => `rgb(${parseInt(h.slice(1, 3), 16)}, ${parseInt(h.slice(3, 5), 16)}, ${parseInt(h.slice(5, 7), 16)})`;
+      expect(painted.includes(greyed.from) || painted.includes(rgb(greyed.from))).toBe(true);
+      expect(painted.includes(greyed.ink) || painted.includes(rgb(greyed.ink))).toBe(true);
     }
   });
 });

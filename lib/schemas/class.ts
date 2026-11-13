@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { classCategorySchema } from "@/lib/class-category";
+import { classCategoryIdSchema, classCategorySchema } from "@/lib/class-category";
 
 /**
  * One recurring slot. Exported so PATCH /api/classes/[id] validates schedule
@@ -75,8 +75,13 @@ export const classCreateSchema = z.object({
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts)
   // and asks the desk first on the register. Omitted = not a kids class.
   isKids: z.boolean().optional(),
-  // T6c: the class category (lib/class-category.ts). Omitted or null =
-  // uncategorised; a key outside the list is a 400.
+  // The club's category for the class (a ClassCategory id). Omitted or null =
+  // uncategorised. Another club's id, an unknown id or an archived category
+  // is refused in the write (lib/class-category-store.ts categoryIdToWrite).
+  categoryId: classCategoryIdSchema.optional(),
+  // LEGACY: an old key, sent by a browser holding a page from before
+  // club-managed categories; translated to the club's category with that key.
+  // A key outside the old list is a 400. Not with `categoryId`.
   category: classCategorySchema.optional(),
   // Required, and at least one: a class with no day never appears on the
   // weekly timetable, and Noe's ruling (18 Sep) is that the minimum — name,

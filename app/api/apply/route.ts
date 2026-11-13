@@ -59,7 +59,8 @@ export async function POST(req: Request) {
           phone,
           discipline: sport,
           memberCount,
-          // notesField() already returns either a trimmed/sanitised string or null.
+          // notesField() returns a trimmed/sanitised string, null, or (when the
+          // field was omitted) undefined, which Prisma stores as NULL here.
           notes: message,
           ipAddress: ip === "unknown" ? null : ip,
           userAgent,

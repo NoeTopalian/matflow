@@ -22,7 +22,8 @@ const h = vi.hoisted(() => {
   const calls: { op: string; args: unknown }[] = [];
   const handlers: Record<string, (args: unknown) => unknown> = {};
   const tx: unknown = new Proxy({}, {
-    get: (_t, model) => new Proxy({}, {
+    // Club creation seeds the club's class categories with one raw statement (lib/class-category-store.ts).
+    get: (_t, model) => model === "$executeRaw" ? async () => 0 : new Proxy({}, {
       get: (_m, method) => async (args: unknown) => {
         const op = `${String(model)}.${String(method)}`;
         calls.push({ op, args });

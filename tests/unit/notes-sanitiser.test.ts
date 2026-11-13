@@ -144,7 +144,8 @@ describe("notesField(maxLength)", () => {
     const { memberUpdateSchema } = await import("@/lib/schemas/member");
     const r = memberUpdateSchema.safeParse({ name: "Sam", phone: "07700900123" });
     expect(r.success).toBe(true);
-    if (r.success) expect((r.data as Record<string, unknown>).notes).toBeUndefined();
+    // The key must be absent (the audit lists Object.keys of the parsed body), not merely undefined.
+    if (r.success) expect(r.data).not.toHaveProperty("notes");
   });
 
   it("preserves legitimate multi-line content within the limit", () => {

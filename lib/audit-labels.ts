@@ -99,6 +99,12 @@ export const AUDIT_LABELS: Record<string, string> = {
   "mat.reorder": "Reordered the mats",
   "mat.adopt": "Made mats from typed places",
   "timetable.layout.update": "Changed how same-time classes are split",
+  // Class categories (Release B): the club's own labels for its classes.
+  "class_category.create": "Added a class category",
+  "class_category.rename": "Renamed a class category",
+  "class_category.archive": "Archived a class category",
+  "class_category.restore": "Restored a class category",
+  "class_category.reorder": "Reordered the class categories",
 
   // ── Memberships, packs, ranks ─────────────────────────────────────────────
   "membership.tier.create": "Created a membership plan",

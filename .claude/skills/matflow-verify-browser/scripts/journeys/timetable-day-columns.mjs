@@ -408,8 +408,8 @@ try {
           await measure("blockTime", day.locator('button:not([data-booked]) [data-block-part="time"]'));
           await measure("blockName", day.locator('button:not([data-booked]) [data-block-part="name"]'));
           await measure("blockLast", day.locator('button:not([data-booked]) [data-block-part="place"]'));
-          // A booked block is filled with its class colour and its ink comes from the shared readableText (not
-          // changed here): measured and recorded, not held to the 4.5:1 line.
+          // A booked block is filled with its class colour and its ink comes from memberBookedFill (lib/class-colours),
+          // which the class-colours journeys hold to 4.5:1; here it is measured and recorded only.
           const filled = day.locator("button[data-booked] [data-block-part]");
           const seen = async () => ({
             subs: await pane.page().evaluate(async () => (await (await fetch("/api/member/me/subscriptions")).json()).classIds),

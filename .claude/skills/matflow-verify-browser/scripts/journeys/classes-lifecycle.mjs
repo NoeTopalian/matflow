@@ -105,7 +105,9 @@ const record = async (inst, mid) => (await q(`select id, "checkInMethod" from "A
 const bookings = async (mid, classId) => Number((await q(`select count(*)::int as n from "ClassSubscription" where "memberId" = $1 and "classId" = $2`, [mid, classId]))[0].n);
 const rosterIds = async (classId) => (await q(`select "memberId" from "ClassRoster" where "tenantId" = $1 and "classId" = $2 order by "memberId"`, [tenantId, classId])).map((r) => r.memberId);
 const tierIds = async (classId) => (await q(`select "tierId" from "ClassMembershipTier" where "tenantId" = $1 and "classId" = $2 order by "tierId"`, [tenantId, classId])).map((r) => r.tierId);
-const classRow = async (classId) => (await q(`select name, category, description, "isActive", "deletedAt", "maxCapacity", duration from "Class" where id = $1 and "tenantId" = $2`, [classId, tenantId]))[0] ?? null;
+const classRow = async (classId) => (await q(`select name, category, "categoryId", description, "isActive", "deletedAt", "maxCapacity", duration from "Class" where id = $1 and "tenantId" = $2`, [classId, tenantId]))[0] ?? null;
+/** The club's starting category with this old key (club-managed categories): what the class's categoryId must be. */
+const categoryIdOf = async (key) => (await q(`select id from "ClassCategory" where "tenantId" = $1 and "legacyKey" = $2`, [tenantId, key]))[0]?.id ?? null;
 const audits = async (action, entityId, extra = "", params = []) =>
   q(`select metadata, "createdAt" from "AuditLog" where "tenantId" = $1 and action = $2 and "entityId" = $3 ${extra} order by "createdAt" asc`, [tenantId, action, entityId, ...params]);
 /** Audit writes are best-effort and asynchronous (lib/audit-log.ts:255-285): poll for `want` rows; for 0, settle then read. */
@@ -199,7 +201,8 @@ try {
   await page.goto("/dashboard/timetable");
   await page.getByRole("button", { name: "Add class" }).first().click();
   await page.getByLabel("Class Name", { exact: true }).fill(CLASS);
-  await page.locator("#class-category").selectOption("competition");
+  // Club-managed categories (11 Nov 2026): the options are the club's own categories by id, so pick by the name shown.
+  await page.locator("#class-category").selectOption({ label: "Competition" });
   await page.getByRole("spinbutton", { name: "Duration (mins)" }).first().fill("60");
   await page.getByRole("spinbutton", { name: "Max Capacity" }).fill("40");
   await page.getByRole("checkbox", { name: TIER_A, exact: true }).click();
@@ -271,7 +274,7 @@ try {
   await page.reload();
   await page.locator(`button[aria-label^="Edit ${CLASS}, "]:visible`).first().click(); // the week chip: "Edit <class>, <day> <start> to <end>"
   await page.locator("#class-category").waitFor();
-  await page.locator("#class-category").selectOption("nogi");
+  await page.locator("#class-category").selectOption({ label: "No-Gi" });
   await page.getByLabel("Description", { exact: true }).fill("Edited by the classes journey");
   let patches = 0;
   page.on("request", (r) => { if (r.method() === "PATCH" && new URL(r.url()).pathname === `/api/classes/${classId}`) patches++; });
@@ -285,7 +288,8 @@ try {
   const upd = (await auditsSettled("class.updated", classId, 1)).at(-1)?.metadata ?? null;
   L.check("audit", "A2 class.updated audit row: category competition -> nogi, description recorded, no bookings cascaded",
     // D2 (21 Oct) removed the booking cascade, so the row carries no cascade fields at all.
-    upd?.before?.category === "competition" && upd?.after?.category === "nogi" && upd?.after?.description === "Edited by the classes journey" && !Object.keys(upd ?? {}).some((k) => /cascade/i.test(k)),
+    // The row records the reference (categoryId), which Undo restores; the old key column follows it in the database.
+    upd?.before?.categoryId === (await categoryIdOf("competition")) && upd?.after?.categoryId === (await categoryIdOf("nogi")) && row1.categoryId === (await categoryIdOf("nogi")) && upd?.after?.description === "Edited by the classes journey" && !Object.keys(upd ?? {}).some((k) => /cascade/i.test(k)),
     { fields: upd?.fields, before: upd?.before, after: upd?.after });
 
   // Three more sessions today for the staff doors (staff doors have no time window).

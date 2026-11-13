@@ -29,8 +29,17 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 vi.mock("@vercel/blob", () => ({ get: getMock, head: vi.fn() }));
 
-const { photoFindFirstMock } = vi.hoisted(() => ({ photoFindFirstMock: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { memberPhoto: { findFirst: photoFindFirstMock } } }));
+const { photoFindFirstMock, childrenMock } = vi.hoisted(() => ({ photoFindFirstMock: vi.fn(), childrenMock: vi.fn(async () => [] as { id: string }[]) }));
+// Round 5 remediation: ownership (lib/blob-ownership.ts memberMayReadBlob) also reads the caller's confirmed
+// children and whether the file is a club asset (logo, announcement image).
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    memberPhoto: { findFirst: photoFindFirstMock },
+    member: { findMany: childrenMock },
+    tenant: { findFirst: vi.fn(async () => null) },
+    announcement: { findFirst: vi.fn(async () => null) },
+  },
+}));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> => {
     const { prisma } = await import("@/lib/prisma");
@@ -82,25 +91,37 @@ describe("GET /api/blob-image — a member may not read another member's blob", 
     expect(getMock, "and the store is never even asked").not.toHaveBeenCalled();
   });
 
-  it("serves a blob the member's own photo row points at", async () => {
+  it("serves a blob the member's own photo row points at (a legacy club-root file: their row is the earliest)", async () => {
     sessionAs("member", "mem-self");
-    photoFindFirstMock.mockResolvedValue({ id: "photo-1" });
+    photoFindFirstMock.mockResolvedValue({ id: "photo-1", memberId: "mem-self" });
 
     const res = await GET(req(PHOTO_URL));
     expect(res.status).toBe(200);
     expect(getMock).toHaveBeenCalled();
   });
 
-  it("scopes the lookup to the member AND their children, inside the tenant", async () => {
+  it("scopes the lookup to the member AND their confirmed children, inside the tenant", async () => {
     sessionAs("member", "mem-parent");
-    photoFindFirstMock.mockResolvedValue({ id: "photo-kid" });
+    childrenMock.mockResolvedValueOnce([{ id: "mem-kid" }]);
+    photoFindFirstMock.mockResolvedValue({ id: "photo-kid", memberId: "mem-kid" });
 
-    await GET(req(PHOTO_URL));
+    const res = await GET(req(PHOTO_URL));
+    expect(res.status).toBe(200);
+    const childWhere = (childrenMock.mock.calls[0] as unknown as [{ where: Record<string, unknown> }])[0].where;
+    expect(childWhere.parentMemberId, "…covering the caller's children").toBe("mem-parent");
+    expect(childWhere.tenantId).toBe(TENANT);
+    expect(JSON.stringify(childWhere), "a suggested (unconfirmed) link grants nothing").toMatch(/guardianConfirmedAt/);
     const where = photoFindFirstMock.mock.calls[0][0].where;
     expect(where.url, "matched on the exact URL, not a prefix").toBe(PHOTO_URL);
     expect(where.tenantId, "…and still inside the tenant").toBe(TENANT);
-    expect(JSON.stringify(where), "…covering the caller's own rows and their children's")
-      .toMatch(/parentMemberId/);
+  });
+
+  it("refuses a legacy file whose earliest photo row is someone else's (a row planted later never wins)", async () => {
+    sessionAs("member", "mem-snooper");
+    photoFindFirstMock.mockResolvedValue({ id: "photo-victim", memberId: "mem-victim" });
+    const res = await GET(req(PHOTO_URL));
+    expect(res.status).toBe(403);
+    expect(getMock).not.toHaveBeenCalled();
   });
 
   it("never serves the import CSV to a member, whatever any row says", async () => {

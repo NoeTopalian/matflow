@@ -6,7 +6,7 @@ import { logAudit } from "@/lib/audit-log";
 import { sendPushToMember } from "@/lib/push";
 import { notesField } from "@/lib/schemas/notes-sanitiser";
 import { assertSameOrigin } from "@/lib/csrf";
-import { isVercelBlobUrl, isForeignBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { STAFF_ROLES } from "@/lib/authz";
 import { refuseSupportSessionUnlessEdit, refuseSupportEditFields, SUPPORT_EDIT_FIELD_POLICY } from "@/lib/support-session";
 import { recordSupportRefusal, refusedFieldsOf } from "@/lib/support-refusal-audit";
@@ -91,6 +91,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { rankSystemId, stripes, notes } = parsed.data;
   // A blob photo must be one of THIS club's uploads (cross-tenant blob
   // deletion, 14 Oct 2026): a foreign store URL is refused before any write.
+  // Round 5 remediation: a stored promotion photo must have been uploaded for
+  // THIS member (the profile's promotion upload is member-scoped); another
+  // member's photo, the logo or an import file is refused, so it can never be
+  // attached here and then read by this member (lib/blob-ownership.ts).
+  if (parsed.data.photoUrl && isVercelBlobUrl(parsed.data.photoUrl) && !isMemberBlobUrl(parsed.data.photoUrl, session.user.tenantId, memberId)) {
+    return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this member" }, { status: 400 });
+  }
   if (parsed.data.photoUrl && isForeignBlobUrl(parsed.data.photoUrl, session.user.tenantId)) {
     return NextResponse.json({ error: "Photo must be uploaded through MatFlow for this club" }, { status: 400 });
   }

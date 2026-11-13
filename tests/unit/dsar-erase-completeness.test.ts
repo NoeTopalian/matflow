@@ -131,9 +131,13 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: memberUpdateManyMock,
       findMany: memberFindManyMock,
     },
-    tenant: { findUnique: tenantFindUniqueMock },
-    memberPhoto: { findMany: photoFindManyMock, deleteMany: photoDeleteManyMock },
-    signedWaiver: { findMany: waiverFindManyMock, updateMany: waiverUpdateManyMock },
+    // Round 5 remediation: before deleting a photo file the erasure checks nothing else in the club references it
+    // (lib/blob-ownership.ts): every findFirst below answers "no other reference".
+    tenant: { findUnique: tenantFindUniqueMock, findFirst: vi.fn(async () => null) },
+    memberPhoto: { findMany: photoFindManyMock, deleteMany: photoDeleteManyMock, findFirst: vi.fn(async () => null) },
+    signedWaiver: { findMany: waiverFindManyMock, updateMany: waiverUpdateManyMock, findFirst: vi.fn(async () => null) },
+    announcement: { findFirst: vi.fn(async () => null) },
+    initiativeAttachment: { findFirst: vi.fn(async () => null) },
     loginEvent: { count: loginEventCountMock, deleteMany: loginEventDeleteManyMock },
     pushSubscription: { count: pushCountMock, deleteMany: pushDeleteManyMock },
     notification: { count: notificationCountMock, deleteMany: notificationDeleteManyMock },
@@ -148,7 +152,7 @@ vi.mock("@/lib/prisma", () => ({
     importedBooking: { count: importedBookingCountMock, deleteMany: importedBookingDeleteManyMock },
     importSourceMapping: { count: mappingCountMock, deleteMany: mappingDeleteManyMock },
     // Import review lists are scrubbed of the subject (lib/importers/import-conflicts-scrub, 25 Oct 2026).
-    importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
+    importJob: { findMany: vi.fn(async () => []), updateMany: vi.fn(), findFirst: vi.fn(async () => null) },
     // The erasure walks every stored upload too (lib/importers/import-erasure.ts, 6 Nov 2026).
     importUpload: { findMany: vi.fn(async () => []) },
     // Earlier-address digests are read, and the member's own Activity rows redacted (6 Nov 2026).
@@ -173,7 +177,7 @@ const ORIGINAL_EMAIL = "alice@example.com";
 const SENTINEL = `deleted-${MEMBER_ID}@deleted.invalid`;
 const EXTERNAL_REF = "teamup:alice@example.com|Alice Smith";
 
-const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/photos/alice.jpg"; // under THIS club: only own-namespace files are deleted (14 Oct 2026)
+const BLOB_PHOTO_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/members/m1/alice.jpg"; // the member's own upload: only own files are deleted (14 Oct 2026; Round 5: own member path or an unreferenced legacy file)
 const DATA_PHOTO_URL = "data:image/png;base64,AAAA";
 const BLOB_SIG_URL = "https://store1.blob.vercel-storage.com/tenants/tenant-A/sigs/alice.png";
 const DATA_SIG_URL = "data:image/png;base64,BBBB";

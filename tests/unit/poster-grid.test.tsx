@@ -49,7 +49,7 @@ const WEEK: ClassRow[] = [
   cls("Juniors Squad", "Mat 2", [[4, "16:45", "17:45"]], { isKids: true }),
   cls("Free Mat Space", "Mat 1", [[4, "18:40", "19:00"]]),
   cls("Free Mat Space", "Mat 2", [[4, "18:40", "19:00"]]),
-  cls("Advanced Gi + Sparring", "Mat 1", [[4, "19:00", "20:30"]], { category: "competition" }),
+  cls("Advanced Gi + Sparring", "Mat 1", [[4, "19:00", "20:30"]], { categoryId: "cat-comp", categoryName: "Competition" }),
   cls("Advanced NoGi Comp Class", "Mat 2", [[4, "19:00", "20:30"]]),
   cls("Beginners Course Gi", "Mat 1", [[1, "06:30", "07:20"], [1, "12:00", "12:50"]]),
   cls("Advanced Free Drilling", "Mat 2", [[1, "06:30", "07:20"]]),

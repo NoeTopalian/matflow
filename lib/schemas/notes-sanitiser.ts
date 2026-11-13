@@ -93,6 +93,8 @@ export function sanitiseNoteText(input: string | null | undefined): string | nul
  *
  * Returns null for whitespace-only or all-stripped inputs.
  */
+// An omitted value passes through as undefined (absent), so an update body
+// that does not mention the field never writes it.
 export function notesField(maxLength: number) {
   return z
     .string()

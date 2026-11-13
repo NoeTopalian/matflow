@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { isBlobStoreHost } from "@/lib/blob-url";
+import { isAttachableClubAsset } from "@/lib/blob-ownership";
 import { parsePagination } from "@/lib/pagination";
 import { announcementCreateSchema as createSchema } from "@/lib/schemas/announcement";
 import { logAudit } from "@/lib/audit-log";
@@ -137,6 +139,14 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
+  }
+  // Round 5 remediation: a stored image must be a club file (club root), never a
+  // member's photo or an import file: deleting the announcement deletes its
+  // image (lib/blob-ownership.ts).
+  if (parsed.data.imageUrl && isBlobStoreHost(parsed.data.imageUrl)) {
+    const imageUrl = parsed.data.imageUrl;
+    const ok = await withTenantContext(session.user.tenantId, (tx) => isAttachableClubAsset(tx, session.user.tenantId, imageUrl));
+    if (!ok) return NextResponse.json({ error: "Image must be uploaded through MatFlow for this club" }, { status: 400 });
   }
 
   // Round 4 (10 Nov 2026): the same notice posted twice within two minutes

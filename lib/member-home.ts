@@ -313,8 +313,9 @@ export async function buildMemberSchedule(
       matId: true,
       maxCapacity: true,
       isKids: true,
-      // T6c: the category key, the same field /api/member/schedule returns.
+      // The legacy key and the club's category, the same fields /api/member/schedule returns.
       category: true,
+      categoryRef: { select: { name: true } },
       requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
       maxRank: { select: { id: true, name: true, discipline: true, order: true } },
       schedules: {
@@ -414,6 +415,7 @@ export async function buildMemberSchedule(
       capacity: cls.maxCapacity,
       isKids: cls.isKids,
       category: cls.category ?? null,
+      categoryName: cls.categoryRef?.name ?? null,
       dayOfWeek: sched.dayOfWeek,
       classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
       eligibility,

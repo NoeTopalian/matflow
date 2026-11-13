@@ -82,8 +82,10 @@ export async function GET(req: Request) {
             matId: true,
             maxCapacity: true,
             isKids: true,
-            // T6c: the category key, shown as a label on the member timetable.
+            // The legacy key, still returned for a member app holding an older page.
             category: true,
+            // The club's category, shown by name on the member timetable.
+            categoryRef: { select: { name: true } },
             requiredRank: { select: { id: true, name: true, discipline: true, order: true } },
             maxRank: { select: { id: true, name: true, discipline: true, order: true } },
             schedules: {
@@ -251,8 +253,9 @@ export async function GET(req: Request) {
           // Shown as a small "Kids" tag on the member's timetable.
           isKids: cls.isKids,
           kidsClassForAdult: viewerIsAdult && cls.isKids === true,
-          // T6c: a key from lib/class-category.ts, or null (uncategorised).
+          // The legacy key (an older page labels from it), and the name the club gives the category today.
           category: cls.category ?? null,
+          categoryName: cls.categoryRef?.name ?? null,
           dayOfWeek: sched.dayOfWeek,
           classInstanceId: instanceMap.get(`${cls.id}-${sched.startTime}`) ?? null,
           cancelled: cancelledSlots.has(`${cls.id}-${sched.startTime}`),

@@ -86,10 +86,12 @@ export async function GET(
           select: {
             id: true,
             name: true,
-            // T6c: the category key, shown as a label on the class list. A
-            // label the club chose for the timetable, so safe on this
-            // unauthenticated door.
+            // The category, shown as a label on the class list: the legacy key
+            // (a kiosk holding an older page labels from it) and the club's
+            // name for it. A label the club chose for the timetable, so safe on
+            // this unauthenticated door.
             category: true,
+            categoryRef: { select: { name: true } },
             requiredRank: { select: { name: true, color: true } },
             maxRank: { select: { name: true, color: true } },
             // T6d: whether the class has a roster (a squad / comp class). A
@@ -122,9 +124,10 @@ export async function GET(
       date: i.date.toISOString(),
       requiredRank: i.class.requiredRank?.name ?? null,
       maxRank: i.class.maxRank?.name ?? null,
-      // T6c: the category key (lib/class-category.ts), or null when
-      // uncategorised. The kiosk shows its label.
+      // The legacy key (lib/class-category.ts) and the club's name for the
+      // category, or null when uncategorised. The kiosk shows the name.
       category: i.class.category ?? null,
+      categoryName: i.class.categoryRef?.name ?? null,
       // T6d: a squad class is badged "Squad only"; the name search that follows
       // a tap lists only the members on its roster.
       rosterOnly: (i.class._count?.rosterMembers ?? 0) > 0,

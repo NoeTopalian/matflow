@@ -22,9 +22,10 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { mayDeleteMemberPhotoBlob } from "@/lib/blob-ownership";
 import { assertSameOrigin } from "@/lib/csrf";
 import { logAudit } from "@/lib/audit-log";
-import { isVercelBlobUrl, isTenantBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
+import { isVercelBlobUrl, isForeignBlobUrl, isMemberBlobUrl } from "@/lib/blob-url";
 import { refuseSupportSession } from "@/lib/support-session";
 import { refuseArchivedMember } from "@/lib/archived-member-guard";
 
@@ -232,7 +233,7 @@ export async function DELETE(
     const removed = await withTenantContext(tenantId, async (tx) => {
       const existing = await tx.memberPhoto.findFirst({
         where: { tenantId, memberId, kind: "profile" },
-        select: { id: true, url: true },
+        select: { id: true, url: true, uploadedAt: true },
       });
       if (!existing) return null;
       await tx.memberPhoto.delete({ where: { id: existing.id } });
@@ -242,8 +243,9 @@ export async function DELETE(
     // Best-effort blob deletion. Failure does NOT fail the API — the row is
     // already gone from the DB and the blob will eventually be orphaned.
     // Vercel Blob has no GC sweep; orphan cleanup is a future feature-follow-up.
-    // Round 5: only a file uploaded for this member is ever deleted.
-    if (removed && isMemberBlobUrl(removed.url, tenantId, memberId)) {
+    // Round 5: only this member's own file, or a legacy club-root file that no
+    // other row still uses, is ever deleted (lib/blob-ownership.ts).
+    if (removed && (await withTenantContext(tenantId, (tx) => mayDeleteMemberPhotoBlob(tx, tenantId, memberId, removed.url, removed.uploadedAt)))) {
       try {
         const { del } = await import("@vercel/blob");
         await del(removed.url);

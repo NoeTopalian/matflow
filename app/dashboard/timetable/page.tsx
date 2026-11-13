@@ -5,6 +5,8 @@ import { classLifecycle, inactiveClassWhere, liveClassWhere, type ClassLifecycle
 import { legacyArchivedAt } from "@/lib/class-lifecycle";
 import { readMatsForTimetable } from "@/lib/mats-store";
 import { isSupportSession } from "@/lib/support-session";
+import { CATEGORY_REF_SELECT, categoryFields, categoryManagementEnabled, listClassCategories } from "@/lib/class-category-store";
+import type { ClassCategoryOption } from "@/lib/class-category";
 
 export type ClassRow = {
   id: string;
@@ -21,8 +23,10 @@ export type ClassRow = {
   maxCapacity: number | null;
   /** A kids class: adults are refused at self/kiosk check-in and asked about on the register. */
   isKids?: boolean;
-  /** T6c: a key from lib/class-category.ts; null/absent = uncategorised. */
-  category?: string | null;
+  /** The club's category for the class (ClassCategory id); null/absent = uncategorised. */
+  categoryId?: string | null;
+  /** That category's name today; null/absent = uncategorised. */
+  categoryName?: string | null;
   color: string | null;
   description: string | null;
   requiredRankId: string | null;
@@ -77,6 +81,7 @@ async function getClasses(tenantId: string, which: "live" | "inactive" = "live")
         // open class. Both ends are fixed; this is the read end.
         rosterMembers: { where: { member: { archivedAt: null } }, select: { memberId: true, member: { select: { name: true } } } },
         allowedTiers: { select: { tier: { select: { id: true, name: true, isActive: true } } } },
+        categoryRef: { select: CATEGORY_REF_SELECT },
       },
       orderBy: { name: "asc" },
     });
@@ -99,7 +104,7 @@ async function getClasses(tenantId: string, which: "live" | "inactive" = "live")
     duration: c.duration,
     maxCapacity: c.maxCapacity,
     isKids: c.isKids,
-    category: c.category,
+    ...categoryFields(c.categoryRef),
     color: c.color,
     description: c.description,
     requiredRankId: c.requiredRankId,
@@ -142,6 +147,11 @@ async function getRankSystems(tenantId: string) {
   );
 }
 
+/** The club's categories for the class form: active first in the club's order, then archived. */
+async function getCategories(tenantId: string): Promise<ClassCategoryOption[]> {
+  return withTenantContext(tenantId, (tx) => listClassCategories(tx, tenantId));
+}
+
 async function getCoachUsers(tenantId: string): Promise<CoachUserOption[]> {
   return withTenantContext(tenantId, (tx) =>
     tx.user.findMany({
@@ -161,7 +171,7 @@ export default async function TimetablePage() {
   // classes — and invited someone to rebuild a schedule that already exists.
   // Before the mats are read: a list read after a class save that added a mat is the truth about that mat.
   const matsReadAt = new Date().toISOString();
-  const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses, matsAndLayout] = await Promise.all([
+  const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses, matsAndLayout, categories] = await Promise.all([
     getClasses(session!.user.tenantId),
     getRankSystems(session!.user.tenantId),
     getCoachUsers(session!.user.tenantId),
@@ -170,6 +180,7 @@ export default async function TimetablePage() {
     // Guarded on purpose (lib/mats-store.ts): the one read here that may fail without failing the page.
     // It runs in its own transaction, so a failed mats statement cannot abort the class read.
     readMatsForTimetable(session!.user.tenantId),
+    getCategories(session!.user.tenantId),
   ]);
 
   return (
@@ -184,6 +195,8 @@ export default async function TimetablePage() {
       }))}
       coachUsers={coachUsers}
       membershipTiers={membershipTiers}
+      categories={categories}
+      categoryManagement={categoryManagementEnabled()}
       mats={matsAndLayout.mats}
       storedLayout={matsAndLayout.storedLayout}
       matsLoadFailed={matsAndLayout.failed}

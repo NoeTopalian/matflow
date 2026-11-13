@@ -55,6 +55,9 @@ async function deleteTenant(tx, tenantId) {
   await tx.class.deleteMany({ where: { tenantId } });
   // Mats: the tenant link is RESTRICT, so they go before the tenant (their classes have just gone).
   await del("mat", { tenantId });
+  // Club-managed class categories: they cascade with the tenant; deleted here too so a schema without the cascade
+  // (or a later one that drops it) still tears down. Their classes have just gone.
+  await del("classCategory", { tenantId });
   await tx.membershipTier.deleteMany({ where: { tenantId } });
   await tx.member.deleteMany({ where: { tenantId } });
   await tx.user.deleteMany({ where: { tenantId } });
@@ -69,6 +72,7 @@ async function rowsLeft(tenantId) {
     members: await tx.member.count({ where: { tenantId } }),
     classes: await tx.class.count({ where: { tenantId } }),
     mats: tx.mat ? await tx.mat.count({ where: { tenantId } }) : 0,
+    classCategories: tx.classCategory ? await tx.classCategory.count({ where: { tenantId } }) : 0,
     attendance: await tx.attendanceRecord.count({ where: { tenantId } }),
   }));
 }
@@ -112,6 +116,8 @@ try {
     ledgerAppend({ event: "intent", runId, slug: S });
     await bypass(async (tx) => {
       const t = await tx.tenant.create({ data: { name: `${S} Synthetic Club`, slug: S, onboardingCompleted: flag !== "--onboarding", subscriptionStatus: "trial" } });
+      // The eight starting class categories, as every club-creation path makes them (schemas that have them only).
+      if (tx.classCategory) await tx.$executeRaw`SELECT matflow_seed_class_categories(${t.id})`;
       const u = await tx.user.create({ data: {
         tenantId: t.id, email: `${S}-owner@example.test`, name: "Sam Synthetic", role: "owner",
         passwordHash: await bcrypt.hash(ownerPass, 10), totpEnabled: true, totpSecret: secret,

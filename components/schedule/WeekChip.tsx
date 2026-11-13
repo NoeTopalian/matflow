@@ -11,6 +11,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { hex } from "@/lib/color";
+import { classDotStyle, classEdge } from "@/lib/class-colours";
 import { sessionStateLabel, type SessionState } from "@/lib/schedule-state";
 import { useMoreToggle } from "@/components/schedule/MorePanel";
 
@@ -104,10 +105,11 @@ export function WeekChip({
         duplicate ? "border-l-[3px] border-l-[color:var(--hue-warning)]" : state === "live" ? "border-l-[3px]" : "",
       ].join(" ")}
       // Runtime values only (UI-RULES §11): the class's own colour. Ended and cancelled dim the fill, never the ink (§8).
-      style={{ background: hex(color, dim ? 0.06 : 0.12), ...(state === "live" && !duplicate ? { borderLeftColor: color } : {}) }}
+      style={{ background: hex(color, dim ? 0.06 : 0.12), ...(state === "live" && !duplicate ? { borderLeftColor: classEdge(color) } : {}) }}
     >
       <span className={["flex flex-wrap items-center font-bold tabular-nums", phone ? "text-xs leading-[15px]" : "text-[11px] leading-[14px]"].join(" ")} data-chip-part="time">
-        <span aria-hidden="true" className="mr-[3px] size-1.5 shrink-0 rounded-full" style={{ background: color }} />
+        {/* A pale class colour gets a hairline ring so its dot does not vanish on white (lib/class-colours.ts). */}
+        <span aria-hidden="true" className="mr-[3px] size-1.5 shrink-0 rounded-full" style={classDotStyle(color)} />
         <span>{startTime}–</span>
         <span>{endTime}</span>
       </span>
@@ -210,7 +212,7 @@ export function MoreRow({
       style={{ background: hex(color, 0.12) }}
     >
       <span className="flex items-center text-xs font-bold leading-[15px] tabular-nums">
-        <span aria-hidden="true" className="mr-[3px] size-1.5 shrink-0 rounded-full" style={{ background: color }} />
+        <span aria-hidden="true" className="mr-[3px] size-1.5 shrink-0 rounded-full" style={classDotStyle(color)} />
         {startTime}–{endTime}
       </span>
       <span className="min-w-0 flex-1 text-[13px] font-semibold leading-[17px] [overflow-wrap:anywhere]">{name}</span>
