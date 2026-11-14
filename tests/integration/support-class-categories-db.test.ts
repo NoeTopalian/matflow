@@ -160,23 +160,34 @@ describe.skipIf(!HAS_DB)("MatFlow support manages class categories — real data
     support("edit");
 
     // Stale edit protection holds for support exactly as for the owner.
-    const staleRename = await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version - 1, name: "Stale" }), params(f.id));
-    expect(staleRename.status).toBe(409);
-    expect(await staleRename.json()).toMatchObject({ code: "stale" });
-    expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version - 1, archived: true }), params(f.id))).status).toBe(409);
-    expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeA.map((c) => ({ id: c.id, version: c.version + 1 })) }))).status).toBe(409);
+    // (+1, not -1: a version the row has not reached is stale too, and it does not depend on the earlier test's writes.)
+    const expectRefused = async (res: Response, status: number, body: Record<string, unknown>) => {
+      expect(res.status).toBe(status);
+      expect(await res.json()).toMatchObject(body);
+    };
+    const STALE_BODY = { code: "stale" };
+    const NOT_THIS_CLUB = { error: "That category isn't one of this club's." };
+    const SWITCHED_OFF = { error: "Category management isn't switched on yet." };
+    await expectRefused(await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version + 1, name: "Stale" }), params(f.id)), 409, STALE_BODY);
+    await expectRefused(await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version + 1, archived: true }), params(f.id)), 409, STALE_BODY);
+    await expectRefused(await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeA.map((c) => ({ id: c.id, version: c.version + 1 })) })), 409, STALE_BODY);
 
-    // The session is club A's: club B's category ids are not found, and an order made of them is refused.
-    expect((await categoryPATCH(request(`/api/class-categories/${bFundamentals.id}`, "PATCH", { version: bFundamentals.version, name: "Hijacked" }), params(bFundamentals.id))).status).toBe(404);
-    expect((await categoryPATCH(request(`/api/class-categories/${bFundamentals.id}`, "PATCH", { version: bFundamentals.version, archived: true }), params(bFundamentals.id))).status).toBe(404);
-    expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeB.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(409);
+    // The session is club A's: club B's category ids are not found, and an order carrying one is refused, including a
+    // list the same length as club A's (so the refusal is not just a count mismatch).
+    await expectRefused(await categoryPATCH(request(`/api/class-categories/${bFundamentals.id}`, "PATCH", { version: bFundamentals.version, name: "Hijacked" }), params(bFundamentals.id)), 404, NOT_THIS_CLUB);
+    await expectRefused(await categoryPATCH(request(`/api/class-categories/${bFundamentals.id}`, "PATCH", { version: bFundamentals.version, archived: true }), params(bFundamentals.id)), 404, NOT_THIS_CLUB);
+    await expectRefused(await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeB.map((c) => ({ id: c.id, version: c.version })).reverse() })), 409, STALE_BODY);
+    const swapped = beforeA.map((c) => ({ id: c.id, version: c.version }));
+    swapped[0] = { id: bFundamentals.id, version: bFundamentals.version };
+    await expectRefused(await orderPUT(request("/api/class-categories/order", "PUT", { items: swapped })), 409, STALE_BODY);
 
     // Management switched off: the edit session is refused like everyone else.
     process.env.CLASS_CATEGORY_MANAGEMENT = "off";
     try {
-      expect((await createPOST(request("/api/class-categories", "POST", { name: "Advanced" }))).status).toBe(404);
-      expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, name: "Switched off" }), params(f.id))).status).toBe(404);
-      expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeA.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(404);
+      await expectRefused(await createPOST(request("/api/class-categories", "POST", { name: "Advanced" })), 404, SWITCHED_OFF);
+      await expectRefused(await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, name: "Switched off" }), params(f.id)), 404, SWITCHED_OFF);
+      await expectRefused(await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, archived: true }), params(f.id)), 404, SWITCHED_OFF);
+      await expectRefused(await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeA.map((c) => ({ id: c.id, version: c.version })).reverse() })), 404, SWITCHED_OFF);
     } finally {
       process.env.CLASS_CATEGORY_MANAGEMENT = "on";
     }
@@ -187,7 +198,9 @@ describe.skipIf(!HAS_DB)("MatFlow support manages class categories — real data
     expect(await audits({ tenantId: B })).toEqual([]);
   }, 120_000);
 
-  it("an expired or revoked support session resolves to no session (support-session-binding), and every category write is then 401", async () => {
+  // In a browser used only for support, an expired or revoked support session resolves to no session
+  // (support-session-binding, support-carrier-jwt); a browser that also held its own club session falls back to that.
+  it("when support has ended and no session is left, every category write is 401", async () => {
     const before = await categories(A);
     const f = before.find((c) => c.legacyKey === "fundamentals")!;
     vi.mocked(auth).mockResolvedValue(null as never);
@@ -196,5 +209,6 @@ describe.skipIf(!HAS_DB)("MatFlow support manages class categories — real data
     expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, name: "Late" }), params(f.id))).status).toBe(401);
     expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: before.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(401);
     expect(await categories(A)).toEqual(before);
+    vi.mocked(auth).mockReset();
   });
 });
