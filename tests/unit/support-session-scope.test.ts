@@ -81,6 +81,8 @@ const NEVER_UNDER_SUPPORT: Array<[string, string, string]> = [
   // Categories: no delete at all, and the category-id rule must not reach the order route.
   ["DELETE", "/api/class-categories/cc1", "destructive (categories are archived, never deleted)"],
   ["PATCH", "/api/class-categories/order", "not a category id: the order route"],
+  ["PATCH", "/api/class-categories/order/", "not a category id: the order route, trailing slash"],
+  ["PATCH", "/api/class-categories/%6Frder", "not a category id: the order route, percent-encoded"],
   ["POST", "/api/class-categories/cc1", "no such route"],
   ["POST", "/dashboard/members", "a page POST (Server Action)"],
   ["POST", "/dashboard/settings", "a page POST (Server Action)"],
