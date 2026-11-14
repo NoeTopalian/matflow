@@ -99,7 +99,9 @@ export function WeekChip({
       data-session-state={state ?? undefined}
       data-chip-size={size}
       className={[
-        "h-auto flex-col items-stretch justify-start gap-0.5 whitespace-normal rounded-[var(--r-sm)] border-bd-hover text-left font-normal text-tx-1 hover:bg-transparent hover:text-tx-1 enabled:hover:brightness-[0.97] disabled:cursor-default disabled:opacity-100",
+        // min-w-0: the chip is a grid item in its lane; without it the chip keeps its widest unbreakable content (the
+        // category pill, which truncates by design) as its minimum and grows past its mat column (14 Nov 2026).
+        "h-auto min-w-0 flex-col items-stretch justify-start gap-0.5 whitespace-normal rounded-[var(--r-sm)] border-bd-hover text-left font-normal text-tx-1 hover:bg-transparent hover:text-tx-1 enabled:hover:brightness-[0.97] disabled:cursor-default disabled:opacity-100",
         phone ? "min-h-[56px] px-[7px] pb-[8px] pt-[7px]" : "min-h-[44px] px-[5px] pb-[6px] pt-[5px]",
         // A 3 px left edge: amber for a possible duplicate, else the class colour while it is live.
         duplicate ? "border-l-[3px] border-l-[color:var(--hue-warning)]" : state === "live" ? "border-l-[3px]" : "",
