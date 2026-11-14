@@ -9,7 +9,7 @@
 // cut). Then the same category renamed (in this synthetic club's own row) to a 31-character name, near the 32
 // maximum: every pill stays inside its chip and carries the whole name as its title.
 import { createRequire } from "node:module";
-import { state, q, ledger, shot, context, ownerSignIn, launchWithScrollbars, gridInvariants, weekGrid, weekChips } from "../lib.mjs";
+import { state, q, ledger, shot, context, ownerSignIn, launchWithScrollbars, gridInvariants, weekGrid, weekChips, weekOnFrozenClock } from "../lib.mjs";
 import { POSTER, FROZEN, seedWeek, countOn } from "./data/timetable-weeks.mjs";
 
 const require = createRequire(import.meta.url);
@@ -51,6 +51,9 @@ const openWeek = async (page) => {
   await page.goto("/dashboard/timetable");
   await expect(weekChips(weekGrid(page))).toHaveCount(SESSIONS, { timeout: 30_000 });
   await expect(weekGrid(page)).toHaveAttribute("data-mats", "true");
+  // The clock is frozen: wait for the browser's own render (Thursday 18:40 live) before measuring, as
+  // timetable-week-grid does; measuring the server's render mid-swap read chips as 0 px tall.
+  await weekOnFrozenClock(page, "thu", "18:40");
 };
 
 const browser = await launchWithScrollbars();
