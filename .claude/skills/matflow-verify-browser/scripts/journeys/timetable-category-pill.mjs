@@ -93,6 +93,8 @@ try {
         expect(p.length).toBeGreaterThan(0);
         expect(p.filter((x) => !x.inside)).toEqual([]);
         expect(p.filter((x) => x.title !== name)).toEqual([]);
+        // Review: prove the overflow condition was really met: at 1280 px the long name cannot fit, so pills truncate.
+        if (name === LONG && width === 1280) expect(p.filter((x) => x.cut).length).toBeGreaterThan(0);
         if (width === 1920) await shot(main, `timetable-category-pill-1920-${name.length}`);
         return { pills: p.length, truncated: p.filter((x) => x.cut).length };
       });
@@ -113,7 +115,10 @@ try {
       const inv = await gridInvariants(page, { sessions: MONDAY_N, grid: "phone-day-grid" });
       const p = await pills(page, "phone-day-grid");
       expect(inv.problems).toEqual([]);
+      // Review: without these the section would pass if the phone day stopped showing category pills at all.
+      expect(p.length).toBeGreaterThan(0);
       expect(p.filter((x) => !x.inside)).toEqual([]);
+      expect(p.filter((x) => x.title !== LONG)).toEqual([]);
       await shot(page, "timetable-category-pill-phone-390");
       return { pills: p.length, truncated: p.filter((x) => x.cut).length };
     } finally { await pctx.close(); }
