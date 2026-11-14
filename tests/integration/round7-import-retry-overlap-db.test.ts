@@ -135,13 +135,14 @@ describe.skipIf(!HAS_DB)("members import: retry, overlap and concurrent staff ed
     // Re-review of a1cef92d: the linking runs in batches of 20; this crosses two batch boundaries (20, 20, 5).
     // A failed slice does not stop the run (the next slice is still written), so slices 2 and 3 (25 + 20 people) fail
     // and only slice 1's 25 are written; every ledger row is written, those 45 people's with no member.
-    const people = Array.from({ length: 70 }, (_, i) => person(i + 1, "b"));
+    // Tag "link", not "b": the overlap case below adds person "b1" as a NEW person; sharing the tag made it a duplicate.
+    const people = Array.from({ length: 70 }, (_, i) => person(i + 1, "link"));
     const j = await job(fileOf(people));
     fault.calls = 0;
     fault.failOnCalls = [2, 3];
     expect((await run(j.id)).status).not.toBe(200);
     fault.failOnCalls = [];
-    expect((await emailsOf("b")).length).toBe(25);
+    expect((await emailsOf("link")).length).toBe(25);
     const again = await run(j.id);
     expect(again.status).toBe(200);
     expect(again.body.imported).toBe(45);
