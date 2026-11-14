@@ -100,6 +100,7 @@ describe.skipIf(!HAS_DB)("MatFlow support manages class categories — real data
     expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, name: "Beginners" }), params(f.id))).status).toBe(403);
     expect((await createPOST(request("/api/class-categories", "POST", { name: "Intermediate" }))).status).toBe(403);
     expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: before.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(403);
+    expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, archived: true }), params(f.id))).status).toBe(403);
     expect(await categories(A)).toEqual(before);
     expect(await audits({ tenantId: A })).toEqual([]);
   });
@@ -149,4 +150,51 @@ describe.skipIf(!HAS_DB)("MatFlow support manages class categories — real data
     expect(await audits({ tenantId: B })).toEqual([]);
     expect((await audits({ operatorId: OPERATOR })).every((r) => r.tenantId === A)).toBe(true);
   }, 120_000);
+
+  it("an EDIT session gets no further than the owner: a stale version is refused, the other club's categories are out of reach, and nothing works while management is off", async () => {
+    const beforeA = await categories(A);
+    const beforeB = await categories(B);
+    const auditCount = (await audits({ tenantId: A })).length;
+    const f = beforeA.find((c) => c.legacyKey === "fundamentals")!;
+    const bFundamentals = beforeB.find((c) => c.legacyKey === "fundamentals")!;
+    support("edit");
+
+    // Stale edit protection holds for support exactly as for the owner.
+    const staleRename = await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version - 1, name: "Stale" }), params(f.id));
+    expect(staleRename.status).toBe(409);
+    expect(await staleRename.json()).toMatchObject({ code: "stale" });
+    expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version - 1, archived: true }), params(f.id))).status).toBe(409);
+    expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeA.map((c) => ({ id: c.id, version: c.version + 1 })) }))).status).toBe(409);
+
+    // The session is club A's: club B's category ids are not found, and an order made of them is refused.
+    expect((await categoryPATCH(request(`/api/class-categories/${bFundamentals.id}`, "PATCH", { version: bFundamentals.version, name: "Hijacked" }), params(bFundamentals.id))).status).toBe(404);
+    expect((await categoryPATCH(request(`/api/class-categories/${bFundamentals.id}`, "PATCH", { version: bFundamentals.version, archived: true }), params(bFundamentals.id))).status).toBe(404);
+    expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeB.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(409);
+
+    // Management switched off: the edit session is refused like everyone else.
+    process.env.CLASS_CATEGORY_MANAGEMENT = "off";
+    try {
+      expect((await createPOST(request("/api/class-categories", "POST", { name: "Advanced" }))).status).toBe(404);
+      expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, name: "Switched off" }), params(f.id))).status).toBe(404);
+      expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: beforeA.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(404);
+    } finally {
+      process.env.CLASS_CATEGORY_MANAGEMENT = "on";
+    }
+
+    expect(await categories(A)).toEqual(beforeA);
+    expect(await categories(B)).toEqual(beforeB);
+    expect(await audits({ tenantId: A })).toHaveLength(auditCount);
+    expect(await audits({ tenantId: B })).toEqual([]);
+  }, 120_000);
+
+  it("an expired or revoked support session resolves to no session (support-session-binding), and every category write is then 401", async () => {
+    const before = await categories(A);
+    const f = before.find((c) => c.legacyKey === "fundamentals")!;
+    vi.mocked(auth).mockResolvedValue(null as never);
+    claim.current = null;
+    expect((await createPOST(request("/api/class-categories", "POST", { name: "Late" }))).status).toBe(401);
+    expect((await categoryPATCH(request(`/api/class-categories/${f.id}`, "PATCH", { version: f.version, name: "Late" }), params(f.id))).status).toBe(401);
+    expect((await orderPUT(request("/api/class-categories/order", "PUT", { items: before.map((c) => ({ id: c.id, version: c.version })).reverse() }))).status).toBe(401);
+    expect(await categories(A)).toEqual(before);
+  });
 });
