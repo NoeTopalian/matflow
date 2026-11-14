@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const DIRS = ["app/api/members", "app/api/staff", "app/api/account", "app/api/mats", "app/api/timetable"];
+const DIRS = ["app/api/members", "app/api/staff", "app/api/account", "app/api/mats", "app/api/timetable", "app/api/class-categories"];
 
 /**
  * Handlers allowed the scope-aware backstop (refuseSupportSessionUnlessEdit):
@@ -40,6 +40,10 @@ const RELAXED_ALLOWED = new Set([
   "app/api/mats/order/route.ts#PUT",
   "app/api/mats/adopt/route.ts#POST",
   "app/api/timetable/layout/route.ts#PATCH",
+  // Class categories (Noe, 14 Nov 2026: "allow me to edit this as the admin"; RULES §5b).
+  "app/api/class-categories/route.ts#POST",
+  "app/api/class-categories/[id]/route.ts#PATCH",
+  "app/api/class-categories/order/route.ts#PUT",
 ]);
 
 /** Handlers that legitimately have no session, or refuse through a helper. */

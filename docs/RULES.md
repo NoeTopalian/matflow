@@ -166,6 +166,12 @@ acts on is worse than an error they can see.
 - **Not undone from Activity.** Mats and the split are changed back where they were changed,
   on the Timetable page. Undoing a class edit re-derives the class's place from its mat and
   never copies an old name back.
+- **Class categories, the same way (Noe, 14 Nov 2026: "allow me to edit this as the admin").**
+  While a club's category management is switched on, a MatFlow edit support session may add,
+  rename, archive, restore and reorder its categories in the Categories sheet, as the owner does.
+  Nothing deletes a category, and a rename keeps the category and every class on it. Each change
+  is recorded as made by MatFlow support in the club's Activity. A read-only support session
+  changes nothing.
 
 ### 5c. Activity (Noe, 5 Nov 2026)
 
