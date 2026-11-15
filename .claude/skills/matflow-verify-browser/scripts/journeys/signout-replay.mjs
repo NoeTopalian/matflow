@@ -115,15 +115,16 @@ async function replay(cs) {
   } finally { await api.dispose(); }
 }
 
-async function signOut(page, kind) {
+/** `retry`: the person is trying again after a refused sign-out; on a phone the More sheet is then still open. */
+async function signOut(page, kind, { retry = false } = {}) {
   if (kind === "desktop") {
     await page.getByRole("button", { name: "Open account menu" }).click();
     await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   } else {
-    const button = page.getByRole("button", { name: "Sign out", exact: true }).filter({ visible: true }).first();
-    // After a refused sign-out the More sheet is still open (the person is told and stays where they were).
-    if (!(await button.isVisible().catch(() => false))) await page.getByRole("button", { name: "More options" }).tap();
-    await button.tap();
+    // The closed sheet keeps its Sign out button rendered off-screen, so "visible" cannot tell open from closed:
+    // after a refused sign-out the sheet is known to be open (the person stays where they were and is told).
+    if (!retry) await page.getByRole("button", { name: "More options" }).tap();
+    await page.getByRole("button", { name: "Sign out", exact: true }).filter({ visible: true }).first().tap();
   }
 }
 const landsOnLogin = async (page, path) => {
@@ -263,7 +264,7 @@ async function failedSignOut(kind) {
   L.check("client", `${tag} F2 the person is told the sign-out did not complete`, errorShown, { url });
   L.check("server", `${tag} F3 nothing was recorded, so the session is still usable (API 200, dashboard 200)`, r.apiStatus === 200 && r.pageStatus === 200, r);
   await page.unroute("**/api/auth/signout");
-  await signOut(page, kind);
+  await signOut(page, kind, { retry: true });
   const retried = await page.waitForURL(/\/login/, { timeout: 60_000 }).then(() => true, () => false);
   const r2 = await replay(before);
   L.check("client", `${tag} F4 trying again signs out (lands on /login)`, retried, { url: path(page) });
@@ -294,7 +295,7 @@ async function lostResponse(kind) {
   L.check("server", `${tag} X1 the server ended the session although its answer was lost: the old cookie is refused`, serverStatus === 200 && r.refused === true, { serverStatus, ...r });
   L.check("client", `${tag} X2 the person is told the sign-out did not complete (the browser never heard back)`, errorShown && !/\/login/.test(url), { url, errorShown });
   await page.unroute("**/api/auth/signout");
-  await signOut(page, kind);
+  await signOut(page, kind, { retry: true });
   const retried = await page.waitForURL(/\/login/, { timeout: 60_000 }).then(() => true, () => false);
   L.check("client", `${tag} X3 trying again signs out cleanly (repeating a sign-out is safe)`, retried, { url: path(page) });
   await ctx.close();
