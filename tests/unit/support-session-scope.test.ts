@@ -37,6 +37,10 @@ const ALLOWED_EDITS: Array<[string, string]> = [
   ["PUT", "/api/mats/order"],
   ["POST", "/api/mats/adopt"],
   ["PATCH", "/api/timetable/layout"],
+  // Class categories (Noe, 14 Nov 2026: "allow me to edit this as the admin"). Nothing deletes.
+  ["POST", "/api/class-categories"],
+  ["PATCH", "/api/class-categories/cc1"],
+  ["PUT", "/api/class-categories/order"],
 ];
 
 // One representative per family that must never be reachable from an edit
@@ -74,6 +78,12 @@ const NEVER_UNDER_SUPPORT: Array<[string, string, string]> = [
   ["DELETE", "/api/mats/order", "not a mat id: the order route"],
   ["PATCH", "/api/mats/adopt", "not a mat id: the adopt route"],
   ["DELETE", "/api/mats/suggestions", "not a mat id: the suggestions route"],
+  // Categories: no delete at all, and the category-id rule must not reach the order route.
+  ["DELETE", "/api/class-categories/cc1", "destructive (categories are archived, never deleted)"],
+  ["PATCH", "/api/class-categories/order", "not a category id: the order route"],
+  ["PATCH", "/api/class-categories/order/", "not a category id: the order route, trailing slash"],
+  ["PATCH", "/api/class-categories/%6Frder", "not a category id: the order route, percent-encoded"],
+  ["POST", "/api/class-categories/cc1", "no such route"],
   ["POST", "/dashboard/members", "a page POST (Server Action)"],
   ["POST", "/dashboard/settings", "a page POST (Server Action)"],
 ];

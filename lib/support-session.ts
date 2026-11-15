@@ -57,6 +57,8 @@ type RouteRule = { method: string; path: RegExp; why: string };
  * or /suggestions (security review of PR feat/support-mats, L-1).
  */
 const MAT_ID = String.raw`(?!(?:order|adopt|suggestions)\/?$)[^/]+`;
+/** One category's id in /api/class-categories/[id]: any segment but the sibling order route's name. */
+const CATEGORY_ID = String.raw`(?!order\/?$)[^/]+`;
 
 /**
  * Non-GET requests a VIEW support session may make. EMPTY on purpose.
@@ -88,6 +90,12 @@ export const SUPPORT_EDIT_MUTATION_ALLOWLIST: readonly RouteRule[] = [
   { method: "PUT", path: /^\/api\/mats\/order\/?$/, why: "Reorder the mats (the order of the columns)." },
   { method: "POST", path: /^\/api\/mats\/adopt\/?$/, why: "Add these as mats: make mats from places typed on classes." },
   { method: "PATCH", path: /^\/api\/timetable\/layout\/?$/, why: "Choose By mat or By time for the club's timetable." },
+  // Class categories are timetable set-up too (Noe, 14 Nov 2026: "allow me to edit this as the admin"). Nothing here
+  // deletes: a category is archived, never removed, and its classes keep it. Only while the club's category management
+  // is switched on (the routes' own CLASS_CATEGORY_MANAGEMENT check applies unchanged).
+  { method: "POST", path: /^\/api\/class-categories\/?$/, why: "Add a class category." },
+  { method: "PATCH", path: new RegExp(String.raw`^\/api\/class-categories\/${CATEGORY_ID}\/?$`), why: "Rename, archive or restore a category; its classes keep it." },
+  { method: "PUT", path: /^\/api\/class-categories\/order\/?$/, why: "Reorder the categories (the class form's order)." },
   { method: "POST", path: /^\/api\/members\/?$/, why: "Create a member record." },
   { method: "PATCH", path: /^\/api\/members\/[^/]+\/?$/, why: "Edit a member's details (name, contact, notes fields)." },
   { method: "POST", path: /^\/api\/members\/[^/]+\/rank\/?$/, why: "Award a rank (routine promotion)." },
