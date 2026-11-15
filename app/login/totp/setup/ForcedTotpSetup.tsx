@@ -6,10 +6,23 @@
  * changed before an authenticator is enrolled — W1 verifier FINDING-1).
  */
 import { useRouter } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import type { Session } from "next-auth";
+import { SessionProvider, signOut, useSession } from "next-auth/react";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 
-export default function ForcedTotpSetup() {
+/**
+ * Its own session context: the root layout has none (Round 8 — see app/layout.tsx). Seeded with the server render's
+ * session, so it makes no session request on mount; it still re-reads on tab focus and on another tab's sign-in/out.
+ */
+export default function ForcedTotpSetup({ session }: { session?: Session | null }) {
+  return (
+    <SessionProvider session={session}>
+      <ForcedTotpSetupBody />
+    </SessionProvider>
+  );
+}
+
+function ForcedTotpSetupBody() {
   const router = useRouter();
   const { data: session } = useSession();
   // Audit N1/N2: members enrol via the member-side API mirror and land back

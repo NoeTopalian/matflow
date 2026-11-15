@@ -17,7 +17,8 @@ import { render, screen } from "@testing-library/react";
  */
 
 const { useSessionMock } = vi.hoisted(() => ({ useSessionMock: vi.fn() }));
-vi.mock("next-auth/react", () => ({ useSession: useSessionMock }));
+// ImportPanel carries its own SessionProvider (Round 8); the mock passes children through.
+vi.mock("next-auth/react", () => ({ useSession: useSessionMock, SessionProvider: ({ children }: { children?: unknown }) => children }));
 
 vi.mock("@/components/ui/confirm-dialog", () => ({
   ConfirmDialog: () => null,

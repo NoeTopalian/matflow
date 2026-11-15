@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Cloud, CheckCircle2, AlertCircle, Folder, Loader2, RefreshCw } from "lucide-react";
+import type { Session } from "next-auth";
 import ImportPanel from "@/components/dashboard/ImportPanel";
 import KioskPanel from "@/components/dashboard/KioskPanel";
 import DisplayTokenPanel from "@/components/leaderboard/DisplayTokenPanel";
@@ -28,7 +29,7 @@ type DriveFolder = { id?: string | null; name?: string | null };
  */
 const GOOGLE_BLUE = "#4285F4";
 
-export default function IntegrationsTab({ primaryColor, role }: { primaryColor: string; role: string }) {
+export default function IntegrationsTab({ primaryColor, role, session }: { primaryColor: string; role: string; session?: Session | null }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -256,7 +257,7 @@ export default function IntegrationsTab({ primaryColor, role }: { primaryColor: 
 
       <DisplayTokenPanel primaryColor={primaryColor} role={role} />
 
-      <ImportPanel primaryColor={primaryColor} />
+      <ImportPanel primaryColor={primaryColor} session={session} />
 
       {/* Folder picker — Sheet, not a hand-rolled overlay (UI-RULES §4a.3):
           the folder list scrolls, which is the Sheet half of the standard. */}

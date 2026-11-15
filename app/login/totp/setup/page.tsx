@@ -35,7 +35,7 @@ export default async function ForcedTotpSetupPage() {
   return (
     <>
       <ImpersonationBanner />
-      <ForcedTotpSetup />
+      <ForcedTotpSetup session={session} />
     </>
   );
 }

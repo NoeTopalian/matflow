@@ -35,6 +35,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import DataRequests from "@/components/dashboard/DataRequests";
 import { formatDate } from "@/lib/date";
 import type { TenantSettings, StaffMember, SettingsPopulationCounts } from "@/app/dashboard/settings/page";
+import type { Session } from "next-auth";
 import { POPULATION_COPY } from "@/lib/member-population";
 import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
@@ -56,6 +57,9 @@ interface Props {
   stripeAccountId?: string | null;
   /** "edit" when rendered inside a MatFlow support edit session (see MemberProfile). */
   supportScope?: "view" | "edit" | null;
+  /** The server render's session (auth()), handed to ImportPanel's SessionProvider so it starts synced and makes no
+   *  session request on mount (Round 8). Omitted → the provider fetches it, as before. */
+  session?: Session | null;
 }
 
 type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "import" | "integrations" | "requests";
@@ -661,7 +665,7 @@ function MemberSelfBillingSection({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function SettingsPage({ settings, staff: initialStaff, statusCounts, populationCounts = { onHold: 0, guardians: 0 }, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null, supportScope = null }: Props) {
+export default function SettingsPage({ settings, staff: initialStaff, statusCounts, populationCounts = { onHold: 0, guardians: 0 }, primaryColor, role, currentUserId, totpEnabled: initTotpEnabled = false, stripeConnected: initStripeConnected = false, stripeAccountId: initStripeAccountId = null, supportScope = null, session }: Props) {
   // F-3 (edit-access remediation): in a support EDIT session only branding,
   // links, check-in windows and timezone are writable (lib/support-session.ts
   // SUPPORT_EDIT_FIELD_POLICY). Revenue, store, staff, account, waiver, import
@@ -3262,7 +3266,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Import ── */}
       {tab === "import" && (
-        <ImportPanel primaryColor={primaryColor} />
+        <ImportPanel primaryColor={primaryColor} session={session} />
       )}
       {tab === "import" && <ImportReconciliation />}
 
@@ -3270,7 +3274,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
 
       {/* ── Integrations ── */}
       {tab === "integrations" && (
-        <IntegrationsTab primaryColor={primaryColor} role={role} />
+        <IntegrationsTab primaryColor={primaryColor} role={role} session={session} />
       )}
 
       {/* ── Staff drawer ── */}
