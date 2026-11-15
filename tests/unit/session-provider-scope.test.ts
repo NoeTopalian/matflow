@@ -26,7 +26,6 @@ describe("session provider scope", () => {
   it("every useSession() caller mounts its own SessionProvider", () => {
     const callers = source.filter((f) => /\buseSession\(/.test(readFileSync(f, "utf8")));
     expect(callers.map((f) => path.relative(ROOT, f).replace(/\\/g, "/")).sort()).toEqual([
-      "app/login/totp/setup/ForcedTotpSetup.tsx",
       "components/dashboard/ImportPanel.tsx",
     ]);
     for (const f of callers) expect(readFileSync(f, "utf8"), f).toMatch(/<SessionProvider[\s>]/);
