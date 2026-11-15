@@ -51,6 +51,14 @@ describe("signOutThisDevice", () => {
     expect(assignMock).not.toHaveBeenCalled();
   });
 
+  it("Auth.js answering with its error page (200 + ?error=) is a failure, not a sign-out", async () => {
+    fetchMock
+      .mockResolvedValueOnce(csrfOk())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ url: "http://localhost/api/auth/error?error=MissingCSRF" }), { status: 200 }));
+    expect(await signOutThisDevice()).toBe(false);
+    expect(assignMock).not.toHaveBeenCalled();
+  });
+
   it("no CSRF token: nothing is posted, failure is reported", async () => {
     fetchMock.mockResolvedValueOnce(new Response("{}", { status: 500 }));
     expect(await signOutThisDevice()).toBe(false);

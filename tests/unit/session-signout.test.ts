@@ -103,12 +103,14 @@ describe("POST /api/auth/signout", () => {
     expect(sid.startsWith("legacy-")).toBe(true);
   });
 
-  it("with no readable session there is nothing to end: straight to Auth.js", async () => {
+  it("with no readable session there is nothing to end: straight to Auth.js (an unreadable cookie is reported)", async () => {
     h.getToken.mockResolvedValue(null);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await POST(signOutRequest());
     expect(res.status).toBe(200);
     expect(h.createMany).not.toHaveBeenCalled();
     expect(h.authPost).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be read"));
   });
 
   it("a cross-site POST cannot end someone's session", async () => {

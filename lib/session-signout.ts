@@ -24,10 +24,12 @@ import { SIGN_OUT_FAILED_MESSAGE } from "@/lib/sign-out-client";
  * Safe to repeat. The insert ignores a record that already exists, so a retry after a lost response, a second tab
  * signing out, or a sign-out with an already-ended token all succeed.
  *
- * Access model. A RevokedSession row holds an opaque id and two timestamps — no club, no person, nothing tenant
- * scoped (pre-release tokens get a hashed per-person id, lib/session-id.ts). Row-level security admits only the
- * RLS-bypass helper, which only this module and the revocation check use; the runtime role cannot read or write the
- * table any other way (prisma/migrations/20261116120000_revoked_session).
+ * Access model. A RevokedSession row holds a session id and two timestamps — no club and nothing tenant scoped. A
+ * random id says nothing about anyone; a pre-release id is an unkeyed hash of the person's id (lib/session-id.ts), so
+ * it is pseudonymous, not anonymous: someone who can read the table and the person tables could match it. Row-level
+ * security admits only the RLS-bypass helper, which only this module and the revocation check use, so the restricted
+ * runtime role (matflow_app) cannot read or write the table any other way. A BYPASSRLS role ignores RLS on every
+ * table, this one included (prisma/migrations/20261116120000_revoked_session, ..._grant).
  */
 
 /** Record that this session has ended. Throws when the record could not be written. */
@@ -64,8 +66,15 @@ export async function recordSignOut(req: Request): Promise<Response | null> {
     cookieName: SESSION_COOKIE_NAME,
     secureCookie: SESSION_COOKIE_SECURE,
   }).catch(() => null);
-  // No readable session: nothing on the server to end. Auth.js clears whatever cookie is there.
-  if (!token) return null;
+  // No readable session: nothing on the server to end. Auth.js clears whatever cookie is there. A session cookie that is
+  // present but unreadable is reported: it would mean this module and Auth.js disagree about the secret, and then a
+  // sign-out could clear the cookie while the server still honoured copies of it.
+  if (!token) {
+    if ((req.headers.get("cookie") ?? "").includes(SESSION_COOKIE_NAME)) {
+      console.warn("[auth] sign-out: a session cookie was present but could not be read; nothing recorded");
+    }
+    return null;
+  }
   const sid = sessionIdOf(token as Record<string, unknown>);
   // A pre-release token mid-support has no id of its own; auth.ts already refuses it on every request.
   if (!sid) return null;

@@ -95,6 +95,8 @@ const accounts = [
   await seedStaff(club, "coach", { name: "Replay coach" }),
 ];
 const COACH = 3;
+/** How many scenarios actually exercised the late-response checks (a NOTE is not a pass; review finding 2, 16 Nov). */
+const exercised = { reissueReplayed: 0, browserCookieAfterLateResponse: 0 };
 let signIns = 0;
 async function signIn(page, tag, fixed) {
   const who = fixed !== undefined ? accounts[fixed] : accounts[signIns++ % accounts.length];
@@ -194,6 +196,7 @@ async function scenario({ kind, path, tabs }) {
   const r1 = await replay(firstReissue);
   if (r1.skipped) L.note("server", `${tag} R2 the held response re-issued no session cookie: nothing to replay`, {});
   else {
+    exercised.reissueReplayed++;
     L.check("server", `${tag} R2 replaying the cookie the held response re-issued is refused`, r1.refused === true, { chunks: firstReissue.length, ...r1 });
     const sidBefore = await sidOf(before);
     const sidReissued = await sidOf(firstReissue);
@@ -209,6 +212,7 @@ async function scenario({ kind, path, tabs }) {
     L.note("client", `${tag} U2 not exercised: the late response restored no cookie in this run`, { delivered, held: hold.held.map((h) => h.deliverError ?? h.error ?? (h.delivered ? "delivered" : "pending")).slice(0, 3) });
   } else {
     // A late response may put a cookie back until the next request; what matters is that the server refuses it.
+    exercised.browserCookieAfterLateResponse++;
     const rb = await replay(afterRelease);
     L.check("client", `${tag} U2 whatever session cookie the browser holds after the held response arrives is refused by the server`,
       rb.refused === true, { names: afterRelease.map((c) => c.name), delivered, replay: rb });
@@ -386,6 +390,9 @@ try {
     { kind: "phone", path: "locations", tabs: "one" },
     { kind: "phone", path: "prefetch", tabs: "two" },
   ]) await scenario(s);
+  // The late-response case must actually have run, not only been noted as not exercised.
+  L.check("server", "E1 R2 and S1 (a held response's re-issued cookie) were exercised in at least one scenario", exercised.reissueReplayed >= 1, exercised);
+  L.check("client", "E2 U2 (the cookie a late response put back in the browser) was exercised in at least one scenario", exercised.browserCookieAfterLateResponse >= 1, exercised);
   await failedSignOut("desktop");
   await failedSignOut("phone");
   await lostResponse("desktop");

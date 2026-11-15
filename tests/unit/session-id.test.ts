@@ -112,3 +112,26 @@ describe("only a sign-in mints a session id", () => {
     expect(userBranch).toMatch(/\.sid = newSessionId\(\)/);
   });
 });
+
+describe("the arithmetic and the check cannot drift apart (review findings 4 and 7, 16 Nov 2026)", () => {
+  it("every session cookie is issued with SESSION_MAX_AGE_SECONDS, never a literal lifetime", () => {
+    for (const file of [
+      "app/api/account/profile/route.ts",
+      "app/api/auth/set-password/route.ts",
+      "app/api/auth/totp/setup/route.ts",
+      "app/api/auth/totp/verify/route.ts",
+      "app/api/magic-link/verify/route.ts",
+      "app/api/member/totp/setup/route.ts",
+      "app/api/member/totp/verify/route.ts",
+    ]) {
+      const src = readFileSync(file, "utf8");
+      expect(src, file).not.toMatch(/maxAge:\s*30 \* 24/);
+      expect(src.match(/maxAge: SESSION_MAX_AGE_SECONDS/g)?.length ?? 0, file).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("both production callers of the revocation check pass the session id", () => {
+    expect(readFileSync("auth.ts", "utf8")).toMatch(/checkSessionVersion\([\s\S]{0,600}sid: sessionIdOf\(token/);
+    expect(readFileSync("lib/auth-pending-gate.ts", "utf8")).toMatch(/sid: sessionIdOf\(token/);
+  });
+});

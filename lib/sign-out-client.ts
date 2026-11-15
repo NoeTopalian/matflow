@@ -23,6 +23,9 @@ export async function signOutThisDevice(callbackUrl = "/login"): Promise<boolean
       body: new URLSearchParams({ csrfToken, callbackUrl }),
     });
     if (!res.ok) return false;
+    // Auth.js answers a refused sign-out (e.g. a missing CSRF cookie) with 200 and its error page as the URL.
+    const data = (await res.json().catch(() => null)) as { url?: unknown } | null;
+    if (data && typeof data.url === "string" && /[?&]error=/.test(data.url)) return false;
   } catch {
     return false;
   }

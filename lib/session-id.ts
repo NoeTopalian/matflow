@@ -7,7 +7,7 @@ import { createHash, randomBytes } from "node:crypto";
  * sign-in (auth.ts jwt(), user branch), a magic link (app/api/magic-link/verify), or the start of a support session in
  * a clean browser (the carrier, app/api/admin/impersonate) — and every later re-issue of that token keeps it: Auth.js
  * re-encodes the same token object, and the routes that re-encode by hand spread the decoded token. Nothing else may
- * mint one (tests/unit/session-id-minting.test.ts pins the call sites). That is what makes "sign out" end this
+ * mint one (tests/unit/session-id.test.ts pins the call sites). That is what makes "sign out" end this
  * session and nothing else: the sign-out route records the sid (lib/session-signout.ts), the revocation check refuses
  * it on every request (lib/session-revocation.ts), and other devices hold other sids.
  */
@@ -55,7 +55,8 @@ export function isSessionId(value: unknown): value is string {
  * every copy and every server, so no copy can ever be given a different, unrevoked id (a random one here would let a
  * delayed response mint an identity that escapes the sign-out). Signing out on one such device therefore ends that
  * person's other pre-release devices too; sessions signed in after the release have their own random ids and are not
- * touched. The derived id is a hash, so the revocation table holds no person identifier.
+ * touched. The derived id is an unkeyed hash of the person's id: pseudonymous (matchable by someone who can read both
+ * tables), not anonymous.
  *
  * A pre-release token in the middle of a support session has no own identity to derive from (its id is the person
  * being supported), so it gets none: auth.ts ends it and the operator starts support again.
