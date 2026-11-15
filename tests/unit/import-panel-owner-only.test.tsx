@@ -40,7 +40,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("ImportPanel — the CSV import is owner-only, like its routes", () => {
   it("renders the importer for an owner", () => {
     sessionAs("owner");
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     expect(screen.getByText(/member csv import/i)).toBeTruthy();
     expect(container.querySelector('select[aria-label="Source"]'), "the owner gets the source picker").toBeTruthy();
   });
@@ -48,7 +48,7 @@ describe("ImportPanel — the CSV import is owner-only, like its routes", () => 
   for (const role of ["manager", "coach", "admin"]) {
     it(`renders nothing at all for a ${role}`, () => {
       sessionAs(role);
-      const { container } = render(<ImportPanel primaryColor="#d62828" />);
+      const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
       expect(
         container.textContent?.trim(),
         `a ${role} must not be shown a control whose every route answers 403`,
@@ -57,7 +57,7 @@ describe("ImportPanel — the CSV import is owner-only, like its routes", () => 
 
     it(`gives a ${role} no file input and no upload control`, () => {
       sessionAs(role);
-      const { container } = render(<ImportPanel primaryColor="#d62828" />);
+      const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
       expect(container.querySelector('input[type="file"]')).toBeNull();
       expect(container.querySelector("button")).toBeNull();
       expect(container.querySelector('select[aria-label="Source"]')).toBeNull();
@@ -66,13 +66,13 @@ describe("ImportPanel — the CSV import is owner-only, like its routes", () => 
 
   it("renders nothing while the session is still loading, rather than flashing the importer", () => {
     useSessionMock.mockReturnValue({ data: null, status: "loading" });
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     expect(container.textContent?.trim()).toBe("");
   });
 
   it("renders nothing when there is no session at all", () => {
     sessionAs(null);
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     expect(container.textContent?.trim()).toBe("");
   });
 });

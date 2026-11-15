@@ -166,10 +166,10 @@ function refreshValue(field: string, v: string | null): string {
 
 /**
  * Its own session context: the root layout has none (Round 8 — see app/layout.tsx). Seeded with the server render's
- * session when the mount passes it, so it makes no session request on mount; it still re-reads on tab focus and on
- * another tab's sign-in/out. Without it (undefined) the provider fetches the session itself, as before.
+ * session (required: every mount passes the page's auth() result), so it makes no session request on mount and the
+ * owner gate is decided on the first render; it still re-reads on tab focus and on another tab's sign-in/out.
  */
-export default function ImportPanel({ primaryColor, session }: { primaryColor: string; session?: Session | null }) {
+export default function ImportPanel({ primaryColor, session }: { primaryColor: string; session: Session | null }) {
   return (
     <SessionProvider session={session}>
       <ImportPanelBody primaryColor={primaryColor} />

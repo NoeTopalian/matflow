@@ -29,7 +29,7 @@ type DriveFolder = { id?: string | null; name?: string | null };
  */
 const GOOGLE_BLUE = "#4285F4";
 
-export default function IntegrationsTab({ primaryColor, role, session }: { primaryColor: string; role: string; session?: Session | null }) {
+export default function IntegrationsTab({ primaryColor, role, session }: { primaryColor: string; role: string; session: Session | null }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);

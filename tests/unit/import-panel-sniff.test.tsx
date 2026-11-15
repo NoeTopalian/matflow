@@ -42,7 +42,7 @@ beforeEach(() => {
 
 describe("ImportPanel — the file's header picks the path", () => {
   it("switches Source to TeamUp for a TeamUp memberships export and says so", async () => {
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     expect(sourceSelect(container).value).toBe("generic");
     choose(container, TEAMUP);
     await waitFor(() => expect(screen.getByTestId("import-source-detected").textContent).toMatch(/Detected a TeamUp memberships export — Source set to TeamUp/));
@@ -50,7 +50,7 @@ describe("ImportPanel — the file's header picks the path", () => {
   });
 
   it("if the owner switches back to Generic, names the problem and disables submit", async () => {
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     choose(container, TEAMUP);
     await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
     fireEvent.change(sourceSelect(container), { target: { value: "generic" } });
@@ -59,7 +59,7 @@ describe("ImportPanel — the file's header picks the path", () => {
   });
 
   it("names an attendance export on the Members tab and disables submit", async () => {
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     choose(container, ATTENDANCE);
     await waitFor(() => expect(screen.getByTestId("import-file-mismatch").textContent).toMatch(/attendance export.*Attendance history/i));
     expect(submit().disabled).toBe(true);
@@ -69,7 +69,7 @@ describe("ImportPanel — the file's header picks the path", () => {
     // The Attendance tab (components/dashboard/AttendanceImport.tsx) first asks
     // whether an import is already waiting; none here.
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ job: null }) })));
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     fireEvent.click(screen.getByRole("button", { name: "Attendance history" }));
     await waitFor(() => expect(container.querySelector("#attendance-file")).not.toBeNull());
     choose(container, TEAMUP);
@@ -79,7 +79,7 @@ describe("ImportPanel — the file's header picks the path", () => {
   });
 
   it("leaves a valid generic file on Generic with no note", async () => {
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     choose(container, GENERIC);
     await waitFor(() => expect(submit().disabled).toBe(false));
     expect(sourceSelect(container).value).toBe("generic");
@@ -97,7 +97,7 @@ describe("ImportPanel — the export time and its provenance", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     try {
-      const { container } = render(<ImportPanel primaryColor="#d62828" />);
+      const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
       choose(container, TEAMUP);
       await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
       fireEvent.change(container.querySelector("#import-exported-at") as HTMLInputElement, { target: { value: "2026-10-02T18:00" } });
@@ -116,7 +116,7 @@ describe("ImportPanel — the export time and its provenance", () => {
   });
 
   it("an estimate with no time cannot be submitted", async () => {
-    const { container } = render(<ImportPanel primaryColor="#d62828" />);
+    const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
     choose(container, TEAMUP);
     await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
     fireEvent.click(screen.getByRole("checkbox", { name: /this is an estimate/i }));
@@ -147,7 +147,7 @@ describe("ImportPanel — people imported without a plan are a warning before co
       json: async () => (String(url).endsWith("/preview") ? preview : job),
     })));
     try {
-      const { container } = render(<ImportPanel primaryColor="#d62828" />);
+      const { container } = render(<ImportPanel primaryColor="#d62828" session={null} />);
       choose(container, TEAMUP);
       await waitFor(() => expect(sourceSelect(container).value).toBe("teamup"));
       fireEvent.change(container.querySelector("#import-exported-at") as HTMLInputElement, { target: { value: "2026-10-02T18:00" } });

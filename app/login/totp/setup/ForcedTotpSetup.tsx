@@ -14,7 +14,7 @@ import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
  * Its own session context: the root layout has none (Round 8 — see app/layout.tsx). Seeded with the server render's
  * session, so it makes no session request on mount; it still re-reads on tab focus and on another tab's sign-in/out.
  */
-export default function ForcedTotpSetup({ session }: { session?: Session | null }) {
+export default function ForcedTotpSetup({ session }: { session: Session | null }) {
   return (
     <SessionProvider session={session}>
       <ForcedTotpSetupBody />

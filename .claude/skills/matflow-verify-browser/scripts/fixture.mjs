@@ -31,7 +31,7 @@ const prefix = `mfv-${runId}-`;
 /** Delete one fixture tenant's rows (child tables first). Models the schema under test lacks are skipped. */
 async function deleteTenant(tx, tenantId) {
   const del = async (model, where) => { if (tx[model]) await tx[model].deleteMany({ where }); };
-  for (const m of ["auditLog", "emailLog", "magicLinkToken", "passwordResetToken", "attendanceRecord", "memberStatusEvent", "memberPhoto", "importJob", "payment", "classMembershipTier"]) {
+  for (const m of ["auditLog", "emailLog", "magicLinkToken", "passwordResetToken", "attendanceRecord", "memberStatusEvent", "memberPhoto", "importJob", "importUpload", "payment", "classMembershipTier"]) {
     await del(m, { tenantId });
     if (FAULT === "teardown-crash" && m === "attendanceRecord") { console.log("[fault] teardown-crash: exiting inside the delete transaction"); process.exit(9); }
   }

@@ -58,8 +58,8 @@ interface Props {
   /** "edit" when rendered inside a MatFlow support edit session (see MemberProfile). */
   supportScope?: "view" | "edit" | null;
   /** The server render's session (auth()), handed to ImportPanel's SessionProvider so it starts synced and makes no
-   *  session request on mount (Round 8). Omitted → the provider fetches it, as before. */
-  session?: Session | null;
+   *  session request on mount (Round 8). */
+  session: Session | null;
 }
 
 type Tab = "overview" | "branding" | "revenue" | "store" | "staff" | "account" | "waiver" | "import" | "integrations" | "requests";

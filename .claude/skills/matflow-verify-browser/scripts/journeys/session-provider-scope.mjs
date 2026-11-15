@@ -3,15 +3,19 @@
 // Counts GET /api/auth/session per step and checks behaviour on the synthetic club:
 //   S1 dashboard load and client navigation (desktop) — no session request;
 //   S2 Settings → Import (desktop and phone): the owner-only import panel renders, with no session request on mount;
-//   S3 tab focus: on the import tab ONE re-read; on a page with no session reader none;
+//   S3 tab focus: on the import tab a re-read (next-auth 5 beta: the re-read broadcasts and the tab's own listener
+//      hears it, so 1–2 requests); on a page with no session reader none;
 //   S4 cross-tab: signing out in another tab of the same browser makes the import panel re-read and disappear, and
 //      the signed-out tab lands on /login;
 //   S5 sign-out on the phone (More → Sign out) lands on /login and the dashboard then sends the browser to /login;
-//   S6 a member's own authenticator setup (/login/totp/setup, the other session reader) renders with no session
-//      request on mount, desktop and phone;
+//   S6 a member's own authenticator setup (/login/totp/setup, the other session reader) on a hard load: no session
+//      request on mount, the setup initialises through the MEMBER route (/api/member/totp/setup, never the staff one)
+//      and shows its secret, with no "Could not initialise" error — desktop and phone;
 //   S7 revocation (the owner's sessionVersion bumped, as "sign out everywhere" does): on the next focus the import
-//      panel re-reads and disappears, and the next navigation is sent to /login.
-// Owner sign-in through the real form runs first (signIn/getSession without any provider).
+//      panel re-reads and disappears, and the next navigation is sent to /login. S7 runs LAST: it leaves the fixture
+//      owner's saved sign-in revoked.
+// Every count waits until session requests have stopped for 2 s (a late echo is counted in its own step, not the
+// next). Owner sign-in through the real form runs first (signIn/getSession without any provider).
 import { createRequire } from "node:module";
 import { state, q, ledger, shot, context, ownerSignIn, memberLogin, memberSignIn, chromium, BASE } from "../lib.mjs";
 
@@ -29,7 +33,15 @@ const sessionReads = (page) => {
   page.on("request", (r) => { if (new URL(r.url()).pathname === "/api/auth/session") c.n++; });
   return c;
 };
-const settle = (page, ms = 2500) => page.waitForTimeout(ms);
+/** Waits until the counter `c` has not moved for `quietMs` (at most `maxMs`). */
+const settle = async (page, c, quietMs = 2000, maxMs = 20_000) => {
+  const start = Date.now();
+  let last = c.n, since = Date.now();
+  while (Date.now() - start < maxMs) {
+    await page.waitForTimeout(200);
+    if (c.n !== last) { last = c.n; since = Date.now(); } else if (Date.now() - since >= quietMs) return;
+  }
+};
 const watch = (page) => page.on("pageerror", (e) => errors.push(String(e.message).slice(0, 200)));
 const importPanel = (page) => page.getByRole("group", { name: "What are you importing?" });
 /** Opens `path` and reports where the browser ends up (server or client redirect), waiting up to 30 s for /login. */
@@ -41,7 +53,8 @@ const landsOnLogin = async (page, path) => {
 const counts = {};
 const record = (id, n, expected) => {
   counts[id] = n;
-  if (EXPECT === "after" && expected !== undefined) return L.check("journey", `${id}: ${expected} session request(s)`, n === expected, { n, expected });
+  const [lo, hi] = Array.isArray(expected) ? expected : [expected, expected];
+  if (EXPECT === "after" && expected !== undefined) return L.check("journey", `${id}: ${lo === hi ? lo : `${lo}–${hi}`} session request(s)`, n >= lo && n <= hi, { n, expected });
   return L.note("journey", `${id}: session requests`, { n });
 };
 
@@ -62,17 +75,17 @@ try {
     const c = sessionReads(page);
     await page.goto("/dashboard/timetable");
     await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ timeout: 90_000 });
-    await settle(page);
+    await settle(page, c);
     record("S1a timetable load (desktop)", c.n, 0);
     c.n = 0;
     await page.locator("aside").getByRole("link", { name: "Members", exact: true }).click();
     await page.waitForURL(/\/dashboard\/members/);
     await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ timeout: 90_000 });
-    await settle(page);
+    await settle(page, c);
     record("S1b client navigation timetable → members", c.n, 0);
     c.n = 0;
     await page.evaluate(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
-    await settle(page);
+    await settle(page, c);
     record("S3b tab focus on a page with no session reader", c.n, 0);
     await ctx.close();
   }
@@ -84,20 +97,21 @@ try {
     const c = sessionReads(a);
     await a.goto("/dashboard/settings?tab=import");
     await importPanel(a).waitFor({ timeout: 90_000 });
-    await settle(a);
+    await settle(a, c);
     L.check("journey", "S2a the owner sees the import panel (desktop)", await importPanel(a).isVisible(), {});
     record("S2a Settings → Import load (desktop)", c.n, 0);
     c.n = 0;
     await a.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await settle(a);
-    record("S3a tab focus on the import tab", c.n, 1);
+    await settle(a, c);
+    record("S3a tab focus on the import tab", c.n, [1, 2]);
     L.check("journey", "S3a the import panel is still shown after the focus re-read", await importPanel(a).isVisible(), {});
-    // Cross-tab: sign out in a second tab of the same browser.
-    c.n = 0;
+    // Cross-tab: sign out in a second tab of the same browser. Tab A's reads are counted from the click only.
     const b = await ctx.newPage(); watch(b);
     await b.goto("/dashboard/timetable");
     await b.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ timeout: 90_000 });
+    await settle(a, c);
     await b.getByRole("button", { name: "Open account menu" }).click();
+    c.n = 0;
     await b.getByRole("menuitem", { name: "Sign out", exact: true }).click();
     await b.waitForURL(/\/login/, { timeout: 60_000 });
     L.check("journey", "S4a desktop sign-out (account menu) lands on /login", /\/login/.test(b.url()), { url: b.url() });
@@ -118,7 +132,7 @@ try {
     const c = sessionReads(page);
     await page.goto("/dashboard/settings?tab=import");
     await importPanel(page).waitFor({ timeout: 90_000 });
-    await settle(page);
+    await settle(page, c);
     L.check("journey", "S2b the owner sees the import panel (phone)", await importPanel(page).isVisible(), {});
     record("S2b Settings → Import load (phone)", c.n, 0);
     await page.getByRole("button", { name: "More options" }).tap();
@@ -141,11 +155,20 @@ try {
       const page = await ctx.newPage(); watch(page);
       await memberSignIn(page, club, member);
       const c = sessionReads(page);
+      const setupCalls = [];
+      page.on("response", (r) => { const p = new URL(r.url()).pathname; if (/\/totp\/setup$/.test(p) && p.startsWith("/api/")) setupCalls.push(`${p} ${r.status()}`); });
       await page.goto("/login/totp/setup");
       const heading = page.getByRole("heading", { level: 1 }).first();
       const shown = await heading.waitFor({ timeout: 60_000 }).then(() => true, () => false);
-      await settle(page);
-      L.check("journey", `S6 the member's authenticator setup renders (${device})`, shown && /\/login\/totp\/setup/.test(page.url()), { url: page.url(), heading: shown ? await heading.innerText() : null });
+      // Initialised = the secret is on screen (its copy button), not just the heading, which shows even on failure.
+      const secret = await page.getByRole("button", { name: "Copy secret to clipboard" }).waitFor({ timeout: 60_000 }).then(() => true, () => false);
+      await settle(page, c);
+      const failed = await page.getByText(/Could not initialise two-factor setup|Network error loading setup/).count();
+      const memberRoute = setupCalls.length > 0 && setupCalls.every((s) => s.startsWith("/api/member/totp/setup 2"));
+      if (!secret || failed) await shot(page, `session-scope-member-totp-${device}`);
+      L.check("journey", `S6 the member's authenticator setup initialises through the member route (${device})`,
+        shown && secret && failed === 0 && memberRoute && /\/login\/totp\/setup/.test(page.url()),
+        { url: page.url(), heading: shown ? await heading.innerText() : null, secretShown: secret, errorShown: failed, setupCalls });
       record(`S6 member authenticator setup load (${device})`, c.n, 0);
       await ctx.close();
     }
@@ -158,7 +181,7 @@ try {
     const c = sessionReads(page);
     await page.goto("/dashboard/settings?tab=import");
     await importPanel(page).waitFor({ timeout: 90_000 });
-    await settle(page);
+    await settle(page, c);
     const owner = (await q(`select id from "User" where "tenantId" = $1 and email = $2`, [tenantId, club.owner.email]))[0];
     await q(`update "User" set "sessionVersion" = "sessionVersion" + 1 where id = $1 and "tenantId" = $2`, [owner.id, tenantId]);
     c.n = 0;

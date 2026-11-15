@@ -14,7 +14,7 @@ function files(dir: string): string[] {
     return /\.(tsx|ts)$/.test(name) ? [p] : [];
   });
 }
-const source = [...files(path.join(ROOT, "app")), ...files(path.join(ROOT, "components"))];
+const source = [...files(path.join(ROOT, "app")), ...files(path.join(ROOT, "components")), ...files(path.join(ROOT, "lib"))];
 
 describe("session provider scope", () => {
   it("the root layout mounts no SessionProvider", () => {
