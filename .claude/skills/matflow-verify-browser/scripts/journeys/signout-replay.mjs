@@ -120,8 +120,10 @@ async function signOut(page, kind) {
     await page.getByRole("button", { name: "Open account menu" }).click();
     await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   } else {
-    await page.getByRole("button", { name: "More options" }).tap();
-    await page.getByRole("button", { name: "Sign out", exact: true }).filter({ visible: true }).first().tap();
+    const button = page.getByRole("button", { name: "Sign out", exact: true }).filter({ visible: true }).first();
+    // After a refused sign-out the More sheet is still open (the person is told and stays where they were).
+    if (!(await button.isVisible().catch(() => false))) await page.getByRole("button", { name: "More options" }).tap();
+    await button.tap();
   }
 }
 const landsOnLogin = async (page, path) => {
@@ -183,11 +185,16 @@ async function scenario({ kind, path, tabs }) {
   const afterSignOut = await sessionCookies(ctx);
 
   hold.release();
+  let afterDelivery = [];
+  for (let t = 0; t < 5000 && !afterDelivery.length; t += 50) {
+    if (hold.held.some((h) => h.delivered)) afterDelivery = await sessionCookies(ctx);
+    if (!afterDelivery.length) await holderPage.waitForTimeout(50);
+  }
   await holderPage.waitForTimeout(3000);
   const delivered = hold.held.filter((h) => h.delivered).length;
   const reissued = hold.held.flatMap((h) => h.setsSession);
   const afterRelease = await sessionCookies(ctx);
-  L.note("client", `${tag} cookies`, { before: before.length, afterSignOut: afterSignOut.length, delivered, heldResponsesSettingSession: reissued.length, afterRelease: afterRelease.length });
+  L.note("client", `${tag} cookies`, { before: before.length, afterSignOut: afterSignOut.length, delivered, heldResponsesSettingSession: reissued.length, atDelivery: afterDelivery.length, threeSecondsLater: afterRelease.length });
 
   const r0 = await replay(before);
   L.check("server", `${tag} R1 replaying the cookie held before sign-out is refused (API 401, dashboard → /login)`, r0.refused === true, r0);
@@ -206,16 +213,17 @@ async function scenario({ kind, path, tabs }) {
 
   // Client: only meaningful if the held response actually reached the browser. In one tab the sign-out navigation
   // usually cancels it first — then the browser-side restore was not exercised, and that is said, not passed.
-  if (delivered === 0 || afterRelease.length === 0) {
+  if (delivered === 0 || afterDelivery.length === 0) {
     // Cancelled before delivery, or delivered to a document already gone (one tab): the browser kept no cookie, so the
     // late-response restore did not happen in this run — not exercised, never a pass.
     L.note("client", `${tag} U2 not exercised: the late response restored no cookie in this run`, { delivered, held: hold.held.map((h) => h.deliverError ?? h.error ?? (h.delivered ? "delivered" : "pending")).slice(0, 3) });
   } else {
     // A late response may put a cookie back until the next request; what matters is that the server refuses it.
     exercised.browserCookieAfterLateResponse++;
-    const rb = await replay(afterRelease);
-    L.check("client", `${tag} U2 whatever session cookie the browser holds after the held response arrives is refused by the server`,
-      rb.refused === true, { names: afterRelease.map((c) => c.name), delivered, replay: rb });
+    const rb = await replay(afterDelivery);
+    L.check("client", `${tag} U2 the session cookie the late response put back in the browser is refused by the server`,
+      rb.refused === true, { names: afterDelivery.map((c) => c.name), delivered, replay: rb });
+    L.note("client", `${tag} U2b the restored cookie three seconds later (the next refused request clears it)`, { stillThere: afterRelease.length });
   }
   const u3 = await landsOnLogin(signer, "/dashboard/timetable");
   if (!u3.ok) await shot(signer, `signout-replay-${kind}-${path}-${tabs}`);
