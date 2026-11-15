@@ -92,7 +92,8 @@ const ACTIVE = { payload: COOKIE, target: TARGET_ROW };
 /** What Auth.js decodes from the carrier cookie: the claim plus its standard JWT fields. */
 function carrierToken(): Record<string, unknown> {
   const now = Math.floor(Date.now() / 1000);
-  return { supportCarrier: true, iat: now, exp: now + 1800, jti: "jti-carrier" };
+  // Its own session id, minted by the route since Round 8 (16 Nov 2026); a carrier without one is ended (tests/unit/support-carrier-jwt.test.ts).
+  return { supportCarrier: true, sid: "carrier-sid-0123456789abcd", iat: now, exp: now + 1800, jti: "jti-carrier" };
 }
 
 async function jwt(token: Record<string, unknown>) {
