@@ -55,7 +55,7 @@ try {
     const page = await ctx.newPage(); watch(page);
     const c = sessionReads(page);
     await page.goto("/dashboard/timetable");
-    await page.getByTestId("week-grid").waitFor({ timeout: 90_000 });
+    await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ timeout: 90_000 });
     await settle(page);
     record("S1a timetable load (desktop)", c.n, 0);
     c.n = 0;
@@ -90,7 +90,7 @@ try {
     c.n = 0;
     const b = await ctx.newPage(); watch(b);
     await b.goto("/dashboard/timetable");
-    await b.getByTestId("week-grid").waitFor({ timeout: 90_000 });
+    await b.locator("main").getByRole("heading", { level: 1 }).first().waitFor({ timeout: 90_000 });
     await b.getByRole("button", { name: "Open account menu" }).click();
     await b.getByRole("menuitem", { name: "Sign out", exact: true }).click();
     await b.waitForURL(/\/login/, { timeout: 60_000 });
