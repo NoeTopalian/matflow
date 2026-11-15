@@ -32,6 +32,12 @@ const sessionReads = (page) => {
 const settle = (page, ms = 2500) => page.waitForTimeout(ms);
 const watch = (page) => page.on("pageerror", (e) => errors.push(String(e.message).slice(0, 200)));
 const importPanel = (page) => page.getByRole("group", { name: "What are you importing?" });
+/** Opens `path` and reports where the browser ends up (server or client redirect), waiting up to 30 s for /login. */
+const landsOnLogin = async (page, path) => {
+  await page.goto(path);
+  const ok = await page.waitForURL(/\/login/, { timeout: 30_000 }).then(() => true, () => false);
+  return { ok, url: page.url(), h1: ok ? null : await page.locator("h1").first().innerText().catch(() => null) };
+};
 const counts = {};
 const record = (id, n, expected) => {
   counts[id] = n;
@@ -98,8 +104,9 @@ try {
     const hidden = await importPanel(a).waitFor({ state: "hidden", timeout: 30_000 }).then(() => true, () => false);
     if (!hidden) await shot(a, "session-scope-cross-tab-still-shown");
     L.check("journey", "S4b the other tab's import panel re-reads the session and disappears after the sign-out", hidden && c.n >= 1, { reads: c.n, hidden });
-    await b.goto("/dashboard/timetable");
-    L.check("journey", "S4c after sign-out the dashboard sends the browser to /login", /\/login/.test(b.url()), { url: b.url() });
+    const s4c = await landsOnLogin(b, "/dashboard/timetable");
+    if (!s4c.ok) await shot(b, "session-scope-after-signout-dashboard");
+    L.check("journey", "S4c after sign-out the dashboard sends the browser to /login", s4c.ok, s4c);
     await ctx.close();
   }
 
@@ -115,11 +122,12 @@ try {
     L.check("journey", "S2b the owner sees the import panel (phone)", await importPanel(page).isVisible(), {});
     record("S2b Settings → Import load (phone)", c.n, 0);
     await page.getByRole("button", { name: "More options" }).tap();
-    await page.getByRole("button", { name: "Sign out" }).tap();
-    await page.waitForURL(/\/login/, { timeout: 60_000 });
-    L.check("journey", "S5a phone sign-out (More → Sign out) lands on /login", /\/login/.test(page.url()), { url: page.url() });
-    await page.goto("/dashboard");
-    L.check("journey", "S5b after phone sign-out the dashboard sends the browser to /login", /\/login/.test(page.url()), { url: page.url() });
+    // The More sheet's Sign out (the account menu's, hidden at phone width, also matches the name).
+    await page.getByRole("button", { name: "Sign out", exact: true }).filter({ visible: true }).first().tap();
+    const s5a = await page.waitForURL(/\/login/, { timeout: 60_000 }).then(() => true, () => false);
+    L.check("journey", "S5a phone sign-out (More → Sign out) lands on /login", s5a, { url: page.url() });
+    const s5b = await landsOnLogin(page, "/dashboard");
+    L.check("journey", "S5b after phone sign-out the dashboard sends the browser to /login", s5b.ok, s5b);
     await ctx.close();
   }
 
@@ -157,8 +165,8 @@ try {
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
     const hidden = await importPanel(page).waitFor({ state: "hidden", timeout: 30_000 }).then(() => true, () => false);
     L.check("journey", "S7a after revocation the next focus re-reads the session and the import panel disappears", hidden && c.n >= 1, { reads: c.n, hidden });
-    await page.goto("/dashboard/timetable");
-    L.check("journey", "S7b after revocation the next navigation is sent to /login", /\/login/.test(page.url()), { url: page.url() });
+    const s7b = await landsOnLogin(page, "/dashboard/timetable");
+    L.check("journey", "S7b after revocation the next navigation is sent to /login", s7b.ok, s7b);
     await ctx.close();
   }
 } catch (e) {
