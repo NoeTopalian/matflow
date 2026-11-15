@@ -1790,3 +1790,17 @@ model ImportUploadChunk {
 
   @@id([uploadId, index])
 }
+
+/// A session that was signed out on its own device (Round 8, 16 Nov 2026). The revocation check refuses its id on
+/// every request (lib/session-revocation.ts); other sessions of the same person are untouched. Holds no club data and
+/// no person identifier: `sid` is an opaque random id (a hash for pre-release tokens, lib/session-id.ts). No foreign
+/// keys, so removing a person or a club can never remove the record that a session ended. Kept until `expiresAt`, the
+/// point after which no token of that session can still be valid (REVOKED_SESSION_RETENTION_MS), then pruned.
+/// Readable and writable only through the RLS-bypass helper (migration 20261116120000_revoked_session).
+model RevokedSession {
+  sid       String   @id
+  revokedAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
