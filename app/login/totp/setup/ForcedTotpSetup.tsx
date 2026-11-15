@@ -6,11 +6,14 @@
  * changed before an authenticator is enrolled — W1 verifier FINDING-1).
  */
 import { useRouter } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
+import { useToast } from "@/components/ui/Toast";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 
 export default function ForcedTotpSetup() {
   const router = useRouter();
+  const { toast } = useToast();
   const { data: session } = useSession();
   // Audit N1/N2: members enrol via the member-side API mirror and land back
   // on their profile — previously this page drove the staff endpoints (401
@@ -35,7 +38,9 @@ export default function ForcedTotpSetup() {
         />
 
         <button
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          onClick={async () => {
+            if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+          }}
           className="w-full mt-4 py-3 text-sm text-center transition-colors"
           style={{ color: "rgba(255,255,255,0.3)" }}
         >
