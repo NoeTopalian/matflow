@@ -13,7 +13,7 @@ import { z } from "zod";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiStaff, requireApiOwnerOrManager } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
-import { refuseSupportSession } from "@/lib/support-session";
+import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { logAudit } from "@/lib/audit-log";
 import { CATEGORY_NAME_MAX, categoryNameKey, cleanCategoryName } from "@/lib/class-category";
 import { CATEGORY_LIMIT, categoryManagementEnabled, listManagedCategories, lockClubCategories } from "@/lib/class-category-store";
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   if (csrfViolation) return csrfViolation;
   const gate = await requireApiOwnerOrManager();
   if (!gate.ok) return gate.response;
-  const support = refuseSupportSession(gate.session); if (support) return support;
+  const support = refuseSupportSessionUnlessEdit(gate.session); if (support) return support; // view refused; an EDIT session may manage categories (SUPPORT_EDIT_MUTATION_ALLOWLIST)
   if (!categoryManagementEnabled()) return NextResponse.json({ error: "Category management isn't switched on yet." }, { status: 404 });
   const { tenantId, userId } = gate;
 
