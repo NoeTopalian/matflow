@@ -39,7 +39,8 @@ can only exist with an expiry before deployment + 30 days, and every re-issue af
 it ignores `RevokedSession`: given a revoked cookie it grants access (if it has the production database) and re-issues
 the cookie with a fresh 30 days, indefinitely, so after cleanup that cookie would work again on current code. See §5.
 
-Independent confirmation of this section: `.omc` review record (private), see "Evidence".
+Independently confirmed on 16 Nov 2026 (focused review of `26b6faaf`: "confirmed on this code"; worst case R + 61 days
+plus request time; pruning cannot revive a token; the only exception is code that does not read `RevokedSession`).
 
 ## 2. "Failed lookups refuse access" and the 24-hour outage allowance
 
@@ -48,14 +49,15 @@ made with it is refused:
 
 - When the revocation check cannot run (database error, timeout, malformed row), `auth.ts` `jwt()` keeps the token,
   stamps `revalidateSince`, and grants no authority: `session()` returns no user, the exported `auth()` returns null
-  for every page and API, `proxy.ts` answers a retryable 503 without clearing the cookie, and `/api/auth/session`
+  for every page and API, `proxy.ts` answers a retryable 503 without clearing the cookie, and `GET /api/auth/session`
   forwards the same 503.
-- The stamp is removed only by a later pass whose check **succeeds**. A successful check reads `RevokedSession` in the
-  same statement as the person row, so a revoked session can never clear the stamp: it is ended instead.
+- The stamp is removed only after a check **succeeds**: in `auth.ts` `jwt()`, and in the two second-factor verify
+  routes once their own check returned "ok". A successful check reads `RevokedSession` in the same statement as the
+  person row, so a revoked session can never clear the stamp: it is ended instead.
 - If no check succeeds within 24 hours of the first failure, the token is ended (null, cookie cleared).
 - The two second-factor verify routes (`/api/auth/totp/verify`, `/api/member/totp/verify`) decode the half-signed-in
-  token themselves; they call `refuseRevokedPendingToken`, which answers 503 on "unknown" and spends nothing, and
-  re-issues nothing.
+  token themselves; they call `refuseRevokedPendingToken`, which answers 503 on "unknown", spends nothing and
+  re-issues nothing; only after "ok" do they spend the code and re-issue.
 - Routes that decode the cookie directly were enumerated (`getToken`/`encode` call sites): the six re-encoders all
   pass `auth()` / `requireApiStaff()` / the pending gate first; the impersonate route only asks whether a session
   exists before minting a carrier; the sign-out route reads the id to record it. None grants access on an unchecked
@@ -84,22 +86,24 @@ Independent review (Opus, APPROVE WITH NITS). Findings 1, 2 and 4–8 were fixed
 ## 4. Deployment sequence, database-role checks, recovery
 
 **Sequence (migration before code).** Merging to `main` starts a production build whose first step,
-`scripts/maybe-migrate.mjs`, runs `prisma migrate deploy` *before* `next build`, and only for `VERCEL_ENV=production`.
-The two migrations are additive and run in one transaction each with bounded waits:
+`scripts/maybe-migrate.mjs`, runs `prisma migrate deploy` *before* `next build` against the build's database URL (it
+refuses the production database in any build that is not a Vercel production deployment). The two migrations are
+additive and run in one transaction each with bounded waits:
 
 1. `20261116120000_revoked_session`: creates `RevokedSession` (sid, revokedAt, expiresAt; no tenant, no foreign
    keys), an `expiresAt` index, RLS enabled and forced, policy `bypass_only` (`app.bypass_rls = 'on'`).
 2. `20261116120100_revoked_session_grant`: grants SELECT, INSERT, DELETE to `matflow_app` if that role exists.
 
 While the build runs, the current deployment keeps serving and ignores the new table (compatible). The new code goes
-live only after both migrations committed. If a migration fails, the build fails and nothing changes. If the new code
+live only after both migrations committed. If a migration fails, the build fails and the old code keeps serving; the
+first migration may already have committed, which old code ignores, and the next build applies the rest. If the new code
 ever ran without the table, every signed-in request would be refused as unavailable (503, fail closed): the order
 above prevents that.
 
 **Database-role checks (Noe, read-only, after the migration).**
 - The runtime role can read the table through the bypass helper: one signed-in page loads (200, not 503).
-- If production ever uses `matflow_app`: `has_table_privilege('matflow_app','"RevokedSession"','SELECT,INSERT,DELETE')`
-  is true. On 12 Nov 2026 `matflow_app` did not exist in production (private record), so the grant is a no-op there.
+- Where the restricted role exists: `has_table_privilege('matflow_app','"RevokedSession"','SELECT,INSERT,DELETE')` is
+  true (the private packet records production's role setup).
 - `relrowsecurity` and `relforcerowsecurity` are true for `RevokedSession`.
 
 **Verification after deploy (Noe, signed in).** One page loads; sign out from the account menu lands on /login; the
@@ -116,10 +120,10 @@ Inventory taken 16 Nov 2026 (`vercel ls`, metadata only; private list in `.omc`)
 preview deployments retained, oldest 13 Oct 2026. Anonymous requests to the production ones and a sample of
 previews were redirected to Vercel's sign-in, so Deployment Protection is on today.
 
-- **Preview deployments (44).** They share `NEXTAUTH_SECRET` with production but have no `DATABASE_URL`. Every one
-  is built from a commit that already has the 24-hour outage bound. Given any cookie, their revocation check cannot
-  run, so they grant nothing and can extend a cookie no further than §1's bound. They cannot accept a revoked cookie
-  in any way that matters. Retiring merged-branch previews is hygiene, not required for this release.
+- **Preview deployments (44).** None has the production database. Every one is built from a commit descending from
+  `75da8b57` (9 Oct 2026), which introduced the 24-hour outage bound (checked per commit, by ancestry and content).
+  Their revocation check cannot run, so they grant nothing and cannot extend a cookie beyond §1's bound. Retiring
+  merged-branch previews is hygiene, not required for this release. Detail in the private packet.
 - **Production deployments (5, built from `e38ab547`, `fa28bb41`, `afc8efbb` twice, `e2b11f46`).** They hold the
   production database and secret and ignore `RevokedSession`. Each one is a place where a revoked cookie still works
   and can be refreshed indefinitely. **They must be retired** (deleted) once the release is live and checked.
@@ -128,9 +132,9 @@ previews were redirected to Vercel's sign-in, so Deployment Protection is on tod
   Rollback is not used.
 - **Prepared for Noe's approval (destructive):** delete those five production deployments, after the release
   deployment is healthy and checked (§4). The exact deployment list is in the private packet.
-- **Separate, pre-existing, recommendation only:** preview builds run any pushed branch with the production signing
-  secret. A separate Preview `NEXTAUTH_SECRET` would stop previews minting production-valid cookies. Changes nothing
-  for production users; Noe's action.
+- **The same rule applies to any process running code older than this release with production credentials** (for
+  example an old checkout started locally against production): it ignores revocations. Never do that.
+- A related environment recommendation is recorded in the private packet (Noe's action).
 
 ## Evidence
 

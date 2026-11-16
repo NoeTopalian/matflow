@@ -110,7 +110,8 @@ describe("only a sign-in mints a session id", () => {
     expect(auth.match(/\bnewSessionId\(\)/g)).toHaveLength(1);
     const userBranch = auth.slice(auth.indexOf("async jwt({ token, user })"), auth.indexOf("A token minted before session ids"));
     expect(userBranch).toMatch(/\.sid = newSessionId\(\)/);
-  });
+    // A whole-tree scan: under full-suite load it once exceeded the default per-test limit (review, 16 Nov 2026).
+  }, 120_000);
 });
 
 describe("the arithmetic and the check cannot drift apart (review findings 4 and 7, 16 Nov 2026)", () => {

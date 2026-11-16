@@ -214,13 +214,19 @@ async function scenario({ kind, path, tabs }) {
 
   // Client: only meaningful if the held response actually reached the browser. In one tab the sign-out navigation
   // usually cancels it first — then the browser-side restore was not exercised, and that is said, not passed.
-  if (delivered === 0 || afterDelivery.length === 0) {
-    // Cancelled before delivery, or delivered to a document already gone (one tab): the browser kept no cookie, so the
-    // late-response restore did not happen in this run — not exercised, never a pass.
-    L.note("client", `${tag} U2 not exercised: the late response restored no cookie in this run`, { delivered, held: hold.held.map((h) => h.deliverError ?? h.error ?? (h.delivered ? "delivered" : "pending")).slice(0, 3) });
+  // U2 counts only when sign-out had left the browser with no session cookie (so whatever is there at delivery came back
+  // with the late response) and that cookie belongs to the signed-out session (review of 26b6faaf, 16 Nov 2026).
+  const sidBeforeU2 = await sidOf(before);
+  const sidAtDelivery = afterDelivery.length ? await sidOf(afterDelivery) : null;
+  if (delivered === 0 || afterDelivery.length === 0 || afterSignOut.length !== 0) {
+    // Cancelled before delivery, delivered to a document already gone (one tab), or sign-out had not cleared the cookie
+    // yet: the late-response restore is not isolated in this run — not exercised, never a pass.
+    L.note("client", `${tag} U2 not exercised: the late response restored no cookie in this run`, { delivered, afterSignOut: afterSignOut.length, held: hold.held.map((h) => h.deliverError ?? h.error ?? (h.delivered ? "delivered" : "pending")).slice(0, 3) });
   } else {
     // A late response may put a cookie back until the next request; what matters is that the server refuses it.
     exercised.browserCookieAfterLateResponse++;
+    L.check("client", `${tag} U2a the cookie back in the browser is the signed-out session's (same id), so it came from the late response`,
+      !!sidBeforeU2 && sidAtDelivery === sidBeforeU2, { beforeHasId: !!sidBeforeU2, deliveredHasId: !!sidAtDelivery, same: sidAtDelivery === sidBeforeU2 });
     const rb = await replay(afterDelivery);
     L.check("client", `${tag} U2 the session cookie the late response put back in the browser is refused by the server`,
       rb.refused === true, { names: afterDelivery.map((c) => c.name), delivered, replay: rb });
