@@ -7,7 +7,7 @@
 // Needs `fixture.mjs create` and `server.mjs start`.
 //   node journeys/class-horizon-lapse.mjs
 import { randomUUID } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, bcrypt } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, memberLogin, memberSignIn } from "../lib.mjs";
 
 const club = state.club;
 if (!club) throw new Error("no fixture — run: node fixture.mjs create");
@@ -22,10 +22,8 @@ const todayMarker = new Date(`${todayIso}T00:00:00.000Z`);
 const T = `${String(Math.min(23, Number(parts.hour) + 1)).padStart(2, "0")}:30`; // later today, club time
 const dayOfWeek = todayMarker.getUTCDay(); // Prisma: 0 = Sunday
 
-const member = (await q(`select id, email from "Member" where "tenantId" = $1 and name = 'Member 1'`, [tenantId]))[0];
-if (!member) throw new Error("fixture has no Member 1");
-const memberPassword = `Mfv-${randomUUID().slice(0, 12)}-aa1`;
-await q(`update "Member" set "waiverAccepted" = true, "passwordHash" = $3 where id = $1 and "tenantId" = $2`, [member.id, tenantId, await bcrypt.hash(memberPassword, 10)]);
+// The fixture's own synthetic member, given a sign-in for this run by the harness (no credential in this file).
+const member = await memberLogin(club);
 const cls = randomUUID();
 await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, 'Lapsed Class', 60, 30)`, [cls, tenantId]);
 await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, $3, $4, $4)`, [randomUUID(), cls, dayOfWeek, T]);
@@ -38,15 +36,8 @@ try {
   const ctx = await context(browser, "10.94.0.1");
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
-  await page.goto("/login");
-  await page.getByLabel("Club code").fill(club.slug);
-  await page.keyboard.press("Enter");
-  await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
-  await page.getByLabel("Email address").first().fill(member.email);
-  await page.getByLabel("Password").fill(memberPassword);
-  const homeRead = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/member/home" && r.request().method() === "GET", { timeout: 120000 });
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL(/\/member/, { timeout: 60000 });
+  const homeRead = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/member/home" && r.request().method() === "GET", { timeout: 180000 });
+  await memberSignIn(page, club, member);
   const home = await homeRead.catch(() => null);
   L.check("journey", "J1 member Home loads its data (the read that tops the horizon up)", home?.status() === 200, { status: home?.status() ?? null });
 
