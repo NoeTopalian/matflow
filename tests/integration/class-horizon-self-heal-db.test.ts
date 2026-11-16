@@ -13,6 +13,7 @@ vi.mock("@/auth", () => ({ auth: vi.fn() }));
 import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { GET as scheduleGET } from "@/app/api/member/schedule/route";
+import { GET as homeGET } from "@/app/api/member/home/route";
 import { resetClassHorizonMemoForTests } from "@/lib/class-horizon";
 import { ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 
@@ -21,7 +22,7 @@ const DAY = 24 * 60 * 60 * 1000;
 
 describe.skipIf(!HAS_DB)("the session horizon is topped up by the member read â€” real database", () => {
   const tenants: string[] = [];
-  const ids = { A: "", B: "", live: "", cancelledClass: "", paused: "", other: "", cancelledInstance: "" };
+  const ids = { A: "", B: "", C: "", live: "", cancelledClass: "", paused: "", other: "", homeClass: "", cancelledInstance: "", memberA: "", memberC: "" };
   // A UTC club, so the club's calendar day is the UTC day.
   const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
   const target = new Date(today.getTime() + 30 * DAY);
@@ -41,17 +42,18 @@ describe.skipIf(!HAS_DB)("the session horizon is topped up by the member read â€
     withRlsBypass((tx) => tx.classInstance.findMany({ where: { classId }, select: { id: true, date: true, isCancelled: true } }));
 
   beforeAll(async () => {
-    for (const label of ["A", "B"]) {
+    for (const label of ["A", "B", "C"]) {
       const t = await withRlsBypass((tx) =>
         tx.tenant.create({ data: { name: `Synthetic horizon ${label}`, slug: `mfv-hz-${randomUUID()}`, timezone: "UTC" }, select: { id: true } }),
       );
       tenants.push(t.id);
     }
-    [ids.A, ids.B] = tenants;
+    [ids.A, ids.B, ids.C] = tenants;
     ids.live = await klass(ids.A, "Live class");
     ids.cancelledClass = await klass(ids.A, "Class cancelled that day");
     ids.paused = await klass(ids.A, "Paused class", false);
     ids.other = await klass(ids.B, "Other club class");
+    ids.homeClass = await klass(ids.C, "Class seen from Home");
     // The owner cancelled the target day's session of the second class before the horizon lapsed: the row is kept.
     ids.cancelledInstance = (
       await withRlsBypass((tx) =>
@@ -64,6 +66,11 @@ describe.skipIf(!HAS_DB)("the session horizon is topped up by the member read â€
     const member = await withRlsBypass((tx) =>
       tx.member.create({ data: { tenantId: ids.A, name: "Synthetic Member", email: `member-${randomUUID()}@example.test` }, select: { id: true } }),
     );
+    ids.memberA = member.id;
+    const memberC = await withRlsBypass((tx) =>
+      tx.member.create({ data: { tenantId: ids.C, name: "Synthetic Home Member", email: `member-${randomUUID()}@example.test` }, select: { id: true } }),
+    );
+    ids.memberC = memberC.id;
     vi.mocked(auth).mockResolvedValue({ user: { id: `synthetic-member-${member.id}`, role: "member", tenantId: ids.A, memberId: member.id } } as never);
     resetClassHorizonMemoForTests();
   });
@@ -111,5 +118,13 @@ describe.skipIf(!HAS_DB)("the session horizon is topped up by the member read â€
   it("a paused class gets no sessions, and another club gets none", async () => {
     expect(await instancesOf(ids.paused)).toHaveLength(0);
     expect(await instancesOf(ids.other)).toHaveLength(0);
+  });
+
+  it("member Home, where members check in, tops its club up too (review of PR #93, finding 1)", async () => {
+    expect(await instancesOf(ids.homeClass)).toHaveLength(0);
+    vi.mocked(auth).mockResolvedValueOnce({ user: { id: `synthetic-member-${ids.memberC}`, role: "member", tenantId: ids.C, memberId: ids.memberC, name: "Synthetic Home Member" } } as never);
+    const res = await homeGET(new Request("https://test.local/api/member/home"));
+    expect(res.status).toBe(200);
+    expect(await instancesOf(ids.homeClass)).toHaveLength(Math.ceil(ROLLING_WINDOW_DAYS / 7));
   });
 });

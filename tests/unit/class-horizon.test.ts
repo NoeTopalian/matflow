@@ -20,6 +20,7 @@ import {
   ensureClassHorizon,
   generateClassHorizon,
   HORIZON_INSERT_BATCH,
+  HORIZON_RETRY_AFTER_FAILURE_MS,
   HORIZON_TOP_UP_INTERVAL_MS,
   resetClassHorizonMemoForTests,
 } from "@/lib/class-horizon";
@@ -31,7 +32,7 @@ const oneClass = [{ id: "c1", schedules: [{ dayOfWeek: 1, startTime: "18:00", en
 beforeEach(() => {
   vi.clearAllMocks();
   resetClassHorizonMemoForTests();
-  h.findUnique.mockResolvedValue({ timezone: "Europe/London" });
+  h.findUnique.mockResolvedValue({ timezone: "Europe/London", subscriptionStatus: "active", deletedAt: null });
   h.findMany.mockResolvedValue(oneClass);
   h.createMany.mockImplementation(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
 });
@@ -74,18 +75,39 @@ describe("ensureClassHorizon", () => {
   });
 
   it("starts from the club's calendar day", async () => {
-    h.findUnique.mockResolvedValue({ timezone: "Pacific/Auckland" }); // 16 Nov 12:00Z is 01:00 on 17 Nov there (UTC+13)
+    h.findUnique.mockResolvedValue({ timezone: "Pacific/Auckland", subscriptionStatus: "active", deletedAt: null }); // 16 Nov 12:00Z is 01:00 on 17 Nov there (UTC+13)
     await ensureClassHorizon("t1", new Date("2026-11-16T12:00:00Z"));
     const { data } = h.createMany.mock.calls[0][0] as { data: { date: Date }[] };
     expect(data.every((r) => r.date.getTime() >= Date.UTC(2026, 10, 17))).toBe(true);
   });
 
-  it("never throws, and a failed top-up is retried on the next read", async () => {
+  it("never throws; after a failure the next reads wait HORIZON_RETRY_AFTER_FAILURE_MS before trying again", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     h.createMany.mockRejectedValueOnce(new Error("Connection terminated"));
     await expect(ensureClassHorizon("t1", NOW)).resolves.toBeUndefined();
-    await ensureClassHorizon("t1", NOW);
+    await ensureClassHorizon("t1", new Date(NOW.getTime() + HORIZON_RETRY_AFTER_FAILURE_MS - 1));
+    expect(h.createMany).toHaveBeenCalledTimes(1);
+    await ensureClassHorizon("t1", new Date(NOW.getTime() + HORIZON_RETRY_AFTER_FAILURE_MS));
     expect(h.createMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("concurrent first reads share one run", async () => {
+    await Promise.all([ensureClassHorizon("t1", NOW), ensureClassHorizon("t1", NOW), ensureClassHorizon("t1", NOW)]);
+    expect(h.findUnique).toHaveBeenCalledTimes(1);
+    expect(h.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a club the doors refuse (suspended, cancelled, deleted) is not topped up", async () => {
+    for (const t of [{ subscriptionStatus: "suspended", deletedAt: null }, { subscriptionStatus: "cancelled", deletedAt: null }, { subscriptionStatus: "active", deletedAt: new Date() }]) {
+      resetClassHorizonMemoForTests();
+      h.findUnique.mockResolvedValue({ timezone: "UTC", ...t });
+      await ensureClassHorizon("t1", NOW);
+    }
+    expect(h.findMany).not.toHaveBeenCalled();
+    h.findUnique.mockResolvedValue({ timezone: "UTC", subscriptionStatus: "past_due", deletedAt: null });
+    resetClassHorizonMemoForTests();
+    await ensureClassHorizon("t1", NOW);
+    expect(h.createMany).toHaveBeenCalledTimes(1); // past due still opens the doors, so its members' sessions exist
   });
 
   it("a club that no longer exists is left alone", async () => {
@@ -96,12 +118,14 @@ describe("ensureClassHorizon", () => {
 });
 
 describe("one generator for the cron and the member reads", () => {
-  it("the cron and the three member read paths call lib/class-horizon", () => {
+  it("the cron and every member and kiosk read that lists sessions call lib/class-horizon", () => {
     expect(readFileSync("app/api/cron/class-instances/route.ts", "utf8")).toMatch(/generateClassHorizon\(/);
     for (const f of [
       "app/api/member/schedule/route.ts",
       "app/api/member/me/children/route.ts",
       "app/api/member/class-subscriptions/[classId]/route.ts",
+      "app/api/member/home/route.ts",
+      "app/api/kiosk/[token]/classes/route.ts",
     ]) {
       expect(readFileSync(f, "utf8"), f).toMatch(/await ensureClassHorizon\(/);
     }

@@ -10,12 +10,18 @@
  *
  * Same rows as the cron, byte for byte: `buildInstanceRows` over the club's active, undeleted classes and their active
  * schedules, from the CLUB's calendar day, inserted with `skipDuplicates` against @@unique([classId, date, startTime]).
- * A cancelled session keeps its row (`isCancelled`), so it is never re-created as bookable.
+ * A cancelled session keeps its row (`isCancelled`), so it is never re-created as bookable. The club filter differs from
+ * the cron's on purpose: the cron sweeps active and trial clubs; a member read tops up any club its doors admit
+ * (lib/tenant-admission.ts), which includes a past-due club its members can still sign in to.
+ *
+ * Known, pre-existing and unchanged: a schedule edit committing between this read of the schedules and its insert can
+ * have sessions at the old time re-inserted, exactly as the Generate button and the cron can (review of PR #93, LOW).
  */
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { clubDayMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
+import { tenantAdmission } from "@/lib/tenant-admission";
 
 /** Rows per createMany. Keeps each statement inside the transaction budget. */
 export const HORIZON_INSERT_BATCH = 500;
@@ -62,30 +68,48 @@ export async function generateClassHorizon(
 
 /** How long one server instance trusts its own last top-up of a club. The horizon is 56 days; this only bounds cost. */
 export const HORIZON_TOP_UP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** After a failed top-up, the reads that follow do not retry it for this long (a struggling database is not hammered). */
+export const HORIZON_RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000;
 
-const lastTopUp = new Map<string, number>();
+const lastTopUp = new Map<string, { at: number; ok: boolean }>();
+const inFlight = new Map<string, Promise<void>>();
 
 /**
  * Top the club's horizon up before a member read lists sessions. At most once per club per server instance every
- * HORIZON_TOP_UP_INTERVAL_MS, so a busy schedule page costs nothing extra almost always. Never throws: a failed top-up
- * is logged and the read carries on with the sessions that already exist (it is no worse than before).
+ * HORIZON_TOP_UP_INTERVAL_MS (HORIZON_RETRY_AFTER_FAILURE_MS after a failure); concurrent first reads share one run.
+ * Only a club the doors admit (lib/tenant-admission.ts) is topped up. Never throws: a failure is logged and the read
+ * carries on with the sessions that already exist (it is no worse than before).
  */
-export async function ensureClassHorizon(tenantId: string, now: Date = new Date()): Promise<void> {
+export function ensureClassHorizon(tenantId: string, now: Date = new Date()): Promise<void> {
   const last = lastTopUp.get(tenantId);
-  if (last !== undefined && now.getTime() - last >= 0 && now.getTime() - last < HORIZON_TOP_UP_INTERVAL_MS) return;
-  try {
-    const tenant = await withTenantContext(tenantId, (tx) =>
-      tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
-    );
-    if (!tenant) return;
-    await generateClassHorizon(tenantId, clubDayMarker(now, usableTimezone(tenant.timezone)));
-    lastTopUp.set(tenantId, now.getTime());
-  } catch (err) {
-    console.error("[class-horizon] top-up failed; the sessions already generated still list", { tenantId }, err);
+  if (last) {
+    const age = now.getTime() - last.at;
+    if (age >= 0 && age < (last.ok ? HORIZON_TOP_UP_INTERVAL_MS : HORIZON_RETRY_AFTER_FAILURE_MS)) return Promise.resolve();
   }
+  const running = inFlight.get(tenantId);
+  if (running) return running;
+  const run = (async () => {
+    try {
+      const tenant = await withTenantContext(tenantId, (tx) =>
+        tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true, subscriptionStatus: true, deletedAt: true } }),
+      );
+      if (tenant && tenantAdmission(tenant).admits) {
+        await generateClassHorizon(tenantId, clubDayMarker(now, usableTimezone(tenant.timezone)));
+      }
+      lastTopUp.set(tenantId, { at: now.getTime(), ok: true });
+    } catch (err) {
+      lastTopUp.set(tenantId, { at: now.getTime(), ok: false });
+      console.error("[class-horizon] top-up failed; the sessions already generated still list", { tenantId }, err);
+    } finally {
+      inFlight.delete(tenantId);
+    }
+  })();
+  inFlight.set(tenantId, run);
+  return run;
 }
 
 /** Tests only: forget every remembered top-up. */
 export function resetClassHorizonMemoForTests(): void {
   lastTopUp.clear();
+  inFlight.clear();
 }
