@@ -31,16 +31,18 @@ const member = await memberLogin(club); // the guardian (adult, "Member 1")
 const owner = (await q(`select id from "User" where "tenantId" = $1 and role = 'owner' limit 1`, [tenantId]))[0];
 const job = randomUUID(), cls = randomUUID();
 const sessions = [35, 28, 21].map((d) => ({ id: randomUUID(), marker: new Date(today.getTime() - d * DAY) }));
-const childA = randomUUID(), childB = randomUUID(), childC = randomUUID();
+const childA = randomUUID(), childB = randomUUID(), childC = randomUUID(), otherParent = randomUUID();
 
 try {
   await q(`insert into "ImportJob" (id, "tenantId", "createdById", source, "fileName", "fileBlobUrl") values ($1, $2, $3, 'teamup', 'synthetic-history.csv', 'inline:synthetic')`, [job, tenantId, owner.id]);
   await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, 'Imported Gi', 60, 30)`, [cls, tenantId]);
+  // Another family: an adult with their own confirmed child (a child account must have a parent).
+  await q(`insert into "Member" (id, "tenantId", name, email, "updatedAt") values ($1, $2, 'Synthetic Other Parent', $3, now())`, [otherParent, tenantId, `other-parent-${otherParent.slice(0, 8)}@example.test`]);
   await q(`insert into "Member" (id, "tenantId", name, email, "accountType", "parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy", "updatedAt") values
     ($1, $4, 'Synthetic Child A', $5, 'kids', $7, now(), 'staff', now()),
     ($2, $4, 'Synthetic Child B', $6, 'kids', $7, null, null, now()),
-    ($3, $4, 'Synthetic Child C', $8, 'kids', null, null, null, now())`,
-    [childA, childB, childC, tenantId, `child-a-${childA.slice(0, 8)}@example.test`, `child-b-${childB.slice(0, 8)}@example.test`, member.id, `child-c-${childC.slice(0, 8)}@example.test`]);
+    ($3, $4, 'Synthetic Child C', $8, 'kids', $9, now(), 'staff', now())`,
+    [childA, childB, childC, tenantId, `child-a-${childA.slice(0, 8)}@example.test`, `child-b-${childB.slice(0, 8)}@example.test`, member.id, `child-c-${childC.slice(0, 8)}@example.test`, otherParent]);
   for (const s of sessions) {
     await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime", "sourceImportJobId") values ($1, $2, $3, '18:00', '19:00', $4)`, [s.id, cls, s.marker, job]);
     for (const who of [member.id, childA]) {
@@ -117,6 +119,7 @@ try {
   await q(`delete from "ClassInstance" where "classId" = $1`, [cls]);
   await q(`delete from "Class" where id = $1 and "tenantId" = $2`, [cls, tenantId]);
   await q(`delete from "Member" where id = any($1) and "tenantId" = $2`, [[childA, childB, childC], tenantId]);
+  await q(`delete from "Member" where id = $1 and "tenantId" = $2`, [otherParent, tenantId]);
   await q(`delete from "ImportJob" where id = $1 and "tenantId" = $2`, [job, tenantId]);
 }
 console.log(`\n${L.summary()} — ledger ${L.path}`);
