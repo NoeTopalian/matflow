@@ -14,7 +14,7 @@ import { auth } from "@/auth";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { GET as scheduleGET } from "@/app/api/member/schedule/route";
 import { GET as homeGET } from "@/app/api/member/home/route";
-import { resetClassHorizonMemoForTests } from "@/lib/class-horizon";
+import { generateClassHorizon, resetClassHorizonMemoForTests } from "@/lib/class-horizon";
 import { ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 
 const HAS_DB = !!process.env.TEST_DATABASE_URL;
@@ -126,5 +126,12 @@ describe.skipIf(!HAS_DB)("the session horizon is topped up by the member read â€
     const res = await homeGET(new Request("https://test.local/api/member/home"));
     expect(res.status).toBe(200);
     expect(await instancesOf(ids.homeClass)).toHaveLength(Math.ceil(ROLLING_WINDOW_DAYS / 7));
+  });
+
+  it("concurrent top-ups of one club (five at once, as from several server instances) create each session exactly once", async () => {
+    await Promise.all(Array.from({ length: 5 }, () => generateClassHorizon(ids.B, today)));
+    const rows = await instancesOf(ids.other);
+    expect(rows).toHaveLength(Math.ceil(ROLLING_WINDOW_DAYS / 7));
+    expect(new Set(rows.map((r) => r.date.getTime())).size).toBe(rows.length);
   });
 });

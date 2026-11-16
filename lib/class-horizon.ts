@@ -1,12 +1,15 @@
 /**
  * The rolling session horizon, kept from the read side as well as by the nightly cron (Round 9, 16 Nov 2026).
  *
- * Members book and check in against ClassInstance rows. Those rows reach ROLLING_WINDOW_DAYS ahead only when a schedule
- * is edited, a class is created, the Generate button is pressed, or the nightly `GET /api/cron/class-instances` runs —
- * and that cron answers 503 until CRON_SECRET is set, which on production it never has been. So, per class, about
- * 56 days after its schedule was last rebuilt, `/api/member/schedule` stopped returning a `classInstanceId` and members
- * silently could not book or check in (staff could still sign people in for today: /api/coach/today mints today's
- * rows). The member read paths now top the horizon up themselves, so member check-in no longer depends on the cron.
+ * Member self check-in (member Home), the kiosk, the "next class" card and a guardian's view of a child's week list
+ * ClassInstance rows. Those rows are made ahead only by: creating a class, adding or removing a schedule slot, and
+ * resuming/restoring a class (56 days); the timetable's Generate buttons and onboarding (28 days); and the nightly
+ * `GET /api/cron/class-instances` (56 days rolling) — which answers 503 until CRON_SECRET is set, and CRON_SECRET is not
+ * set in production. `ensureTodayInstances` makes today's rows only, and only when staff open the Check-in page. So,
+ * per class, between 28 and 62 days after its rows were last made, the class still appears to members but self
+ * check-in says there is no session to sign in to, the class is missing from the kiosk, and nothing is logged (trace,
+ * 16 Nov 2026). Booking is a standing per-class subscription and does NOT need a session row. The member and kiosk
+ * read paths now top the horizon up themselves, so none of this depends on the cron.
  *
  * Same rows as the cron, byte for byte: `buildInstanceRows` over the club's active, undeleted classes and their active
  * schedules, from the CLUB's calendar day, inserted with `skipDuplicates` against @@unique([classId, date, startTime]).
@@ -88,7 +91,9 @@ export function ensureClassHorizon(tenantId: string, now: Date = new Date()): Pr
   }
   const running = inFlight.get(tenantId);
   if (running) return running;
-  const run = (async () => {
+  // The body starts on a microtask, after the entry below is recorded, so even a synchronous failure cannot leave a
+  // stale in-flight entry behind (review of #93 fixes, nit).
+  const run = Promise.resolve().then(async () => {
     try {
       const tenant = await withTenantContext(tenantId, (tx) =>
         tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true, subscriptionStatus: true, deletedAt: true } }),
@@ -103,7 +108,7 @@ export function ensureClassHorizon(tenantId: string, now: Date = new Date()): Pr
     } finally {
       inFlight.delete(tenantId);
     }
-  })();
+  });
   inFlight.set(tenantId, run);
   return run;
 }
