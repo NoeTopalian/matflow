@@ -39,6 +39,22 @@ describe("signOutThisDevice", () => {
     expect(assignMock).toHaveBeenCalledWith("/login");
   });
 
+  it("a confirmed sign-out tells the browser's other tabs on next-auth's channel; a refused one does not", async () => {
+    const posted: unknown[] = [];
+    class FakeChannel {
+      constructor(public name: string) {}
+      postMessage(m: unknown) { posted.push({ name: this.name, m }); }
+      close() {}
+    }
+    vi.stubGlobal("BroadcastChannel", FakeChannel);
+    fetchMock.mockResolvedValueOnce(csrfOk()).mockResolvedValueOnce(new Response("{}", { status: 503 }));
+    expect(await signOutThisDevice()).toBe(false);
+    expect(posted).toEqual([]);
+    fetchMock.mockResolvedValueOnce(csrfOk()).mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    expect(await signOutThisDevice()).toBe(true);
+    expect(posted).toEqual([{ name: "next-auth", m: { event: "session", data: { trigger: "signout" } } }]);
+  });
+
   it("a refused sign-out (503: not recorded on the server) reports failure and stays on the page", async () => {
     fetchMock.mockResolvedValueOnce(csrfOk()).mockResolvedValueOnce(new Response("{}", { status: 503 }));
     expect(await signOutThisDevice()).toBe(false);

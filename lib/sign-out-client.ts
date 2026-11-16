@@ -32,6 +32,23 @@ export async function signOutThisDevice(callbackUrl = "/login"): Promise<boolean
   } catch {
     return false;
   }
+  tellOtherTabs();
   window.location.assign(callbackUrl);
   return true;
+}
+
+/**
+ * next-auth's own signOut() tells the browser's other tabs, whose SessionProvider then re-reads the session and drops
+ * staff-only UI at once. Posting the same message on the same channel keeps that (combined-candidate journey S4b,
+ * 16 Nov 2026). Without BroadcastChannel the other tabs still learn on their next focus re-read.
+ */
+function tellOtherTabs(): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    const channel = new BroadcastChannel("next-auth");
+    channel.postMessage({ event: "session", data: { trigger: "signout" } });
+    channel.close();
+  } catch {
+    // Telling other tabs is a courtesy; the sign-out itself has already succeeded on the server.
+  }
 }
