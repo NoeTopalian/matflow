@@ -69,7 +69,10 @@ export function MorePanel({
   // tap on one of the panel's own rows would blur to nothing and close the panel before the tap landed.)
   useEffect(() => {
     const outside = (e: PointerEvent) => {
-      if (root.current && e.target instanceof Node && !root.current.contains(e.target)) close.current(false);
+      if (!root.current || !(e.target instanceof Node) || root.current.contains(e.target)) return;
+      // A press inside a dialog this panel opened (a class's detail sheet) is not "outside" (review of #97, M1).
+      if (e.target instanceof Element && e.target.closest('[aria-modal="true"]')) return;
+      close.current(false);
     };
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
@@ -91,6 +94,9 @@ export function MorePanel({
         // Focus moving to something outside (Tab past the last row): closed. Focus moving to nothing is a tap,
         // handled by the press listener above.
         const next = e.relatedTarget as Node | null;
+        // Focus moving into a dialog this panel opened (a class's detail sheet) keeps the panel, so the row that
+        // opened it is still there to take focus back when the dialog closes (review of #97, M1).
+        if (next instanceof Element && next.closest('[aria-modal="true"]')) return;
         if (next && !root.current?.contains(next)) onClose(false);
       }}
     >
