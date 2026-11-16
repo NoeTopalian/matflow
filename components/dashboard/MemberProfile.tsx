@@ -1723,6 +1723,7 @@ export default function MemberProfile({
                               ? "Hidden: this member's name and count are left off the gym's leaderboard, including the TV screen."
                               : "Shown: this member can appear on the gym's leaderboard, including the TV screen."}
                             {" "}Changes show within about a minute.
+                            {supportEdit ? " Stays with the club owner during a support session." : ""}
                           </p>
                         </div>
                         <Switch

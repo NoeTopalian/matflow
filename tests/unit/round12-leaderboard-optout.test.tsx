@@ -92,6 +92,14 @@ describe("leaderboard switch on the member profile", () => {
 });
 
 describe("staff PATCH schema and support policy", () => {
+  it("in a MatFlow support edit session the switch is disabled and says why", async () => {
+    render(<MemberProfile member={MEMBER} rankOptions={[]} primaryColor="#3b82f6" role="owner" tenantSlug="t" supportScope="edit" />);
+    await act(async () => {});
+    expect(sw()).not.toBeNull();
+    expect((sw() as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("leaderboard-optout-hint")?.textContent).toContain("Stays with the club owner during a support session.");
+  });
+
   it("accepts a boolean leaderboardOptOut and refuses anything else", () => {
     expect(memberUpdateSchema.safeParse({ leaderboardOptOut: true }).success).toBe(true);
     expect(memberUpdateSchema.safeParse({ leaderboardOptOut: false }).success).toBe(true);
