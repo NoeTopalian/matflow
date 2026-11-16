@@ -120,10 +120,11 @@ Inventory taken 16 Nov 2026 (`vercel ls`, metadata only; private list in `.omc`)
 preview deployments retained, oldest 13 Oct 2026. Anonymous requests to the production ones and a sample of
 previews were redirected to Vercel's sign-in, so Deployment Protection is on today.
 
-- **Preview deployments (44).** None has the production database. Every one is built from a commit descending from
-  `75da8b57` (9 Oct 2026), which introduced the 24-hour outage bound (checked per commit, by ancestry and content).
-  Their revocation check cannot run, so they grant nothing and cannot extend a cookie beyond §1's bound. Retiring
-  merged-branch previews is hygiene, not required for this release. Detail in the private packet.
+- **Preview deployments (44).** None has the production database, and every one is built from a commit descending
+  from `75da8b57` (9 Oct 2026), which introduced the 24-hour outage bound (checked per commit, by ancestry and content):
+  their revocation check cannot run, so they cannot grant a club session or extend a cookie beyond §1's bound. That
+  does not make them harmless: they carry other credentials, and their exposure is reviewed in the private packet.
+  Retiring the previews of merged branches is recommended there and prepared for approval.
 - **Production deployments (5, built from `e38ab547`, `fa28bb41`, `afc8efbb` twice, `e2b11f46`).** They hold the
   production database and secret and ignore `RevokedSession`. Each one is a place where a revoked cookie still works
   and can be refreshed indefinitely. **They must be retired** (deleted) once the release is live and checked.
