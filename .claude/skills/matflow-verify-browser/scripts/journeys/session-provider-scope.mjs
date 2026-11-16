@@ -61,12 +61,20 @@ const record = (id, n, expected) => {
 const browser = await chromium.launch();
 try {
   // ── Sign in through the real form ──
-  const s0 = await context(browser, LANE);
-  const p0 = await s0.newPage(); watch(p0);
-  await ownerSignIn(p0, club);
-  L.check("journey", "S0 owner sign-in through /login reaches the dashboard", /\/dashboard/.test(p0.url()), { url: p0.url() });
-  const storage = await s0.storageState();
-  await s0.close();
+  // Each block that follows a sign-out starts from a fresh sign-in: since the sign-out fix (#88) "Sign out" ends that
+  // session on the server, so a copy of its cookie no longer works (16 Nov 2026).
+  async function freshOwnerStorage() {
+    const s = await context(browser, LANE);
+    const p = await s.newPage(); watch(p);
+    await ownerSignIn(p, club);
+    const ok = /\/dashboard/.test(p.url());
+    const st = await s.storageState();
+    await s.close();
+    return { ok, url: p.url(), st };
+  }
+  const first = await freshOwnerStorage();
+  L.check("journey", "S0 owner sign-in through /login reaches the dashboard", first.ok, { url: first.url });
+  let storage = first.st;
 
   // ── S1 desktop: dashboard load + client navigation ──
   {
@@ -125,6 +133,7 @@ try {
   }
 
   // ── S2 phone: import tab; S5 phone sign-out ──
+  storage = (await freshOwnerStorage()).st;
   {
     const ctx = await browser.newContext({ ...devices["iPhone 13"], baseURL: BASE, ignoreHTTPSErrors: true, extraHTTPHeaders: { "x-lane-ip": LANE }, serviceWorkers: "block", storageState: storage });
     ctx.setDefaultTimeout(60_000);
@@ -175,6 +184,7 @@ try {
   }
 
   // ── S7 revocation ──
+  storage = (await freshOwnerStorage()).st;
   {
     const ctx = await context(browser, LANE, { storageState: storage });
     const page = await ctx.newPage(); watch(page);
