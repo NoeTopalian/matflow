@@ -100,6 +100,21 @@ describe("F-2: no club records is not 'did not train'", () => {
     expect(dates).toEqual(["2026-11-18T10:00:00.000Z"]);
   });
 
+  it("a session ticked in advance takes the session's date once it has run", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T20:00:00Z"));
+    const { stats } = await computeMemberStats(fakeTx([row("2026-11-18", "18:00", "2026-11-17T10:00:00Z")]) as never, { memberId: "m1", tenantId: "t1" });
+    expect(stats.weeklyCounts.flatMap((w) => w.classes.map((c) => c.date))).toEqual(["2026-11-18T18:00:00.000Z"]);
+  });
+
+  it("weeks before the club's records stop are never marked no-records", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T12:00:00Z"));
+    const tx = fakeTx([], { first: new Date("2026-01-05T18:00:00Z"), lastImported: new Date("2026-10-02T17:00:00Z"), firstAfter: null });
+    const { stats } = await computeMemberStats(tx as never, { memberId: "m1", tenantId: "t1" });
+    expect(stats.weeklyCounts.filter((w) => w.weekStart <= "2026-09-21").some((w) => w.noRecords)).toBe(false);
+  });
+
   it("computeWeeklyCounts never marks a week with records, or any week without a no-records date", () => {
     const now = new Date("2026-11-18T12:00:00Z");
     const weeks = computeWeeklyCounts([{ checkInTime: new Date("2026-11-17T10:00:00Z"), className: "X" }], now, { from: new Date("2026-10-03T00:00:00Z"), to: null });

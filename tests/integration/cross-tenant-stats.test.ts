@@ -104,6 +104,7 @@ describe("GET /api/member/me — cross-tenant stats isolation", () => {
     for (const call of calls) expect(call[0].where.memberId).toBe("member-a");
     // The club's coverage reads (Round 10) are scoped to tenant-A.
     const cov = vi.mocked(prisma.attendanceRecord.findFirst as (...args: unknown[]) => unknown).mock.calls as [{ where: { tenantId?: string } }][];
+    expect(cov.length).toBeGreaterThan(0);
     for (const call of cov) expect(call[0].where.tenantId).toBe("tenant-A");
     // No COUNT is used for the member's windows any more.
     expect(mockCount).not.toHaveBeenCalled();

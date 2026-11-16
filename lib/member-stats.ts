@@ -307,9 +307,9 @@ export async function computeMemberStats(
     const inst = r.classInstance;
     if (inst?.date && inst.startTime) {
       const at = parseTime(inst.startTime, inst.date, zone);
-      // The earlier of the session start and the record: a register caught up later keeps the session's day, and a
-      // session ticked in advance is never dated in the future.
-      if (!Number.isNaN(at.getTime())) return at.getTime() <= r.checkInTime.getTime() ? at : r.checkInTime;
+      // The session's start once it has happened (a register caught up later keeps the session's day; a session ticked
+      // in advance takes the session's day once it has run); never a time still in the future (then the record's).
+      if (!Number.isNaN(at.getTime())) return at.getTime() <= now.getTime() ? at : r.checkInTime;
     }
     return r.checkInTime;
   };
