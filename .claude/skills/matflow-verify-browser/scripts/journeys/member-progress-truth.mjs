@@ -36,10 +36,10 @@ const childA = randomUUID(), childB = randomUUID(), childC = randomUUID();
 try {
   await q(`insert into "ImportJob" (id, "tenantId", "createdById", source, "fileName", "fileBlobUrl") values ($1, $2, $3, 'teamup', 'synthetic-history.csv', 'inline:synthetic')`, [job, tenantId, owner.id]);
   await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, 'Imported Gi', 60, 30)`, [cls, tenantId]);
-  await q(`insert into "Member" (id, "tenantId", name, email, "accountType", "parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy") values
-    ($1, $4, 'Synthetic Child A', $5, 'kids', $7, now(), 'staff'),
-    ($2, $4, 'Synthetic Child B', $6, 'kids', $7, null, null),
-    ($3, $4, 'Synthetic Child C', $8, 'kids', null, null, null)`,
+  await q(`insert into "Member" (id, "tenantId", name, email, "accountType", "parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy", "updatedAt") values
+    ($1, $4, 'Synthetic Child A', $5, 'kids', $7, now(), 'staff', now()),
+    ($2, $4, 'Synthetic Child B', $6, 'kids', $7, null, null, now()),
+    ($3, $4, 'Synthetic Child C', $8, 'kids', null, null, null, now())`,
     [childA, childB, childC, tenantId, `child-a-${childA.slice(0, 8)}@example.test`, `child-b-${childB.slice(0, 8)}@example.test`, member.id, `child-c-${childC.slice(0, 8)}@example.test`]);
   for (const s of sessions) {
     await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime", "sourceImportJobId") values ($1, $2, $3, '18:00', '19:00', $4)`, [s.id, cls, s.marker, job]);
