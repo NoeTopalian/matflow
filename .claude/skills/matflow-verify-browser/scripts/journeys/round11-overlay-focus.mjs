@@ -62,8 +62,8 @@ try {
     await page.keyboard.press("Shift+Tab");
     if (!(await active(page)).inDialog) escaped++;
     L.check("member", "K2 Tab and Shift+Tab stay inside the class sheet (16 presses)", escaped === 0, { escaped });
-    const closeName = await dialog.getByRole("button", { name: "Close" }).count();
-    L.check("member", "K3 the sheet's icon-only close button is named 'Close'", closeName === 1, { closeName });
+    const closeName = await dialog.getByRole("button", { name: "Close class details", exact: true }).count();
+    L.check("member", "K3 the sheet's icon-only close button is named 'Close class details'", closeName === 1, { closeName });
     await shot(page, "r11-member-sheet-open");
     await page.keyboard.press("Escape");
     const gone = await dialog.waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
@@ -98,7 +98,7 @@ try {
       await target.click();
       const sheet2 = page.getByRole("dialog", { name: /^Fold \d$/ });
       await sheet2.waitFor({ timeout: 15000 });
-      await sheet2.getByRole("button", { name: "Close" }).click();
+      await sheet2.getByRole("button", { name: "Close class details", exact: true }).click();
       await sheet2.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
       const panelAfterMouse = await panel.isVisible();
       L.check("member", "P1 by mouse: a row's sheet, closed with its Close button, leaves the '+N more' panel open", panelAfterMouse, { panelAfterMouse });
@@ -120,7 +120,7 @@ try {
     await mdialog.waitFor({ timeout: 15000 });
     const ovOpen = await mp.evaluate(() => document.body.style.overflow);
     await shot(mp, "r11-member-sheet-phone");
-    await mdialog.getByRole("button", { name: "Close" }).tap();
+    await mdialog.getByRole("button", { name: "Close class details", exact: true }).tap();
     await mdialog.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
     const ovClosed = await mp.evaluate(() => document.body.style.overflow);
     const mw = await mp.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));

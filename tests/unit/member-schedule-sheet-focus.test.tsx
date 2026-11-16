@@ -108,6 +108,6 @@ describe("member class detail sheet — keyboard and focus", () => {
 
   it("the close button has an accessible name", async () => {
     const { dialog } = await openClass();
-    expect(dialog.querySelector('button[aria-label="Close"]')).toBeTruthy();
+    expect(dialog.querySelector('button[aria-label="Close class details"]')).toBeTruthy();
   });
 });

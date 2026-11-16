@@ -40,6 +40,12 @@ export function useMoreToggle(expanded: boolean, onOpen: () => void, onClose?: (
   };
 }
 
+/** True when `node` is inside a modal dialog that does not itself contain `panel` (a dialog opened over the panel). */
+function insideDialogOver(node: EventTarget | null, panel: HTMLElement | null): boolean {
+  const dialog = node instanceof Element ? node.closest('[aria-modal="true"]') : null;
+  return !!dialog && !!panel && !dialog.contains(panel);
+}
+
 export function MorePanel({
   label,
   onClose,
@@ -70,8 +76,9 @@ export function MorePanel({
   useEffect(() => {
     const outside = (e: PointerEvent) => {
       if (!root.current || !(e.target instanceof Node) || root.current.contains(e.target)) return;
-      // A press inside a dialog this panel opened (a class's detail sheet) is not "outside" (review of #97, M1).
-      if (e.target instanceof Element && e.target.closest('[aria-modal="true"]')) return;
+      // A press inside a dialog opened over this panel (a class's detail sheet) is not "outside" (review of #97, M1).
+      // A dialog that CONTAINS the panel does not count: there a press elsewhere in that dialog is still outside.
+      if (insideDialogOver(e.target, root.current)) return;
       close.current(false);
     };
     document.addEventListener("pointerdown", outside, true);
@@ -96,7 +103,7 @@ export function MorePanel({
         const next = e.relatedTarget as Node | null;
         // Focus moving into a dialog this panel opened (a class's detail sheet) keeps the panel, so the row that
         // opened it is still there to take focus back when the dialog closes (review of #97, M1).
-        if (next instanceof Element && next.closest('[aria-modal="true"]')) return;
+        if (insideDialogOver(next, root.current)) return;
         if (next && !root.current?.contains(next)) onClose(false);
       }}
     >

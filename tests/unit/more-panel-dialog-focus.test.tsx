@@ -41,4 +41,31 @@ describe("a class opened from \"+N more\"", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(rowBtn));
   });
+
+  it("by pointer: pressing the sheet's Close keeps the panel open and returns focus to the row (re-review L3)", async () => {
+    render(<MemberSchedulePage />);
+    const pane = await waitFor(() => { const p = screen.getByTestId("schedule-pane"); const m = p.querySelector('[data-testid="schedule-more"]'); expect(m).toBeTruthy(); return p; });
+    const more = pane.querySelector<HTMLElement>('[data-testid="schedule-more"]')!;
+    more.focus(); fireEvent.click(more);
+    await waitFor(() => expect(pane.querySelector('[data-testid="more-panel"]')).toBeTruthy());
+    const rowBtn = document.activeElement as HTMLElement;
+    fireEvent.click(rowBtn);
+    const dialog = await screen.findByRole("dialog");
+    const close = dialog.querySelector<HTMLElement>('button[aria-label="Close class details"]')!;
+    fireEvent.pointerDown(close);
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(pane.querySelector('[data-testid="more-panel"]')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(rowBtn));
+  });
+
+  it("a press outside both the panel and the sheet still closes the panel", async () => {
+    render(<MemberSchedulePage />);
+    const pane = await waitFor(() => { const p = screen.getByTestId("schedule-pane"); const m = p.querySelector('[data-testid="schedule-more"]'); expect(m).toBeTruthy(); return p; });
+    const more = pane.querySelector<HTMLElement>('[data-testid="schedule-more"]')!;
+    more.focus(); fireEvent.click(more);
+    await waitFor(() => expect(pane.querySelector('[data-testid="more-panel"]')).toBeTruthy());
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(pane.querySelector('[data-testid="more-panel"]')).toBeNull());
+  });
 });
