@@ -81,18 +81,28 @@ describe("F-2: no club records is not 'did not train'", () => {
     expect(stats.weeklyCounts.find((w) => w.weekStart === "2026-09-28")).toMatchObject({ count: 1 });
   });
 
-  it("once the club records attendance again, there is no no-records span", async () => {
+  it("once the club records attendance again, the stats are current but the weeks of the gap still say no records", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-18T12:00:00Z"));
     const tx = fakeTx([], { first: new Date("2026-01-05T18:00:00Z"), lastImported: new Date("2026-10-02T17:00:00Z"), firstAfter: new Date("2026-11-10T18:00:00Z") });
     const { stats } = await computeMemberStats(tx as never, { memberId: "m1", tenantId: "t1" });
     expect(stats.noRecordsSince).toBeNull();
-    expect(stats.weeklyCounts.some((w) => w.noRecords)).toBe(false);
+    // Gap 3 Oct → 10 Nov: the empty weeks inside it are no-records; the weeks after the records resume are plain zeros.
+    expect(stats.weeklyCounts.find((w) => w.weekStart === "2026-10-12")?.noRecords).toBe(true);
+    expect(stats.weeklyCounts.find((w) => w.weekStart === "2026-11-16")?.noRecords).toBeUndefined();
+  });
+
+  it("a session ticked in advance is dated by the tick, never in the future", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T12:00:00Z"));
+    const { stats } = await computeMemberStats(fakeTx([row("2026-11-25", "18:00", "2026-11-18T10:00:00Z")]) as never, { memberId: "m1", tenantId: "t1" });
+    const dates = stats.weeklyCounts.flatMap((w) => w.classes.map((c) => c.date));
+    expect(dates).toEqual(["2026-11-18T10:00:00.000Z"]);
   });
 
   it("computeWeeklyCounts never marks a week with records, or any week without a no-records date", () => {
     const now = new Date("2026-11-18T12:00:00Z");
-    const weeks = computeWeeklyCounts([{ checkInTime: new Date("2026-11-17T10:00:00Z"), className: "X" }], now, new Date("2026-10-03T00:00:00Z"));
+    const weeks = computeWeeklyCounts([{ checkInTime: new Date("2026-11-17T10:00:00Z"), className: "X" }], now, { from: new Date("2026-10-03T00:00:00Z"), to: null });
     expect(weeks.at(-1)).toMatchObject({ count: 1 });
     expect(weeks.at(-1)!.noRecords).toBeUndefined();
     expect(computeWeeklyCounts([], now).some((w) => w.noRecords)).toBe(false);

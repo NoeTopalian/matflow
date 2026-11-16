@@ -307,7 +307,9 @@ export async function computeMemberStats(
     const inst = r.classInstance;
     if (inst?.date && inst.startTime) {
       const at = parseTime(inst.startTime, inst.date, zone);
-      if (!Number.isNaN(at.getTime())) return at;
+      // The earlier of the session start and the record: a register caught up later keeps the session's day, and a
+      // session ticked in advance is never dated in the future.
+      if (!Number.isNaN(at.getTime())) return at.getTime() <= r.checkInTime.getTime() ? at : r.checkInTime;
     }
     return r.checkInTime;
   };
@@ -320,9 +322,11 @@ export async function computeMemberStats(
   const thisYear = countSince(startOfYear);
   const last8w = countSince(eightWeeksAgo);
   // Where the club's records stop (owner rule 28 Oct 2026: missing coverage is not a claim nobody attended).
-  const coverage = await readAttendanceCoverage(tx as never, tenantId, zone);
+  const coverage = await readAttendanceCoverage(tx, tenantId, zone);
   const noRecordsSince =
     coverage.historyEnd && !coverage.resumes && coverage.historyEnd.getTime() <= now.getTime() ? coverage.historyEnd : null;
+  // The span with no club records: from the end of the imported history to the first record after it (or to today).
+  const noRecordsSpan = coverage.historyEnd ? { from: coverage.historyEnd, to: coverage.resumes ?? null } : null;
 
   const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now, {
     accountType: args.accountType,
@@ -364,7 +368,7 @@ export async function computeMemberStats(
       className: r.classInstance?.class?.name ?? null,
     })),
     now,
-    noRecordsSince,
+    noRecordsSpan,
   );
 
   return {
@@ -730,7 +734,7 @@ export function selectVisibleBadges(
 export function computeWeeklyCounts(
   rows: { checkInTime: Date; className: string | null }[],
   now: Date,
-  noRecordsSince: Date | null = null,
+  noRecords: { from: Date; to: Date | null } | null = null,
 ): WeeklyCount[] {
   const currentMonday = new Date(`${getWeekKey(now)}T00:00:00.000Z`);
   const buckets = new Map<string, WeeklyCount>();
@@ -751,8 +755,11 @@ export function computeWeeklyCounts(
   for (const key of order) {
     const b = buckets.get(key)!;
     b.classes.sort((a, c) => a.date.localeCompare(c.date));
-    // A week that starts on or after the end of the club's records, with nothing in it, has no records — not zero.
-    if (noRecordsSince && b.count === 0 && new Date(`${key}T00:00:00.000Z`).getTime() + 7 * 86_400_000 > noRecordsSince.getTime()) b.noRecords = true;
+    // An empty week that overlaps the club's no-records span has no records — not zero. Once the club records again
+    // (`to` set) the weeks of the gap keep saying so.
+    const weekStart = new Date(`${key}T00:00:00.000Z`).getTime();
+    const weekEnd = weekStart + 7 * 86_400_000;
+    if (noRecords && b.count === 0 && weekEnd > noRecords.from.getTime() && (noRecords.to === null || weekStart < noRecords.to.getTime())) b.noRecords = true;
   }
   return order.map((key) => buckets.get(key)!);
 }
