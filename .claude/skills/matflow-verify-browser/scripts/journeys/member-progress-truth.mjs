@@ -34,7 +34,7 @@ const sessions = [35, 28, 21].map((d) => ({ id: randomUUID(), marker: new Date(t
 const childA = randomUUID(), childB = randomUUID(), childC = randomUUID();
 
 try {
-  await q(`insert into "ImportJob" (id, "tenantId", "createdById", source, "fileName", "fileBlobUrl", "updatedAt") values ($1, $2, $3, 'teamup', 'synthetic-history.csv', 'inline:synthetic', now())`, [job, tenantId, owner.id]);
+  await q(`insert into "ImportJob" (id, "tenantId", "createdById", source, "fileName", "fileBlobUrl") values ($1, $2, $3, 'teamup', 'synthetic-history.csv', 'inline:synthetic')`, [job, tenantId, owner.id]);
   await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, 'Imported Gi', 60, 30)`, [cls, tenantId]);
   await q(`insert into "Member" (id, "tenantId", name, email, "accountType", "parentMemberId", "guardianConfirmedAt", "guardianSuggestedBy") values
     ($1, $4, 'Synthetic Child A', $5, 'kids', $7, now(), 'staff'),
