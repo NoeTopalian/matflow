@@ -16,6 +16,11 @@ import { SIGN_OUT_FAILED_MESSAGE } from "@/lib/sign-out-client";
  * every request (lib/session-revocation.ts). Other devices hold other ids and stay signed in. "Sign out everywhere"
  * is unchanged: it bumps the person's sessionVersion (app/api/auth/logout-all).
  *
+ * The one exception: a session signed in BEFORE this release has no id of its own and is given its person's derived
+ * id (lib/session-id.ts). Signing out one of those ends every pre-release session of that person, not only this
+ * one; sessions signed in after the release keep their own ids and are not affected. Accepted by Noe on 16 Nov 2026,
+ * with no calendar end date: the effect fades as old cookies expire or are signed out.
+ *
  * Fails closed. If the record cannot be written, the request answers 503 and Auth.js never runs, so the cookie is
  * kept and the page tells the person it did not work (lib/sign-out-client.ts) — never "signed out" while the server
  * still honours the session. Not Auth.js's `events.signOut`: Auth.js logs and swallows that event's errors and clears

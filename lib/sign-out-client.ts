@@ -1,5 +1,8 @@
 /**
- * Sign this device out, and only report success once the server has ended the session (Round 8, 16 Nov 2026).
+ * Sign out the session this browser holds, and only report success once the server has ended it (Round 8, 16 Nov
+ * 2026). A session signed in after the release ends alone. A pre-release session (no own id) shares its person's
+ * derived id, so signing it out also ends that person's other pre-release sessions, never their newer ones
+ * (lib/session-id.ts; accepted by Noe 16 Nov 2026).
  *
  * next-auth's client `signOut()` redirects to the sign-in page whatever the sign-out request answered, so a sign-out
  * the server refused (lib/session-signout.ts answers 503 when it cannot record it) or a request that never arrived

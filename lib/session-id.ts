@@ -56,7 +56,8 @@ export function isSessionId(value: unknown): value is string {
  * delayed response mint an identity that escapes the sign-out). Signing out on one such device therefore ends that
  * person's other pre-release devices too; sessions signed in after the release have their own random ids and are not
  * touched. The derived id is an unkeyed hash of the person's id: pseudonymous (matchable by someone who can read both
- * tables), not anonymous.
+ * tables), not anonymous. This exception was accepted by Noe on 16 Nov 2026: no forced sign-in at deployment and no
+ * calendar end date.
  *
  * A pre-release token in the middle of a support session has no own identity to derive from (its id is the person
  * being supported), so it gets none: auth.ts ends it and the operator starts support again.
