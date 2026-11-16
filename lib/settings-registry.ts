@@ -79,10 +79,44 @@ export const SETTINGS: readonly SettingSpec[] = [
   spec({ key: "groupChatUrl", group: "club", kind: "url", editRole: "owner", risk: "low", what: "WhatsApp / Telegram / Discord invite.", where: ["member app gym card"], who: "members", when: "immediately", undo: "edit back", inheritable: false }),
 ];
 
+/**
+ * Round 12 (G-2): settings stored OUTSIDE `PATCH /api/settings`, so the strict-schema test above does not cover them.
+ * Same five answers, plus the route that changes each one and the roles its gate admits today (a unit test reads each
+ * route and fails if the gate named here is not there). Documentation only: no new setting, no storage change.
+ */
+export type SettingEditor = "owner" | "manager" | "admin";
+export interface ExternalSettingSpec extends Omit<SettingSpec, "editRole" | "kind" | "undo"> {
+  /** The route file (repository-relative) whose handler changes it. */
+  route: string;
+  /** The gate in that file that decides who may change it. */
+  gate: "requireApiOwnerOrManager" | "requireApiOwner" | "role !== \"owner\"" | "[\"owner\", \"manager\", \"admin\"].includes(session.user.role)";
+  editRoles: readonly SettingEditor[];
+  /** "club" for one value per club; "member" for one per member. */
+  scope: "club" | "member";
+  undo: SettingSpec["undo"] | "edit back (also undoable from Activity)" | "edit back on the page (not undone from Activity)";
+}
+
+export const EXTERNAL_SETTINGS: readonly ExternalSettingSpec[] = [
+  { key: "timetableLayout", group: "operations", scope: "club", route: "app/api/timetable/layout/route.ts", gate: "requireApiOwnerOrManager", editRoles: ["owner", "manager"], risk: "low", what: "How classes at the same time are split on the timetable: by mat or by time.", where: ["staff timetable", "member schedule", "printed poster"], who: "members and staff", when: "next page load", undo: "edit back on the page (not undone from Activity)", inheritable: true },
+  { key: "mats", group: "operations", scope: "club", route: "app/api/mats/route.ts", gate: "requireApiOwnerOrManager", editRoles: ["owner", "manager"], risk: "medium", what: "The club's mats. Renaming one renames it on every class on that mat; removing one leaves its classes with the old name typed in.", where: ["staff timetable", "member schedule", "class editor"], who: "members and staff", when: "immediately", undo: "edit back on the page (not undone from Activity)", constraint: "at most 12 mats, 24 characters each", inheritable: false },
+  { key: "classCategories", group: "operations", scope: "club", route: "app/api/class-categories/route.ts", gate: "requireApiOwnerOrManager", editRoles: ["owner", "manager"], risk: "medium", what: "The club's class categories. Only while category management is switched on for the whole deployment (CLASS_CATEGORY_MANAGEMENT); never deleted, and a rename keeps every class on it.", where: ["class editor", "timetable category labels", "member schedule"], who: "members and staff", when: "immediately", undo: "edit back", inheritable: false },
+  { key: "locations", group: "operations", scope: "club", route: "app/api/locations/route.ts", gate: "requireApiOwnerOrManager", editRoles: ["owner", "manager"], risk: "low", what: "The club's venues; the class venue picker appears only with more than one.", where: ["class editor", "member schedule", "timetable"], who: "members and staff", when: "immediately", undo: "edit back (also undoable from Activity)", inheritable: false },
+  { key: "kioskLink", group: "operations", scope: "club", route: "app/api/settings/kiosk/route.ts", gate: "role !== \"owner\"", editRoles: ["owner"], risk: "high", what: "The check-in kiosk link. Regenerating or turning it off stops every device using the old link.", where: ["kiosk devices"], who: "members", when: "immediately", undo: "edit back", inheritable: false },
+  { key: "displayLink", group: "operations", scope: "club", route: "app/api/settings/display/route.ts", gate: "role !== \"owner\"", editRoles: ["owner"], risk: "medium", what: "The TV leaderboard link. Regenerating or turning it off blanks every screen using the old link.", where: ["gym TV screen"], who: "members", when: "immediately", undo: "edit back", inheritable: false },
+  { key: "membershipTier", group: "money", scope: "club", route: "app/api/memberships/[id]/route.ts", gate: "requireApiOwner", editRoles: ["owner"], risk: "high", what: "A plan's allowance, billing cycle, price, children's flag and active state. A changed allowance applies to the plan's members from their next check-in; existing subscription prices are not rewritten.", where: ["member check-in", "member app allowance", "reports"], who: "members and staff", when: "immediately", undo: "edit back; existing contracts unchanged", inheritable: false },
+  { key: "classPacks", group: "money", scope: "club", route: "app/api/class-packs/route.ts", gate: "requireApiOwnerOrManager", editRoles: ["owner", "manager"], risk: "medium", what: "The club's class-pack products.", where: ["member profile", "check-in"], who: "members and staff", when: "immediately", undo: "edit back", inheritable: false },
+  { key: "staffRole", group: "people", scope: "club", route: "app/api/staff/[id]/route.ts", gate: "role !== \"owner\"", editRoles: ["owner"], risk: "high", what: "What each staff member can open and change.", where: ["every staff page"], who: "staff", when: "immediately", undo: "edit back (also undoable from Activity)", inheritable: false },
+  { key: "leaderboardOptOut", group: "people", scope: "member", route: "app/api/members/[id]/route.ts", gate: "[\"owner\", \"manager\", \"admin\"].includes(session.user.role)", editRoles: ["owner", "manager", "admin"], risk: "low", what: "Hide one member from the gym's leaderboard, including the TV screen. Set by staff on the member's profile; members cannot set it themselves yet.", where: ["leaderboard", "gym TV screen"], who: "members", when: "next page load", undo: "edit back (also undoable from Activity)", inheritable: false },
+];
+
 export const SETTINGS_KEYS: readonly string[] = SETTINGS.map((s) => s.key);
 
 export function settingSpec(key: string): SettingSpec | undefined {
   return SETTINGS.find((s) => s.key === key);
+}
+
+export function externalSettingSpec(key: string): ExternalSettingSpec | undefined {
+  return EXTERNAL_SETTINGS.find((s) => s.key === key);
 }
 
 /**

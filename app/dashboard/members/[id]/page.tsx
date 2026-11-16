@@ -43,6 +43,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
         paymentStatus: true,
         nextDueAt: true,
         holdUntil: true,
+        leaderboardOptOut: true,
         // TeamUp bridge (readiness spec v3 §7): who collects, and how old the standing is.
         billedBy: true,
         billingStatusAsOf: true,
@@ -165,6 +166,7 @@ async function getMember(memberId: string, tenantId: string): Promise<MemberDeta
     status: m.status,
     paymentStatus: shownPaymentStatus(m, new Date()),
     holdUntil: m.holdUntil ? m.holdUntil.toISOString() : null,
+    leaderboardOptOut: m.leaderboardOptOut,
     billedBy: m.billedBy,
     billingStatusAsOf: m.billingStatusAsOf ? m.billingStatusAsOf.toISOString() : null,
     archivedAt: m.archivedAt ? m.archivedAt.toISOString() : null,
