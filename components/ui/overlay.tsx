@@ -4,6 +4,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   useSyncExternalStore,
   type ReactNode,
   type RefObject,
@@ -12,6 +13,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { Button } from "./button";
 
 /**
  * Shared overlay machinery for the Dialog and Sheet primitives
@@ -232,6 +234,18 @@ export function useOverlay({
 
 // ── The shared shell ─────────────────────────────────────────────────────────
 
+/** Dialog geometry, shared by `Dialog` and the discard question below. */
+export const DIALOG_CONTAINER_CLASS =
+  "fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4";
+export const DIALOG_PANEL_CLASS = [
+  "relative flex w-full max-h-[calc(100dvh-2rem)] flex-col overflow-hidden",
+  "border border-bd-default bg-sf-3",
+  "rounded-t-[var(--r-lg)] sm:max-w-lg sm:rounded-[var(--r-md)] sm:pb-0",
+  "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom",
+  "sm:motion-safe:slide-in-from-bottom-0 sm:motion-safe:zoom-in-95",
+  "duration-[var(--dur-normal)] ease-[var(--ease-out)]",
+].join(" ");
+
 /** What a bottom sheet has to clear on mobile (UI-RULES §5.3). */
 export type NavClearance = "safe-area" | "member-nav";
 
@@ -251,6 +265,14 @@ export interface OverlayShellProps {
   navClearance?: NavClearance;
   /** Focus this on open instead of the panel's first focusable child. */
   initialFocusRef?: RefObject<HTMLElement | null>;
+  /**
+   * The caller's form differs from what it opened with (Round 11, 6.1). While
+   * true, the scrim, Escape and the header close button ask "Discard your
+   * changes?" instead of closing, so one stray tap cannot throw away typed
+   * work. The caller's own Cancel button is an explicit choice and still
+   * closes at once.
+   */
+  confirmDiscard?: boolean;
   className?: string;
   /** Internal: geometry supplied by Dialog / Sheet. */
   slot: "dialog" | "sheet";
@@ -271,18 +293,26 @@ export function OverlayShell({
   hideClose = false,
   navClearance = "safe-area",
   initialFocusRef,
+  confirmDiscard = false,
   className,
   slot,
   containerClassName,
   panelClassName,
 }: OverlayShellProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const keepEditingRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const descriptionId = useId();
   const hydrated = useHydrated();
   const active = open && hydrated;
+  const [asking, setAsking] = useState(false);
+  // Reset during render when the overlay closes, so it never reopens mid-question.
+  if (!open && asking) setAsking(false);
 
-  useOverlay({ open: active, onClose, panelRef, initialFocusRef });
+  // Scrim, Escape and the close button: ask first while the form has unsaved changes.
+  const requestClose = () => (confirmDiscard ? setAsking(true) : onClose());
+
+  useOverlay({ open: active, onClose: requestClose, panelRef, initialFocusRef });
 
   if (!active) return null;
 
@@ -292,7 +322,7 @@ export function OverlayShell({
       <div
         data-slot={`${slot}-scrim`}
         aria-hidden="true"
-        onClick={onClose}
+        onClick={requestClose}
         className="absolute inset-0 bg-black/60 motion-safe:animate-in motion-safe:fade-in duration-[var(--dur-fast)] ease-[var(--ease-out)]"
       />
 
@@ -325,7 +355,7 @@ export function OverlayShell({
           {hideClose ? null : (
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               aria-label="Close"
               className="ui-fixed-size relative -mr-1 flex size-8 shrink-0 items-center justify-center rounded-[var(--r-sm)] border border-bd-default text-tx-3 transition-colors hover:border-bd-hover hover:text-tx-1 before:absolute before:top-1/2 before:left-1/2 before:size-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
             >
@@ -344,6 +374,36 @@ export function OverlayShell({
           </div>
         ) : null}
       </div>
+
+      {confirmDiscard || asking ? (
+        <OverlayShell
+          open={asking}
+          onClose={() => setAsking(false)}
+          title="Discard your changes?"
+          description={`What you've entered in "${title}" hasn't been saved.`}
+          navClearance={navClearance}
+          initialFocusRef={keepEditingRef}
+          slot="dialog"
+          containerClassName={DIALOG_CONTAINER_CLASS}
+          panelClassName={DIALOG_PANEL_CLASS}
+          footer={
+            <>
+              <Button ref={keepEditingRef} variant="secondary" onClick={() => setAsking(false)}>
+                Keep editing
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setAsking(false);
+                  onClose();
+                }}
+              >
+                Discard changes
+              </Button>
+            </>
+          }
+        />
+      ) : null}
     </div>,
     // Inside the member portal's themed root when there is one: its colour
     // tokens are set inline on #member-app, so an overlay portalled to <body>

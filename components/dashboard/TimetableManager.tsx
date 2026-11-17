@@ -805,6 +805,7 @@ function ClassForm({
   primaryColor,
   onSave,
   onCancel,
+  onDirtyChange,
   saving,
   error = null,
 }: {
@@ -821,6 +822,8 @@ function ClassForm({
   primaryColor: string;
   onSave: (data: Record<string, unknown>) => void;
   onCancel: () => void;
+  /** Told whether anything differs from what the form opened with (Round 11, 6.1: the Sheet asks before discarding). */
+  onDirtyChange?: (dirty: boolean) => void;
   saving: boolean;
   /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
   error?: SaveError | null;
@@ -1019,6 +1022,16 @@ function ClassForm({
     }
   }
   const canSubmit = missing.length === 0 && repeated.length === 0;
+
+  // Round 11 (6.1): everything the person can enter, so the Sheet knows when a stray tap would lose work.
+  const draft = JSON.stringify([
+    name, coachName, coachUserId, locationChoice, newLocation, locationId, duration, maxCapacity, isKids, category,
+    description, requiredRankId, maxRankId, useRoster, rosterMemberIds, allowedTierIds, color, schedules,
+  ]);
+  const [initialDraft] = useState(draft);
+  const dirty = draft !== initialDraft;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   function submit() {
     if (!canSubmit) return;
@@ -2053,6 +2066,9 @@ export default function TimetableManager({
     document.querySelector(`[data-testid="inactive-class-${linkedInactiveId}"]`)?.scrollIntoView({ block: "center" });
   }, [linkedInactiveId]);
 
+  // Round 11 (6.1): the class form has unsaved changes, so the Sheet asks before a scrim tap or Escape discards them.
+  const [classFormDirty, setClassFormDirty] = useState(false);
+
   function openEdit(cls: ClassRow) {
     setEditTarget(cls);
     setSaveError(null);
@@ -2940,6 +2956,7 @@ export default function TimetableManager({
         open={drawerOpen}
         title={editTarget ? "Edit class" : "New class"}
         onClose={() => setDrawerOpen(false)}
+        confirmDiscard={classFormDirty}
       >
         <ClassForm
           initial={editTarget}
@@ -2952,6 +2969,7 @@ export default function TimetableManager({
           primaryColor={primaryColor}
           onSave={handleSave}
           onCancel={() => setDrawerOpen(false)}
+          onDirtyChange={setClassFormDirty}
           saving={saving}
           error={saveError}
         />
