@@ -38,7 +38,7 @@ async function otherPersonSavesPhone(pageB, member, phone) {
 async function walk(where, pageA, pageB, { tap }) {
   const m = await seedMember(where);
   const newName = `${m.name} Renamed`;
-  const phone = where === "desktop" ? "07700 900123" : "07700 900456";
+  const typedPhone = where === "desktop" ? "07700 900123" : "07700 900456";
   await pageA.goto(`/dashboard/members/${m.id}`);
   const edit = pageA.getByRole("button", { name: "Edit", exact: true }).first();
   await edit.waitFor({ timeout: 90000 });
@@ -46,8 +46,10 @@ async function walk(where, pageA, pageB, { tap }) {
   const nameBox = pageA.getByLabel("Full Name", { exact: true });
   await nameBox.fill(newName);
 
-  const status = await otherPersonSavesPhone(pageB, m, phone);
-  L.check(where, "C0 the other person's phone save is accepted", status === 200, { status });
+  const status = await otherPersonSavesPhone(pageB, m, typedPhone);
+  // The server stores UK numbers in international form; "their phone" is what it stored.
+  const phone = (await row(m.id)).phone;
+  L.check(where, "C0 the other person's phone save is accepted and stored", status === 200 && !!phone && phone.endsWith(typedPhone.replace(/\D/g, "").slice(1)), { status, phone });
 
   const save = pageA.getByRole("button", { name: "Save", exact: true });
   await (tap ? save.tap() : save.click());
