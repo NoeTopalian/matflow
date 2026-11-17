@@ -4,21 +4,23 @@
  * Client body of /login/totp/setup — the TOTP enrolment UI. The forced-password
  * guard lives in the server component page.tsx that renders this (password is
  * changed before an authenticator is enrolled — W1 verifier FINDING-1).
+ *
+ * Which enrolment API it drives comes from the server render (`isMember`), not from a client session read.
+ * TotpEnrollmentStep fetches `${apiPrefix}/setup` ONCE, on mount, so the route must be right on the first render.
+ * Until 15 Nov 2026 it came from next-auth's client session hook, whose first render on a hard load has no session yet: a member was
+ * sent to the staff route (/api/auth/totp/setup), refused, and shown "Could not initialise two-factor setup".
  */
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
 import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
 import { useToast } from "@/components/ui/Toast";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 
-export default function ForcedTotpSetup() {
+export default function ForcedTotpSetup({ isMember }: { isMember: boolean }) {
   const router = useRouter();
   const { toast } = useToast();
-  const { data: session } = useSession();
   // Audit N1/N2: members enrol via the member-side API mirror and land back
   // on their profile — previously this page drove the staff endpoints (401
   // for members) and redirected everyone to /dashboard.
-  const isMember = session?.user?.role === "member";
   const home = isMember ? "/member/profile" : "/dashboard";
 
   return (

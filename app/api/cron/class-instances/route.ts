@@ -26,7 +26,7 @@
  *    gym's classes being generated, so each runs in its own try/catch and
  *    reports `{ created }` or `{ error }` into the JSON response.
  *
- *  - Work is CHUNKED and RESUMABLE. Rows go in batches of INSERT_BATCH via
+ *  - Work is CHUNKED and RESUMABLE. Rows go in batches of HORIZON_INSERT_BATCH (lib/class-horizon.ts) via
  *    createMany({ skipDuplicates: true }) — which only became truthful once
  *    ClassInstance gained @@unique([classId, date, startTime]) in migration
  *    20260819090000. That constraint is what makes this job idempotent: a run
@@ -42,8 +42,9 @@
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
-import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
-import { buildInstanceRows, ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
+import { withRlsBypass } from "@/lib/prisma-tenant";
+import { ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
+import { generateClassHorizon } from "@/lib/class-horizon";
 import { clubDayMarker } from "@/lib/today-sessions";
 import { usableTimezone } from "@/lib/class-time";
 
@@ -55,10 +56,9 @@ export const maxDuration = 300;
  * eight weeks of runs, cannot break check-in, and bounded so the table does not
  * grow without limit: a club running 30 classes a week holds ~240 future rows.
  * It lives in lib/class-instances.ts because a schedule edit rebuilds the same
- * horizon (task 3c) and the two must not drift.
+ * horizon (task 3c) and the two must not drift. The per-club generation lives in lib/class-horizon.ts, shared with
+ * the member read paths that top the horizon up themselves (Round 9, 16 Nov 2026).
  */
-/** Rows per createMany. Keeps each statement inside the transaction budget. */
-const INSERT_BATCH = 500;
 /** Stop starting new work after this, leaving 60s of the 300s budget spare. */
 const DEADLINE_MS = 240_000;
 
@@ -122,7 +122,7 @@ export async function GET(req: Request) {
     }
     try {
       const from = clubDayMarker(now, usableTimezone(tenant.timezone));
-      results.push({ tenantId: tenant.id, ...(await generateForTenant(tenant.id, from, elapsed)) });
+      results.push({ tenantId: tenant.id, ...(await generateClassHorizon(tenant.id, from, () => elapsed() > DEADLINE_MS)) });
     } catch (e) {
       const message = e instanceof Error ? e.message : "unknown";
       console.error(`[cron/class-instances] tenant ${tenant.id} failed`, e);
@@ -150,44 +150,4 @@ export async function GET(req: Request) {
     },
     { status: ok ? 200 : 500 },
   );
-}
-
-async function generateForTenant(
-  tenantId: string,
-  from: Date,
-  elapsed: () => number,
-): Promise<{ created: number; partial?: true }> {
-  const classes = await withTenantContext(tenantId, (tx) =>
-    tx.class.findMany({
-      // A paused (isActive: false) or removed (deletedAt) class must not have
-      // instances minted for it — that would put it back on the check-in
-      // screen while every list filters it out.
-      where: { tenantId, isActive: true, deletedAt: null },
-      select: {
-        id: true,
-        schedules: {
-          where: { isActive: true },
-          select: { dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
-        },
-      },
-    }),
-  );
-
-  const rows = buildInstanceRows(classes, { from, days: ROLLING_WINDOW_DAYS });
-  if (rows.length === 0) return { created: 0 };
-
-  let created = 0;
-  for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-    if (elapsed() > DEADLINE_MS) return { created, partial: true };
-    const batch = rows.slice(i, i + INSERT_BATCH);
-    const res = await withTenantContext(tenantId, (tx) =>
-      // Genuinely idempotent since migration 20260819090000 gave ClassInstance
-      // @@unique([classId, date, startTime]). Before that this line was a lie
-      // and this cron would have duplicated the horizon nightly.
-      tx.classInstance.createMany({ data: batch, skipDuplicates: true }),
-    );
-    created += res.count;
-  }
-
-  return { created };
 }
