@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { X, Loader2 } from "lucide-react";
+import { useOverlay } from "@/components/ui/overlay";
+import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 
 /**
  * EditChildModal — shared modal used by FamilySection for both:
@@ -36,15 +38,27 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const titleId = useId();
+  const { ask, dialogProps } = useConfirmDialog();
 
-  useEffect(() => {
-    nameRef.current?.focus();
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Round 11 (5.4): one stray tap on the backdrop, Escape or × threw a half-typed child
+  // away. With something entered, each asks first. The shared overlay behaviour moves
+  // focus in (the name field), keeps Tab inside and returns focus on close.
+  const dirty = name !== (kid?.name ?? "") || dob !== (kid?.dateOfBirth ? kid.dateOfBirth.slice(0, 10) : "");
+  async function requestClose() {
+    if (saving) return;
+    if (!dirty) return onClose();
+    if (await ask({
+      title: "Discard your changes?",
+      body: "What you've entered here hasn't been saved.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+      destructive: true,
+      navClearance: "member-nav",
+    })) onClose();
+  }
+  useOverlay({ open: true, onClose: () => void requestClose(), panelRef, initialFocusRef: nameRef });
 
   const trimmed = name.trim();
   const canSave = trimmed.length > 0 && !saving;
@@ -84,22 +98,28 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
     }
   }
 
+  // The question sits outside the backdrop: React clicks bubble through portals, so a
+  // click on it inside the backdrop would ask again.
   return (
+    <>
     <div
       className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center"
       style={{ paddingBottom: "var(--member-nav-clearance)" }}
-      onClick={onClose}
-      aria-modal="true"
-      role="dialog"
+      onClick={() => void requestClose()}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="bg-[var(--member-elevated)] border border-[var(--member-elevated-border)] rounded-t-3xl md:rounded-3xl w-full md:max-w-sm p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white font-bold text-base">{kid ? "Edit child" : "Add a child"}</h2>
+          {/* Round 11 (5.2): with two children, the title says whose details these are. */}
+          <h2 id={titleId} className="text-white font-bold text-base">{kid ? `Edit ${kid.name}` : "Add a child"}</h2>
           <button
-            onClick={onClose}
+            onClick={() => void requestClose()}
             aria-label="Close"
             className="w-8 h-8 rounded-full flex items-center justify-center"
             style={{ background: "var(--member-surface)" }}
@@ -145,5 +165,7 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
         </button>
       </div>
     </div>
+    <ConfirmDialog {...dialogProps} />
+    </>
   );
 }
