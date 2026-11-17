@@ -229,7 +229,8 @@ export default function AdhocChargeDrawer({
       // fresh idempotency key and Stripe would take the money twice. Same
       // guard as MarkPaidDrawer.
       onClose={() => !submitting && onClose()}
-      confirmDiscard={dirty && !submitting && !successMsg}
+      // Not after an unknown outcome: the charge may have gone through, so "hasn't been saved" would be untrue.
+      confirmDiscard={dirty && !submitting && !successMsg && !unknownMsg}
       title="Ad-hoc charge"
       description={memberName}
       footer={

@@ -493,6 +493,8 @@ export default function MemberProfile({
     description: "", amount: "", method: "cash",
   });
   const paymentDrawerDirty = useDirtySince(paymentDrawer, payForm);
+  // The ref stops a double tap within one tick; this state lets the sheet refuse a close mid-save.
+  const [paySaving, setPaySaving] = useState(false);
 
   // Ad-hoc charge drawer
   const [showChargeDrawer, setShowChargeDrawer] = useState(false);
@@ -850,6 +852,7 @@ export default function MemberProfile({
     if (!manualPaymentFormIsValid(payForm)) return;
     if (addingPaymentRef.current) return;
     addingPaymentRef.current = true;
+    setPaySaving(true);
     setPayError(null);
     const tempId = `local-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     // Snapshot the form values so the POST body and the optimistic entry stay
@@ -927,6 +930,7 @@ export default function MemberProfile({
       toast("Payment not recorded", "error");
     } finally {
       addingPaymentRef.current = false;
+      setPaySaving(false);
     }
   }
 
@@ -2012,7 +2016,7 @@ export default function MemberProfile({
       <Sheet
         open={showRankDrawer}
         // Closing discards (review of the 6.1 rollout): the guard's "Discard changes" must be true.
-        onClose={() => { setShowRankDrawer(false); setRankForm({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" }); }}
+        onClose={() => { if (promotingSaving) return; setShowRankDrawer(false); setRankForm({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" }); }}
         confirmDiscard={rankDrawerDirty && !promotingSaving}
         title="Assign / Promote Rank"
         description={member.name}
@@ -2138,8 +2142,8 @@ export default function MemberProfile({
       {/* ── Add payment drawer (Sheet — §4a.3) ── */}
       <Sheet
         open={paymentDrawer}
-        onClose={() => { setPaymentDrawer(false); setPayForm({ description: "", amount: "", method: "cash" }); setPayError(null); }}
-        confirmDiscard={paymentDrawerDirty}
+        onClose={() => { if (paySaving) return; setPaymentDrawer(false); setPayForm({ description: "", amount: "", method: "cash" }); setPayError(null); }}
+        confirmDiscard={paymentDrawerDirty && !paySaving}
         title="Record payment"
         description={member.name}
         footer={
