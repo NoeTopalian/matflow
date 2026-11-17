@@ -592,6 +592,9 @@ function InactiveClassList({
 }
 
 /** The counted confirmation for an archive (T6b): what is kept, in numbers. */
+/** Added to the Pause / Archive question when the class sheet holds unsaved edits (Round 11). */
+const DISCARDS_EDITS = "Your unsaved changes to this class will be discarded, not saved.";
+
 export function archiveConfirmBody(
   counts: { attendanceCount: number; rosterCount: number; bookingCount: number },
   lifecycle?: ClassRow["lifecycle"],
@@ -2194,16 +2197,20 @@ export default function TimetableManager({
   }
 
   // T6b: Pause — off the timetable for now, one click to resume.
+  // Round 11: from the class sheet with unsaved edits, the same question says the edits are discarded (they are
+  // never saved silently); the sheet closes only once the class is paused, so a "no" or a failure keeps the draft.
   const handlePause = useCallback(
-    async (cls: ClassRow) => {
+    async (cls: ClassRow, opts: { discardsEdits?: boolean } = {}): Promise<boolean> => {
       const confirmed = await ask({
         title: `Pause ${cls.name}?`,
         body:
           "It comes off the timetable, the member app, booking and the kiosk, and no new sessions are made. " +
-          "Bookings and check-in history are kept. Resume it any time from Paused and archived, or undo this from Activity.",
-        confirmLabel: "Pause class",
+          "Bookings and check-in history are kept. Resume it any time from Paused and archived, or undo this from Activity." +
+          (opts.discardsEdits ? " " + DISCARDS_EDITS : ""),
+        confirmLabel: opts.discardsEdits ? "Discard changes and pause" : "Pause class",
+        ...(opts.discardsEdits ? { destructive: true } : {}),
       });
-      if (!confirmed) return;
+      if (!confirmed) return false;
       setLifecycleBusy({ id: cls.id, action: "pause" });
       try {
         const res = await fetch(`/api/classes/${cls.id}`, {
@@ -2219,8 +2226,10 @@ export default function TimetableManager({
         setInactiveClasses((prev) => [...prev.filter((c) => c.id !== cls.id), { ...cls, lifecycle: "paused", archivedAt: null }]);
         showToast("Class paused. Resume it from Paused and archived.", "success");
         router.refresh();
+        return true;
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not pause the class. Try again.", "error");
+        return false;
       } finally {
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
@@ -2231,7 +2240,7 @@ export default function TimetableManager({
   // T6b: Archive — a counted confirmation instead of the old 409. The counts
   // are read first; if they cannot be read the archive does not go ahead.
   const handleArchive = useCallback(
-    async (cls: ClassRow) => {
+    async (cls: ClassRow, opts: { discardsEdits?: boolean } = {}): Promise<boolean> => {
       let counts: { attendanceCount: number; rosterCount: number; bookingCount: number };
       // Busy from the click: the history read can take seconds, and an idle
       // button invited a second click and a second confirmation.
@@ -2254,16 +2263,17 @@ export default function TimetableManager({
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not check this class's history. Try again.", "error");
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
-        return;
+        return false;
       }
       const confirmed = await ask({
         title: `Archive ${cls.name}?`,
-        body: archiveConfirmBody(counts, cls.lifecycle),
-        confirmLabel: "Archive class",
+        body: archiveConfirmBody(counts, cls.lifecycle) + (opts.discardsEdits ? " " + DISCARDS_EDITS : ""),
+        confirmLabel: opts.discardsEdits ? "Discard changes and archive" : "Archive class",
+        ...(opts.discardsEdits ? { destructive: true } : {}),
       });
       if (!confirmed) {
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
-        return;
+        return false;
       }
       try {
         const res = await fetch(`/api/classes/${cls.id}`, { method: "DELETE" });
@@ -2276,8 +2286,10 @@ export default function TimetableManager({
         ]);
         showToast("Class archived. Its history is kept — restore it from Paused and archived.", "success");
         router.refresh();
+        return true;
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not archive the class. Try again.", "error");
+        return false;
       } finally {
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
@@ -2958,8 +2970,8 @@ export default function TimetableManager({
         open={drawerOpen}
         title={editTarget ? "Edit class" : "New class"}
         // While a save is in flight the sheet stays: closing it would not stop the save (review of #99, M1).
-        onClose={() => { if (!saving) setDrawerOpen(false); }}
-        confirmDiscard={classFormDirty && !saving}
+        onClose={() => { if (!saving && !lifecycleBusy) setDrawerOpen(false); }}
+        confirmDiscard={classFormDirty && !saving && !lifecycleBusy}
       >
         <ClassForm
           initial={editTarget}
@@ -2987,10 +2999,11 @@ export default function TimetableManager({
               <Button
                 variant="secondary"
                 size="compact"
-                onClick={() => {
-                  const target = editTarget;
-                  setDrawerOpen(false);
-                  void handlePause(target);
+                // Not while the class form is saving or another status change runs: one write at a time.
+                disabled={saving || !!lifecycleBusy}
+                loading={lifecycleBusy?.id === editTarget.id && lifecycleBusy.action === "pause"}
+                onClick={async () => {
+                  if (await handlePause(editTarget, { discardsEdits: classFormDirty })) setDrawerOpen(false);
                 }}
               >
                 <Pause className="size-3.5" />
@@ -2999,10 +3012,10 @@ export default function TimetableManager({
               <Button
                 variant="ghost"
                 size="compact"
-                onClick={() => {
-                  const target = editTarget;
-                  setDrawerOpen(false);
-                  void handleArchive(target);
+                disabled={saving || !!lifecycleBusy}
+                loading={lifecycleBusy?.id === editTarget.id && lifecycleBusy.action === "archive"}
+                onClick={async () => {
+                  if (await handleArchive(editTarget, { discardsEdits: classFormDirty })) setDrawerOpen(false);
                 }}
               >
                 <Archive className="size-3.5" />

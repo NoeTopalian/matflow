@@ -80,6 +80,62 @@ try {
     L.check("desktop", "D4 reopening after Discard starts a clean form", fresh === "", { fresh });
     await classSheet(page).getByRole("button", { name: "Close", exact: true }).click();
     await classSheet(page).waitFor({ state: "detached", timeout: 10000 });
+
+    // ── Pause / Archive from the class sheet with an unsaved edit ──
+    const cls = randomUUID(), CLS = `Pause probe ${TAG}`;
+    await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, $3, 60, 20)`, [cls, tenantId, CLS]);
+    await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, 1, '18:00', '19:00')`, [randomUUID(), cls]);
+    await page.reload();
+    const edit = page.getByRole("button", { name: `Edit ${CLS}` }).filter({ visible: true }).first();
+    await edit.click({ timeout: 90000 });
+    const editSheet = page.getByRole("dialog", { name: "Edit class" });
+    const editName = editSheet.getByRole("textbox", { name: "Class Name" });
+    await editName.fill(`${CLS} renamed`);
+    await editSheet.getByRole("button", { name: "Pause class" }).click();
+    const pq = page.getByRole("dialog", { name: `Pause ${CLS}?` });
+    const pqText = (await pq.textContent({ timeout: 15000 }).catch(() => "")) ?? "";
+    await shot(page, "r11b-pause-with-edits");
+    await pq.getByRole("button", { name: "Cancel" }).click();
+    await pq.waitFor({ state: "detached", timeout: 10000 });
+    const keptName = await editName.inputValue().catch(() => null);
+    const stillActive = (await q(`select "isActive" from "Class" where id = $1`, [cls]))[0].isActive === true;
+    L.check("desktop", "PA1 Pause from the sheet with an edit asks that the edits will be discarded; Cancel keeps the sheet, the edit and the class",
+      pqText.includes("Your unsaved changes to this class will be discarded, not saved.") && keptName === `${CLS} renamed` && stillActive, { pqText: pqText.slice(0, 200), keptName, stillActive });
+
+    // A pause that fails keeps the sheet and the edit.
+    await page.route(`**/api/classes/${cls}`, (route) => (route.request().method() === "PATCH" ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Could not pause the class right now." }) }) : route.continue()));
+    await editSheet.getByRole("button", { name: "Pause class" }).click();
+    await page.getByRole("dialog", { name: `Pause ${CLS}?` }).getByRole("button", { name: "Discard changes and pause" }).click();
+    const toldFail = await page.getByText("Could not pause the class right now.").first().waitFor({ timeout: 15000 }).then(() => true, () => false);
+    const keptAfterFail = (await editSheet.isVisible()) && (await editName.inputValue().catch(() => null)) === `${CLS} renamed`;
+    L.check("desktop", "PA2 a failed pause says so and keeps the sheet with the edit", toldFail && keptAfterFail, { toldFail, keptAfterFail });
+    await page.unroute(`**/api/classes/${cls}`);
+
+    // While the class save is in flight, Pause and Archive are off.
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route(`**/api/classes/${cls}`, async (route) => { if (route.request().method() === "PUT" || route.request().method() === "PATCH") { await held; } return route.continue(); });
+    await editSheet.getByRole("button", { name: "Save changes" }).click();
+    await page.waitForTimeout(500);
+    const pauseOff = await editSheet.getByRole("button", { name: "Pause class" }).isDisabled();
+    const archiveOff = await editSheet.getByRole("button", { name: "Archive class" }).isDisabled();
+    release();
+    await page.unroute(`**/api/classes/${cls}`);
+    L.check("desktop", "PA3 while the class save is in flight, Pause and Archive in the sheet are disabled", pauseOff && archiveOff, { pauseOff, archiveOff });
+    await editSheet.waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
+
+    // Confirmed: the class is paused and the edit is NOT saved (the save above stored the rename; edit again to test).
+    await page.reload();
+    await page.getByRole("button", { name: `Edit ${CLS} renamed` }).filter({ visible: true }).first().click({ timeout: 90000 });
+    await editName.fill(`${CLS} second edit`);
+    await editSheet.getByRole("button", { name: "Pause class" }).click();
+    await page.getByRole("dialog", { name: `Pause ${CLS} renamed?` }).getByRole("button", { name: "Discard changes and pause" }).click();
+    const closed = await editSheet.waitFor({ state: "detached", timeout: 30000 }).then(() => true, () => false);
+    const row = (await q(`select name, "isActive" from "Class" where id = $1`, [cls]))[0];
+    L.check("desktop", "PA4 confirmed: the class is paused, the sheet closes, and the unsaved edit was not saved", closed && row.isActive === false && row.name === `${CLS} renamed`, { closed, row });
+    await q(`delete from "ClassInstance" where "classId" = $1`, [cls]).catch(() => {});
+    await q(`delete from "ClassSchedule" where "classId" = $1`, [cls]).catch(() => {});
+    await q(`delete from "Class" where id = $1 and "tenantId" = $2`, [cls, tenantId]).catch(() => {});
     await ctx.close();
   }
 
