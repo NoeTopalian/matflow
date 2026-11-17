@@ -12,6 +12,7 @@
 // These tests pin the kiosk to the same window helper as the register.
 
 import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 import { todayWindow } from "@/lib/class-time";
 
 const TENANT = "tenant_a";

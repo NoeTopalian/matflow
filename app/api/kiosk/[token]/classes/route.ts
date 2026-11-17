@@ -11,6 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { hashToken } from "@/lib/token-hash";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { tenantAdmission, admissionMessage } from "@/lib/tenant-admission";
@@ -70,6 +71,8 @@ export async function GET(
   // actually store (the cron's 00:00Z, a BST laptop's 23:00Z of the day
   // before) fell outside the band, so the class was simply missing from the
   // tablet. See lib/class-time#todayWindow for the two spellings it admits.
+  // The tablet lists today's sessions: they must exist even when no staff page has minted them (lib/class-horizon.ts).
+  await ensureClassHorizon(tenant.id);
   const { start, end } = todayWindow(new Date(), usableTimezone(tenant.timezone));
 
   const instances = await withTenantContext(tenant.id, (tx) =>

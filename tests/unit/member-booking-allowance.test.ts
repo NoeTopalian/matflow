@@ -6,6 +6,7 @@
 // notice is judged at the class's next session that has not started yet (or
 // now, if none is scheduled), after the same Class row lock.
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

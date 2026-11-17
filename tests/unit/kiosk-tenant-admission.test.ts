@@ -16,6 +16,7 @@
 // the answer is a refusal, and NOTHING past the tenant lookup ran.
 
 import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 import { admissionMessage } from "@/lib/tenant-admission";
 
 const TENANT = "tenant_paused";
