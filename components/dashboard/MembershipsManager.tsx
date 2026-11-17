@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { Plus, Edit2, Trash2, Tag, Check, Users, CreditCard, MapPin } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/Toast";
@@ -226,6 +227,8 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
   // way a save normalises it (trimmed; blank = null). Same rule as the limit.
   const [loadedDescription, setLoadedDescription] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Round 11 (6.1): a stray tap or Escape asks before throwing an edited plan away.
+  const formDirty = useDirtySince(showModal, form);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
   const [venues, setVenues] = useState<{ id: string; name: string }[]>([]);
@@ -629,6 +632,7 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
         // Escape and the scrim have to agree with the disabled Cancel button —
         // otherwise a mid-save dismissal loses the in-flight request's result.
         onClose={closeSheet}
+        confirmDiscard={formDirty && !saving}
         title={editingId ? "Edit tier" : "Add tier"}
         footer={
           <>

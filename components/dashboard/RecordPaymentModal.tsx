@@ -167,6 +167,12 @@ export default function RecordPaymentModal({ open, onClose, onRecorded, member, 
     <Dialog
       open={open}
       onClose={onClose}
+      // Round 11 (6.1): ask before a stray tap or Escape throws an entered payment away.
+      confirmDiscard={
+        !done && !submitting &&
+        (amount.trim() !== (suggestedAmountPence != null ? (suggestedAmountPence / 100).toFixed(2) : "") ||
+          notes.trim() !== "" || q.trim() !== "" || method !== "cash" || (picked?.id ?? null) !== (member?.id ?? null))
+      }
       title="Record a payment"
       footer={
         done ? undefined : (

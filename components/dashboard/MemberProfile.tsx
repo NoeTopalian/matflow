@@ -48,6 +48,7 @@ import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import { paymentStatusFromHoldResponse } from "@/lib/member-hold";
@@ -464,6 +465,8 @@ export default function MemberProfile({
   const [showRankDrawer, setShowRankDrawer] = useState(false);
   const [rankForm, setRankForm] = useState({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" as string });
   const [promotingSaving, setPromotingSaving] = useState(false);
+  // Round 11 (6.1): a stray tap or Escape asks before throwing a half-filled promotion away.
+  const rankDrawerDirty = useDirtySince(showRankDrawer, rankForm);
 
   // Payments state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
@@ -489,6 +492,7 @@ export default function MemberProfile({
   const [payForm, setPayForm] = useState<{ description: string; amount: string; method: ManualPaymentMethod }>({
     description: "", amount: "", method: "cash",
   });
+  const paymentDrawerDirty = useDirtySince(paymentDrawer, payForm);
 
   // Ad-hoc charge drawer
   const [showChargeDrawer, setShowChargeDrawer] = useState(false);
@@ -2008,6 +2012,7 @@ export default function MemberProfile({
       <Sheet
         open={showRankDrawer}
         onClose={() => setShowRankDrawer(false)}
+        confirmDiscard={rankDrawerDirty && !promotingSaving}
         title="Assign / Promote Rank"
         description={member.name}
         footer={
@@ -2133,6 +2138,7 @@ export default function MemberProfile({
       <Sheet
         open={paymentDrawer}
         onClose={() => setPaymentDrawer(false)}
+        confirmDiscard={paymentDrawerDirty}
         title="Record payment"
         description={member.name}
         footer={

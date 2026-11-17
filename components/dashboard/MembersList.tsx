@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useId, useCallback } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { describeSaveFailure } from "@/lib/save-failure";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -1422,6 +1423,8 @@ function AddMemberModal({
   // Attribution (M1): who ran the trial + who gets the sign-up credit. Held
   // separately from `form` because the resolver collapses it to the XOR body.
   const [attribution, setAttribution] = useState<AttributionValue>(emptyAttribution);
+  // Round 11 (6.1): a stray tap or Escape asks before throwing a half-typed member away.
+  const dirty = useDirtySince(true, { form, attribution });
 
   // Three states, never two (UI-RULES §7). "This gym has not created any
   // tiers yet" and "we could not find out what its tiers are" look identical
@@ -1578,6 +1581,7 @@ function AddMemberModal({
     <Dialog
       open
       onClose={onClose}
+      confirmDiscard={dirty && !loading}
       title="Add Member"
       footer={
         <>
