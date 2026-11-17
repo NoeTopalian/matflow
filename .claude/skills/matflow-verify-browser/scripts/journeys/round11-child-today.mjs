@@ -1,6 +1,7 @@
 // Journey: Round 11 (baseline 5.3) — a guardian's child timetable says "Today" on the club's day, not the UTC day.
 // Depends on PR #92 (/api/member/home returns the club's `today`). The synthetic fixture club is set, for this run
-// only, to Pacific/Kiritimati (UTC+14), so from 10:00 UTC onwards its calendar date is a day ahead of UTC; the old
+// only, to a zone whose calendar date differs from UTC's at this hour: Pacific/Kiritimati (UTC+14, a day ahead) from
+// 10:00 UTC, otherwise Etc/GMT+12 (UTC-12, a day behind, the west case); the old
 // code (UTC date) labels the wrong entry. A parent with one confirmed child booked on a class with sessions on the
 // club's today and tomorrow: the club's today is "Today", tomorrow is not. Phone 390 with the browser in the club's zone.
 // Needs `fixture.mjs create` and `server.mjs start`. Restores the club's timezone at the end.
@@ -14,7 +15,8 @@ const L = ledger("round11-child-today");
 const tenantId = club.tenantId;
 const TAG = randomUUID().slice(0, 8);
 const errors = [];
-const ZONE = "Pacific/Kiritimati";
+// Chosen by the UTC hour so the club's date always differs from UTC's (review of #106, M1).
+const ZONE = new Date().getUTCHours() >= 10 ? "Pacific/Kiritimati" : "Etc/GMT+12";
 
 const isoIn = (zone, d) => {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d).map((x) => [x.type, x.value]));
