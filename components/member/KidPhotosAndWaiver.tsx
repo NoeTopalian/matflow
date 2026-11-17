@@ -279,18 +279,25 @@ function SignWaiverModal({
   // Round 11 (5.4): a guardian halfway through a drawn signature lost it to one stray tap
   // on the backdrop. With a name, the box ticked or a mark drawn, Escape, the backdrop and
   // × ask first; the shared overlay behaviour adds Escape, focus in and a Tab trap.
-  const started = signerName.trim() !== "" || agreed || hasMark;
+  // The guardian's own emergency contact, when asked for here, counts once it differs from what loaded.
+  const contactNow = `${contact.fields.name}|${contact.fields.phone}|${contact.fields.relation}`;
+  const [contactBase, setContactBase] = useState<string | null>(null);
+  if (contact.ask === true && contactBase === null) setContactBase(contactNow);
+  const contactTyped = contact.ask === true && contactBase !== null && contactNow !== contactBase;
+  const started = signerName.trim() !== "" || agreed || hasMark || contactTyped;
   async function requestClose() {
     if (signing) return;
     if (!started) return onClose();
-    if (await ask({
+    const discard = await ask({
       title: "Discard your changes?",
       body: "What you've entered here hasn't been saved.",
       confirmLabel: "Discard changes",
       cancelLabel: "Keep editing",
       destructive: true,
       navClearance: "member-nav",
-    })) onClose();
+    });
+    if (discard) onClose();
+    else focusBackInto(panelRef.current);
   }
   useOverlay({ open: true, onClose: () => void requestClose(), panelRef });
 
@@ -465,4 +472,12 @@ function SignWaiverModal({
     <ConfirmDialog {...dialogProps} />
     </>
   );
+}
+
+/** After "Keep editing" the question hands focus back to what it saw on open; a backdrop tap left that as <body>. */
+function focusBackInto(panel: HTMLElement | null, preferred?: HTMLElement | null) {
+  setTimeout(() => {
+    if (!panel || panel.contains(document.activeElement)) return;
+    (preferred ?? panel.querySelector<HTMLElement>("input, textarea, button"))?.focus();
+  }, 0);
 }

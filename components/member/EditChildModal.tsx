@@ -49,14 +49,16 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
   async function requestClose() {
     if (saving) return;
     if (!dirty) return onClose();
-    if (await ask({
+    const discard = await ask({
       title: "Discard your changes?",
       body: "What you've entered here hasn't been saved.",
       confirmLabel: "Discard changes",
       cancelLabel: "Keep editing",
       destructive: true,
       navClearance: "member-nav",
-    })) onClose();
+    });
+    if (discard) onClose();
+    else focusBackInto(panelRef.current, nameRef.current);
   }
   useOverlay({ open: true, onClose: () => void requestClose(), panelRef, initialFocusRef: nameRef });
 
@@ -168,4 +170,12 @@ export default function EditChildModal({ primaryColor, kid, onClose, onSaved }: 
     <ConfirmDialog {...dialogProps} />
     </>
   );
+}
+
+/** After "Keep editing" the question hands focus back to what it saw on open; a backdrop tap left that as <body>. */
+function focusBackInto(panel: HTMLElement | null, preferred?: HTMLElement | null) {
+  setTimeout(() => {
+    if (!panel || panel.contains(document.activeElement)) return;
+    (preferred ?? panel.querySelector<HTMLElement>("input, textarea, button"))?.focus();
+  }, 0);
 }

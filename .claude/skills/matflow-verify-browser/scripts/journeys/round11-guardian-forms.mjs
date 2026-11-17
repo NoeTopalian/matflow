@@ -25,6 +25,11 @@ const childRow = async () => (await q(`select name, "waiverAccepted" from "Membe
 
 const question = (page) => page.getByRole("dialog", { name: "Discard your changes?" });
 const asked = (page) => question(page).waitFor({ timeout: 10000 }).then(() => true, () => false);
+/** A point on the backdrop: halfway between the top of the screen and the top of the panel. */
+const tapAbove = async (page, panel) => {
+  const box = await panel.boundingBox();
+  await page.touchscreen.tap(195, Math.max(2, Math.floor((box?.y ?? 40) / 2)));
+};
 const gone = (loc) => loc.waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
 
 const browser = await chromium.launch();
@@ -44,7 +49,7 @@ try {
   const focused = titled ? await nameBox.evaluate((el) => el === document.activeElement) : false;
   L.check("edit", "E1 Edit child is titled with the child's name and opens on the name field", titled && focused, { titled, focused });
   await nameBox.fill(`${CHILD} Smith`);
-  await page.touchscreen.tap(195, 40); // the backdrop above the bottom sheet
+  await tapAbove(page, edit);
   const e2asked = await asked(page);
   await shot(page, "r11-edit-child-question");
   await question(page).getByRole("button", { name: "Keep editing" }).tap();
@@ -68,7 +73,7 @@ try {
   await signBtn.tap();
   await waiver.waitFor({ timeout: 15000 });
   await waiver.getByLabel("Your name").fill("Ana Guardian");
-  await page.touchscreen.tap(195, 20);
+  await tapAbove(page, waiver);
   const w2asked = await asked(page);
   await question(page).getByRole("button", { name: "Keep editing" }).tap();
   const wKept = await waiver.getByLabel("Your name").inputValue().catch(() => null);
