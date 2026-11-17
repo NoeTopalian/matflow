@@ -17,6 +17,7 @@
  */
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import {
   buildMemberMeData,
@@ -148,6 +149,9 @@ export async function GET() {
   if (session.user.tenantId === "demo-tenant" || !memberId) {
     return NextResponse.json(demoHome(session.user.name));
   }
+
+  // Home is where members check in: its sessions must exist before they are listed (lib/class-horizon.ts). Never throws.
+  await ensureClassHorizon(session.user.tenantId);
 
   try {
     const payload = await withTenantContext(session.user.tenantId, async (tx) => {

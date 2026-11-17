@@ -13,6 +13,7 @@
  * green for the wrong reason. What must never regress is the WHERE clause.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async () => ({})) }));
