@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useId, useRef, useCallback } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { CreditCard, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,8 @@ export default function AdhocChargeDrawer({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [unknownMsg, setUnknownMsg] = useState<string | null>(null);
   const submittingRef = useRef(false);
+  // Round 11 (6.1): ask before a stray tap or Escape throws an entered charge away.
+  const dirty = useDirtySince(open, { amount, description });
   // The in-flight attempt's idempotency id, bound to the exact amount and
   // description it was minted for.
   //
@@ -226,6 +229,7 @@ export default function AdhocChargeDrawer({
       // fresh idempotency key and Stripe would take the money twice. Same
       // guard as MarkPaidDrawer.
       onClose={() => !submitting && onClose()}
+      confirmDiscard={dirty && !submitting && !successMsg}
       title="Ad-hoc charge"
       description={memberName}
       footer={

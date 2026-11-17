@@ -2011,7 +2011,8 @@ export default function MemberProfile({
           four. Behaviour and handlers are unchanged — this is a shell swap. */}
       <Sheet
         open={showRankDrawer}
-        onClose={() => setShowRankDrawer(false)}
+        // Closing discards (review of the 6.1 rollout): the guard's "Discard changes" must be true.
+        onClose={() => { setShowRankDrawer(false); setRankForm({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" }); }}
         confirmDiscard={rankDrawerDirty && !promotingSaving}
         title="Assign / Promote Rank"
         description={member.name}
@@ -2137,7 +2138,7 @@ export default function MemberProfile({
       {/* ── Add payment drawer (Sheet — §4a.3) ── */}
       <Sheet
         open={paymentDrawer}
-        onClose={() => setPaymentDrawer(false)}
+        onClose={() => { setPaymentDrawer(false); setPayForm({ description: "", amount: "", method: "cash" }); setPayError(null); }}
         confirmDiscard={paymentDrawerDirty}
         title="Record payment"
         description={member.name}

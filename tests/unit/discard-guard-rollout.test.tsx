@@ -4,7 +4,7 @@
 // "Discard your changes?" before a stray scrim tap or Escape throws typed input away: plans,
 // ranks, record a payment (and, by the same one-line wiring, add member, new announcement,
 // promote rank and the profile's record payment). A form nobody touched still closes at once.
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import React, { useState } from "react";
 
@@ -15,18 +15,22 @@ import { useDirtySince } from "@/lib/use-dirty-since";
 import MembershipsManager from "@/components/dashboard/MembershipsManager";
 import RanksManager from "@/components/dashboard/RanksManager";
 import RecordPaymentModal from "@/components/dashboard/RecordPaymentModal";
+import MemberProfile, { type MemberDetail } from "@/components/dashboard/MemberProfile";
 
+const realFetch = globalThis.fetch;
+beforeEach(() => {
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const body = url === "/api/locations" ? { locations: [] } : url.includes("/payments") ? { payments: [] } : url.startsWith("/api/members") ? { members: [] } : {};
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as unknown as typeof fetch;
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  globalThis.fetch = realFetch;
   document.body.style.overflow = "";
 });
-
-globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
-  const url = String(input);
-  const body = url === "/api/locations" ? { locations: [] } : url.startsWith("/api/members") ? { members: [] } : {};
-  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
-}) as unknown as typeof fetch;
 
 const question = () => screen.queryByRole("dialog", { name: "Discard your changes?" });
 const escape = () => fireEvent.keyDown(document, { key: "Escape" });
@@ -101,5 +105,30 @@ describe("Record a payment", () => {
     escape();
     expect(question()).not.toBeNull();
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("member profile: Record payment sheet", () => {
+  const MEMBER: MemberDetail = {
+    id: "mem_1", name: "Sam Carter", email: "sam@example.com", phone: null, membershipType: null, membershipTierId: null,
+    status: "active", paymentStatus: "paid", notes: null, profilePictureUrl: null, joinedAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-09-30T09:00:00.000Z", emergencyContactName: null, emergencyContactPhone: null, emergencyContactRelation: null,
+    medicalConditions: null, dateOfBirth: null, waiverAccepted: true, waiverAcceptedAt: null, subscriptions: [], ranks: [], attendances: [],
+  };
+  it("asks once an amount is typed, and Discard really discards: reopening starts empty", async () => {
+    render(<MemberProfile member={MEMBER} rankOptions={[]} primaryColor="#3b82f6" role="owner" tenantSlug="t" />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("tab", { name: /Payments/ }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+    fireEvent.change(screen.getByLabelText("Amount (£)"), { target: { value: "40" } });
+    escape();
+    expect(question()).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog", { name: "Record payment" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+    expect((screen.getByLabelText("Amount (£)") as HTMLInputElement).value).toBe("");
+    escape();
+    expect(question()).toBeNull();
   });
 });
