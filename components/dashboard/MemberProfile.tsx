@@ -48,6 +48,7 @@ import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
+import { changedKeys, stashDraft, takeDraft } from "@/lib/draft-stash";
 import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import { paymentStatusFromHoldResponse } from "@/lib/member-hold";
@@ -416,6 +417,37 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+/** The profile edit form's fields, as opened from a member row. */
+function profileFormFrom(m: {
+  name: string; email: string; phone?: string | null; emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null; emergencyContactRelation?: string | null; membershipType?: string | null;
+  membershipTierId?: string | null; status: string; dateOfBirth?: string | null;
+}) {
+  return {
+    name: m.name,
+    email: m.email,
+    phone: m.phone ?? "",
+    emergencyContactName: m.emergencyContactName ?? "",
+    emergencyContactPhone: m.emergencyContactPhone ?? "",
+    emergencyContactRelation: m.emergencyContactRelation ?? "",
+    membershipType: m.membershipType ?? "",
+    membershipTierId: m.membershipTierId ?? "",
+    status: m.status,
+    dateOfBirth: m.dateOfBirth ? m.dateOfBirth.slice(0, 10) : "",
+  };
+}
+
+const PROFILE_FIELD_LABEL: Record<string, string> = {
+  name: "name", email: "email", phone: "phone", emergencyContactName: "emergency contact name",
+  emergencyContactPhone: "emergency contact phone", emergencyContactRelation: "emergency contact relation",
+  membershipType: "membership", membershipTierId: "membership", status: "status", dateOfBirth: "date of birth",
+  attribution: "who brought them in",
+};
+
+/** Round 11 (3.2): what a conflict reload keeps — only what this person changed. */
+type ProfileDraft = { form: Record<string, string>; attribution: AttributionValue | null; at: number };
+const DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
+
 export default function MemberProfile({
   member: initial,
   rankOptions,
@@ -435,6 +467,10 @@ export default function MemberProfile({
   // Verifier lane 7 D1/D4: a failed profile save is said inside the form, with
   // the input kept, rather than a toast that vanishes (or nothing at all).
   const [profileError, setProfileError] = useState<string | null>(null);
+  // Round 11 (3.2): the refusal was "someone else changed this member"; Reload keeps what was typed.
+  const [staleConflict, setStaleConflict] = useState(false);
+  // After that reload: which of this person's edits were put back on the fresh record.
+  const [restoredNote, setRestoredNote] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
   const [form, setForm] = useState({
@@ -594,6 +630,37 @@ export default function MemberProfile({
     void loadPayments();
   }, [loadPayments]);
 
+  // Round 11 (3.2): after a conflict reload, put back what this person had changed, on top
+  // of the fresh record, and open the form for them to check it and save.
+  useEffect(() => {
+    const draft = takeDraft<ProfileDraft>(`member:${initial.id}`);
+    if (!draft || Date.now() - draft.at > DRAFT_MAX_AGE_MS) return;
+    const keys = Object.keys(draft.form ?? {});
+    if (keys.length === 0 && !draft.attribution) return;
+    const labels = [...new Set([...keys, ...(draft.attribution ? ["attribution"] : [])].map((k) => PROFILE_FIELD_LABEL[k] ?? k))];
+    const list = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+    // Deferred so the effect body does not set state synchronously (react-hooks/set-state-in-effect).
+    queueMicrotask(() => {
+      setForm((f) => ({ ...f, ...draft.form }));
+      if (draft.attribution) setAttribution(draft.attribution);
+      setEditing(true);
+      setRestoredNote(`Their changes are loaded. Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save.`);
+    });
+  }, [initial.id]);
+
+  function reloadKeepingEdits() {
+    const opened = profileFormFrom(member);
+    const keys = changedKeys(opened, form);
+    const attributionChanged = JSON.stringify(attributionFromMember(member)) !== JSON.stringify(attribution);
+    const draft: ProfileDraft = {
+      form: Object.fromEntries(keys.map((k) => [k, form[k]])),
+      attribution: attributionChanged ? attribution : null,
+      at: Date.now(),
+    };
+    stashDraft(`member:${member.id}`, draft);
+    window.location.reload();
+  }
+
   useEffect(() => {
     if (!showActionsMenu) return;
     function handleClick(e: MouseEvent) {
@@ -697,6 +764,7 @@ export default function MemberProfile({
       // reach the server as null instead of being silently omitted.
       const credit = resolveSignupCredit(attribution);
       setProfileError(null);
+      setStaleConflict(false);
       let res: Response;
       try {
         res = await fetch(`/api/members/${member.id}`, {
@@ -738,11 +806,13 @@ export default function MemberProfile({
       // save failed with nothing said. Parse defensively.
       const body: unknown = await res.json().catch(() => null);
       if (!res.ok) {
+        // The route's other 409 ("Email already in use") carries no
+        // currentUpdatedAt and keeps its own sentence.
+        const stale = res.status === 409 && !!body && typeof (body as { currentUpdatedAt?: unknown }).currentUpdatedAt === "string";
+        setStaleConflict(stale);
         setProfileError(
-          // The route's other 409 ("Email already in use") carries no
-          // currentUpdatedAt and keeps its own sentence.
-          res.status === 409 && body && typeof (body as { currentUpdatedAt?: unknown }).currentUpdatedAt === "string"
-            ? "Someone else changed this member since you opened it. Reload to see their changes, then make yours again."
+          stale
+            ? "Someone else changed this member since you opened it. Reload to see their changes — what you've changed here is kept."
             : describeSaveFailure(res.status, body, "Save").message,
         );
         return;
@@ -769,6 +839,7 @@ export default function MemberProfile({
         creditedToLabel: credit.creditedToLabel,
       }));
       setEditing(false);
+      setRestoredNote(null);
       toast("Profile updated", "success");
     } finally { setSaving(false); }
   }
@@ -1512,17 +1583,29 @@ export default function MemberProfile({
                   )}
                 </div>
               </div>
-              {profileError && (
-                <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
-                  {profileError}
+              {restoredNote && !profileError && (
+                <p role="status" data-testid="profile-draft-restored" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
+                  {restoredNote}
                 </p>
+              )}
+              {profileError && (
+                <div className="flex items-start gap-2 rounded-[var(--r-md)] px-3 py-2" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))" }}>
+                  <p role="alert" className="flex-1 text-sm" style={{ color: "var(--hue-danger-ink)" }}>
+                    {profileError}
+                  </p>
+                  {staleConflict && (
+                    <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="shrink-0">
+                      Reload
+                    </Button>
+                  )}
+                </div>
               )}
               <div className="flex gap-3 pt-1">
                 <Button onClick={saveProfile} loading={saving}>
                   {!saving && <Check className="size-4" />}
                   {saving ? "Saving…" : "Save"}
                 </Button>
-                <Button variant="secondary" onClick={() => { setEditing(false); setProfileError(null); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
+                <Button variant="secondary" onClick={() => { setEditing(false); setProfileError(null); setStaleConflict(false); setRestoredNote(null); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
                   <X className="size-4" /> Cancel
                 </Button>
               </div>
