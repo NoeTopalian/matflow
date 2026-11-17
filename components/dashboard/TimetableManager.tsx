@@ -809,6 +809,7 @@ function ClassForm({
   onSave,
   onCancel,
   onDirtyChange,
+  locked = false,
   saving,
   error = null,
 }: {
@@ -827,6 +828,8 @@ function ClassForm({
   onCancel: () => void;
   /** Told whether anything differs from what the form opened with (Round 11, 6.1: the Sheet asks before discarding). */
   onDirtyChange?: (dirty: boolean) => void;
+  /** A status change (pause / archive) is in flight for this class: no save and no cancel until it settles. */
+  locked?: boolean;
   saving: boolean;
   /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
   error?: SaveError | null;
@@ -1689,10 +1692,10 @@ function ClassForm({
           </p>
         )}
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={onCancel} className="flex-1">
+          <Button variant="secondary" onClick={onCancel} disabled={locked} className="flex-1">
             Cancel
           </Button>
-          <Button onClick={submit} loading={saving} disabled={!canSubmit} className="flex-1">
+          <Button onClick={submit} loading={saving} disabled={!canSubmit || locked} className="flex-1">
             {initial?.id ? "Save changes" : "Create class"}
           </Button>
         </div>
@@ -2983,7 +2986,9 @@ export default function TimetableManager({
           places={places}
           primaryColor={primaryColor}
           onSave={handleSave}
-          onCancel={() => setDrawerOpen(false)}
+          // Not while a pause / archive runs: it would close over a draft the status change may still need (a failure keeps it).
+          onCancel={() => { if (!lifecycleBusy) setDrawerOpen(false); }}
+          locked={!!lifecycleBusy && lifecycleBusy.id === editTarget?.id}
           onDirtyChange={setClassFormDirty}
           saving={saving}
           error={saveError}

@@ -263,6 +263,26 @@ describe("Pause / Archive from the class sheet with unsaved edits (Round 11)", (
     expect(nameNow()).toBe("Fundamentals BJJ (renamed)");
   });
 
+  it("while the pause is in flight, Save and Cancel are off, so the discarded edits cannot be saved or the draft lost", async () => {
+    let answer!: (v: { ok: boolean; json: () => Promise<unknown> }) => void;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
+      if (method === "PATCH") return new Promise((r) => { answer = r; });
+      return { ok: true, json: async () => [] };
+    }));
+    const sheet = await openEditAndType();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Pause class" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Pause Fundamentals BJJ?" })).getByRole("button", { name: "Discard changes and pause" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect((within(sheet).getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(sheet).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    answer({ ok: false, json: async () => ({ error: "Could not pause the class right now." }) });
+    await waitFor(() => expect((within(sheet).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(nameNow()).toBe("Fundamentals BJJ (renamed)");
+  });
+
   it("Archive with edits says the same, and an untouched sheet asks the ordinary question", async () => {
     render(<TimetableManager {...PROPS} initialClasses={[LIVE]} initialInactiveClasses={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit Fundamentals BJJ" }));
