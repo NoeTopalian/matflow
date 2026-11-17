@@ -115,11 +115,14 @@ try {
     let release;
     const held = new Promise((r) => { release = r; });
     await page.route(`**/api/classes/${cls}`, async (route) => { if (route.request().method() === "PUT" || route.request().method() === "PATCH") { await held; } return route.continue(); });
+    const savedResp = page.waitForResponse((r) => r.url().endsWith(`/api/classes/${cls}`) && ["PUT", "PATCH"].includes(r.request().method()), { timeout: 60000 });
     await editSheet.getByRole("button", { name: "Save changes" }).click();
     await page.waitForTimeout(500);
     const pauseOff = await editSheet.getByRole("button", { name: "Pause class" }).isDisabled();
     const archiveOff = await editSheet.getByRole("button", { name: "Archive class" }).isDisabled();
     release();
+    // The held request must finish through its handler before the route is removed (it was removed mid-request before).
+    await savedResp.catch(() => null);
     await page.unroute(`**/api/classes/${cls}`);
     L.check("desktop", "PA3 while the class save is in flight, Pause and Archive in the sheet are disabled", pauseOff && archiveOff, { pauseOff, archiveOff });
     await editSheet.waitFor({ state: "detached", timeout: 30000 }).catch(() => {});

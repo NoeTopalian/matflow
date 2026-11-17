@@ -2988,7 +2988,8 @@ export default function TimetableManager({
           onSave={handleSave}
           // Not while a pause / archive runs: it would close over a draft the status change may still need (a failure keeps it).
           onCancel={() => { if (!lifecycleBusy) setDrawerOpen(false); }}
-          locked={!!lifecycleBusy && lifecycleBusy.id === editTarget?.id}
+          // The same condition as onCancel above, so Cancel never looks enabled while it does nothing.
+          locked={!!lifecycleBusy}
           onDirtyChange={setClassFormDirty}
           saving={saving}
           error={saveError}
