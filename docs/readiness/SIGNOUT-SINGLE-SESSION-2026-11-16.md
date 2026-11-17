@@ -109,10 +109,18 @@ above prevents that.
 **Verification after deploy (Noe, signed in).** One page loads; sign out from the account menu lands on /login; the
 browser's back button does not show the dashboard.
 
-**Recovery.** Never Instant Rollback or Promote (runbook §4). Fix forward: a revert PR of the application commits,
-merged and deployed. Reverted code ignores the table, so it is compatible; the table stays (harmless, pruned only by
-this code). Reverting re-opens the late-response weakness for as long as the revert is live. No data migration
-needs undoing.
+**Recovery.** Never Instant Rollback or Promote (runbook §4). Fix forward: a PR that reverts the **application code
+only** and **keeps** both migration folders (`prisma/migrations/20261116120000_revoked_session`,
+`prisma/migrations/20261116120100_revoked_session_grant`) and the `RevokedSession` model in `prisma/schema.prisma`:
+`git revert -m 1 <#88 merge>`, then `git checkout <#88 merge> -- prisma/migrations/20261116120000_revoked_session
+prisma/migrations/20261116120100_revoked_session_grant prisma/schema.prisma`, then the normal gates, CI and Noe's merge.
+A plain revert would delete migrations production has already applied (the repo and the database would disagree, and
+the next schema change would propose dropping the table). Never drop the table in a recovery PR. Reverted code ignores
+the table, so it is compatible; the table stays (harmless; its rows are pruned only by this code). Reverting re-opens
+the late-response weakness for as long as the revert is live. No data migration needs undoing. If #88 is later
+re-landed, the already-applied migrations are skipped; a person who signed out of a pre-release session before the
+revert, and signed in again while it was live, may be asked to sign in once more (the derived id is still revoked; it
+fails closed).
 
 ## 5. Old deployments that could accept these cookies
 

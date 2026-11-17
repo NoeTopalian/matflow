@@ -23,6 +23,10 @@ vi.mock("next-auth/react", () => ({
   SessionProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+const { signOutThisDevice, toastSpy } = vi.hoisted(() => ({ signOutThisDevice: vi.fn(), toastSpy: vi.fn() }));
+vi.mock("@/lib/sign-out-client", () => ({ signOutThisDevice, SIGN_OUT_FAILED_MESSAGE: "Couldn't sign you out." }));
+vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
+
 import ForcedTotpSetup from "@/app/login/totp/setup/ForcedTotpSetup";
 
 /** A server that, like the real routes, refuses the other audience's setup route. */
@@ -69,5 +73,17 @@ describe("ForcedTotpSetup route selection", () => {
       cleanup();
       push.mockReset();
     }
+  });
+});
+
+describe("Sign out on the setup page uses the single-session sign-out (#88, integration with #94)", () => {
+  it("signs out this device through signOutThisDevice, and says so when it is refused", async () => {
+    signOutThisDevice.mockResolvedValueOnce(false);
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ qrDataUrl: "data:image/png;base64,AA", secret: "ABC" }), { status: 200 })) as unknown as typeof fetch;
+    render(<ForcedTotpSetup isMember />);
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(await screen.findByRole("button", { name: /Sign out/ }));
+    await waitFor(() => expect(signOutThisDevice).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith("Couldn't sign you out.", "error", 8000));
   });
 });
