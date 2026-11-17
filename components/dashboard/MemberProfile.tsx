@@ -649,10 +649,11 @@ export default function MemberProfile({
   // Round 11 (3.2): after a conflict reload, put back what this person had changed, on top
   // of the fresh record, and open the form for them to check it and save.
   useEffect(() => {
+    // The fresh record may no longer be editable here (archived meanwhile, or a role that cannot edit):
+    // then the draft is left to expire rather than taken.
+    if (!["owner", "manager", "admin"].includes(role) || initial.archivedAt) return;
     const draft = takeDraft<ProfileDraft>(`member:${initial.id}`);
     if (!draft || Date.now() - draft.at > DRAFT_MAX_AGE_MS) return;
-    // The fresh record may no longer be editable here (archived meanwhile, or a role that cannot edit).
-    if (!["owner", "manager", "admin"].includes(role) || initial.archivedAt) return;
     const keys = Object.keys(draft.form ?? {});
     const attrKeys = Object.keys(draft.attribution ?? {});
     if (keys.length === 0 && attrKeys.length === 0) return;

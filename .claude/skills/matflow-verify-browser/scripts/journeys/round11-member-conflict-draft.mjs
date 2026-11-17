@@ -69,19 +69,24 @@ async function walk(where, pageA, pageB, { tap }) {
     noted && restoredName === newName && freshPhone === phone, { noted, note: noted ? await note.textContent() : null, restoredName, freshPhone });
   await shot(pageA, `r11-conflict-restored-${where}`);
 
-  // Forced failed save, then a real retry.
+  // Forced failed save, then a real retry. The sentence is matched, not "any alert": Next's route announcer is one.
   let aborted = 0;
   await pageA.route(`**/api/members/${m.id}`, (route) => (route.request().method() === "PATCH" && aborted++ === 0 ? route.abort("failed") : route.continue()));
+  const dropped = pageA.waitForEvent("requestfailed", { predicate: (r) => r.method() === "PATCH" && r.url().endsWith(`/api/members/${m.id}`), timeout: 30000 }).then(() => true, () => false);
   await (tap ? save.tap() : save.click());
-  const failed = await pageA.getByRole("alert").first().waitFor({ timeout: 20000 }).then(() => true, () => false);
+  const sawDrop = await dropped;
+  const failed = sawDrop && await pageA.getByRole("alert").filter({ hasText: "Couldn't reach MatFlow" }).waitFor({ timeout: 20000 }).then(() => true, () => false);
   const keptAfterFail = await pageA.getByLabel("Full Name", { exact: true }).inputValue().catch(() => null);
-  L.check(where, "F1 a dropped save says so and keeps the form", failed && keptAfterFail === newName, { failed, keptAfterFail });
+  L.check(where, "F1 a dropped save (request seen to fail) says so and keeps the form", failed && keptAfterFail === newName, { sawDrop, failed, keptAfterFail });
   await pageA.unroute(`**/api/members/${m.id}`);
+  let patchesSent = 0;
+  pageA.on("request", (r) => { if (r.method() === "PATCH" && r.url().endsWith(`/api/members/${m.id}`)) patchesSent++; });
   const saved = pageA.waitForResponse((r) => r.request().method() === "PATCH" && r.url().endsWith(`/api/members/${m.id}`));
   await (tap ? save.tap() : save.click());
   const res = await saved;
+  await pageA.waitForTimeout(1000);
   const stored = await row(m.id);
-  L.check(where, "C3 the retry saves once, and the stored member has my name AND their phone", res.status() === 200 && stored.name === newName && stored.phone === phone, { status: res.status(), stored });
+  L.check(where, "C3 the retry sends one save, and the stored member has my name AND their phone", res.status() === 200 && patchesSent === 1 && stored.name === newName && stored.phone === phone, { status: res.status(), patchesSent, stored });
 }
 
 const browser = await chromium.launch();
