@@ -124,4 +124,53 @@ describe("class form: a conflict reload keeps what was typed (Round 11, 1.1)", (
     await act(async () => {});
     expect(screen.queryByTestId("class-draft-restored")).toBeNull();
   });
+
+  it("lists are merged, not replaced: my moved Monday and their new Wednesday both survive (review of #105, H1)", async () => {
+    store.set(KEY, JSON.stringify({
+      classId: "c1", form: {}, opened: {},
+      lists: { schedules: {
+        added: [{ dayOfWeek: 1, startTime: "18:30", endTime: "19:30" }],
+        removed: [{ dayOfWeek: 1, startTime: "18:00", endTime: "19:00" }],
+      } },
+      at: Date.now(),
+    }));
+    patchReply = () => ({ ok: true, status: 200, body: GI });
+    const theirs = { ...GI, schedules: [...GI.schedules, { id: "slot-wed", dayOfWeek: 3, startTime: "07:00", endTime: "08:00" }] };
+    render(<TimetableManager initialClasses={[theirs]} {...PROPS} />);
+    await act(async () => {});
+    expect((await screen.findByTestId("class-draft-restored")).textContent).toContain("days and times");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const sent = (calls.find((c) => c.method === "PATCH")!.body!.schedules as Array<{ dayOfWeek: number; startTime: string }>)
+      .map((x) => `${x.dayOfWeek} ${x.startTime}`).sort();
+    expect(sent).toEqual(["1 18:30", "3 07:00"]); // their Wednesday kept, my Monday move applied, the old Monday gone
+  });
+
+  it("a whole list is never stashed: Reload after a squad change keeps added/removed ids only", async () => {
+    await refusedEdit();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    const kept = JSON.parse(store.get(KEY)!);
+    expect(kept.form).not.toHaveProperty("schedules");
+    expect(kept.form).not.toHaveProperty("rosterMemberIds");
+    expect(kept.form).not.toHaveProperty("allowedTierIds");
+  });
+
+  it("a new class (nothing to reopen) does not claim Reload keeps the draft (review of #105, M1)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
+      if (method === "POST") return { ok: false, status: 409, json: async () => ({ error: "That category changed. Reload the page and choose again.", reason: "category" }) };
+      return { ok: false, json: async () => ({}) };
+    }));
+    render(<TimetableManager initialClasses={[GI]} {...PROPS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Add class" })[0]);
+    fireEvent.change(await screen.findByLabelText("Class Name"), { target: { value: "Brand new" } });
+    fireEvent.click(screen.getByRole("button", { name: /Add day/ }));
+    const create = screen.getByRole("button", { name: "Create class" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(false);
+    fireEvent.click(create);
+    expect((await screen.findByRole("alert")).textContent).toContain("That category changed");
+    expect(screen.queryByTestId("class-form-reload-keeps")).toBeNull();
+  });
 });
+

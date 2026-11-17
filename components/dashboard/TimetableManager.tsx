@@ -837,7 +837,32 @@ type ClassDraftValues = {
   maxRankId: string; useRoster: boolean; rosterMemberIds: string[]; allowedTierIds: string[]; color: string | null;
   schedules: ScheduleInput[];
 };
-type ClassDraft = { classId: string; form: Partial<ClassDraftValues>; opened: Partial<ClassDraftValues>; at: number };
+type ListDiff<T> = { added: T[]; removed: T[] };
+type ClassDraft = {
+  classId: string;
+  /** Single-value fields this person changed (whole values), and what they were when the form opened. */
+  form: Partial<ClassDraftValues>;
+  opened: Partial<ClassDraftValues>;
+  /** List fields as this person's additions and removals, applied to the FRESH list on restore (review of #105, H1):
+   *  a whole stashed list would silently drop entries someone else added meanwhile (the P6 lost update). */
+  lists?: { schedules?: ListDiff<ScheduleInput>; rosterMemberIds?: ListDiff<string>; allowedTierIds?: ListDiff<string> };
+  at: number;
+};
+const LIST_KEYS = ["schedules", "rosterMemberIds", "allowedTierIds"] as const;
+// Squad on/off and both rank gates decide one thing (who may attend by squad or rank): kept together or not at all.
+const ACCESS_GROUP = ["useRoster", "requiredRankId", "maxRankId"] as const;
+const scheduleKey = (x: ScheduleInput) => `${x.dayOfWeek}|${x.startTime}|${x.endTime}`;
+function listDiff<T>(opened: T[], now: T[], key: (x: T) => string): ListDiff<T> {
+  const o = new Set(opened.map(key)), n = new Set(now.map(key));
+  return { added: now.filter((x) => !o.has(key(x))), removed: opened.filter((x) => !n.has(key(x))) };
+}
+function applyDiff<T>(fresh: T[], d: ListDiff<T> | undefined, key: (x: T) => string): T[] {
+  if (!d) return fresh;
+  const gone = new Set(d.removed.map(key));
+  const kept = fresh.filter((x) => !gone.has(key(x)));
+  const have = new Set(kept.map(key));
+  return [...kept, ...d.added.filter((x) => !have.has(key(x)))];
+}
 const CLASS_DRAFT_KEY = "class-edit";
 const CLASS_DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
 const CLASS_FIELD_LABEL: Record<keyof ClassDraftValues, string> = {
@@ -847,7 +872,8 @@ const CLASS_FIELD_LABEL: Record<keyof ClassDraftValues, string> = {
   rosterMemberIds: "squad list", allowedTierIds: "who can attend", color: "colour", schedules: "days and times",
 };
 function restoredNote(d: ClassDraft): string {
-  const labels = [...new Set((Object.keys(d.form) as (keyof ClassDraftValues)[]).map((k) => CLASS_FIELD_LABEL[k] ?? k))];
+  const keys = [...(Object.keys(d.form) as (keyof ClassDraftValues)[]), ...(Object.keys(d.lists ?? {}) as (keyof ClassDraftValues)[])];
+  const labels = [...new Set(keys.map((k) => CLASS_FIELD_LABEL[k] ?? k))];
   const list = labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
   return `Their changes are loaded. Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save. Where they changed the same thing, yours replaces theirs when you save.`;
 }
@@ -991,7 +1017,7 @@ function ClassForm({
     rv("useRoster", Boolean(initial?.roster && initial.roster.length > 0)),
   );
   const [rosterMemberIds, setRosterMemberIds] = useState<string[]>(
-    rv("rosterMemberIds", initial?.roster?.map((r: { memberId: string }) => r.memberId) ?? []),
+    applyDiff(initial?.roster?.map((r: { memberId: string }) => r.memberId) ?? [], restore?.lists?.rosterMemberIds, String),
   );
   const [availableMembers, setAvailableMembers] = useState<Array<{ id: string; name: string; email: string }>>([]);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -1002,7 +1028,7 @@ function ClassForm({
   const [memberSearch, setMemberSearch] = useState("");
   // T6a "Who can attend": none ticked = everyone (the class stays open).
   const [allowedTierIds, setAllowedTierIds] = useState<string[]>(
-    rv("allowedTierIds", initial?.allowedTiers?.map((t) => t.id) ?? []),
+    applyDiff(initial?.allowedTiers?.map((t) => t.id) ?? [], restore?.lists?.allowedTierIds, String),
   );
   const initialTierIds = (initial?.allowedTiers ?? []).map((t) => t.id);
   // A deactivated tier still attached is shown read-only (it still admits its
@@ -1023,7 +1049,7 @@ function ClassForm({
   // A class saved with a colour the palette does not hold keeps it: offered first, as "Current colour".
   const [ownColour] = useState(() => (initial?.color && !classColourName(initial.color) ? initial.color : null));
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
-    rv("schedules", initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [])
+    applyDiff(initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [], restore?.lists?.schedules, scheduleKey)
   );
 
   // Round 11 (1.1): what the form holds now, and what it held when opened (for a restored field, what it held before
@@ -1034,19 +1060,38 @@ function ClassForm({
     description, requiredRankId, maxRankId, useRoster, rosterMemberIds: [...rosterMemberIds].sort(),
     allowedTierIds: [...allowedTierIds].sort(), color, schedules,
   };
-  const [openedValues] = useState<ClassDraftValues>(() => ({ ...draftValues, ...(restore?.opened ?? {}) }) as ClassDraftValues);
+  const [openedValues] = useState<ClassDraftValues>(() => ({
+    ...draftValues,
+    ...(restore?.opened ?? {}),
+    ...(restore ? {
+      schedules: initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [],
+      rosterMemberIds: (initial?.roster?.map((r: { memberId: string }) => r.memberId) ?? []).sort(),
+      allowedTierIds: (initial?.allowedTiers?.map((t) => t.id) ?? []).sort(),
+    } : {}),
+  }) as ClassDraftValues);
   const [stashRefused, setStashRefused] = useState(false);
   function reloadKeepingEdits() {
     if (initial?.id) {
-      const keys = changedKeys(openedValues as Record<string, unknown>, draftValues as Record<string, unknown>) as (keyof ClassDraftValues)[];
+      const changed = changedKeys(openedValues as Record<string, unknown>, draftValues as Record<string, unknown>) as (keyof ClassDraftValues)[];
+      const single = new Set(changed.filter((k) => !(LIST_KEYS as readonly string[]).includes(k)));
+      // The access group travels whole; a category refusal is about the category itself, so it is never restored
+      // (the reload shows the club's categories as they are now).
+      if (ACCESS_GROUP.some((k) => single.has(k))) ACCESS_GROUP.forEach((k) => single.add(k));
+      if (error?.reason === "category") single.delete("category");
+      const lists: NonNullable<ClassDraft["lists"]> = {};
+      if (changed.includes("schedules")) lists.schedules = listDiff(openedValues.schedules, draftValues.schedules, scheduleKey);
+      if (changed.includes("rosterMemberIds")) lists.rosterMemberIds = listDiff(openedValues.rosterMemberIds, draftValues.rosterMemberIds, String);
+      if (changed.includes("allowedTierIds")) lists.allowedTierIds = listDiff(openedValues.allowedTierIds, draftValues.allowedTierIds, String);
+      const keys = [...single];
       const draft: ClassDraft = {
         classId: initial.id,
         form: Object.fromEntries(keys.map((k) => [k, draftValues[k]])) as Partial<ClassDraftValues>,
         opened: Object.fromEntries(keys.map((k) => [k, openedValues[k]])) as Partial<ClassDraftValues>,
+        ...(Object.keys(lists).length ? { lists } : {}),
         at: Date.now(),
       };
       // Never reload after saying the draft is kept when it cannot be kept.
-      if (keys.length > 0 && !stashDraft(CLASS_DRAFT_KEY, draft)) { setStashRefused(true); return; }
+      if ((keys.length > 0 || Object.keys(lists).length > 0) && !stashDraft(CLASS_DRAFT_KEY, draft)) { setStashRefused(true); return; }
     }
     window.location.reload();
   }
@@ -1759,7 +1804,7 @@ function ClassForm({
             )}
           </div>
         )}
-        {error && (error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
+        {error && initial?.id && (error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
           // Round 11 (1.1): said beside the server's own sentence, not inside it.
           <p role="note" data-testid="class-form-reload-keeps" className="text-xs" style={{ color: stashRefused ? "var(--hue-danger-ink)" : "var(--tx-3)" }}>
             {stashRefused
