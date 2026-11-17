@@ -172,12 +172,15 @@ describe("class form: a conflict reload keeps what was typed (Round 11, 1.1)", (
     const theirs = { ...GI, schedules: [{ id: "slot-mon", ...row(1, "19:00") }, { id: "slot-wed", ...row(3, "19:00") }] };
     render(<TimetableManager initialClasses={[theirs]} {...PROPS} />);
     await act(async () => {});
-    expect((await screen.findByTestId("class-draft-restored")).textContent).toContain("Your days and times change was not kept");
+    expect((await screen.findByTestId("class-draft-restored")).textContent).toContain("Their days are kept, with your duration applied to them");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = calls.find((c) => c.method === "PATCH")!.body!;
     const sent = ((body.schedules ?? []) as Array<{ dayOfWeek: number }>).map((x) => x.dayOfWeek).sort();
     expect(sent).not.toContain(2); // Tuesday is not brought back
+    // My duration reaches their remaining days, so the class never saves 90 minutes over 60-minute sessions (review M-1).
+    expect(body.duration).toBe(90);
+    expect(((body.schedules ?? []) as Array<{ endTime: string }>).map((x) => x.endTime)).toEqual(["19:30", "19:30"]);
   });
 
   it("a new class (nothing to reopen) does not claim Reload keeps the draft (review of #105, M1)", async () => {
@@ -196,6 +199,8 @@ describe("class form: a conflict reload keeps what was typed (Round 11, 1.1)", (
     fireEvent.click(create);
     expect((await screen.findByRole("alert")).textContent).toContain("That category changed");
     expect(screen.queryByTestId("class-form-reload-keeps")).toBeNull();
+    // The server sentence asks for a reload, and an installed app has no reload control: the button stays (review L-1).
+    expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
   });
 });
 

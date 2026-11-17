@@ -881,9 +881,11 @@ function restoredNote(d: ClassDraft, schedulesDropped: boolean): string {
   const kept = labels.length
     ? `Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save. Where they changed the same thing, yours replaces theirs when you save.`
     : "";
-  const dropped = schedulesDropped
-    ? " Your days and times change was not kept: they changed or removed a day you had changed. The days below are theirs — make your change again."
-    : "";
+  const dropped = !schedulesDropped
+    ? ""
+    : d.form.duration !== undefined
+      ? " Their days are kept, with your duration applied to them; any other change you made to the days was not kept."
+      : " Your days and times change was not kept: they changed or removed a day you had changed. The days below are theirs — make your change again.";
   return `Their changes are loaded. ${kept}${dropped}`.replace(/\s+/g, " ").trim();
 }
 /** A days-and-times change can only be put back when every day it changed is still as it was (review of #105, N1). */
@@ -1068,7 +1070,11 @@ function ClassForm({
   // otherwise it could bring back a day the other person removed or duplicate one they moved.
   const [schedulesKept] = useState(() => schedulesRestorable(freshSchedules, restore?.lists?.schedules));
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
-    applyDiff(freshSchedules, schedulesKept ? restore?.lists?.schedules : undefined, scheduleKey)
+    schedulesKept
+      ? applyDiff(freshSchedules, restore?.lists?.schedules, scheduleKey)
+      : restore?.form.duration !== undefined
+        ? applyClassDuration(freshSchedules, [], Number(restore.form.duration))
+        : freshSchedules
   );
 
   // Round 11 (1.1): what the form holds now, and what it held when opened (for a restored field, what it held before
@@ -1816,7 +1822,7 @@ function ClassForm({
             </p>
             {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then).
                 Round 6: so is a category refusal (the club's categories or this class's changed); its sentence says to reload, and an installed app has no reload control. */}
-            {initial?.id && (error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
+            {(initial?.id ? (error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") : error.reason === "category") && (
               <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="shrink-0">
                 Reload
               </Button>
