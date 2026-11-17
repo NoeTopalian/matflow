@@ -85,11 +85,45 @@ describe("register: a refused tick is shown on the row that was ticked (Round 11
     attended = new Set(["m7"]);
     replies = [{ status: 409, body: { error: "This check-in was already removed." } }];
     await renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Mark Member 7 absent" }));
+    const untick = screen.getByRole("button", { name: "Mark Member 7 absent" });
+    untick.focus(); // a tap or Enter puts focus on the tick; jsdom's click does not
+    fireEvent.click(untick);
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Remove check-in" }));
     await settle();
     expect(within(rowOf("Member 7")).getByRole("alert").textContent).toContain("already removed");
+    // After the "Remove this check-in?" question and the failed request, focus is on that row's tick.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Mark Member 7 absent" }));
+  });
+
+  it("a booked member added from the search is refused under the search field, not on their row; editing the search clears it", async () => {
+    replies = [{ status: 403, body: { error: REFUSAL } }];
+    await renderPanel([{ id: "m20", name: "Member 20", accountType: "adult" }]);
+    const search = screen.getByLabelText("Search members");
+    fireEvent.change(search, { target: { value: "Member 20" } });
+    await act(async () => { fireEvent.keyDown(search, { key: "Enter" }); });
+    await settle();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain(REFUSAL);
+    expect(within(rowOf("Member 20")).queryByRole("alert")).toBeNull();
+    expect(search.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(search, { target: { value: "Member 2" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("focus is not pulled back if the person moved on while the request ran", async () => {
+    let answer!: (r: { status: number; body: unknown }) => void;
+    replies = [new Promise((r) => { answer = r; })];
+    await renderPanel();
+    const tick = screen.getByRole("button", { name: "Mark Member 20 attended" });
+    tick.focus();
+    fireEvent.click(tick);
+    await act(async () => {});
+    const search = screen.getByLabelText("Search members");
+    search.focus();
+    answer({ status: 403, body: { error: REFUSAL } });
+    await settle();
+    expect(document.activeElement).toBe(search);
   });
 
   it("someone added from the search is refused under the search field", async () => {

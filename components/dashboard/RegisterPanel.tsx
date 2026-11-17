@@ -146,7 +146,9 @@ export default function RegisterPanel({
   // row that was ticked, or under the search field for someone added from it. The
   // top banner is only for the register itself failing to load; on a phone it sits
   // off-screen when row 20 is ticked, so the coach saw "nothing happened".
-  const [markError, setMarkError] = useState<{ memberId: string; message: string } | null>(null);
+  // `from` is where the tick was made: a booked member can also be added from the search,
+  // and their refusal then belongs under the search field, where the person is typing.
+  const [markError, setMarkError] = useState<{ memberId: string; message: string; from: "row" | "search" } | null>(null);
   // The tick button is disabled while its request runs, and a browser drops focus
   // from a disabled control; it is given back once the button is enabled again, so
   // a keyboard user stays on the row they ticked.
@@ -267,6 +269,7 @@ export default function RegisterPanel({
     who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & {
       waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null;
     },
+    from: "row" | "search" = "row",
   ): Promise<boolean> {
     const acknowledged: Acknowledged[] = [];
     if (who?.cancelled) return false;
@@ -331,7 +334,7 @@ export default function RegisterPanel({
       // with no class-pack credit) is shown in the server's own words.
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
-        setMarkError({ memberId, message: hasFields ? describeApiError(body) : outcome.message });
+        setMarkError({ memberId, message: hasFields ? describeApiError(body) : outcome.message, from });
         return false;
       }
       const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
@@ -340,7 +343,7 @@ export default function RegisterPanel({
       await loadRegister();
       return true;
     } catch {
-      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again." });
+      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again.", from });
       return false;
     } finally {
       setMarking(null);
@@ -369,12 +372,12 @@ export default function RegisterPanel({
       const res = await fetch(`/api/checkin?classInstanceId=${instance.id}&memberId=${memberId}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setMarkError({ memberId, message: describeApiError(body) });
+        setMarkError({ memberId, message: describeApiError(body), from: "row" });
         return;
       }
       await loadRegister();
     } catch {
-      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again." });
+      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again.", from: "row" });
     } finally {
       setMarking(null);
     }
@@ -390,7 +393,7 @@ export default function RegisterPanel({
     const back = focusBackRef.current;
     focusBackRef.current = null;
     const a = document.activeElement;
-    if (back?.isConnected && (!a || a === document.body)) back.focus();
+    if (back?.isConnected && (!a || a === document.body)) back.focus({ preventScroll: true });
   }, [marking]);
 
   useEffect(() => {
@@ -417,7 +420,7 @@ export default function RegisterPanel({
 
   async function markFromSearch(c: Candidate) {
     // F-6: the toast says what happened, so only a recorded check-in gets one.
-    const recorded = await mark(c.id, c);
+    const recorded = await mark(c.id, c, "search");
     if (recorded) {
       setQuery("");
       showToast(`Marked in: ${c.name}`, "success");
@@ -645,7 +648,7 @@ export default function RegisterPanel({
                       {medicalNotesText(m.medicalConditions)}
                     </p>
                   )}
-                  {markError?.memberId === m.memberId && <MarkError message={markError.message} />}
+                  {markError?.from === "row" && markError.memberId === m.memberId && <MarkError message={markError.message} />}
                 </div>
               </li>
             );
@@ -665,7 +668,11 @@ export default function RegisterPanel({
             ref={searchRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // A search refusal is about the name that was typed; editing the search ends it.
+              if (markError?.from === "search") setMarkError(null);
+            }}
             onKeyDown={(e) => {
               if (e.key !== "Enter") return;
               e.preventDefault();
@@ -685,7 +692,7 @@ export default function RegisterPanel({
         <p id="register-search-hint" className="text-[11px] text-tx-3">
           Tap a name to mark them in. When only one name matches, Enter marks it.
         </p>
-        {markError && !expected.some((m) => m.memberId === markError.memberId) && <MarkError message={markError.message} />}
+        {markError?.from === "search" && <MarkError message={markError.message} />}
         {candidatesError && (
           <p role="alert" className="text-xs" style={{ color: "var(--hue-danger)" }}>
             Couldn&rsquo;t load the member list — the register above still works.{" "}
@@ -758,7 +765,7 @@ function MarkError({ message }: { message: string }) {
     <p
       id="register-mark-error"
       role="alert"
-      className="mt-2 flex items-start gap-1.5 rounded-[var(--r-sm)] border px-2 py-1.5 text-xs"
+      className="mt-2 flex scroll-mb-28 items-start gap-1.5 rounded-[var(--r-sm)] border px-2 py-1.5 text-xs md:scroll-mb-0"
       style={{ borderColor: tint("var(--hue-danger)", 25), background: tint("var(--hue-danger)", 6), color: "var(--hue-danger-ink)" }}
       data-testid="register-mark-error"
     >

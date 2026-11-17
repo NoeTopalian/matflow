@@ -44,6 +44,8 @@ const m20 = members[19], m21 = members[20];
 const stored = async (mid) => Number((await q(`select count(*)::int as n from "AttendanceRecord" where "tenantId" = $1 and "classInstanceId" = $2 and "memberId" = $3`, [tenantId, instanceId, mid]))[0].n);
 const rowOf = (page, m) => page.getByRole("list", { name: "Register" }).getByRole("listitem").filter({ hasText: m.name });
 const tick = (page, m, state = "attended") => page.getByRole("button", { name: `Mark ${m.name} ${state}`, exact: true });
+// Next adds a route announcer with role=alert to every page (in a shadow root that getByRole reaches); not ours.
+const ourAlerts = (page) => page.locator('[role="alert"]:not(#__next-route-announcer__)');
 const focusedLabel = (page) => page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? null);
 
 /** Refuse the mark for row 20 with the staff sentence; everything else goes to the server. */
@@ -74,18 +76,27 @@ try {
     page.on("pageerror", (e) => errors.push(String(e).slice(0, 200)));
     await openRegister(page);
     await refuseRow20(page);
-    await tick(page, m20).scrollIntoViewIfNeeded();
+    // Start with row 20 sitting just above the fixed tab bar, so the message below it would land under the bar
+    // unless the panel scrolls it clear.
+    const barTop = await page.getByRole("navigation", { name: "Main navigation" }).evaluate((el) => el.getBoundingClientRect().top);
+    await rowOf(page, m20).evaluate((li, top) => {
+      let sc = li.parentElement;
+      while (sc && !(sc.scrollHeight > sc.clientHeight && /(auto|scroll)/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+      const by = li.getBoundingClientRect().bottom - (top - 4);
+      (sc ?? document.scrollingElement).scrollBy(0, by);
+    }, barTop);
+    const before = await rowOf(page, m20).boundingBox();
     await tick(page, m20).tap();
     const inRow = rowOf(page, m20).getByRole("alert").filter({ hasText: SENTENCE });
     const shown = await inRow.waitFor({ timeout: 20000 }).then(() => true, () => false);
-    const alerts = await page.getByRole("alert").count();
-    const vh = page.viewportSize().height;
+    await page.waitForTimeout(400);
+    const alerts = await ourAlerts(page).count();
     const box = shown ? await inRow.boundingBox() : null;
-    const onScreen = !!box && box.y >= 0 && box.y + box.height <= vh;
-    L.check("phone", "P1 tapping row 20 of 30: the refusal is inside row 20, on screen, and is the only alert (no top banner)", shown && onScreen && alerts === 1, { shown, box, vh, alerts });
+    const clear = !!box && box.y >= 0 && box.y + box.height <= barTop;
+    L.check("phone", "P1 tapping row 20 of 30 (row just above the tab bar): the refusal is inside row 20, scrolled clear of the tab bar, and is the only alert (no top banner)", shown && clear && alerts === 1, { shown, rowBefore: before, box, barTop, alerts });
     await shot(page, "r11-register-row-refusal-phone");
     const focus = await focusedLabel(page);
-    L.check("phone", "P2 the tick button for row 20 still has focus after the refusal", focus === `Mark ${m20.name} attended`, { focus });
+    L.check("phone", "P2 the tick button for row 20 still has focus after the refusal (Chromium with an iPhone 13 profile; iOS Safari does not focus on tap)", focus === `Mark ${m20.name} attended`, { focus });
     L.check("phone", "P3 the row stays unticked and nothing is stored for row 20", (await tick(page, m20).count()) === 1 && (await stored(m20.id)) === 0, null);
     await ctx.close();
   }
@@ -113,7 +124,7 @@ try {
     await page.unroute("**/api/checkin");
     await tick(page, m21).click();
     const marked = await tick(page, m21, "absent").waitFor({ timeout: 30000 }).then(() => true, () => false);
-    const left = await page.getByRole("alert").count();
+    const left = await ourAlerts(page).count();
     L.check("desktop", "N2 the retry marks row 21 once and clears the message", marked && left === 0 && (await stored(m21.id)) === 1, { marked, left, stored: await stored(m21.id) });
     await shot(page, "r11-register-retry-desktop");
     await ctx.close();
