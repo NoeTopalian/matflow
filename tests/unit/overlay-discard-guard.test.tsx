@@ -61,6 +61,26 @@ describe("overlay discard guard", () => {
     expect((screen.getByLabelText("Class Name") as HTMLInputElement).value).toBe("Half-built class");
   });
 
+  it("Keep editing after a scrim click puts focus back inside the form, not on <body> (review of #99, M2)", async () => {
+    await mount(true);
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.click(scrim());
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    const sheet = screen.getByRole("dialog", { name: "New class" });
+    expect(sheet.contains(document.activeElement)).toBe(true);
+  });
+
+  it("Keep editing returns focus to the field the person was in", async () => {
+    await mount(true);
+    const box = screen.getByLabelText("Class Name");
+    box.focus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(document.activeElement).toBe(box);
+  });
+
   it("Escape asks too; a second Escape answers the question (keep editing), not the form", async () => {
     const onClose = await mount(true);
     fireEvent.keyDown(document, { key: "Escape" });

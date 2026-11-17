@@ -1024,9 +1024,11 @@ function ClassForm({
   const canSubmit = missing.length === 0 && repeated.length === 0;
 
   // Round 11 (6.1): everything the person can enter, so the Sheet knows when a stray tap would lose work.
+  // Order-free lists, and the new-location box only while it is the choice, so only a change that would be sent counts.
   const draft = JSON.stringify([
-    name, coachName, coachUserId, locationChoice, newLocation, locationId, duration, maxCapacity, isKids, category,
-    description, requiredRankId, maxRankId, useRoster, rosterMemberIds, allowedTierIds, color, schedules,
+    name, coachName, coachUserId, locationChoice, locationChoice === "new" ? newLocation : "", locationId, duration,
+    maxCapacity, isKids, category, description, requiredRankId, maxRankId, useRoster, [...rosterMemberIds].sort(),
+    [...allowedTierIds].sort(), color, schedules,
   ]);
   const [initialDraft] = useState(draft);
   const dirty = draft !== initialDraft;
@@ -2955,8 +2957,9 @@ export default function TimetableManager({
       <Sheet
         open={drawerOpen}
         title={editTarget ? "Edit class" : "New class"}
-        onClose={() => setDrawerOpen(false)}
-        confirmDiscard={classFormDirty}
+        // While a save is in flight the sheet stays: closing it would not stop the save (review of #99, M1).
+        onClose={() => { if (!saving) setDrawerOpen(false); }}
+        confirmDiscard={classFormDirty && !saving}
       >
         <ClassForm
           initial={editTarget}

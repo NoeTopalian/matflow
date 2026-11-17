@@ -309,8 +309,27 @@ export function OverlayShell({
   // Reset during render when the overlay closes, so it never reopens mid-question.
   if (!open && asking) setAsking(false);
 
+  // Where focus was inside the panel when the question opened, so "Keep editing" can put it back. A scrim click (or
+  // Safari's close button) leaves focus on <body>; then it goes to the panel's first control (review of #99, M2).
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
   // Scrim, Escape and the close button: ask first while the form has unsaved changes.
-  const requestClose = () => (confirmDiscard ? setAsking(true) : onClose());
+  const requestClose = () => {
+    if (!confirmDiscard) return onClose();
+    const a = document.activeElement;
+    returnFocusRef.current = a instanceof HTMLElement && panelRef.current?.contains(a) ? a : null;
+    setAsking(true);
+  };
+  const keepEditing = () => {
+    setAsking(false);
+    // After the question's own cleanup has restored focus to whatever it found.
+    setTimeout(() => {
+      const panel = panelRef.current;
+      if (!panel || panel.contains(document.activeElement)) return;
+      const back = returnFocusRef.current;
+      (back && panel.contains(back) ? back : getFocusable(panel)[0])?.focus();
+    }, 0);
+  };
 
   useOverlay({ open: active, onClose: requestClose, panelRef, initialFocusRef });
 
@@ -375,12 +394,13 @@ export function OverlayShell({
         ) : null}
       </div>
 
+      {/* The question is drawn by this shell, not ConfirmDialog: confirm-dialog → dialog → overlay would be a cycle. */}
       {confirmDiscard || asking ? (
         <OverlayShell
           open={asking}
-          onClose={() => setAsking(false)}
+          onClose={keepEditing}
           title="Discard your changes?"
-          description={`What you've entered in "${title}" hasn't been saved.`}
+          description="What you've entered here hasn't been saved."
           navClearance={navClearance}
           initialFocusRef={keepEditingRef}
           slot="dialog"
@@ -388,7 +408,7 @@ export function OverlayShell({
           panelClassName={DIALOG_PANEL_CLASS}
           footer={
             <>
-              <Button ref={keepEditingRef} variant="secondary" onClick={() => setAsking(false)}>
+              <Button ref={keepEditingRef} variant="secondary" onClick={keepEditing}>
                 Keep editing
               </Button>
               <Button

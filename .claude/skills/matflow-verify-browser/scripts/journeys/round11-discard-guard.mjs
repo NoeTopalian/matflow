@@ -56,7 +56,9 @@ try {
     await shot(page, "r11b-desktop-question");
     await question(page).getByRole("button", { name: "Keep editing" }).click();
     const kept = await nameBox(page).inputValue().catch(() => null);
-    L.check("desktop", "D3 Keep editing returns to the form with the name still there", !(await isOpen(question(page))) && kept === typed, { kept });
+    await page.waitForTimeout(200);
+    const focusInSheet = await classSheet(page).evaluate((el) => el.contains(document.activeElement));
+    L.check("desktop", "D3 Keep editing returns to the form with the name still there and focus inside it", !(await isOpen(question(page))) && kept === typed && focusInSheet, { kept, focusInSheet });
 
     await page.keyboard.press("Escape");
     const kAsked = await question(page).waitFor({ timeout: 10000 }).then(() => true, () => false);
@@ -98,9 +100,10 @@ try {
     await shot(page, "r11b-phone-question");
     const btn = question(page).getByRole("button", { name: "Keep editing" });
     const box = asked ? await btn.boundingBox() : null;
-    await btn.tap().catch(() => {});
+    await btn.tap();
+    const closedQ = await question(page).waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
     const kept = await nameBox(page).inputValue().catch(() => null);
-    L.check("phone", "P1 a tap above the sheet asks; Keep editing keeps the typed name", asked && kept === typed, { asked, kept });
+    L.check("phone", "P1 a tap above the sheet asks; Keep editing closes the question and keeps the typed name", asked && closedQ && kept === typed, { asked, closedQ, kept });
     L.check("phone", "P2 the question's buttons are at least 44 px tall", !!box && box.height >= 44, { box });
     await ctx.close();
   }
