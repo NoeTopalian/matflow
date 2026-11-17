@@ -146,13 +146,38 @@ describe("class form: a conflict reload keeps what was typed (Round 11, 1.1)", (
     expect(sent).toEqual(["1 18:30", "3 07:00"]); // their Wednesday kept, my Monday move applied, the old Monday gone
   });
 
-  it("a whole list is never stashed: Reload after a squad change keeps added/removed ids only", async () => {
-    await refusedEdit();
+  it("a days-and-times change is stashed as additions and removals, never as the whole list", async () => {
+    render(<TimetableManager initialClasses={[GI]} {...PROPS} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit Gi/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /Add day/ }));
+    fireEvent.change(screen.getAllByLabelText("Day of the week")[1], { target: { value: "3" } }); // a new Wednesday
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByRole("alert");
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     const kept = JSON.parse(store.get(KEY)!);
     expect(kept.form).not.toHaveProperty("schedules");
-    expect(kept.form).not.toHaveProperty("rosterMemberIds");
-    expect(kept.form).not.toHaveProperty("allowedTierIds");
+    expect(kept.lists.schedules.added).toHaveLength(1);
+    expect(kept.lists.schedules.removed).toHaveLength(0);
+  });
+
+  it("a days-and-times change is NOT put back when they removed a day it changed (review of #105, N1): their Tuesday stays deleted", async () => {
+    // Opened: Mon, Tue, Wed 18:00-19:00. I changed the duration to 90 (every row's end). They deleted Tuesday.
+    const row = (d: number, e: string) => ({ dayOfWeek: d, startTime: "18:00", endTime: e });
+    store.set(KEY, JSON.stringify({
+      classId: "c1", form: { duration: "90" }, opened: { duration: "60" },
+      lists: { schedules: { added: [row(1, "19:30"), row(2, "19:30"), row(3, "19:30")], removed: [row(1, "19:00"), row(2, "19:00"), row(3, "19:00")] } },
+      at: Date.now(),
+    }));
+    patchReply = () => ({ ok: true, status: 200, body: GI });
+    const theirs = { ...GI, schedules: [{ id: "slot-mon", ...row(1, "19:00") }, { id: "slot-wed", ...row(3, "19:00") }] };
+    render(<TimetableManager initialClasses={[theirs]} {...PROPS} />);
+    await act(async () => {});
+    expect((await screen.findByTestId("class-draft-restored")).textContent).toContain("Your days and times change was not kept");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const body = calls.find((c) => c.method === "PATCH")!.body!;
+    const sent = ((body.schedules ?? []) as Array<{ dayOfWeek: number }>).map((x) => x.dayOfWeek).sort();
+    expect(sent).not.toContain(2); // Tuesday is not brought back
   });
 
   it("a new class (nothing to reopen) does not claim Reload keeps the draft (review of #105, M1)", async () => {

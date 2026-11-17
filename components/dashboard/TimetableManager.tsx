@@ -871,11 +871,26 @@ const CLASS_FIELD_LABEL: Record<keyof ClassDraftValues, string> = {
   description: "description", requiredRankId: "required rank", maxRankId: "maximum rank", useRoster: "squad list",
   rosterMemberIds: "squad list", allowedTierIds: "who can attend", color: "colour", schedules: "days and times",
 };
-function restoredNote(d: ClassDraft): string {
-  const keys = [...(Object.keys(d.form) as (keyof ClassDraftValues)[]), ...(Object.keys(d.lists ?? {}) as (keyof ClassDraftValues)[])];
+function restoredNote(d: ClassDraft, schedulesDropped: boolean): string {
+  const keys = [
+    ...(Object.keys(d.form) as (keyof ClassDraftValues)[]),
+    ...(Object.keys(d.lists ?? {}) as (keyof ClassDraftValues)[]).filter((k) => !(schedulesDropped && k === "schedules")),
+  ];
   const labels = [...new Set(keys.map((k) => CLASS_FIELD_LABEL[k] ?? k))];
   const list = labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
-  return `Their changes are loaded. Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save. Where they changed the same thing, yours replaces theirs when you save.`;
+  const kept = labels.length
+    ? `Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save. Where they changed the same thing, yours replaces theirs when you save.`
+    : "";
+  const dropped = schedulesDropped
+    ? " Your days and times change was not kept: they changed or removed a day you had changed. The days below are theirs — make your change again."
+    : "";
+  return `Their changes are loaded. ${kept}${dropped}`.replace(/\s+/g, " ").trim();
+}
+/** A days-and-times change can only be put back when every day it changed is still as it was (review of #105, N1). */
+function schedulesRestorable(fresh: ScheduleInput[], d: ListDiff<ScheduleInput> | undefined): boolean {
+  if (!d) return true;
+  const have = new Set(fresh.map(scheduleKey));
+  return d.removed.every((x) => have.has(scheduleKey(x)));
 }
 
 function ClassForm({
@@ -1048,8 +1063,12 @@ function ClassForm({
   const [color, setColor] = useState<string | null>(rv("color", initialColour));
   // A class saved with a colour the palette does not hold keeps it: offered first, as "Current colour".
   const [ownColour] = useState(() => (initial?.color && !classColourName(initial.color) ? initial.color : null));
+  const freshSchedules = initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [];
+  // Matched by day and times, a change is safe to re-apply only while the days it changed are still there unchanged:
+  // otherwise it could bring back a day the other person removed or duplicate one they moved.
+  const [schedulesKept] = useState(() => schedulesRestorable(freshSchedules, restore?.lists?.schedules));
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
-    applyDiff(initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [], restore?.lists?.schedules, scheduleKey)
+    applyDiff(freshSchedules, schedulesKept ? restore?.lists?.schedules : undefined, scheduleKey)
   );
 
   // Round 11 (1.1): what the form holds now, and what it held when opened (for a restored field, what it held before
@@ -1076,7 +1095,7 @@ function ClassForm({
       const single = new Set(changed.filter((k) => !(LIST_KEYS as readonly string[]).includes(k)));
       // The access group travels whole; a category refusal is about the category itself, so it is never restored
       // (the reload shows the club's categories as they are now).
-      if (ACCESS_GROUP.some((k) => single.has(k))) ACCESS_GROUP.forEach((k) => single.add(k));
+      if (ACCESS_GROUP.some((k) => single.has(k)) || changed.includes("rosterMemberIds")) ACCESS_GROUP.forEach((k) => single.add(k));
       if (error?.reason === "category") single.delete("category");
       const lists: NonNullable<ClassDraft["lists"]> = {};
       if (changed.includes("schedules")) lists.schedules = listDiff(openedValues.schedules, draftValues.schedules, scheduleKey);
@@ -1282,7 +1301,7 @@ function ClassForm({
     <div className="space-y-4">
       {restore && (
         <p role="status" data-testid="class-draft-restored" className="rounded-lg px-3 py-2 text-xs" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
-          {restoredNote(restore)}
+          {restoredNote(restore, !schedulesKept)}
         </p>
       )}
       {/* Noe 2026-09-18: star what the API actually requires (name, duration)
@@ -1797,7 +1816,7 @@ function ClassForm({
             </p>
             {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then).
                 Round 6: so is a category refusal (the club's categories or this class's changed); its sentence says to reload, and an installed app has no reload control. */}
-            {(error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
+            {initial?.id && (error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
               <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="shrink-0">
                 Reload
               </Button>
