@@ -7,6 +7,7 @@
 import type { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
@@ -37,6 +38,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
   const { classId } = await ctx.params;
   const r = await resolveMember();
   if ("error" in r) return r.error;
+  // Booking a standing place reads the upcoming sessions: top the horizon up first (lib/class-horizon.ts). Never throws.
+  await ensureClassHorizon(r.tenantId);
 
   try {
     const created = await withTenantContext(r.tenantId, async (tx) => {

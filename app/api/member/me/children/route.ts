@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
@@ -53,6 +54,8 @@ export async function GET(req: Request) {
   if (!memberId) return NextResponse.json([]);
 
   const includeTimetable = new URL(req.url).searchParams.get("include") === "timetable";
+  // The children's timetable lists sessions: top the horizon up first (lib/class-horizon.ts). Never throws.
+  if (includeTimetable) await ensureClassHorizon(session.user.tenantId);
 
   try {
     const children = await withTenantContext(session.user.tenantId, (tx) =>
