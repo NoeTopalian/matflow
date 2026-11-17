@@ -17,6 +17,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { hex, readableOn } from "@/lib/color";
 import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, classColourName, classDotStyle, classInk } from "@/lib/class-colours";
+import { changedKeys, stashDraft, takeDraft } from "@/lib/draft-stash";
 import { describeApiError } from "@/lib/api-field-errors";
 import { parseIdParam } from "@/lib/id-param";
 import { duplicateSessionKeys, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
@@ -829,6 +830,28 @@ function sameTierSet(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x) => b.includes(x));
 }
 
+/** Round 11 (1.1): the class form's input fields, as kept through a conflict reload. */
+type ClassDraftValues = {
+  name: string; coachName: string; coachUserId: string; locationChoice: string; newLocation: string; locationId: string;
+  duration: string; maxCapacity: string; isKids: boolean; category: string; description: string; requiredRankId: string;
+  maxRankId: string; useRoster: boolean; rosterMemberIds: string[]; allowedTierIds: string[]; color: string | null;
+  schedules: ScheduleInput[];
+};
+type ClassDraft = { classId: string; form: Partial<ClassDraftValues>; opened: Partial<ClassDraftValues>; at: number };
+const CLASS_DRAFT_KEY = "class-edit";
+const CLASS_DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
+const CLASS_FIELD_LABEL: Record<keyof ClassDraftValues, string> = {
+  name: "name", coachName: "coach", coachUserId: "coach", locationChoice: "location", newLocation: "location",
+  locationId: "venue", duration: "duration", maxCapacity: "capacity", isKids: "kids class", category: "category",
+  description: "description", requiredRankId: "required rank", maxRankId: "maximum rank", useRoster: "squad list",
+  rosterMemberIds: "squad list", allowedTierIds: "who can attend", color: "colour", schedules: "days and times",
+};
+function restoredNote(d: ClassDraft): string {
+  const labels = [...new Set((Object.keys(d.form) as (keyof ClassDraftValues)[]).map((k) => CLASS_FIELD_LABEL[k] ?? k))];
+  const list = labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  return `Their changes are loaded. Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save. Where they changed the same thing, yours replaces theirs when you save.`;
+}
+
 function ClassForm({
   initial,
   rankSystems,
@@ -842,6 +865,7 @@ function ClassForm({
   onCancel,
   saving,
   error = null,
+  restore = null,
 }: {
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
@@ -859,10 +883,14 @@ function ClassForm({
   saving: boolean;
   /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
   error?: SaveError | null;
+  /** Round 11 (1.1): after a conflict reload, the fields this person had changed, put back on the fresh class. */
+  restore?: ClassDraft | null;
 }) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [coachName, setCoachName] = useState(initial?.coachName ?? "");
-  const [coachUserId, setCoachUserId] = useState(initial?.coachUserId ?? "");
+  // A restored field starts from what was typed before the reload; every other field from the fresh class.
+  const rv = <T,>(key: keyof ClassDraftValues, fallback: T): T => (restore && key in restore.form ? (restore.form[key] as T) : fallback);
+  const [name, setName] = useState(rv("name", initial?.name ?? ""));
+  const [coachName, setCoachName] = useState(rv("coachName", initial?.coachName ?? ""));
+  const [coachUserId, setCoachUserId] = useState(rv("coachUserId", initial?.coachUserId ?? ""));
   // Location (Noe, 7 Nov 2026): one select of the club's saved locations (its
   // mats), then the places typed on its classes that are not mats yet, "No
   // location" and "Add a new location…". A typed place or a new name is sent
@@ -872,8 +900,8 @@ function ClassForm({
   // "new", and "keep" for the class's own place when the list cannot offer
   // it (see locationChoiceOf).
   const [initialChoice] = useState(() => locationChoiceOf(initial, mats, places));
-  const [locationChoice, setLocationChoice] = useState(initialChoice);
-  const [newLocation, setNewLocation] = useState("");
+  const [locationChoice, setLocationChoice] = useState(rv("locationChoice", initialChoice));
+  const [newLocation, setNewLocation] = useState(rv("newLocation", ""));
   const locationSelect = useRef<HTMLSelectElement>(null);
   const newLocationInput = useRef<HTMLInputElement>(null);
   // A refusal is said until the Location is changed: the select or the box. The next refused save says it again.
@@ -908,7 +936,7 @@ function ClassForm({
   }
   // ADR-001 D2: the venue. The picker only appears once the club has more
   // than one location; a single-venue club never sees it.
-  const [locationId, setLocationId] = useState(initial?.locationId ?? "");
+  const [locationId, setLocationId] = useState(rv("locationId", initial?.locationId ?? ""));
   const [venues, setVenues] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
   // UI-RULES §7: a failed read is said, not shown as "one venue".
   const [venuesError, setVenuesError] = useState(false);
@@ -926,9 +954,9 @@ function ClassForm({
     })();
     return () => { alive = false; };
   }, []);
-  const [duration, setDuration] = useState(String(initial?.duration ?? 60));
-  const [maxCapacity, setMaxCapacity] = useState(String(initial?.maxCapacity ?? ""));
-  const [isKids, setIsKids] = useState<boolean>(initial?.isKids ?? false);
+  const [duration, setDuration] = useState(rv("duration", String(initial?.duration ?? 60)));
+  const [maxCapacity, setMaxCapacity] = useState(rv("maxCapacity", String(initial?.maxCapacity ?? "")));
+  const [isKids, setIsKids] = useState<boolean>(rv("isKids", initial?.isKids ?? false));
   // The class's category. Values: "" uncategorised (sent as categoryId null), "id:<id>" one of the club's
   // categories, and "key:<old key>" only when the club has no category rows yet (a club created by an older build
   // during the changeover): the server turns the old key into the club's category with that key.
@@ -936,7 +964,7 @@ function ClassForm({
   // A new class copied from one on an archived category starts uncategorised: choosing an archived category is
   // refused, only keeping one is allowed.
   const initialCategory = initial?.categoryId && !(ownCategory?.archived && !initial.id) ? `id:${initial.categoryId}` : "";
-  const [category, setCategory] = useState<string>(initialCategory);
+  const [category, setCategory] = useState<string>(rv("category", initialCategory));
   // Offered: the club's active categories, then, on an edit, the class's own one when it is archived (it may keep
   // it, never choose it again, so it says so) or when the list does not hold it yet (its name alone: a category the
   // server made since this page loaded).
@@ -953,17 +981,17 @@ function ClassForm({
     if (category.startsWith("key:")) return { category: category.slice(4), ...base };
     return { categoryId: category.startsWith("id:") ? category.slice(3) : null, ...base };
   }
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [requiredRankId, setRequiredRankId] = useState(initial?.requiredRankId ?? "");
-  const [maxRankId, setMaxRankId] = useState(initial?.maxRankId ?? "");
+  const [description, setDescription] = useState(rv("description", initial?.description ?? ""));
+  const [requiredRankId, setRequiredRankId] = useState(rv("requiredRankId", initial?.requiredRankId ?? ""));
+  const [maxRankId, setMaxRankId] = useState(rv("maxRankId", initial?.maxRankId ?? ""));
   // Task 12: per-class roster (mutually exclusive with rank gates).
   // useRoster=true switches the form into "comp class" mode: rank pickers hide,
   // member checkbox list appears. Server enforces mutual exclusion in PATCH too.
   const [useRoster, setUseRoster] = useState<boolean>(
-    Boolean(initial?.roster && initial.roster.length > 0),
+    rv("useRoster", Boolean(initial?.roster && initial.roster.length > 0)),
   );
   const [rosterMemberIds, setRosterMemberIds] = useState<string[]>(
-    initial?.roster?.map((r: { memberId: string }) => r.memberId) ?? [],
+    rv("rosterMemberIds", initial?.roster?.map((r: { memberId: string }) => r.memberId) ?? []),
   );
   const [availableMembers, setAvailableMembers] = useState<Array<{ id: string; name: string; email: string }>>([]);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -974,7 +1002,7 @@ function ClassForm({
   const [memberSearch, setMemberSearch] = useState("");
   // T6a "Who can attend": none ticked = everyone (the class stays open).
   const [allowedTierIds, setAllowedTierIds] = useState<string[]>(
-    initial?.allowedTiers?.map((t) => t.id) ?? [],
+    rv("allowedTierIds", initial?.allowedTiers?.map((t) => t.id) ?? []),
   );
   const initialTierIds = (initial?.allowedTiers ?? []).map((t) => t.id);
   // A deactivated tier still attached is shown read-only (it still admits its
@@ -991,12 +1019,37 @@ function ClassForm({
   // A new class starts on the palette's first colour. A class with no colour of its own (shown in the club's colour,
   // e.g. one an import made) has none chosen here, and keeps having none until someone picks one.
   const initialColour: string | null = initial?.id ? (initial.color ?? null) : (initial?.color ?? DEFAULT_CLASS_COLOUR);
-  const [color, setColor] = useState<string | null>(initialColour);
+  const [color, setColor] = useState<string | null>(rv("color", initialColour));
   // A class saved with a colour the palette does not hold keeps it: offered first, as "Current colour".
   const [ownColour] = useState(() => (initial?.color && !classColourName(initial.color) ? initial.color : null));
   const [schedules, setSchedules] = useState<ScheduleInput[]>(
-    initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? []
+    rv("schedules", initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [])
   );
+
+  // Round 11 (1.1): what the form holds now, and what it held when opened (for a restored field, what it held before
+  // the reload). A conflict Reload keeps only the fields that differ, so the other person's changes to anything else
+  // come from the fresh class.
+  const draftValues: ClassDraftValues = {
+    name, coachName, coachUserId, locationChoice, newLocation, locationId, duration, maxCapacity, isKids, category,
+    description, requiredRankId, maxRankId, useRoster, rosterMemberIds: [...rosterMemberIds].sort(),
+    allowedTierIds: [...allowedTierIds].sort(), color, schedules,
+  };
+  const [openedValues] = useState<ClassDraftValues>(() => ({ ...draftValues, ...(restore?.opened ?? {}) }) as ClassDraftValues);
+  const [stashRefused, setStashRefused] = useState(false);
+  function reloadKeepingEdits() {
+    if (initial?.id) {
+      const keys = changedKeys(openedValues as Record<string, unknown>, draftValues as Record<string, unknown>) as (keyof ClassDraftValues)[];
+      const draft: ClassDraft = {
+        classId: initial.id,
+        form: Object.fromEntries(keys.map((k) => [k, draftValues[k]])) as Partial<ClassDraftValues>,
+        opened: Object.fromEntries(keys.map((k) => [k, openedValues[k]])) as Partial<ClassDraftValues>,
+        at: Date.now(),
+      };
+      // Never reload after saying the draft is kept when it cannot be kept.
+      if (keys.length > 0 && !stashDraft(CLASS_DRAFT_KEY, draft)) { setStashRefused(true); return; }
+    }
+    window.location.reload();
+  }
 
   // One mode per schedule row, parallel to `schedules` (D3).
   const [rowModes, setRowModes] = useState<RowMode[]>(() => schedules.map(() => "duration"));
@@ -1182,6 +1235,11 @@ function ClassForm({
 
   return (
     <div className="space-y-4">
+      {restore && (
+        <p role="status" data-testid="class-draft-restored" className="rounded-lg px-3 py-2 text-xs" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
+          {restoredNote(restore)}
+        </p>
+      )}
       {/* Noe 2026-09-18: star what the API actually requires (name, duration)
           so a blank optional field is never mistaken for the reason a save
           failed. A schedule is optional to the API; its empty state says
@@ -1695,11 +1753,19 @@ function ClassForm({
             {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then).
                 Round 6: so is a category refusal (the club's categories or this class's changed); its sentence says to reload, and an installed app has no reload control. */}
             {(error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
-              <Button variant="secondary" size="compact" onClick={() => window.location.reload()} className="shrink-0">
+              <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="shrink-0">
                 Reload
               </Button>
             )}
           </div>
+        )}
+        {error && (error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
+          // Round 11 (1.1): said beside the server's own sentence, not inside it.
+          <p role="note" data-testid="class-form-reload-keeps" className="text-xs" style={{ color: stashRefused ? "var(--hue-danger-ink)" : "var(--tx-3)" }}>
+            {stashRefused
+              ? "This browser won't keep what you've typed through a reload: note your changes first."
+              : "Reload keeps what you've changed here."}
+          </p>
         )}
         {missing.length > 0 && (
           <p role="status" className="text-xs" style={{ color: "var(--tx-3)" }}>
@@ -1785,6 +1851,12 @@ export default function TimetableManager({
   const [lifecycleBusy, setLifecycleBusy] = useState<{ id: string; action: "pause" | "archive" | "restore" } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
+  // Round 11 (1.1): a class draft kept through a conflict reload, applied when its class's sheet opens once.
+  const [restoreDraft, setRestoreDraft] = useState<ClassDraft | null>(null);
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setRestoreDraft(null);
+  }
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
@@ -2100,6 +2172,23 @@ export default function TimetableManager({
     setDrawerOpen(true);
   }
 
+  useEffect(() => {
+    if (!canManage) return;
+    const d = takeDraft<ClassDraft>(CLASS_DRAFT_KEY);
+    if (!d || Date.now() - d.at > CLASS_DRAFT_MAX_AGE_MS) return;
+    const cls = initialClasses.find((c) => c.id === d.classId);
+    if (!cls) return;
+    // Deferred so the effect body does not set state synchronously (react-hooks/set-state-in-effect).
+    queueMicrotask(() => {
+      setRestoreDraft(d);
+      setEditTarget(cls);
+      setSaveError(null);
+      setDrawerOpen(true);
+    });
+    // Once, on the page load that follows the reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // A save that added a Location: the new mat is used at once, and the club's other classes it took are shown on it.
   // Returns what to say: classes on the timetable now on it, and the paused or archived ones that went too.
   function takeLocation(loc: LocationAdded, savedId: string, savedIsLive: boolean): string {
@@ -2204,7 +2293,7 @@ export default function TimetableManager({
       // The page's cached copy predates this save; without a refresh, browser
       // Back re-mounts the timetable from it and the change is not shown.
       router.refresh();
-      setDrawerOpen(false);
+      closeDrawer();
     } catch (err) {
       // In the form, beside the buttons — not a toast that lands on top of them.
       setSaveError({
@@ -2980,7 +3069,7 @@ export default function TimetableManager({
       <Sheet
         open={drawerOpen}
         title={editTarget ? "Edit class" : "New class"}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => closeDrawer()}
       >
         <ClassForm
           initial={editTarget}
@@ -2992,9 +3081,10 @@ export default function TimetableManager({
           places={places}
           primaryColor={primaryColor}
           onSave={handleSave}
-          onCancel={() => setDrawerOpen(false)}
+          onCancel={() => closeDrawer()}
           saving={saving}
           error={saveError}
+          restore={restoreDraft && editTarget?.id === restoreDraft.classId ? restoreDraft : null}
         />
         {/* T6b: the lifecycle actions, on the class itself as well as its card. */}
         {editTarget && canManage && (
@@ -3009,7 +3099,7 @@ export default function TimetableManager({
                 size="compact"
                 onClick={() => {
                   const target = editTarget;
-                  setDrawerOpen(false);
+                  closeDrawer();
                   void handlePause(target);
                 }}
               >
@@ -3021,7 +3111,7 @@ export default function TimetableManager({
                 size="compact"
                 onClick={() => {
                   const target = editTarget;
-                  setDrawerOpen(false);
+                  closeDrawer();
                   void handleArchive(target);
                 }}
               >
