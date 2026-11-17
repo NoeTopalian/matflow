@@ -445,8 +445,21 @@ const PROFILE_FIELD_LABEL: Record<string, string> = {
 };
 
 /** Round 11 (3.2): what a conflict reload keeps — only what this person changed. */
-type ProfileDraft = { form: Record<string, string>; attribution: AttributionValue | null; at: number };
+type ProfileDraft = {
+  /** This person's new value for each field they changed, and the value it had when they opened Edit. */
+  form: Record<string, string>;
+  opened: Record<string, string>;
+  /** The attribution groups they changed (trial runner; the sign-up credit as one group), new and as opened. */
+  attribution: Record<string, string> | null;
+  attributionOpened: Record<string, string> | null;
+  at: number;
+};
 const DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
+// The sign-up credit is one choice spread over four fields; the trial runner is separate.
+const ATTRIBUTION_GROUPS = [["trialRunById"], ["creditType", "creditedToUserId", "creditedToMemberId", "creditedToLabel"]] as const;
+// Fields whose value means something read aloud in the note (ids and codes are only named).
+const SHOWN_VALUE = new Set(["name", "email", "phone", "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth", "status"]);
+const joinList = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 export default function MemberProfile({
   member: initial,
@@ -471,6 +484,9 @@ export default function MemberProfile({
   const [staleConflict, setStaleConflict] = useState(false);
   // After that reload: which of this person's edits were put back on the fresh record.
   const [restoredNote, setRestoredNote] = useState<string | null>(null);
+  // What the edit form held when it was opened: changes are measured against this, not
+  // against `member`, which other actions (Mark as inactive) update while the form is open.
+  const editOpenedRef = useRef<{ form: ReturnType<typeof profileFormFrom>; attribution: AttributionValue } | null>(null);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
   const [form, setForm] = useState({
@@ -635,29 +651,67 @@ export default function MemberProfile({
   useEffect(() => {
     const draft = takeDraft<ProfileDraft>(`member:${initial.id}`);
     if (!draft || Date.now() - draft.at > DRAFT_MAX_AGE_MS) return;
+    // The fresh record may no longer be editable here (archived meanwhile, or a role that cannot edit).
+    if (!["owner", "manager", "admin"].includes(role) || initial.archivedAt) return;
     const keys = Object.keys(draft.form ?? {});
-    if (keys.length === 0 && !draft.attribution) return;
-    const labels = [...new Set([...keys, ...(draft.attribution ? ["attribution"] : [])].map((k) => PROFILE_FIELD_LABEL[k] ?? k))];
-    const list = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+    const attrKeys = Object.keys(draft.attribution ?? {});
+    if (keys.length === 0 && attrKeys.length === 0) return;
+    const fresh = profileFormFrom(initial) as Record<string, string>;
+    const freshAttr = attributionFromMember(initial) as unknown as Record<string, string>;
+    const labels = [...new Set([...keys, ...(attrKeys.length ? ["attribution"] : [])].map((k) => PROFILE_FIELD_LABEL[k] ?? k))];
+    // Fields both people changed: theirs is replaced by this person's, so say what theirs was.
+    const both = [...new Set([
+      ...keys.filter((k) => fresh[k] !== draft.opened?.[k]).map((k) =>
+        SHOWN_VALUE.has(k) ? `${PROFILE_FIELD_LABEL[k] ?? k} (they set “${fresh[k] || "nothing"}”)` : (PROFILE_FIELD_LABEL[k] ?? k)),
+      ...(attrKeys.some((k) => freshAttr[k] !== draft.attributionOpened?.[k]) ? [PROFILE_FIELD_LABEL.attribution] : []),
+    ])];
     // Deferred so the effect body does not set state synchronously (react-hooks/set-state-in-effect).
     queueMicrotask(() => {
+      editOpenedRef.current = { form: profileFormFrom(initial), attribution: attributionFromMember(initial) };
       setForm((f) => ({ ...f, ...draft.form }));
-      if (draft.attribution) setAttribution(draft.attribution);
+      if (attrKeys.length) setAttribution((a) => ({ ...a, ...(draft.attribution as Partial<AttributionValue>) }));
       setEditing(true);
-      setRestoredNote(`Their changes are loaded. Your ${list} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save.`);
+      setRestoredNote(
+        `Their changes are loaded. Your ${joinList(labels)} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save.` +
+        (both.length ? ` You both changed ${joinList(both)}; yours is in the form.` : ""),
+      );
     });
-  }, [initial.id]);
+  }, [initial, role]);
+
+  function openEdit() {
+    // Open on the member as it is now (a status change since the last edit included).
+    const f = profileFormFrom(member);
+    const a = attributionFromMember(member);
+    editOpenedRef.current = { form: f, attribution: a };
+    setForm(f);
+    setAttribution(a);
+    setEditing(true);
+  }
 
   function reloadKeepingEdits() {
-    const opened = profileFormFrom(member);
-    const keys = changedKeys(opened, form);
-    const attributionChanged = JSON.stringify(attributionFromMember(member)) !== JSON.stringify(attribution);
+    const opened = editOpenedRef.current ?? { form: profileFormFrom(member), attribution: attributionFromMember(member) };
+    const keys = changedKeys(opened.form, form);
+    const now = attribution as unknown as Record<string, string>;
+    const was = opened.attribution as unknown as Record<string, string>;
+    const attr: Record<string, string> = {};
+    const attrOpened: Record<string, string> = {};
+    for (const group of ATTRIBUTION_GROUPS) {
+      if (group.some((k) => now[k] !== was[k])) for (const k of group) { attr[k] = now[k]; attrOpened[k] = was[k]; }
+    }
+    const hasAttr = Object.keys(attr).length > 0;
     const draft: ProfileDraft = {
       form: Object.fromEntries(keys.map((k) => [k, form[k]])),
-      attribution: attributionChanged ? attribution : null,
+      opened: Object.fromEntries(keys.map((k) => [k, opened.form[k]])),
+      attribution: hasAttr ? attr : null,
+      attributionOpened: hasAttr ? attrOpened : null,
       at: Date.now(),
     };
-    stashDraft(`member:${member.id}`, draft);
+    if (!stashDraft(`member:${member.id}`, draft)) {
+      // Never reload after promising to keep the input when it cannot be kept.
+      setStaleConflict(false);
+      setProfileError("Someone else changed this member, and this browser won't let MatFlow keep what you've typed through a reload. Note your changes, then reload the page to see theirs.");
+      return;
+    }
     window.location.reload();
   }
 
@@ -1146,7 +1200,7 @@ export default function MemberProfile({
             />
           )}
           {canEdit && !editing && !member.archivedAt && (
-            <Button variant="secondary" onClick={() => setEditing(true)}>
+            <Button variant="secondary" onClick={openEdit}>
               <Edit2 className="size-4" />
               Edit
             </Button>
