@@ -1688,9 +1688,10 @@ export default function MemberHomePage() {
                       {upcoming.length === 0 ? (
                         // Round 11 (5.1): no link to the timetable here. Booking from it books the
                         // signed-in guardian, not this child, so the link led a parent to act on the
-                        // wrong person. The club adds a child to a class.
+                        // wrong person. The list is the child's bookings in the next 7 days, and the
+                        // sentence says exactly that.
                         <p className="text-gray-400 text-xs" data-testid="child-no-classes">
-                          {k.name} isn&apos;t on any classes yet. Ask your club to add {k.name} to a class.
+                          {k.name} has no classes booked in the next 7 days.
                         </p>
                       ) : (
                         upcoming.map((entry) => {

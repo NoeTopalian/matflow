@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage } from "@/lib/checkin-outcome";
@@ -118,7 +118,8 @@ function getWeekDays(anchor: Date): Date[] {
 function fmt(d: Date) { return d.toISOString().split("T")[0]; }
 
 /** "Mia", "Mia or Sam", "Mia, Sam or Leo". */
-function listNames(names: string[]) {
+function listNames(all: string[]) {
+  const names = [...new Set(all)];
   return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
 }
 
@@ -141,6 +142,9 @@ function EventSheet({
   childNames?: string[];
 }) {
   const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
+  const booksYouId = useId();
+  // Said before booking only: above "Unsubscribe" the booking already exists.
+  const showBooksYou = childNames.length > 0 && !isSub;
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -261,13 +265,14 @@ function EventSheet({
             </div>
           )}
 
-          {childNames.length > 0 && (
-            <p className="text-gray-600 text-xs text-center" data-testid="books-you">
+          {showBooksYou && (
+            <p id={booksYouId} className="text-xs text-center" style={{ color: "var(--member-text-muted)" }} data-testid="books-you">
               This books you, not {listNames(childNames)}.
             </p>
           )}
           <button
             onClick={onToggle}
+            aria-describedby={showBooksYou ? booksYouId : undefined}
             // A booked member can always cancel their own booking, eligible or not (D2).
             disabled={!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included")}
             className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"

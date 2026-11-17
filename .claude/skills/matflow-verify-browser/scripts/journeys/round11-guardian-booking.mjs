@@ -1,6 +1,6 @@
 // Journey: Round 11 (baseline 5.1) — a guardian is not led to book themselves when they mean their child.
 // A synthetic parent with one confirmed child who has no classes, and a synthetic adult with no children. Phone width
-// (390, touch). Member home: the child's card says to ask the club and has no link to booking. Member schedule: the
+// (390, touch). Member home: the child's card says what it lists and has no link to booking. Member schedule: the
 // parent's class sheet says "This books you, not <child>."; the adult's does not. Forced failure: the children read
 // aborted, the line is left off and booking is still offered.
 // Needs `fixture.mjs create` and `server.mjs start`.
@@ -56,7 +56,7 @@ try {
     await line.waitFor({ timeout: 15000 });
     const text = (await line.textContent())?.trim();
     const links = await line.getByRole("link").count();
-    L.check("parent", "G1 the child's card says to ask the club and has no link to the timetable", text === `${CHILD} isn't on any classes yet. Ask your club to add ${CHILD} to a class.` && links === 0, { text, links });
+    L.check("parent", "G1 the child's card says what it lists (bookings in the next 7 days) and has no link to the timetable", text === `${CHILD} has no classes booked in the next 7 days.` && links === 0, { text, links });
     await shot(page, "r11-guardian-child-card");
 
     const opened = await openSheet(page);
@@ -65,8 +65,11 @@ try {
     await shot(page, "r11-guardian-books-you");
 
     await page.route("**/api/member/me/children", (route) => route.abort("failed"));
+    const failed = page.waitForEvent("requestfailed", { predicate: (r) => r.url().includes("/api/member/me/children"), timeout: 60000 }).then(() => true, () => false);
     const reopened = await openSheet(page);
-    L.check("parent", "F1 with the children read failing, the line is left off and booking is still offered", reopened && (await booksYou(page).count()) === 0, { reopened });
+    const sawFailure = await failed;
+    await page.waitForTimeout(300);
+    L.check("parent", "F1 with the children read failing (request seen to fail), the line is left off and booking is still offered", sawFailure && reopened && (await booksYou(page).count()) === 0, { sawFailure, reopened });
     await ctx.close();
   }
 
