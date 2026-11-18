@@ -1644,16 +1644,15 @@ export default function MemberProfile({
                 </p>
               )}
               {profileError && (
-                <div className="flex items-start gap-2 rounded-[var(--r-md)] px-3 py-2" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))" }}>
-                  <p role="alert" className="flex-1 text-sm" style={{ color: "var(--hue-danger-ink)" }}>
-                    {profileError}
-                  </p>
-                  {staleConflict && (
-                    <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="shrink-0">
-                      Reload
-                    </Button>
-                  )}
-                </div>
+                <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
+                  {profileError}
+                </p>
+              )}
+              {/* Its own element under the alert, so the alert announces the sentence alone (UI-RULES §8). */}
+              {profileError && staleConflict && (
+                <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="self-start">
+                  Reload
+                </Button>
               )}
               <div className="flex gap-3 pt-1">
                 <Button onClick={saveProfile} loading={saving}>
