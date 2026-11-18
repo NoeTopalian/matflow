@@ -1694,12 +1694,12 @@ export default function MemberHomePage() {
                       style={{ borderColor: hex(primaryColor, 0.18) }}
                     >
                       {upcoming.length === 0 ? (
-                        <p className="text-gray-400 text-xs">
-                          {k.name} isn&apos;t signed up to any classes yet.{" "}
-                          <Link href="/member/schedule" className="underline" style={{ color: "var(--member-ink)" }}>
-                            View the timetable
-                          </Link>
-                          .
+                        // Round 11 (5.1): no link to the timetable here. Booking from it books the
+                        // signed-in guardian, not this child, so the link led a parent to act on the
+                        // wrong person. The list is the child's bookings in the next 7 days, and the
+                        // sentence says exactly that.
+                        <p className="text-gray-400 text-xs" data-testid="child-no-classes">
+                          {k.name} has no classes booked in the next 7 days.
                         </p>
                       ) : (
                         upcoming.map((entry) => {

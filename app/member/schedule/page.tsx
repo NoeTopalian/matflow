@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useId } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage, bookingUnconfirmedMessage } from "@/lib/checkin-outcome";
+import { linkedChildNames } from "@/lib/member-onboarding";
 import { categoryTag } from "@/lib/class-category";
 import { readableOn } from "@/lib/color";
 import { memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
@@ -117,6 +118,12 @@ function getWeekDays(anchor: Date): Date[] {
 
 function fmt(d: Date) { return d.toISOString().split("T")[0]; }
 
+/** "Mia", "Mia or Sam", "Mia, Sam or Leo". */
+function listNames(all: string[]) {
+  const names = [...new Set(all)];
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+}
+
 // ─── Event detail sheet ───────────────────────────────────────────────────────
 
 function EventSheet({
@@ -126,6 +133,7 @@ function EventSheet({
   onToggle,
   onClose,
   primaryColor,
+  childNames = [],
 }: {
   cls: ScheduleClass;
   isSub: boolean;
@@ -134,6 +142,8 @@ function EventSheet({
   onToggle: () => void;
   onClose: () => void;
   primaryColor: string;
+  /** The signed-in guardian's children: booking here books the guardian, never them (Round 11, 5.1). */
+  childNames?: string[];
 }) {
   const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
   // Round 11 (4.1): the shared overlay behaviour (components/ui/overlay.tsx)
@@ -143,6 +153,9 @@ function EventSheet({
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useOverlay({ open: true, onClose, panelRef });
+  const booksYouId = useId();
+  // Said before booking only: above "Unsubscribe" the booking already exists.
+  const showBooksYou = childNames.length > 0 && !isSub;
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -268,8 +281,14 @@ function EventSheet({
             </div>
           )}
 
+          {showBooksYou && (
+            <p id={booksYouId} className="text-xs text-center" style={{ color: "var(--member-text-muted)" }} data-testid="books-you">
+              This books you, not {listNames(childNames)}.
+            </p>
+          )}
           <button
             onClick={onToggle}
+            aria-describedby={showBooksYou ? booksYouId : undefined}
             // A booked member can always cancel their own booking, eligible or not (D2).
             // While this class's request is out the button waits but stays focusable (aria-disabled, not disabled), so a
             // keyboard user keeps their place; the page's guard ignores a press meanwhile.
@@ -674,6 +693,9 @@ export default function MemberSchedulePage() {
   const [anchor, setAnchor] = useState(today);
   const [selectedDay, setSelectedDay] = useState(today.getDay() === 0 ? 6 : today.getDay() - 1);
   const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
+  // A guardian's children (Round 11, 5.1): the class sheet says the booking is the
+  // guardian's own. A failed read only leaves that line off; booking is unaffected.
+  const [childNames, setChildNames] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [allClasses, setAllClasses] = useState<ScheduleClass[]>([]);
   // By mat or by time, and the mats. Read beside the schedule and waited for,
@@ -719,6 +741,15 @@ export default function MemberSchedulePage() {
         }
       } catch { /* localStorage unavailable in SSR / private mode — fall back to default */ }
     });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/member/me/children")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (!cancelled) setChildNames(linkedChildNames(data)); })
+      .catch(() => { /* the line stays off; booking is unaffected */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -1267,6 +1298,7 @@ export default function MemberSchedulePage() {
           onToggle={() => toggle(selectedCls.classId)}
           onClose={() => setSelected(null)}
           primaryColor={primaryColor}
+          childNames={childNames}
         />
       )}
     </div>
