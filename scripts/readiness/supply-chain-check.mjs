@@ -43,6 +43,7 @@ export const AUDIT_EXCEPTIONS = [
   // mysql2 (ADV-01/02) entries removed 16 Nov 2026: the package.json override (mysql2 ^3.24.5) lifts it past both fixes (3.22.0, 3.23.1).
   { id: "GHSA-3g3m-2fjr-6pw4", pkg: "glob", expires: "2027-01-31", reason: "glob 13.0.6 only via @sentry/nextjs -> @sentry/bundler-plugins (the build-time plugin next.config loads); not in the runtime; fix needs @sentry/nextjs 11 (major) (ADV-17)" },
   { id: "GHSA-g3hv-75wg-m249", pkg: "minimatch", expires: "2027-01-31", reason: "minimatch 10.2.6 only under that glob (ADV-17); not in the runtime (ADV-18)" },
+  { id: "GHSA-fc5q-39xc-vjpf", pkg: "picomatch", expires: "2026-12-31", reason: "ReDoS needs an attacker-chosen glob; picomatch 4.0.4 only via @sentry/nextjs -> @rollup/plugin-commonjs (build time, patterns from config); no fixed release exists (<= 4.0.7) (ADV-21)" },
 ];
 
 const pkgName = (key, v) => v.name || key.replace(/^.*node_modules\//, "");
