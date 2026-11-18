@@ -81,6 +81,26 @@ export function assertTestUrl(url, name) {
   return url;
 }
 
+/**
+ * The database a guarded run may use: the Neon test branch (default, URLs from .env.test), or an ISOLATED database on
+ * this machine (MF_DB_TARGET=isolated with MF_ISOLATED_OWNER_URL and MF_ISOLATED_RESTRICTED_URL). An isolated target is
+ * accepted only on localhost, which can never be production or the shared branch; anything else is refused.
+ */
+export function dbTargets() {
+  if ((process.env.MF_DB_TARGET ?? "test-branch") !== "isolated") {
+    const t = testEnv();
+    return { kind: "test-branch", owner: assertTestUrl(t.TEST_DATABASE_URL, "TEST_DATABASE_URL"), restricted: assertTestUrl(t.RESTRICTED_DATABASE_URL, "RESTRICTED_DATABASE_URL") };
+  }
+  const local = (name) => {
+    const url = process.env[name];
+    let host = "";
+    try { host = new URL(url).hostname; } catch { /* refused below */ }
+    if (!url || !["localhost", "127.0.0.1", "[::1]"].includes(host) || url.includes(PROD_HOST) || url.includes(TEST_HOST)) throw new Error(`refusing: ${name} is not a database on localhost (an isolated target must be local)`);
+    return url;
+  };
+  return { kind: "isolated", owner: local("MF_ISOLATED_OWNER_URL"), restricted: local("MF_ISOLATED_RESTRICTED_URL") };
+}
+
 /** A MatFlow checkout with no .env* file (Next loads .env, .env.local, .env.production, .env.production.local …). */
 export function assertWorktree() {
   const pkg = `${APP}/package.json`;

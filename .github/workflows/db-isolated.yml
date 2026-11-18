@@ -1,0 +1,116 @@
+name: DB suites (isolated database, both roles)
+
+# A fresh PostgreSQL 17 on the runner itself: the repository's migrations, an owner role and the restricted runtime
+# role with the same attributes as the Neon test branch, synthetic data only (each suite makes and removes its own).
+# The suites go through the guarded runner (.claude/skills/matflow-verify-local/scripts/db-tests.mjs), which reads the
+# connected role and the effective row-level security from Postgres before each pass.
+#
+# What this is NOT: Neon. No pooler, no TLS, a different minor version, and the database is on the same machine, so a
+# round trip costs well under a millisecond. It answers "does the code pass as both roles on the repository's schema",
+# not "how long does it take from a laptop".
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [chore/db-runner-guard]
+
+concurrency:
+  group: db-isolated-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  db-both-roles:
+    name: DB suites, owner then restricted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Throwaway credentials for a container that lives for this job only.
+      ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      MF_DB_TARGET: isolated
+      MF_ISOLATED_OWNER_URL: postgresql://mf_owner:ci_only_not_a_secret@localhost:5432/matflow_iso?schema=public
+      MF_ISOLATED_RESTRICTED_URL: postgresql://matflow_app:ci_only_not_a_secret@localhost:5432/matflow_iso?schema=public
+      MF_REPO: ${{ github.workspace }}
+      MF_OUT: ${{ github.workspace }}/.db-isolated-out
+      # One file per run on a local database takes seconds; the cap only stops a hang.
+      MF_DB_SPAWN_TIMEOUT_MS: "900000"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        env:
+          DATABASE_URL: ${{ env.MF_ISOLATED_OWNER_URL }}
+        run: npx prisma generate
+
+      # The owner mirrors the test branch's neondb_owner: NOT a superuser, BYPASSRLS, owns every table. The restricted
+      # role exists BEFORE the migrations, as it does on Neon, so the migrations that grant to it take effect.
+      - name: Create the isolated database and both roles
+        run: |
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE mf_owner LOGIN PASSWORD 'ci_only_not_a_secret' NOSUPERUSER BYPASSRLS CREATEDB CREATEROLE;
+          CREATE ROLE matflow_app LOGIN PASSWORD 'ci_only_not_a_secret';
+          GRANT matflow_app TO mf_owner;
+          CREATE DATABASE matflow_iso OWNER mf_owner;
+          SQL
+
+      - name: Apply the repository's migrations as the owner role
+        env:
+          DATABASE_URL: ${{ env.MF_ISOLATED_OWNER_URL }}
+        run: npx prisma migrate deploy
+
+      # The repository's own synthetic demo seed, as ci.yml applies it and as the test branch carries it.
+      - name: Seed synthetic demo data
+        env:
+          DATABASE_URL: ${{ env.MF_ISOLATED_OWNER_URL }}
+        run: npm run seed
+
+      - name: Grant the restricted role its runtime privileges
+        run: psql "${MF_ISOLATED_OWNER_URL%%\?*}" -v ON_ERROR_STOP=1 -f scripts/ci-create-restricted-role.sql
+
+      - name: Record the target (version, migrations, roles)
+        run: |
+          psql "${MF_ISOLATED_OWNER_URL%%\?*}" -v ON_ERROR_STOP=1 -At <<'SQL'
+          SELECT 'server ' || current_setting('server_version');
+          SELECT 'migrations applied ' || count(*) FILTER (WHERE finished_at IS NOT NULL) || ' unfinished ' || count(*) FILTER (WHERE finished_at IS NULL) FROM _prisma_migrations;
+          SELECT 'role ' || rolname || ' super=' || rolsuper || ' bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname IN ('mf_owner','matflow_app') ORDER BY 1;
+          SELECT 'tables ' || count(*) || ' rls=' || count(*) FILTER (WHERE relrowsecurity) || ' forced=' || count(*) FILTER (WHERE relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r';
+          SELECT 'table owners ' || string_agg(DISTINCT tableowner, ',') FROM pg_tables WHERE schemaname='public';
+          SQL
+          echo "migrations in the tree: $(ls -d prisma/migrations/*/ | wc -l)"
+
+      - name: DB suites through the guarded runner (owner, then restricted)
+        run: node .claude/skills/matflow-verify-local/scripts/db-tests.mjs --each --list .github/db-isolated-files.txt
+
+      - name: Keep the output of any run that did not pass
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: db-isolated-failures
+          path: .db-isolated-out/db-fail/
+          if-no-files-found: ignore
+          retention-days: 14
