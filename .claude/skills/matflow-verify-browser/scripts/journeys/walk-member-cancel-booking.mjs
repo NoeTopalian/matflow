@@ -71,7 +71,8 @@ try {
     return route.abort("failed");
   });
   await cancelButton(page).click();
-  const f1Said = await page.getByRole("alert").filter({ hasText: /unsubscribe|cancel/i }).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
+  // main says "Couldn't unsubscribe"; with #92 a lost answer says "Couldn't confirm that you're no longer booked".
+  const f1Said = await page.getByRole("alert").filter({ hasText: /unsubscribe|cancel|no longer booked/i }).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
   await page.waitForTimeout(500);
   L.check("failure", "F1 a cancel lost to the network says it did not happen, and the booking is still there", f1Said && (await booked()) === 1 && deletes === 1, { f1Said, rows: await booked(), deletes });
   await page.unroute(`**/api/member/class-subscriptions/${cls}`);
