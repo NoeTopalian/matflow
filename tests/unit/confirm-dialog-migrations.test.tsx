@@ -36,6 +36,12 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/dashboard",
 }));
+// This device's sign-out goes through lib/sign-out-client since Round 8 (16 Nov 2026): it reports whether the server
+// ended the session. Resolves true here: the server agreed.
+vi.mock("@/lib/sign-out-client", () => ({
+  SIGN_OUT_FAILED_MESSAGE: "We couldn't sign you out. Try again.",
+  signOutThisDevice: (...args: unknown[]) => signOutMock(...args),
+}));
 vi.mock("next-auth/react", () => ({
   signOut: (...args: unknown[]) => signOutMock(...args),
 }));
@@ -86,6 +92,7 @@ beforeEach(installFetch);
 afterEach(() => {
   vi.restoreAllMocks();
   signOutMock.mockReset();
+  signOutMock.mockResolvedValue(true);
 });
 
 // ── RegisterPanel: removing a check-in ───────────────────────────────────────
@@ -290,6 +297,6 @@ describe("Topbar — sign out from all devices still confirms", () => {
     await click("Sign out everywhere");
 
     expect(mutations()).toEqual(["POST /api/auth/logout-all"]);
-    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 });

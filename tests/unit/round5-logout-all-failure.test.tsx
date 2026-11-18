@@ -22,7 +22,12 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/dashboard",
 }));
-vi.mock("next-auth/react", () => ({ signOut: (...args: unknown[]) => signOutMock(...args) }));
+// This device's sign-out goes through lib/sign-out-client since Round 8 (16 Nov 2026): it reports whether the server
+// ended the session. Resolves true here: the server agreed.
+vi.mock("@/lib/sign-out-client", () => ({
+  SIGN_OUT_FAILED_MESSAGE: "We couldn't sign you out. Try again.",
+  signOutThisDevice: (...args: unknown[]) => signOutMock(...args),
+}));
 vi.mock("@/components/ui/Toast", () => ({
   useToast: () => ({ toast: toastMock }),
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -42,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   signOutMock.mockReset();
+  signOutMock.mockResolvedValue(true);
   toastMock.mockReset();
 });
 
@@ -70,7 +76,7 @@ const callers: Array<[string, () => Promise<void>]> = [
 describe.each(callers)("%s: sign out all devices", (_name, revoke) => {
   it("a confirmed revoke signs this device out", async () => {
     await revoke();
-    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(signOutMock).toHaveBeenCalledTimes(1);
     expect(toastMock).not.toHaveBeenCalled();
   });
 
@@ -95,7 +101,7 @@ describe.each(callers)("%s: sign out all devices", (_name, revoke) => {
   it("a 401 (this session is already gone) signs this device out: there is nothing left to keep", async () => {
     answer = "401";
     await revoke();
-    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(signOutMock).toHaveBeenCalledTimes(1);
     expect(toastMock).not.toHaveBeenCalled();
   });
 
@@ -111,6 +117,6 @@ describe.each(callers)("%s: sign out all devices", (_name, revoke) => {
     } else {
       await click("Sign out all devices");
     }
-    expect(signOutMock).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 });

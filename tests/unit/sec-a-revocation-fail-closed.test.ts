@@ -16,6 +16,7 @@
 // The database-backed counterpart (real pg errors on the TEST branch, both
 // roles) is tests/integration/sec-a-revocation-fail-closed-db.test.ts.
 
+import { sessionRowRaw } from "./helpers/session-row";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 type Jwt = (args: { token: Record<string, unknown>; user?: unknown }) => Promise<unknown>;
@@ -56,6 +57,7 @@ const tx = {
   user: { findUnique: h.userFindUnique, findFirst: vi.fn(), update: h.userUpdate },
   member: { findUnique: h.memberFindUnique, findFirst: vi.fn(), update: h.memberUpdate },
   tenant: { findUnique: vi.fn() },
+  $queryRaw: sessionRowRaw({ member: { findUnique: h.memberFindUnique }, user: { findUnique: h.userFindUnique } }),
 };
 vi.mock("@/lib/prisma", () => ({ prisma: tx }));
 vi.mock("@/lib/prisma-tenant", () => ({

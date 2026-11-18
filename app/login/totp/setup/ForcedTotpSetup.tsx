@@ -11,11 +11,13 @@
  * sent to the staff route (/api/auth/totp/setup), refused, and shown "Could not initialise two-factor setup".
  */
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
+import { useToast } from "@/components/ui/Toast";
 import TotpEnrollmentStep from "@/components/onboarding/TotpEnrollmentStep";
 
 export default function ForcedTotpSetup({ isMember }: { isMember: boolean }) {
   const router = useRouter();
+  const { toast } = useToast();
   // Audit N1/N2: members enrol via the member-side API mirror and land back
   // on their profile — previously this page drove the staff endpoints (401
   // for members) and redirected everyone to /dashboard.
@@ -38,7 +40,9 @@ export default function ForcedTotpSetup({ isMember }: { isMember: boolean }) {
         />
 
         <button
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          onClick={async () => {
+            if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+          }}
           className="w-full mt-4 py-3 text-sm text-center transition-colors"
           style={{ color: "rgba(255,255,255,0.3)" }}
         >
