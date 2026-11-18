@@ -21,7 +21,7 @@ on:
 
 jobs:
   dump:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned (Round 9, 16 Nov 2026): ubuntu-latest became 26.04, where Playwright refuses to install chromium
     permissions:
       contents: read
     defaults:

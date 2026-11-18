@@ -36,6 +36,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getToken, encode } from "next-auth/jwt";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/session-id";
 import { requireApiStaff, refuseSupportSession } from "@/lib/api-authz";
 import { assertSameOrigin } from "@/lib/csrf";
 import { withTenantContext } from "@/lib/prisma-tenant";
@@ -151,7 +152,7 @@ export async function PATCH(req: Request) {
   const encoded = await encode({
     token: { ...token, name: outcome.name },
     secret: AUTH_SECRET_VALUE,
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
     salt: SESSION_COOKIE_NAME,
   });
   const res = NextResponse.json({ ok: true, name: outcome.name, sessionRefreshed: true });
@@ -160,7 +161,7 @@ export async function PATCH(req: Request) {
     sameSite: "lax",
     secure: SESSION_COOKIE_SECURE,
     path: "/",
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
   return res;
 }

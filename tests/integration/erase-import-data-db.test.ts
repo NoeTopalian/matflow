@@ -220,7 +220,13 @@ describe.skipIf(!HAS_DB)("erasure reaches kept import files and diagnostics", ()
       new Request("https://test.local/api/waiver/open", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: raw, signerName: BEN.name }) }),
     )) as unknown as { status: number };
     expect(res.status).toBe(200);
-    const signed = await withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, action: KIOSK, entityId: benId } }));
+    // The route's logAudit is best-effort (it returns before the row is written), so wait for the row to land rather
+    // than read once: a single read raced the insert and failed intermittently in CI (17 Nov 2026, #104 and #106).
+    const findSigned = () => withRlsBypass((tx) => tx.auditLog.findMany({ where: { tenantId, action: KIOSK, entityId: benId } }));
+    let signed = await findSigned();
+    for (const deadline = Date.now() + 10_000; signed.length < 1 && Date.now() < deadline; signed = await findSigned()) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
     expect(signed).toHaveLength(1);
     expect(signed[0].entityType).toBe("Member");
     expect(JSON.stringify(signed)).not.toContain(BEN.email);

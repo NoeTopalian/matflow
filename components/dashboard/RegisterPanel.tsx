@@ -142,6 +142,17 @@ export default function RegisterPanel({
   const [candidatesError, setCandidatesError] = useState(false);
   const [query, setQuery] = useState("");
   const [retrying, setRetrying] = useState(false);
+  // Round 11 (2.1): a refused or failed tick is shown where it was made: under the
+  // row that was ticked, or under the search field for someone added from it. The
+  // top banner is only for the register itself failing to load; on a phone it sits
+  // off-screen when row 20 is ticked, so the coach saw "nothing happened".
+  // `from` is where the tick was made: a booked member can also be added from the search,
+  // and their refusal then belongs under the search field, where the person is typing.
+  const [markError, setMarkError] = useState<{ memberId: string; message: string; from: "row" | "search" } | null>(null);
+  // The tick button is disabled while its request runs, and a browser drops focus
+  // from a disabled control; it is given back once the button is enabled again, so
+  // a keyboard user stays on the row they ticked.
+  const focusBackRef = useRef<HTMLElement | null>(null);
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -258,6 +269,7 @@ export default function RegisterPanel({
     who?: Pick<RegisterMember, "name" | "onHold" | "holdUntil"> & {
       waiverAccepted?: boolean; cancelled?: boolean; accountType?: string | null;
     },
+    from: "row" | "search" = "row",
   ): Promise<boolean> {
     const acknowledged: Acknowledged[] = [];
     if (who?.cancelled) return false;
@@ -299,8 +311,10 @@ export default function RegisterPanel({
     // about: the server refuses a member they exclude (or whose allowance is
     // used up with no class pack to pay), and the refusal below shows its
     // sentence.
+    focusBackRef.current = currentFocus();
     setMarking(memberId);
     setError(null);
+    setMarkError(null);
     try {
       const res = await fetch("/api/checkin", {
         method: "POST",
@@ -320,7 +334,7 @@ export default function RegisterPanel({
       // with no class-pack credit) is shown in the server's own words.
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
-        setError(hasFields ? describeApiError(body) : outcome.message);
+        setMarkError({ memberId, message: hasFields ? describeApiError(body) : outcome.message, from });
         return false;
       }
       const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
@@ -329,7 +343,7 @@ export default function RegisterPanel({
       await loadRegister();
       return true;
     } catch {
-      setError("Couldn't reach MatFlow — check your signal and try again.");
+      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again.", from });
       return false;
     } finally {
       setMarking(null);
@@ -350,22 +364,42 @@ export default function RegisterPanel({
       destructive: true,
     });
     if (!confirmed) return;
+    focusBackRef.current = currentFocus();
     setMarking(memberId);
     setError(null);
+    setMarkError(null);
     try {
       const res = await fetch(`/api/checkin?classInstanceId=${instance.id}&memberId=${memberId}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(describeApiError(body));
+        setMarkError({ memberId, message: describeApiError(body), from: "row" });
         return;
       }
       await loadRegister();
     } catch {
-      setError("Couldn't reach MatFlow — check your signal and try again.");
+      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again.", from: "row" });
     } finally {
       setMarking(null);
     }
   }
+
+  function currentFocus(): HTMLElement | null {
+    const a = document.activeElement;
+    return a instanceof HTMLElement && a !== document.body ? a : null;
+  }
+
+  useEffect(() => {
+    if (marking !== null) return;
+    const back = focusBackRef.current;
+    focusBackRef.current = null;
+    const a = document.activeElement;
+    if (back?.isConnected && (!a || a === document.body)) back.focus({ preventScroll: true });
+  }, [marking]);
+
+  useEffect(() => {
+    if (!markError) return;
+    document.getElementById("register-mark-error")?.scrollIntoView?.({ block: "nearest" });
+  }, [markError]);
 
   const searchable = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -386,7 +420,7 @@ export default function RegisterPanel({
 
   async function markFromSearch(c: Candidate) {
     // F-6: the toast says what happened, so only a recorded check-in gets one.
-    const recorded = await mark(c.id, c);
+    const recorded = await mark(c.id, c, "search");
     if (recorded) {
       setQuery("");
       showToast(`Marked in: ${c.name}`, "success");
@@ -614,6 +648,7 @@ export default function RegisterPanel({
                       {medicalNotesText(m.medicalConditions)}
                     </p>
                   )}
+                  {markError?.from === "row" && markError.memberId === m.memberId && <MarkError message={markError.message} />}
                 </div>
               </li>
             );
@@ -633,7 +668,11 @@ export default function RegisterPanel({
             ref={searchRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // A search refusal is about the name that was typed; editing the search ends it.
+              if (markError?.from === "search") setMarkError(null);
+            }}
             onKeyDown={(e) => {
               if (e.key !== "Enter") return;
               e.preventDefault();
@@ -653,6 +692,7 @@ export default function RegisterPanel({
         <p id="register-search-hint" className="text-[11px] text-tx-3">
           Tap a name to mark them in. When only one name matches, Enter marks it.
         </p>
+        {markError?.from === "search" && <MarkError message={markError.message} />}
         {candidatesError && (
           <p role="alert" className="text-xs" style={{ color: "var(--hue-danger)" }}>
             Couldn&rsquo;t load the member list — the register above still works.{" "}
@@ -717,5 +757,20 @@ export default function RegisterPanel({
 
       <ConfirmDialog {...dialogProps} />
     </div>
+  );
+}
+
+function MarkError({ message }: { message: string }) {
+  return (
+    <p
+      id="register-mark-error"
+      role="alert"
+      className="mt-2 flex scroll-mb-28 items-start gap-1.5 rounded-[var(--r-sm)] border px-2 py-1.5 text-xs md:scroll-mb-0"
+      style={{ borderColor: tint("var(--hue-danger)", 25), background: tint("var(--hue-danger)", 6), color: "var(--hue-danger-ink)" }}
+      data-testid="register-mark-error"
+    >
+      <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+      <span>{message}</span>
+    </p>
   );
 }

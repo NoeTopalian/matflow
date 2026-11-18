@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
 import { getToken, encode } from "next-auth/jwt";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/session-id";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
     const encoded = await encode({
       token: newToken,
       secret: AUTH_SECRET_VALUE,
-      maxAge: 30 * 24 * 60 * 60,
+      maxAge: SESSION_MAX_AGE_SECONDS,
       salt: SESSION_COOKIE_NAME,
     });
     const res = NextResponse.json({ ok: true, recoveryCodes: verifyResult.recoveryCodes });
@@ -193,7 +194,7 @@ export async function POST(req: NextRequest) {
       sameSite: "lax",
       secure: SESSION_COOKIE_SECURE,
       path: "/",
-      maxAge: 30 * 24 * 60 * 60,
+      maxAge: SESSION_MAX_AGE_SECONDS,
     });
     return res;
   }
