@@ -4,10 +4,11 @@
 // and says so; the retry sends exactly one request and removes it; reload shows it gone; the member books it again by
 // keyboard alone; at phone width the sheet's action is reachable without sideways scroll.
 // Outcomes only (row in the database, what the page says), not the mechanism: main flips the button optimistically and
-// rolls back, the Round 7 branch waits for the answer; both must satisfy every check here.
+// rolls back, the Round 7 branch waits for the answer; both must satisfy every check here. K3 (Escape closes the
+// sheet) needs #97 (Round 11), which adds Escape to the member sheet; without #97 K3 fails, as it should.
 // Needs `fixture.mjs create` and `server.mjs start` (or run-journeys.mjs).
 import { randomUUID } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, memberLogin, memberSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, memberLogin, memberSignIn, focusRing } from "../lib.mjs";
 
 const club = state.club;
 if (!club) throw new Error("no fixture — run: node fixture.mjs create");
@@ -32,7 +33,8 @@ await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime
 await q(`insert into "ClassSubscription" (id, "memberId", "classId") values ($1, $2, $3)`, [randomUUID(), member.id, cls]);
 const booked = async () => Number((await q(`select count(*)::int as n from "ClassSubscription" where "memberId" = $1 and "classId" = $2`, [member.id, cls]))[0].n);
 
-const isSubscriptionCall = (url, method) => new URL(url).pathname === `/api/member/class-subscriptions/${cls}` && (!method || true);
+const isSubscriptionCall = (url) => new URL(url).pathname === `/api/member/class-subscriptions/${cls}`;
+const failAlerts = (page) => page.getByRole("alert").filter({ hasText: /unsubscribe|cancel|no longer booked/i });
 async function openSheet(page) {
   const block = page.getByRole("button", { name: new RegExp(`^${NAME}, `) }).first();
   await block.waitFor({ timeout: 60000 });
@@ -72,11 +74,14 @@ try {
   });
   await cancelButton(page).click();
   // main says "Couldn't unsubscribe"; with #92 a lost answer says "Couldn't confirm that you're no longer booked".
-  const f1Said = await page.getByRole("alert").filter({ hasText: /unsubscribe|cancel|no longer booked/i }).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
+  const f1Said = await failAlerts(page).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
   await page.waitForTimeout(500);
   L.check("failure", "F1 a cancel lost to the network says it did not happen, and the booking is still there", f1Said && (await booked()) === 1 && deletes === 1, { f1Said, rows: await booked(), deletes });
   await page.unroute(`**/api/member/class-subscriptions/${cls}`);
   await closeSheet(page);
+  // F1's message (a toast lasts 3.5 s) must be gone, so F2 can only pass on its own message.
+  await failAlerts(page).first().waitFor({ state: "hidden", timeout: 15000 }).catch(() => {});
+  const staleBefore = await failAlerts(page).count();
 
   // F2: the server refuses (500). Same outcome.
   await openSheet(page);
@@ -88,9 +93,9 @@ try {
     return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Internal error" }) });
   });
   await cancelButton(page).click();
-  const f2Said = await page.getByRole("alert").filter({ hasText: /unsubscribe|cancel/i }).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
+  const f2Said = await failAlerts(page).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
   await page.waitForTimeout(500);
-  L.check("failure", "F2 a cancel the server refuses says so, and the booking is still there", f2Said && (await booked()) === 1 && deletes === 1, { f2Said, rows: await booked(), deletes });
+  L.check("failure", "F2 a cancel the server refuses says so (its own message, not F1's), and the booking is still there", staleBefore === 0 && f2Said && (await booked()) === 1 && deletes === 1, { staleBefore, f2Said, rows: await booked(), deletes });
   await page.unroute(`**/api/member/class-subscriptions/${cls}`);
   const stillOffered = await cancelButton(page).isVisible().catch(() => false);
   L.check("failure", "F3 after the failure the sheet still offers cancelling (it does not pretend the cancel worked)", stillOffered);
@@ -123,16 +128,19 @@ try {
     await page.keyboard.press("Tab");
     reached = await bookButton(page).evaluate((el) => el === document.activeElement).catch(() => false);
   }
-  const ring = reached ? await bookButton(page).evaluate((el) => { const s = getComputedStyle(el); return s.outlineStyle !== "none" || s.boxShadow !== "none"; }) : false;
-  L.check("keyboard", "K1 Tab reaches the booking action inside the open sheet, with a visible focus indicator", reached && ring, { reached, ring });
+  const ring = reached ? await focusRing(bookButton(page)) : null;
+  const ringOk = !!ring && ring.focusVisible && ring.style !== "none" && ring.width >= 1 && ring.contrast >= 3;
+  L.check("keyboard", "K1 Tab reaches the booking action inside the open sheet, with a visible focus ring (≥ 1 px, ≥ 3:1)", reached && ringOk, { reached, ring });
   const posted = page.waitForResponse((r) => r.request().method() === "POST" && isSubscriptionCall(r.url()), { timeout: 60000 });
   await page.keyboard.press("Enter");
   const p = await posted;
   await page.waitForTimeout(500);
   L.check("keyboard", "K2 Enter books the class and the row exists", p.ok() && (await booked()) === 1, { status: p.status(), rows: await booked() });
+  // The sheet is open (it now offers cancelling); Escape must close it.
+  const openBefore = await cancelButton(page).waitFor({ timeout: 15000 }).then(() => true, () => false);
   await page.keyboard.press("Escape");
-  const sheetClosed = await cancelButton(page).isHidden({ timeout: 5000 }).catch(() => false);
-  L.check("keyboard", "K3 Escape closes the sheet", sheetClosed);
+  const sheetClosed = await cancelButton(page).waitFor({ state: "hidden", timeout: 5000 }).then(() => true, () => false);
+  L.check("keyboard", "K3 Escape closes the open sheet", openBefore && sheetClosed, { openBefore, sheetClosed });
 
   // M: phone width, the member's real device. No sideways scroll; the cancel action is reachable and tappable.
   const phone = await context(browser, "10.131.0.2", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState() });

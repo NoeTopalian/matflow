@@ -26,6 +26,8 @@ const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: 
 const parts = Object.fromEntries(fmt.formatToParts(new Date()).map((p) => [p.type, p.value]));
 const todayMarker = new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00.000Z`);
 const TIME = `${parts.hour}:00`;
+// A real hour-long session that started this hour (a zero-length one is not a class anyone runs).
+const END = Number(parts.hour) === 23 ? "23:59" : `${String(Number(parts.hour) + 1).padStart(2, "0")}:00`;
 const CLASS = `Coach Walk ${TAG}`;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -33,8 +35,8 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const tier = randomUUID(), classId = randomUUID(), instanceId = randomUUID(), otherClass = randomUUID(), otherInst = randomUUID();
 await q(`insert into "MembershipTier" (id, "tenantId", name, "pricePence", currency, "billingCycle", "classLimit", "classLimitBasis", "updatedAt") values ($1, $2, $3, 0, 'GBP', 'monthly', 1, 'week', now())`, [tier, tenantId, `Once Weekly ${TAG}`]);
 await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, $3, 60, 50), ($4, $2, $5, 60, 50)`, [classId, tenantId, CLASS, otherClass, `Earlier ${TAG}`]);
-await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, $3, $4, $4)`, [randomUUID(), classId, todayMarker.getUTCDay(), TIME]);
-await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, $4, $4), ($5, $6, $3, '06:00', '07:00')`, [instanceId, classId, todayMarker, TIME, otherInst, otherClass]);
+await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, $3, $4, $5)`, [randomUUID(), classId, todayMarker.getUTCDay(), TIME, END]);
+await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, $4, $7), ($5, $6, $3, '06:00', '07:00')`, [instanceId, classId, todayMarker, TIME, otherInst, otherClass, END]);
 const members = {};
 for (const key of ["Eligible", "Used", "Retry"]) {
   const id = randomUUID(), name = `${key} ${TAG}`;
@@ -62,7 +64,8 @@ try {
   L.check("journey", "C1 the coach signs in on a phone through the real form, without an authenticator", !new URL(page.url()).pathname.startsWith("/login"), new URL(page.url()).pathname);
 
   await page.goto("/dashboard/timetable");
-  const onTimetable = await page.getByText(CLASS).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
+  // The page also holds the hidden phone or desktop layout; match the copy that is on screen.
+  const onTimetable = await page.getByText(CLASS).filter({ visible: true }).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
   L.check("journey", "C2 today's class is on the coach's timetable", onTimetable);
   const t = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
   L.check("mobile", "M1 the timetable at phone width has no horizontal page scroll", t.scroll <= t.width + 1, t);
@@ -92,7 +95,8 @@ try {
   const said = await refusal.waitFor({ timeout: 20000 }).then(() => true, () => false);
   const text = said ? (await refusal.textContent())?.trim() : null;
   L.check("refusal", "A2 the server refuses the member whose weekly class is used (4xx), and nothing is stored", !a2r.ok() && a2r.status() < 500 && (await stored(members.Used)) === 0, { status: a2r.status(), rows: await stored(members.Used) });
-  L.check("refusal", "A3 the refusal names the member and says why, on screen", said && !!text && text.includes(members.Used.name), { text });
+  // The weekly-allowance reason ("… has used …"), not another refusal that ends the same way (no renewal date).
+  L.check("refusal", "A3 the refusal names the member and says the weekly class is used, on screen", said && !!text && text.includes(members.Used.name) && /has used/.test(text), { text });
   await shot(page, "walk-coach-refusal");
 
   // F1: the network drops a tick. Told; nothing stored. R1: the retry stores it exactly once.
@@ -120,15 +124,19 @@ try {
   page.off("request", onReq);
   L.check("retry", "R1 the retry sends one request and stores the attendance exactly once", sent.length === 1 && rr.ok() && (await stored(members.Retry)) === 1, { requests: sent.length, status: rr.status(), rows: await stored(members.Retry) });
   await page.reload();
-  await page.getByRole("button", { name: new RegExp(`${esc(TIME)} · ${esc(CLASS)}`) }).first().click({ timeout: 90000 }).catch(() => {});
-  // After reload the tick no longer offers "Mark … attended" for the stored member.
-  await tick(page, members.Eligible).or(page.getByRole("button", { name: new RegExp(esc(members.Eligible.name)) })).first().waitFor({ timeout: 60000 }).catch(() => {});
+  await page.getByRole("button", { name: new RegExp(`${esc(TIME)} · ${esc(CLASS)}`) }).first().click({ timeout: 90000 });
+  // After reload the register shows the retried member as marked: its button now offers "Mark … absent", pressed.
+  const marked = page.getByRole("button", { name: `Mark ${members.Retry.name} absent`, exact: true });
+  const shownMarked = await marked.waitFor({ timeout: 60000 }).then(() => true, () => false);
+  const pressed = shownMarked ? await marked.getAttribute("aria-pressed") : null;
   const stillOffersMark = await tick(page, members.Retry).isVisible().catch(() => false);
-  L.check("retry", "R2 after reload the retried member is shown as marked (no 'Mark … attended' offered)", !stillOffersMark, { stillOffersMark });
+  L.check("retry", "R2 after reload the retried member is shown as marked (Mark … absent, pressed; no Mark … attended)", shownMarked && pressed === "true" && !stillOffersMark, { shownMarked, pressed, stillOffersMark });
 
-  // P1: within existing permissions — the server refuses a coach an owner-only change.
-  const p1 = await page.request.patch(`${BASE}/api/settings`, { data: { name: "Coach rename attempt" }, failOnStatusCode: false });
-  L.check("permissions", "P1 the server refuses a coach an owner-only settings change (401/403)", p1.status() === 401 || p1.status() === 403, { status: p1.status() });
+  // P1: within existing permissions — the server refuses a coach an owner-only change, for the ROLE. The Origin header
+  // gets the request past the CSRF check, which would otherwise refuse it before the role is looked at.
+  const p1 = await page.request.patch(`${BASE}/api/settings`, { data: { name: "Coach rename attempt" }, headers: { Origin: BASE }, failOnStatusCode: false });
+  const p1Body = await p1.json().catch(() => null);
+  L.check("permissions", "P1 the server refuses a coach an owner-only settings change because of the role (403, owners only)", p1.status() === 403 && /Only owners can change gym settings/.test(p1Body?.error ?? ""), { status: p1.status(), error: p1Body?.error });
 
   const other = errors.filter((e) => !/Minified React error #418/.test(e));
   if (other.length !== errors.length) L.note("journey", "N2 pre-existing hydration text mismatch (#418) seen", errors.length - other.length);
