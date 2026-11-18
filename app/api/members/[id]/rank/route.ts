@@ -104,6 +104,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Round 4 (10 Nov 2026): the member row is held for this short
+      // transaction (lock order level 3, docs/design/LOCK-ORDER-2026-10-24.md),
+      // so two awards for one member (a double click, two coaches, a retried
+      // request) are decided one after the other: the second reads the rank
+      // the first wrote. NO KEY UPDATE does not bump updatedAt, so the
+      // profile's optimistic check is unaffected.
+      await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "id" = ${memberId} AND "tenantId" = ${session.user.tenantId} FOR NO KEY UPDATE`;
       // Audit iter-4-database A8I4-V-3 [High]: existence check only —
       // result is narrowed to { id } and `.id` itself is not used. Select
       // minimum to keep credential material out of the process heap.
@@ -125,6 +132,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
         include: { rankSystem: true },
       });
+
+      // Round 4: the member already holds exactly this belt and these stripes
+      // (the same award sent twice: a double click, or a retry after a lost
+      // reply). Nothing changes, so no history row, audit entry or
+      // notification is written a second time.
+      if (existingRank && existingRank.rankSystemId === rankSystemId && existingRank.stripes === stripes) {
+        return { kind: "unchanged" as const, value: existingRank };
+      }
 
       if (existingRank) {
         const updated = await tx.memberRank.update({
@@ -188,7 +203,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (result.kind === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
     if (result.kind === "no-rank") return NextResponse.json({ error: "Rank not found" }, { status: 404 });
 
-    await logAudit({
+    if (result.kind !== "unchanged") await logAudit({
       tenantId: session.user.tenantId,
       userId: session.user.id,
       action: "member.rank.promote",
@@ -204,7 +219,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       req,
     });
 
-    if (parsed.data.photoUrl && result.kind === "updated") {
+    // The same photo sent again with an unchanged award (a retry) is already
+    // attached; a different photo on an unchanged award is a deliberate
+    // replacement and goes through as before.
+    const photoAlreadyAttached = !!parsed.data.photoUrl && result.kind === "unchanged" &&
+      !!(await withTenantContext(session.user.tenantId, (tx) =>
+        tx.memberPhoto.findFirst({
+          where: { tenantId: session.user.tenantId, memberRankId: result.value.id, kind: "promotion", replacedAt: null, url: parsed.data.photoUrl! },
+          select: { id: true },
+        }),
+      ));
+    const attachPhoto = !!parsed.data.photoUrl && !photoAlreadyAttached;
+
+    if (attachPhoto && result.kind !== "created") {
       // The new promotion photo replaces the old one on the page. The old rows and
       // their files are KEPT (product rule, Noe, 6 Nov 2026: "nothing should be
       // automatically deleted"), marked replaced and hidden from every photo list.
@@ -218,7 +245,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    if (parsed.data.photoUrl) {
+    if (attachPhoto) {
       await withTenantContext(session.user.tenantId, (tx) =>
         tx.memberPhoto.create({
           data: {
@@ -247,13 +274,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
     }
 
-    void sendPushToMember(session.user.tenantId, memberId, {
+    if (result.kind !== "unchanged") void sendPushToMember(session.user.tenantId, memberId, {
       title: "Belt promotion!",
       body: `You've been awarded ${result.value.rankSystem.name}${result.value.stripes ? ` · ${result.value.stripes} stripe${result.value.stripes !== 1 ? "s" : ""}` : ""}.`,
       url: "/member/profile",
     });
 
-    return NextResponse.json(result.value, { status: result.kind === "updated" ? 200 : 201 });
+    return NextResponse.json(result.value, { status: result.kind === "created" ? 201 : 200 });
   } catch {
     return NextResponse.json({ error: "Failed to assign rank" }, { status: 500 });
   }

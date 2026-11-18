@@ -57,6 +57,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     const result = await withTenantContext(tenantId, async (tx) => {
+      // Round 4 (10 Nov 2026): the member row is held (lock order level 3) so
+      // two demotions of one member are decided one after the other.
+      await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "id" = ${memberId} AND "tenantId" = ${tenantId} FOR NO KEY UPDATE`;
       // Audit iter-4-database A8I4-V-4 [High]: select only the fields used
       // downstream (id, email, name for the rank_demoted email template).
       // Was bare findFirst pulling all sensitive scalars.
@@ -78,6 +81,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
         include: { rankSystem: true },
       });
+
+      // Round 4: already on this belt with no stripes (the same demotion sent
+      // twice: a double click, or a retry after a lost reply). Nothing
+      // changes, so no history row, audit entry or email is repeated.
+      if (existingRank && existingRank.rankSystemId === toRankId && existingRank.stripes === 0) {
+        return { kind: "unchanged" as const, value: existingRank };
+      }
 
       // D2: the member's highest rank order (any discipline, the door's read)
       // before this demotion, so the classes it NEWLY turns them away from
@@ -182,6 +192,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (result.kind === "no-member") return NextResponse.json({ error: "Member not found" }, { status: 404 });
     if (result.kind === "no-rank") return NextResponse.json({ error: "Rank not found" }, { status: 404 });
+    if (result.kind === "unchanged") {
+      return NextResponse.json({ ok: true, memberRank: result.value, cancelledSubscriptions: 0, bookingsKeptIneligibleClassIds: [] });
+    }
 
     await logAudit({
       tenantId,

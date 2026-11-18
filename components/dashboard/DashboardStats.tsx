@@ -51,6 +51,8 @@ export type UserTask = {
 };
 
 interface Props {
+  /** Today in the club's zone ("YYYY-MM-DD"), from the server. */
+  todayKey?: string;
   stats: {
     totalActive: number;
     newThisMonth: number;
@@ -101,15 +103,15 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function todayKey() {
-  return new Date().toISOString().split("T")[0];
-}
-
-function formatDate() {
-  return new Date().toLocaleDateString("en-GB", {
+// Today is the club's day ("YYYY-MM-DD" from the server, Round 3, 10 Nov
+// 2026): the classes are the club's week, so a UTC or browser "today" could
+// fall outside it and show an empty day.
+function formatDate(dayKey: string) {
+  return new Date(`${dayKey}T12:00:00Z`).toLocaleDateString("en-GB", {
     weekday: "long",
     day: "numeric",
     month: "long",
+    timeZone: "UTC",
   });
 }
 
@@ -236,6 +238,7 @@ export default function DashboardStats({
   actionItems = [],
   currentUserId = "",
   currentUserRole = "",
+  todayKey = new Date().toISOString().slice(0, 10),
 }: Props) {
   const firstName = (userName ?? "").split(" ")[0] || "My";
   const todoListLabel = `${firstName}'s To Do List`;
@@ -284,9 +287,10 @@ export default function DashboardStats({
       setCompleting(null);
     }
   }
-  const today = todayKey();
+  const today = todayKey;
   const todayClasses = classes.filter((cls) => cls.date === today);
-  const bookedToday = todayClasses.reduce((sum, cls) => sum + cls.enrolled, 0);
+  // `enrolled` is the session's attendance count (app/dashboard/page.tsx: _count.attendances), so say so.
+  const checkedInToday = todayClasses.reduce((sum, cls) => sum + cls.enrolled, 0);
   const spacesLeft = todayClasses.reduce((sum, cls) => {
     if (!cls.capacity) return sum;
     return sum + Math.max(cls.capacity - cls.enrolled, 0);
@@ -353,7 +357,7 @@ export default function DashboardStats({
             Today at {tenantName}
           </h1>
           <p className="text-sm mt-1" style={{ color: "var(--tx-3)" }}>
-            {formatDate()}
+            {formatDate(todayKey)}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -437,7 +441,7 @@ export default function DashboardStats({
         <MetricCard
           label="Today's Classes"
           value={todayClasses.length}
-          detail={`${bookedToday} booked${spacesLeft > 0 ? ` · ${spacesLeftText(spacesLeft)}` : ""}`}
+          detail={`${checkedInToday} checked in${spacesLeft > 0 ? ` · ${spacesLeftText(spacesLeft)}` : ""}`}
           color={primaryColor}
           icon={CalendarCheck}
           href="/dashboard/coach"

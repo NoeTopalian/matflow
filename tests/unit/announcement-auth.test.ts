@@ -3,6 +3,11 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // Lane 1 iter-1 CSRF-sweep follow-up: short-circuit the guard so test
 // Requests (which carry no browser-set Origin header) don't 403.
 vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
+// Round 4: the route's dedupe hit is allowed here (its DB test covers it); the rest of the module stays real.
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
+}));
 
 
 vi.mock("next/server", () => ({

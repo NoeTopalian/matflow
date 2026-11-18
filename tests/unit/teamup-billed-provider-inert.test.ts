@@ -43,7 +43,7 @@ vi.mock("@/lib/csrf", () => ({ assertSameOrigin: () => null }));
 vi.mock("@/lib/api-authz", () => ({ requireApiOwnerOrManager: async () => ({ ok: true, tenantId: "t1", userId: "u1", role: "owner" }) }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: m.audit }));
 vi.mock("@/lib/email", () => ({ sendEmail: m.sendEmail }));
-vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }), getClientIp: () => "203.0.113.9" }));
+vi.mock("@/lib/rate-limit", () => ({ resetRateLimit: async () => {}, checkRateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }), getClientIp: () => "203.0.113.9" }));
 vi.mock("@/lib/env-url", () => ({ getBaseUrl: () => "http://localhost:3000" }));
 vi.mock("@/lib/api-error", () => ({ apiError: (message: string, status: number) => ({ status, json: async () => ({ error: message }) }) }));
 vi.mock("stripe", () => ({ default: class { constructor() { return throwingStripe(); } } }));

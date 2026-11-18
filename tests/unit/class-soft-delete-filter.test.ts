@@ -27,7 +27,11 @@ vi.mock("@/auth", () => ({
 const mockPrisma = {
   class: { findMany: vi.fn(), findFirst: vi.fn() },
   // Round-3 day-marker migration: the generate routes read the club zone.
-  tenant: { findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
+  tenant: {
+    findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }),
+    // Round 6: the timetable page reads the club's zone for its "today".
+    findUnique: vi.fn().mockResolvedValue({ timezone: "Pacific/Kiritimati" }),
+  },
   classInstance: { findMany: vi.fn(), createMany: vi.fn() },
   classSubscription: { findMany: vi.fn() },
   classRoster: { findMany: vi.fn(), groupBy: vi.fn() },
@@ -124,6 +128,13 @@ describe("Task 3e — every Class reader filters deletedAt", () => {
       isActive: true,
       deletedAt: null,
     });
+  });
+
+  it("Round 6: the staff timetable page hands the club's own time zone to the timetable, read for this club only", async () => {
+    const TimetablePage = (await import("@/app/dashboard/timetable/page")).default;
+    const el = (await TimetablePage()) as { props: { timeZone?: string } };
+    expect(el.props.timeZone).toBe("Pacific/Kiritimati");
+    expect(mockPrisma.tenant.findUnique).toHaveBeenCalledWith({ where: { id: "t1" }, select: { timezone: true } });
   });
 
   it("POST /api/instances/generate does not mint instances for a removed class", async () => {

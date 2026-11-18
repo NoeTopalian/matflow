@@ -43,6 +43,8 @@ const mockPrisma = {
   membershipTier: { findMany: vi.fn().mockResolvedValue([]) },
   // Club-managed categories: the timetable page reads the club's categories for the class form.
   classCategory: { findMany: vi.fn().mockResolvedValue([]) },
+  // Round 6: the timetable page reads the club's zone for its "today".
+  tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

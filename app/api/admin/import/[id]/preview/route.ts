@@ -101,6 +101,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const toReviewDiffers = count("conflict");
       const toReviewUncertain = count("ambiguous");
       const repeatedInFile = count("repeat");
+      // Rows (not addresses) a staff login refuses: the commit refuses each row, so the two counts are the same unit
+      // (Round 7 review F1: two rows on one staff address were 1 here and 2 at commit).
+      const staffLoginRefused = drafts.filter((d) => staffHeld.has(d.email)).length;
+      // People this job already created on an earlier, interrupted run (a preview of a failed job): the commit counts
+      // them among its creations, so the comparison after the commit adds them back (Round 7 review F2).
+      const ownAtPreview = count("own");
       const s = {
         totalRows,
         validRows: drafts.length,
@@ -111,15 +117,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         sameAsMatFlow,
         toReviewDiffers,
         toReviewUncertain,
-        staffLoginRefused: staffHeld.size,
+        staffLoginRefused,
         childrenWithoutParent,
         repeatedInFile,
+        ownAtPreview,
         // Of those who will be imported: with the plan the file names, and
         // without one (listed after the import for staff to assign), by label and reason.
         willImportWithPlan: planDecisions.filter((p) => p.kind === "assign").length,
         willImportWithoutPlan: planDecisions.filter((p) => p.kind === "review").length,
         planReview: tallyPlanReview(planDecisions),
-        willSkip: sameAsMatFlow + toReviewDiffers + toReviewUncertain + repeatedInFile + staffHeld.size + childrenWithoutParent + errors.length,
+        willSkip: sameAsMatFlow + toReviewDiffers + toReviewUncertain + repeatedInFile + staffLoginRefused + childrenWithoutParent + errors.length,
         sampleDrafts: drafts.slice(0, 5).map((d) => ({
           name: d.name,
           email: d.nonContactable ? "(no email)" : d.email,

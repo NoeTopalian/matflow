@@ -24,6 +24,7 @@ import { MemberAppCheckinSetting } from "@/components/dashboard/MemberAppCheckin
 import { StaffUnlockControl } from "@/components/dashboard/UnlockSignIn";
 import { StaffTotpResetControl } from "@/components/dashboard/StaffTotpReset";
 import { ContactEmailSection } from "@/components/dashboard/ContactEmailSection";
+import { SettingsConflictNotice } from "@/components/dashboard/SettingsConflictNotice";
 import LoginEmailCard from "@/components/dashboard/LoginEmailCard";
 import ProfileCard from "@/components/dashboard/ProfileCard";
 import PasswordCard from "@/components/dashboard/PasswordCard";
@@ -36,7 +37,7 @@ import DataRequests from "@/components/dashboard/DataRequests";
 import { formatDate } from "@/lib/date";
 import type { TenantSettings, StaffMember, SettingsPopulationCounts } from "@/app/dashboard/settings/page";
 import { POPULATION_COPY } from "@/lib/member-population";
-import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText } from "@/lib/waiver-editor";
+import { waiverEditorStart, waiverSaveValues, defaultWaiverText, type WaiverText, type WaiverKind } from "@/lib/waiver-editor";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { cyclePriceSuffix } from "@/lib/billing-cycle";
@@ -154,17 +155,74 @@ type RevenueSummary = {
   mrr: number;
   arr: number;
   activeMembers: number;
-  avgPerMember: number;
+  avgPerMember: number | null;
   growth: number;
   history: { month: string; revenue: number }[];
   memberships: { name: string; price: number | null; cycle?: string | null; count: number; color: string }[];
-  recent: { name: string; action: string; tier: string; date: string }[];
+  recent: { name: string; action: string; status?: string; tier: string; date: string }[];
 };
 
+/**
+ * The branding fields whose value differs from the server-confirmed one.
+ * Only these go in the PATCH: the API leaves an omitted field untouched, so
+ * nothing the owner did not change can be written back.
+ */
+export function brandingChanges(
+  saved: Record<string, string | null>,
+  next: Record<string, string | null>,
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(next)) {
+    if (saved[k] !== v) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The values a settings save expects to replace (Round 4, CONCURRENCY-1): for
+ * each field being sent, the one the server last confirmed. The route writes
+ * a field only while the club still holds that value.
+ */
+export function expectedFor(
+  saved: Record<string, string | null | undefined>,
+  changed: Record<string, unknown>,
+): Record<string, string | null> {
+  return Object.fromEntries(Object.keys(changed).map((k) => [k, saved[k] ?? null]));
+}
+
+export type SettingsConflicts = { field: string; current: unknown }[];
+
+/** A 409 `stale_settings` body's conflicts, or null for any other answer. */
+export function settingsConflictsOf(status: number, body: unknown): SettingsConflicts | null {
+  if (status !== 409 || !body || typeof body !== "object") return null;
+  const b = body as { reason?: unknown; conflicts?: unknown };
+  if (b.reason !== "stale_settings" || !Array.isArray(b.conflicts)) return null;
+  return b.conflicts.filter((c): c is { field: string; current: unknown } => !!c && typeof (c as { field?: unknown }).field === "string");
+}
+
+/** The editor's branding when the club has none saved (one place, so a "use the latest" reset matches the first load). */
+const BRANDING_FALLBACK = { secondaryColor: "#2563eb", textColor: "#ffffff", bgColor: "#111111", fontFamily: "Inter, sans-serif" } as const;
+
 const EMPTY_REVENUE: RevenueSummary = {
-  mrr: 0, arr: 0, activeMembers: 0, avgPerMember: 0, growth: 0,
+  mrr: 0, arr: 0, activeMembers: 0, avgPerMember: null, growth: 0,
   history: [], memberships: [], recent: [],
 };
+
+// "Recent payments" is Payment rows (route: recentPayments), not membership
+// movements. Each row is labelled by its payment status; the older `action`
+// ("joined" = not failed/refunded, "cancelled" = failed or refunded) is only
+// the fallback for a response without `status`. A payment is never described
+// as a join, and a refund or failure is never described as a cancellation.
+export function paymentStatusLabel(status: string | undefined, action: string): string {
+  switch (status) {
+    case "succeeded": return "Paid";
+    case "pending": return "Pending";
+    case "failed": return "Failed";
+    case "refunded": return "Refunded";
+    case "disputed": return "Disputed";
+    default: return action === "cancelled" ? "Failed or refunded" : "Payment recorded";
+  }
+}
 
 function hex(h: string, a: number) {
   const n = parseInt(h.replace("#", ""), 16);
@@ -703,17 +761,62 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   // Branding state
   const [gymName, setGymName]           = useState(settings?.name ?? "");
   const [primaryCol, setPrimaryCol]     = useState(settings?.primaryColor   ?? primaryColor);
-  const [secondaryCol, setSecondaryCol] = useState(settings?.secondaryColor ?? "#2563eb");
-  const [textCol, setTextCol]           = useState(settings?.textColor      ?? "#ffffff");
-  const [bgCol, setBgCol]               = useState("#111111");
-  const [fontFamily, setFontFamily]     = useState("Inter, sans-serif");
+  const [secondaryCol, setSecondaryCol] = useState<string>(settings?.secondaryColor ?? BRANDING_FALLBACK.secondaryColor);
+  const [textCol, setTextCol]           = useState<string>(settings?.textColor      ?? BRANDING_FALLBACK.textColor);
+  const [bgCol, setBgCol]               = useState<string>(settings?.bgColor ?? BRANDING_FALLBACK.bgColor);
+  const [fontFamily, setFontFamily]     = useState<string>(settings?.fontFamily ?? BRANDING_FALLBACK.fontFamily);
+  // The club's branding as last confirmed by the server. Save sends only the
+  // fields that differ from this, so a field the owner did not touch is never
+  // written back (a fresh browser can no longer reset it).
+  const savedBranding = useRef<Record<string, string | null>>({
+    name: settings?.name ?? "",
+    primaryColor: settings?.primaryColor ?? null,
+    secondaryColor: settings?.secondaryColor ?? null,
+    textColor: settings?.textColor ?? null,
+    bgColor: settings?.bgColor ?? null,
+    fontFamily: settings?.fontFamily ?? null,
+    logoUrl: settings?.logoUrl ?? null,
+    logoSize: settings?.logoSize ?? null,
+  });
   const [logoPreview, setLogoPreview]   = useState<string | null>(settings?.logoUrl ?? null);
   const [logoFile, setLogoFile]         = useState<File | null>(null);
   const [logoBg, setLogoBg]             = useState<"none" | "black" | "white">("none");
   const [logoSize, setLogoSize]         = useState<"sm" | "md" | "lg">((settings?.logoSize as "sm" | "md" | "lg") ?? "md");
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [saving, setSaving]             = useState(false);
+  // Round 4 (CONCURRENCY-1): a branding save refused because someone changed
+  // the same fields since this page loaded. The editor keeps the draft.
+  const [brandingConflict, setBrandingConflict] = useState<SettingsConflicts | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+
+  /** Put the club's current value of one branding field into the editor. */
+  function showBrandingValue(field: string, current: unknown) {
+    const v = typeof current === "string" ? current : null;
+    if (field === "name") setGymName(v ?? "");
+    else if (field === "primaryColor") setPrimaryCol(v ?? primaryColor);
+    else if (field === "secondaryColor") setSecondaryCol(v ?? BRANDING_FALLBACK.secondaryColor);
+    else if (field === "textColor") setTextCol(v ?? BRANDING_FALLBACK.textColor);
+    else if (field === "bgColor") setBgCol(v ?? BRANDING_FALLBACK.bgColor);
+    else if (field === "fontFamily") setFontFamily(v ?? BRANDING_FALLBACK.fontFamily);
+    else if (field === "logoUrl") { setLogoPreview(v); setLogoFile(null); }
+    else if (field === "logoSize") setLogoSize((v as "sm" | "md" | "lg" | null) ?? "md");
+  }
+  function applyLatestBranding() {
+    for (const c of brandingConflict ?? []) {
+      savedBranding.current = { ...savedBranding.current, [c.field]: typeof c.current === "string" ? c.current : null };
+      showBrandingValue(c.field, c.current);
+    }
+    setBrandingConflict(null);
+  }
+  function keepMyBranding() {
+    // The owner chose to replace what is there now: the next save expects the
+    // current values, so it overwrites them knowingly, never silently.
+    for (const c of brandingConflict ?? []) {
+      savedBranding.current = { ...savedBranding.current, [c.field]: typeof c.current === "string" ? c.current : null };
+    }
+    setBrandingConflict(null);
+    void saveBranding();
+  }
 
   // Staff drawer
   const [staffDrawer, setStaffDrawer] = useState(false);
@@ -881,11 +984,104 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   const [kidsWaiverEditing, setKidsWaiverEditing] = useState(false);
   const [kidsWaiverSaving, setKidsWaiverSaving]   = useState(false);
 
+  // Round 4 (CONCURRENCY-1): a waiver save refused because someone changed
+  // that waiver since this page loaded it. The draft stays in the editor and
+  // `values` is what the owner tried to save.
+  type WaiverValues = { title: string | null; content: string | null };
+  const [waiverConflict, setWaiverConflict] = useState<{ kind: WaiverKind; conflicts: SettingsConflicts; values: WaiverValues } | null>(null);
+  const waiverKeys = (kind: WaiverKind) =>
+    kind === "adult" ? { title: "waiverTitle", content: "waiverContent" } as const : { title: "kidsWaiverTitle", content: "kidsWaiverContent" } as const;
+  const savedWaiver = (kind: WaiverKind): WaiverValues =>
+    kind === "adult"
+      ? { title: waiverTitle || null, content: waiverContent || null }
+      : { title: kidsWaiverTitle || null, content: kidsWaiverContent || null };
+  function setSavedWaiver(kind: WaiverKind, v: WaiverValues) {
+    if (kind === "adult") { setWaiverTitle(v.title ?? ""); setWaiverContent(v.content ?? ""); }
+    else { setKidsWaiverTitle(v.title ?? ""); setKidsWaiverContent(v.content ?? ""); }
+  }
+
+  /**
+   * Save one waiver's title and text, expecting the saved text this page holds
+   * (`base`). Refused with a conflict when someone changed it since; a lost
+   * reply is said as unknown, not as a failure or a success.
+   */
+  async function persistWaiver(kind: WaiverKind, values: WaiverValues, base: WaiverValues, done: string): Promise<boolean> {
+    const keys = waiverKeys(kind);
+    const setBusy = kind === "adult" ? setWaiverSaving : setKidsWaiverSaving;
+    setBusy(true);
+    try {
+      let res: Response;
+      try {
+        res = await fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            [keys.title]: values.title,
+            [keys.content]: values.content,
+            expected: { [keys.title]: base.title, [keys.content]: base.content },
+          }),
+        });
+      } catch {
+        toast("No reply from MatFlow, so it isn't known whether the waiver was saved. Your text is still here; save again or reload to check.", "error");
+        return false;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const conflicts = settingsConflictsOf(res.status, body);
+        if (conflicts) {
+          setWaiverConflict({ kind, conflicts, values });
+          toast("Not saved: someone else changed this waiver since you opened it. Your text is still here.", "error");
+        } else {
+          toast("Failed to save waiver", "error");
+        }
+        return false;
+      }
+      setSavedWaiver(kind, values);
+      setWaiverConflict(null);
+      if (kind === "adult") setWaiverEditing(false); else setKidsWaiverEditing(false);
+      toast(done, "success");
+      return true;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** The club's waiver now, after a conflict: what was saved, overlaid with the conflicting current values. */
+  function latestWaiver(kind: WaiverKind, conflicts: SettingsConflicts): WaiverValues {
+    const keys = waiverKeys(kind);
+    const latest = { ...savedWaiver(kind) };
+    for (const c of conflicts) {
+      const v = typeof c.current === "string" ? c.current : null;
+      if (c.field === keys.title) latest.title = v;
+      if (c.field === keys.content) latest.content = v;
+    }
+    return latest;
+  }
+  function applyLatestWaiver() {
+    if (!waiverConflict) return;
+    const { kind, conflicts } = waiverConflict;
+    const latest = latestWaiver(kind, conflicts);
+    setSavedWaiver(kind, latest);
+    const draft = waiverEditorStart(kind, latest, settings?.name);
+    if (kind === "adult") setWaiverDraft(draft); else setKidsWaiverDraft(draft);
+    setWaiverConflict(null);
+  }
+  function keepMyWaiver() {
+    if (!waiverConflict) return;
+    const { kind, conflicts, values } = waiverConflict;
+    // The owner chose to replace the newer text: expect it, so the overwrite is knowing.
+    const latest = latestWaiver(kind, conflicts);
+    setWaiverConflict(null);
+    void persistWaiver(kind, values, latest, kind === "adult" ? "Waiver saved" : "Parent/guardian waiver saved");
+  }
+
   // Stripe Connect state
   const [stripeIsConnected, setStripeIsConnected] = useState(initStripeConnected);
   const [stripeAccount, setStripeAccount]         = useState<string | null>(initStripeAccountId);
   const [plans, setPlans]                         = useState<{ id: string; name: string; amount: number; currency: string; interval: string }[]>([]);
   const [plansLoaded, setPlansLoaded]             = useState(false);
+  // A failed read is not "No plans yet" (UI-RULES §7): it is said, with a Retry.
+  const [plansError, setPlansError]               = useState(false);
   const [planDrawer, setPlanDrawer]               = useState(false);
   const [planName, setPlanName]                   = useState("");
   const [planPrice, setPlanPrice]                 = useState("");
@@ -912,19 +1108,19 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
   }, [searchParams, tabOffered]);
 
   useEffect(() => {
+    // Round 2 (10 Nov 2026): the club's saved branding (server props) is what
+    // the editor shows. This browser's cache used to override colours, font,
+    // logo and size here, so a stale or fresh browser showed, and then saved,
+    // values the club never had. Only the two choices that exist nowhere but
+    // this browser are read back: the logo fill and the preset name.
     try {
       const localSettings = JSON.parse(localStorage.getItem("gym-settings") ?? "{}") as Record<string, unknown>;
-      if (typeof localSettings.primaryColor === "string") setPrimaryCol(localSettings.primaryColor);
-      if (typeof localSettings.secondaryColor === "string") setSecondaryCol(localSettings.secondaryColor);
-      if (typeof localSettings.textColor === "string") setTextCol(localSettings.textColor);
-      if (typeof localSettings.bgColor === "string") setBgCol(localSettings.bgColor);
-      if (typeof localSettings.fontFamily === "string") setFontFamily(localSettings.fontFamily);
-      if (typeof localSettings.logoUrl === "string") setLogoPreview(localSettings.logoUrl);
-      if (localSettings.logoBg === "none" || localSettings.logoBg === "black" || localSettings.logoBg === "white") setLogoBg(localSettings.logoBg);
-      if (localSettings.logoSize === "sm" || localSettings.logoSize === "md" || localSettings.logoSize === "lg") setLogoSize(localSettings.logoSize);
-      if (typeof localSettings.presetName === "string") setActivePreset(localSettings.presetName);
+      if (localSettings.slug === settings?.slug) {
+        if (localSettings.logoBg === "none" || localSettings.logoBg === "black" || localSettings.logoBg === "white") setLogoBg(localSettings.logoBg);
+        if (typeof localSettings.presetName === "string") setActivePreset(localSettings.presetName);
+      }
     } catch { /* ignore local preview state */ }
-  }, []);
+  }, [settings?.slug]);
 
   // Load Google Fonts when branding tab is open or font changes
   const FONT_IMPORTS_MAP: Record<string, string> = {
@@ -1096,14 +1292,21 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     setStripeDisconnecting(false);
   }
 
-  async function loadPlans() {
-    if (plansLoaded) return;
-    const res = await fetch("/api/stripe/subscription-plans");
-    if (res.ok) {
-      const { plans: data } = await res.json() as { plans: typeof plans };
-      setPlans(data);
+  async function loadPlans(force = false) {
+    if (plansLoaded && !force) return;
+    setPlansError(false);
+    setPlansLoaded(false);
+    try {
+      const res = await fetch("/api/stripe/subscription-plans");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { plans?: unknown };
+      if (!Array.isArray(body.plans)) throw new Error("Unexpected response");
+      setPlans(body.plans as typeof plans);
+    } catch {
+      setPlansError(true);
+    } finally {
+      setPlansLoaded(true);
     }
-    setPlansLoaded(true);
   }
 
   async function createPlan() {
@@ -1141,6 +1344,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
         if (upRes.ok) {
           const { url } = await upRes.json();
           finalLogoUrl = url;
+          setLogoPreview(url);
+          setLogoFile(null);
         } else {
           // Surface the failure instead of silently writing logoUrl=null to the DB.
           // Common cause: BLOB_READ_WRITE_TOKEN missing in Vercel env (returns 503).
@@ -1156,21 +1361,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
       // member app updated".
       let saveError: string | null = null;
 
-      // 2. Persist to localStorage for demo mode (always works)
-      const localData = { slug: settings?.slug, primaryColor: primaryCol, secondaryColor: secondaryCol, textColor: textCol, bgColor: bgCol, fontFamily, logoUrl: finalLogoUrl, logoBg, logoSize, presetName: activePreset };
-      localStorage.setItem("gym-settings", JSON.stringify(localData));
-
-      // Apply CSS vars immediately (admin dashboard colours only — bgColor stays in member app)
-      const root = document.documentElement;
-      root.style.setProperty("--color-primary",          primaryCol);
-      root.style.setProperty("--color-secondary",        secondaryCol);
-      root.style.setProperty("--color-text",             textCol);
-      root.style.setProperty("--color-primary-dim",      hex(primaryCol, 0.1));
-      root.style.setProperty("--color-primary-border",   hex(primaryCol, 0.25));
-      root.style.setProperty("--color-secondary-dim",    hex(secondaryCol, 0.12));
-      root.style.setProperty("--color-secondary-border", hex(secondaryCol, 0.3));
-      root.style.setProperty("--color-text-muted",       hex(textCol, 0.4));
-      root.style.setProperty("--color-text-subtle",      hex(textCol, 0.2));
+      // Round 2 close-out (10 Nov 2026): this browser's cache and the staff
+      // colours used to be written here, before the PATCH, so a refused or
+      // lost save had already published the preview (and a chosen logo was
+      // cached the moment it was picked). Both now happen only after the
+      // server confirms, below.
 
       // 3. Save to DB. Allow data: URLs through so members see the logo even
       // when Vercel Blob isn't configured (BLOB_READ_WRITE_TOKEN missing) —
@@ -1182,36 +1377,81 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           typeof finalLogoUrl === "string" && finalLogoUrl.length > 0
             ? finalLogoUrl
             : null;
-        const res = await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: gymName,
-            primaryColor: primaryCol,
-            secondaryColor: secondaryCol,
-            textColor: textCol,
-            bgColor: bgCol,
-            fontFamily,
-            logoUrl: persistedLogoUrl,
-            logoSize,
-          }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({} as { error?: string }));
-          saveError = body.error ?? `Couldn't save branding (HTTP ${res.status})`;
+        const next: Record<string, string | null> = {
+          name: gymName,
+          primaryColor: primaryCol,
+          secondaryColor: secondaryCol,
+          textColor: textCol,
+          bgColor: bgCol,
+          fontFamily,
+          logoUrl: persistedLogoUrl,
+          logoSize,
+        };
+        const changed = brandingChanges(savedBranding.current, next);
+        if (Object.keys(changed).length > 0) {
+          const res = await fetch("/api/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            // Round 4: each changed field carries the value it replaces, so a
+            // stale or retried save cannot overwrite someone else's newer one.
+            body: JSON.stringify({ ...changed, expected: expectedFor(savedBranding.current, changed) }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({} as { error?: string }));
+            const conflicts = settingsConflictsOf(res.status, body);
+            if (conflicts) setBrandingConflict(conflicts);
+            saveError = conflicts
+              ? "Not saved: someone else changed this branding since you opened it. Your changes are still here."
+              : body.error ?? `Couldn't save branding (HTTP ${res.status})`;
+          } else {
+            savedBranding.current = { ...savedBranding.current, ...changed };
+            setBrandingConflict(null);
+          }
         }
       } catch {
-        saveError = "Couldn't reach MatFlow to save branding. Your members still see the previous look.";
+        // No reply: it may or may not have been saved. Say so instead of
+        // asserting either way; the editor keeps the owner's choices.
+        saveError = "No reply from MatFlow, so it isn't known whether your branding was saved. Your choices are kept here; reload to see what the club has now.";
       }
 
-      setLogoFile(null);
       if (saveError) {
-        // The local cache above is what the staff dashboard reads back, so
-        // leaving it in place after a failed save is what made this lie
-        // survive a reload: the owner saw their new colours, and members kept
-        // the old ones. Drop it so the screen reflects the server, not a wish.
-        try { localStorage.removeItem("gym-settings"); } catch { /* storage unavailable */ }
+        // Nothing was published: the cache and the staff colours still hold
+        // what the server last confirmed. The editor keeps the owner's choices.
         toast(saveError, "error");
+      } else {
+        // Confirmed (or nothing to send): the cache now mirrors the club's
+        // saved branding, plus this browser's own logo fill and preset name.
+        const confirmed = savedBranding.current;
+        try {
+          localStorage.setItem("gym-settings", JSON.stringify({
+            slug: settings?.slug,
+            primaryColor: confirmed.primaryColor,
+            secondaryColor: confirmed.secondaryColor,
+            textColor: confirmed.textColor,
+            bgColor: confirmed.bgColor,
+            fontFamily: confirmed.fontFamily,
+            logoUrl: confirmed.logoUrl,
+            logoSize: confirmed.logoSize,
+            logoBg,
+            presetName: activePreset,
+          }));
+        } catch { /* storage unavailable */ }
+        const root = document.documentElement;
+        const p = confirmed.primaryColor ?? primaryCol;
+        const s2 = confirmed.secondaryColor ?? secondaryCol;
+        const t = confirmed.textColor ?? textCol;
+        root.style.setProperty("--color-primary",          p);
+        root.style.setProperty("--color-secondary",        s2);
+        root.style.setProperty("--color-text",             t);
+        root.style.setProperty("--color-primary-dim",      hex(p, 0.1));
+        root.style.setProperty("--color-primary-border",   hex(p, 0.25));
+        root.style.setProperty("--color-secondary-dim",    hex(s2, 0.12));
+        root.style.setProperty("--color-secondary-border", hex(s2, 0.3));
+        root.style.setProperty("--color-text-muted",       hex(t, 0.4));
+        root.style.setProperty("--color-text-subtle",      hex(t, 0.2));
+      }
+      if (saveError) {
+        // (said above)
       } else if (uploadError) {
         toast(`Branding saved, but ${uploadError}`, "error");
       } else {
@@ -1242,12 +1482,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
+      // A preview in this editor only. It used to be written into this
+      // browser's branding cache straight away, which the login page and
+      // member app read, so an unsaved logo appeared there before (or
+      // without) any Save. Save Branding publishes it once the server confirms.
       setLogoPreview(dataUrl);
-      // Save preview immediately to localStorage so member app updates
-      try {
-        const existing = JSON.parse(localStorage.getItem("gym-settings") ?? "{}");
-        localStorage.setItem("gym-settings", JSON.stringify({ ...existing, slug: settings?.slug, logoUrl: dataUrl, logoBg }));
-      } catch { /* ignore */ }
     };
     reader.readAsDataURL(file);
   }
@@ -2050,7 +2289,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           {logoPreview && (
             <div>
               <label className="text-tx-2 text-xs font-medium block mb-1.5">Logo Background Fill</label>
-              <p className="text-tx-3 text-[10px] mb-2">If your logo has a coloured or transparent background, fill it so the text reads clearly.</p>
+              <p className="text-tx-3 text-[10px] mb-2">If your logo has a coloured or transparent background, fill it so the text reads clearly. Saved on this device only; members and other browsers don&apos;t see this choice.</p>
               <div className="flex gap-2">
                 {(["none", "black", "white"] as const).map((opt) => (
                   <button
@@ -2072,6 +2311,14 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           )}
 
           {/* Live phone preview */}
+          {isOwner && brandingConflict && (
+            <SettingsConflictNotice
+              fields={brandingConflict.map((c) => c.field)}
+              onUseLatest={applyLatestBranding}
+              onKeepMine={keepMyBranding}
+              busy={saving}
+            />
+          )}
           {isOwner && (
             <button onClick={saveBranding} disabled={saving}
               className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
@@ -2245,6 +2492,11 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
               </div>
               {!plansLoaded ? (
                 <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-tx-3" /></div>
+              ) : plansError ? (
+                <div role="alert" className="flex items-center justify-between gap-3 py-3 text-sm" style={{ color: "var(--hue-danger-ink)" }} data-testid="plans-load-error">
+                  <span>Couldn&apos;t load your plans. They haven&apos;t been changed.</span>
+                  <Button type="button" variant="secondary" size="compact" onClick={() => void loadPlans(true)}>Retry</Button>
+                </div>
               ) : plans.length === 0 ? (
                 <p className="text-tx-3 text-sm text-center py-4">No plans yet — add one to start selling memberships.</p>
               ) : (
@@ -2282,10 +2534,15 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
-              { label: "Monthly Revenue",  value: `£${revenue.mrr.toLocaleString()}`,  sub: "recorded in MatFlow", color: "#10b981" },
-              { label: "Annual Run Rate", value: `£${revenue.arr.toLocaleString()}`,  sub: "projected",           color: "#3b82f6" },
-              { label: "Active Members",  value: revenue.activeMembers,                sub: "active, however billed", color: "#8b5cf6" },
-              { label: "Avg per Member",  value: `£${revenue.avgPerMember}`,           sub: "per month",          color: "#f59e0b" },
+              // Round 3 (10 Nov 2026): each label says what the number is.
+              // `mrr` is this club-month's succeeded payments so far, `arr`
+              // is that times 12 and `avgPerMember` is it over active
+              // members (app/api/revenue/summary). "Annual Run Rate,
+              // projected" read as a forecast; it is not one.
+              { label: "Collected this month", value: `£${revenue.mrr.toLocaleString()}`,  sub: "so far · payments recorded in MatFlow", color: "#10b981" },
+              { label: "This month × 12",      value: `£${revenue.arr.toLocaleString()}`,  sub: "this month so far × 12 · not a forecast", color: "#3b82f6" },
+              { label: "Active Members",       value: revenue.activeMembers,                sub: "active, however billed", color: "#8b5cf6" },
+              { label: "Per active member",    value: revenue.avgPerMember === null ? "—" : `£${revenue.avgPerMember}`, sub: "collected this month so far ÷ active members", color: "#f59e0b" },
             ].map(({ label, value, sub, color }) => (
               <div key={label} className="rounded-2xl border p-4" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
                 <p className="text-tx-1 text-2xl font-bold">{value}</p>
@@ -2336,16 +2593,16 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           </div>
 
           <div className="rounded-2xl border p-5" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
-            <h2 className="text-tx-1 font-semibold text-sm mb-4">Recent Activity</h2>
+            <h2 className="text-tx-1 font-semibold text-sm mb-4">Recent payments</h2>
             <div className="space-y-3">
-              {revenue.recent.map(({ name, action, tier, date }, i) => (
+              {revenue.recent.map(({ name, action, status, tier, date }, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: action === "joined" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)" }}>
                     <TrendingUp className="w-4 h-4" style={{ color: action === "joined" ? "#10b981" : "#ef4444" }} />
                   </div>
                   <div className="flex-1">
                     <p className="text-tx-1 text-sm font-medium">{name}</p>
-                    <p className="text-tx-3 text-xs">{action === "joined" ? "Joined" : "Cancelled"} · {tier}</p>
+                    <p className="text-tx-3 text-xs">{paymentStatusLabel(status, action)} · {tier}</p>
                   </div>
                   <span className="text-tx-3 text-xs shrink-0">{date}</span>
                 </div>
@@ -2411,8 +2668,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                 <p className="text-tx-1 font-bold text-sm shrink-0">£{p.price.toFixed(2)}</p>
                 {isOwner && (
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => openEditProduct(p)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteProduct(p.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-[var(--hue-danger-ink)] transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => openEditProduct(p)} aria-label={`Edit ${p.name}`} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-tx-1 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteProduct(p.id)} aria-label={`Remove ${p.name} from the shop`} className="w-7 h-7 rounded-lg flex items-center justify-center text-tx-3 hover:text-[var(--hue-danger-ink)] transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
@@ -3027,24 +3284,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   />
                   <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{waiverDraft.content.length}/20,000</p>
                 </div>
+                {waiverConflict?.kind === "adult" && (
+                  <SettingsConflictNotice
+                    fields={waiverConflict.conflicts.map((c) => c.field)}
+                    onUseLatest={applyLatestWaiver}
+                    onKeepMine={keepMyWaiver}
+                    busy={waiverSaving}
+                  />
+                )}
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={async () => {
-                      setWaiverSaving(true);
                       // Text identical to the default is saved as "use the default".
                       const toSave = waiverSaveValues("adult", waiverDraft, settings?.name);
-                      try {
-                        const res = await fetch("/api/settings", {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ waiverTitle: toSave.title, waiverContent: toSave.content }),
-                        });
-                        if (!res.ok) { toast("Failed to save waiver", "error"); return; }
-                        setWaiverTitle(toSave.title ?? "");
-                        setWaiverContent(toSave.content ?? "");
-                        setWaiverEditing(false);
-                        toast("Waiver saved", "success");
-                      } finally { setWaiverSaving(false); }
+                      await persistWaiver("adult", toSave, savedWaiver("adult"), "Waiver saved");
                     }}
                     disabled={waiverSaving}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
@@ -3070,19 +3323,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                           confirmLabel: "Reset waiver",
                           destructive: true,
                         }))) return;
-                        setWaiverSaving(true);
-                        try {
-                          const res = await fetch("/api/settings", {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ waiverTitle: null, waiverContent: null }),
-                          });
-                          if (!res.ok) { toast("Failed to reset waiver", "error"); return; }
-                          setWaiverTitle("");
-                          setWaiverContent("");
-                          setWaiverEditing(false);
-                          toast("Reset to default waiver", "success");
-                        } finally { setWaiverSaving(false); }
+                        await persistWaiver("adult", { title: null, content: null }, savedWaiver("adult"), "Reset to default waiver");
                       }}
                       className="ml-auto px-4 py-2 rounded-xl text-xs border"
                       style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.04)" }}
@@ -3167,24 +3408,20 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                   />
                   <p className="text-xs mt-1 text-right" style={{ color: "var(--tx-4)" }}>{kidsWaiverDraft.content.length}/20,000</p>
                 </div>
+                {waiverConflict?.kind === "kids" && (
+                  <SettingsConflictNotice
+                    fields={waiverConflict.conflicts.map((c) => c.field)}
+                    onUseLatest={applyLatestWaiver}
+                    onKeepMine={keepMyWaiver}
+                    busy={kidsWaiverSaving}
+                  />
+                )}
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={async () => {
-                      setKidsWaiverSaving(true);
                       // Text identical to the default is saved as "use the default".
                       const toSave = waiverSaveValues("kids", kidsWaiverDraft, settings?.name);
-                      try {
-                        const res = await fetch("/api/settings", {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ kidsWaiverTitle: toSave.title, kidsWaiverContent: toSave.content }),
-                        });
-                        if (!res.ok) { toast("Failed to save waiver", "error"); return; }
-                        setKidsWaiverTitle(toSave.title ?? "");
-                        setKidsWaiverContent(toSave.content ?? "");
-                        setKidsWaiverEditing(false);
-                        toast("Parent/guardian waiver saved", "success");
-                      } finally { setKidsWaiverSaving(false); }
+                      await persistWaiver("kids", toSave, savedWaiver("kids"), "Parent/guardian waiver saved");
                     }}
                     disabled={kidsWaiverSaving}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--tx-on-accent)] disabled:opacity-60"
@@ -3210,19 +3447,7 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
                           confirmLabel: "Reset waiver",
                           destructive: true,
                         }))) return;
-                        setKidsWaiverSaving(true);
-                        try {
-                          const res = await fetch("/api/settings", {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ kidsWaiverTitle: null, kidsWaiverContent: null }),
-                          });
-                          if (!res.ok) { toast("Failed to reset waiver", "error"); return; }
-                          setKidsWaiverTitle("");
-                          setKidsWaiverContent("");
-                          setKidsWaiverEditing(false);
-                          toast("Reset to default parent/guardian waiver", "success");
-                        } finally { setKidsWaiverSaving(false); }
+                        await persistWaiver("kids", { title: null, content: null }, savedWaiver("kids"), "Reset to default parent/guardian waiver");
                       }}
                       className="ml-auto px-4 py-2 rounded-xl text-xs border"
                       style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.04)" }}
@@ -3365,6 +3590,10 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
           <div className="flex items-center justify-between p-3 rounded-xl border" style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)" }}>
             <span className="text-sm" style={{ color: "var(--tx-1)" }}>In Stock</span>
             <button
+              type="button"
+              role="switch"
+              aria-checked={pStock}
+              aria-label="In stock"
               onClick={() => setPStock((v) => !v)}
               className="w-10 h-6 rounded-full transition-all relative"
               style={{ background: pStock ? primaryColor : "var(--sf-2)" }}

@@ -55,7 +55,7 @@ try {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(member.email);
-  await page.getByLabel("Password").fill(memberPassword);
+  await page.getByLabel("Password", { exact: true }).fill(memberPassword);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL(/\/member/, { timeout: 60000 });
   L.check("journey", "J1 member sign-in lands in the member app", /\/member/.test(page.url()), new URL(page.url()).pathname);
