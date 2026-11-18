@@ -1,6 +1,6 @@
 "use client";
 
-import { OverlayShell, type OverlayShellProps } from "./overlay";
+import { DIALOG_CONTAINER_CLASS, DIALOG_PANEL_CLASS, OverlayShell, type OverlayShellProps } from "./overlay";
 
 /**
  * Dialog primitive — the centred half of the one overlay standard
@@ -26,15 +26,8 @@ export function Dialog(props: DialogProps) {
     <OverlayShell
       {...props}
       slot="dialog"
-      containerClassName="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
-      panelClassName={[
-        "relative flex w-full max-h-[calc(100dvh-2rem)] flex-col overflow-hidden",
-        "border border-bd-default bg-sf-3",
-        "rounded-t-[var(--r-lg)] sm:max-w-lg sm:rounded-[var(--r-md)] sm:pb-0",
-        "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom",
-        "sm:motion-safe:slide-in-from-bottom-0 sm:motion-safe:zoom-in-95",
-        "duration-[var(--dur-normal)] ease-[var(--ease-out)]",
-      ].join(" ")}
+      containerClassName={DIALOG_CONTAINER_CLASS}
+      panelClassName={DIALOG_PANEL_CLASS}
     />
   );
 }
