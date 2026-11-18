@@ -314,6 +314,13 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     });
   }, [stepKey]);
   const [loading, setLoading] = useState(false);
+  // Round 2 (10 Nov 2026), after the approach in draft PR #35 (onboarding
+  // batch 1, 16 Oct 2026): a step that saves advances only once the server
+  // confirms it. A refused or unanswered save keeps the owner on the step,
+  // with everything they entered, and says what happened. `busyRef` stops a
+  // second press from sending the same save twice while the first is out.
+  const [stepError, setStepError] = useState<string | null>(null);
+  const busyRef = useRef(false);
 
   // Step 1
   const [gymName, setGymName] = useState(tenantName);
@@ -415,7 +422,29 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
     reader.readAsDataURL(file);
   }
 
+  /** PATCH /api/settings. `null` when no reply arrived: the outcome is unknown. */
+  async function patchSettings(body: Record<string, unknown>): Promise<Response | null> {
+    return fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+  }
+
+  /** What to tell the owner when a save did not succeed. */
+  async function saveFailure(res: Response | null): Promise<string> {
+    if (!res) return "No reply from MatFlow, so it isn't known whether this was saved. Everything you entered is still here; press the button again to retry.";
+    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+    const reason = typeof body?.error === "string" ? body.error : null;
+    if (res.status === 401) return "You've been signed out. Sign in again to carry on; nothing on this step was saved.";
+    if (res.status >= 400 && res.status < 500 && reason) return `That wasn't saved: ${reason}. Check what you entered and try again.`;
+    return "That wasn't saved. Everything you entered is still here; try again.";
+  }
+
   async function goNext() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setStepError(null);
     setLoading(true);
     try {
       if (step === 1) {
@@ -427,15 +456,15 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           // onboarding step 1" — which nothing did. It does now, and the
           // screen says so rather than setting it behind the owner's back;
           // Settings → Waiver carries the control that changes it.
-          await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              detectedTimezone
-                ? { name: gymName.trim(), timezone: detectedTimezone }
-                : { name: gymName.trim() },
-            ),
-          });
+          const res = await patchSettings(
+            detectedTimezone
+              ? { name: gymName.trim(), timezone: detectedTimezone }
+              : { name: gymName.trim() },
+          );
+          if (!res?.ok) {
+            setStepError(await saveFailure(res));
+            return;
+          }
         }
       } else if (step === 3) {
         let totalRanks = 0;
@@ -518,8 +547,6 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           body.textColor = theme.text;
           body.bgColor = theme.bg;
           body.fontFamily = theme.font;
-          setPrimaryColor(theme.primary);
-          setSummary((s) => ({ ...s, theme: theme.name }));
         }
         // Persist the logo-size choice from the wizard's expanded Step 5
         // (mirrors the Settings → Branding tab control).
@@ -540,30 +567,34 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           }
         }
         if (Object.keys(body).length > 0) {
-          await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
+          const res = await patchSettings(body);
+          if (!res?.ok) {
+            setStepError(await saveFailure(res));
+            return;
+          }
+        }
+        if (theme) {
+          setPrimaryColor(theme.primary);
+          setSummary((s) => ({ ...s, theme: theme.name }));
         }
       } else if (step === 6) {
         // Persist questionnaire answers but don't mark onboardingCompleted —
         // there are now 2 more steps (payment rail, CSV handoff) before
         // the celebration screen.
-        await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            onboardingAnswers: {
-              size: gymSize,
-              goals,
-              referral,
-              // Persist the free-text only when "other" is selected; trims and falls
-              // back to null so analytics queries on the JSON column stay clean.
-              referralOther: referral === "other" ? (referralOther.trim() || null) : null,
-            },
-          }),
-        }).catch(() => {});
+        const res = await patchSettings({
+          onboardingAnswers: {
+            size: gymSize,
+            goals,
+            referral,
+            // Persist the free-text only when "other" is selected; trims and falls
+            // back to null so analytics queries on the JSON column stay clean.
+            referralOther: referral === "other" ? (referralOther.trim() || null) : null,
+          },
+        });
+        if (!res?.ok) {
+          setStepError(await saveFailure(res));
+          return;
+        }
       } else if (step === 7) {
         // Payment rail — record the owner's choice, for BOTH answers.
         //
@@ -604,36 +635,42 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       } else if (step === 9) {
         // CSV handoff — if owner chose white-glove, the file is already
         // uploaded via the upload-on-select pattern. Mark completion.
-        await fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ onboardingCompleted: true }),
-        }).catch(() => {});
+        const res = await patchSettings({ onboardingCompleted: true });
+        if (!res?.ok) {
+          setStepError(await saveFailure(res));
+          return;
+        }
         setStep(FINAL_STEP);
-        setLoading(false);
         return;
       }
       setStep((s) => s + 1);
     } catch {
-      setStep((s) => s + 1);
+      // An unexpected error is not a success: stay on the step and say so.
+      setStepError("Something went wrong and this step wasn't confirmed as saved. Everything you entered is still here; try again.");
     } finally {
+      busyRef.current = false;
       setLoading(false);
     }
   }
 
   async function skip() {
     if (step === 9) {
-      // Skipping the last step still completes onboarding.
+      // Skipping the last step still completes onboarding, once that is saved.
+      if (busyRef.current) return;
+      busyRef.current = true;
+      setStepError(null);
       setLoading(true);
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ onboardingCompleted: true }),
-      }).catch(() => {});
+      const res = await patchSettings({ onboardingCompleted: true });
+      busyRef.current = false;
       setLoading(false);
+      if (!res?.ok) {
+        setStepError(await saveFailure(res));
+        return;
+      }
       setStep(FINAL_STEP);
       return;
     }
+    setStepError(null);
     setStep((s) => s + 1);
   }
 
@@ -730,7 +767,7 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
           <div className="flex items-center gap-3">
             {step > 1 && (
               <button
-                onClick={() => setStep((s) => s - 1)}
+                onClick={() => { setStepError(null); setStep((s) => s - 1); }}
                 aria-label="Back"
                 className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:bg-white/8"
                 style={{ color: "rgba(255,255,255,0.4)" }}
@@ -757,6 +794,11 @@ export default function OwnerOnboardingWizard({ tenantName, ownerName, primaryCo
       )}
 
       {/* ── Step 1: Gym Identity ── */}
+      {stepError && (
+        <div role="alert" data-testid="onboarding-step-error" className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {stepError}
+        </div>
+      )}
       {step === 1 && (
         <div className="flex-1 flex flex-col">
           <div className="mb-8">

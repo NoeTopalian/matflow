@@ -8,7 +8,8 @@
  * the standalone routes' shapes — both sides call the same builders in
  * lib/member-home.ts, so they cannot drift.
  *
- * Response: { me, schedule, children, announcements }
+ * Response: { me, schedule, children, announcements, today }
+ *   today         — the club's calendar date and weekday (0 = Sunday): the day the schedule's sessions are for
  *   me            — /api/member/me GET shape (or null if the member row is gone)
  *   schedule      — /api/member/schedule GET array
  *   children      — /api/member/me/children?include=timetable GET array
@@ -16,6 +17,7 @@
  */
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import {
   buildMemberMeData,
@@ -24,6 +26,7 @@ import {
   buildAnnouncementsData,
 } from "@/lib/member-home";
 import { demoBadges } from "@/lib/demo-member";
+import { clubWallClock, usableTimezone } from "@/lib/class-time";
 
 // ─── Demo fallback (mirrors the standalone routes' demo constants — those live
 // in route files, which may only export HTTP handlers, so they can't be
@@ -130,14 +133,15 @@ function demoHome(name?: string | null) {
   };
 }
 
-export async function GET(req: Request) {
+export async function GET() {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { searchParams } = new URL(req.url);
-  const dateParam = searchParams.get("date"); // YYYY-MM-DD, optional
+  // `?date=` is still accepted from older pages but no longer decides "today": the page sent the UTC date while
+  // listing the device's weekday, so wherever those differ from the club's day a check-in reached another date's
+  // session (Round 6, 13 Nov 2026). Today is the club's day, the one the door and the register use.
 
   const memberId = session.user.memberId as string | undefined;
 
@@ -146,8 +150,17 @@ export async function GET(req: Request) {
     return NextResponse.json(demoHome(session.user.name));
   }
 
+  // Home is where members check in: its sessions must exist before they are listed (lib/class-horizon.ts). Never throws.
+  await ensureClassHorizon(session.user.tenantId);
+
   try {
     const payload = await withTenantContext(session.user.tenantId, async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } });
+      const club = clubWallClock(new Date(), usableTimezone(tenant?.timezone));
+      const today = {
+        date: `${club.year}-${String(club.month).padStart(2, "0")}-${String(club.day).padStart(2, "0")}`,
+        dayOfWeek: club.dow,
+      };
       const me = await buildMemberMeData(tx, {
         memberId,
         tenantId: session.user.tenantId,
@@ -156,11 +169,12 @@ export async function GET(req: Request) {
       const schedule = await buildMemberSchedule(tx, {
         tenantId: session.user.tenantId,
         memberId,
-        dateParam,
+        dateParam: today.date,
       });
       const children = await buildMemberChildren(tx, {
         tenantId: session.user.tenantId,
         memberId,
+        clubToday: today.date,
         includeTimetable: true,
       });
       const announcements = await buildAnnouncementsData(tx, {
@@ -169,7 +183,7 @@ export async function GET(req: Request) {
         memberId,
         take: 50,
       });
-      return { me, schedule, children, announcements };
+      return { me, schedule, children, announcements, today };
     });
 
     // no-store: the announcements sub-payload carries per-member `unseen`

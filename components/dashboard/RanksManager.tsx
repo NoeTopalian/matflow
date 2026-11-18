@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { Plus, Trash2, Edit2, Award, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/button";
@@ -120,12 +121,15 @@ function RankForm({
   onSave,
   onCancel,
   saving,
+  onDirtyChange,
 }: {
   initial: Partial<RankRow> | null;
   disciplines: string[];
   onSave: (data: RankInput) => void;
   onCancel: () => void;
   saving: boolean;
+  /** Round 11 (6.1): tells the sheet the form differs from how it opened. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [discipline, setDiscipline] = useState(initial?.discipline ?? disciplines[0] ?? "");
@@ -133,6 +137,9 @@ function RankForm({
   const [color, setColor] = useState(initial?.color ?? RANK_COLORS[0]);
   const [stripes, setStripes] = useState(initial?.stripes ?? 0);
   const [order, setOrder] = useState(initial?.order ?? 0);
+  const dirty = useDirtySince(true, { name, discipline, newDiscipline, color, stripes, order });
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const effectiveDiscipline = discipline === "__new__" ? newDiscipline : discipline;
 
@@ -271,6 +278,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
   const [presetOpen, setPresetOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<RankRow | null>(null);
   const [saving, setSaving] = useState(false);
+  const [rankFormDirty, setRankFormDirty] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<RankRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState<string | null>(null);
@@ -711,6 +719,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
       <Sheet
         open={drawerOpen}
         onClose={closeDrawer}
+        confirmDiscard={rankFormDirty && !saving}
         title={editTarget ? "Edit rank" : "Add rank"}
       >
         <RankForm
@@ -719,6 +728,7 @@ export default function RanksManager({ initialRanks, primaryColor, role }: Props
           onSave={handleSave}
           onCancel={closeDrawer}
           saving={saving}
+          onDirtyChange={setRankFormDirty}
         />
       </Sheet>
 

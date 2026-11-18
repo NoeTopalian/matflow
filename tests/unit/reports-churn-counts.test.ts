@@ -300,7 +300,8 @@ describe("getReportsData — survival and recovery carry their counts", () => {
   it("6-month survival: 15 of 20 → 75%", async () => {
     setup(BASE);
     const data = await getReportsData("tenant-A");
-    expect(data.retention).toEqual({ ratePct: 75, survived: 15, cohort: 20 });
+    expect(data.retention).toMatchObject({ ratePct: 75, survived: 15, cohort: 20 });
+    expect(typeof data.retention.joinedBefore).toBe("string"); // the cohort's join-date line (Round 3 close-out)
     expect(data.retentionRate).toBe(75);
   });
 
@@ -314,7 +315,7 @@ describe("getReportsData — survival and recovery carry their counts", () => {
   it("both are null on an empty base", async () => {
     setup({ ...BASE, retentionCohort: 0, retentionSurvived: 0, failedMemberIds: [], recovered: 0 });
     const data = await getReportsData("tenant-A");
-    expect(data.retention).toEqual({ ratePct: null, survived: 0, cohort: 0 });
+    expect(data.retention).toMatchObject({ ratePct: null, survived: 0, cohort: 0 });
     expect(data.paymentHealth.recovery).toEqual({ ratePct: null, recovered: 0, failedMembers: 0 });
   });
 });

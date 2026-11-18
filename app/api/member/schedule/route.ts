@@ -20,6 +20,7 @@
  */
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import { resolveCoachName } from "@/lib/class-coach";
 import { isAdultAccount } from "@/lib/account-type";
@@ -58,6 +59,10 @@ export async function GET(req: Request) {
   }
 
   const memberId = session.user.memberId;
+
+  // Sessions must exist before they are listed: without the nightly cron the horizon lapses and no class carries a
+  // classInstanceId, so nothing can be booked or checked into (lib/class-horizon.ts). Never throws.
+  await ensureClassHorizon(session.user.tenantId);
 
   try {
     const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds } = await withTenantContext(

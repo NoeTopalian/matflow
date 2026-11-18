@@ -256,7 +256,7 @@ export const SUPPORT_EDIT_FIELD_POLICY = {
   "member.update": [
     "name", "phone",
     "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
-    "notes", "dateOfBirth", "updatedAt",
+    "notes", "dateOfBirth", "updatedAt", "expectedNotes",
   ],
   // I-3 (security review): no membership tier/type/status at create either -
   // creating a member straight onto a free tier is comped access, the exact

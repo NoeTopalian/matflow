@@ -105,6 +105,11 @@ export const memberUpdateSchema = z.object({
   // Optimistic-concurrency precondition (US-508): client sends the updatedAt
   // it last saw; server returns 409 if the row has changed since.
   updatedAt: z.string().optional(),
+  // Round 4 (10 Nov 2026): the notes this client last saw. The notes save
+  // sends it instead of `updatedAt`, so another admin's unrelated edit does
+  // not block it, but a newer note is never overwritten. Compared exactly
+  // with the stored (already sanitised) text.
+  expectedNotes: z.string().max(4000).nullable().optional(),
   // Attribution (M1). Editable by staff; the XOR refine below rejects setting
   // both credit targets, mirroring the DB CHECK.
   trialRunById: z.string().min(1).max(50).optional().nullable(),

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { Plus, Edit2, Trash2, Tag, Check, Users, CreditCard, MapPin } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/Toast";
@@ -16,6 +17,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import type { MembershipTierRow } from "@/app/dashboard/memberships/page";
 import { describeApiError } from "@/lib/api-field-errors";
+import { SettingsConflictNotice } from "@/components/dashboard/SettingsConflictNotice";
 import { BILLING_CYCLES, cycleLabel, isBillingCycle, type BillingCycle } from "@/lib/billing-cycle";
 import {
   BILLING_BASIS_AVAILABLE,
@@ -212,6 +214,27 @@ const emptyForm = {
 
 type FormState = typeof emptyForm;
 
+/** The plan fields a save compares against what the editor loaded (Round 4). */
+const PLAN_FIELDS = ["name", "pricePence", "currency", "billingCycle", "isKids", "stripePriceId", "stripeProductId", "locationId"] as const;
+type PlanFields = Record<(typeof PLAN_FIELDS)[number] | "description" | "classLimit" | "classLimitBasis" | "classLimitWeeks" | "classLimitAnchor", unknown>;
+const PLAN_FIELD_LABELS: Record<string, string> = {
+  name: "the name", pricePence: "the price", currency: "the currency", billingCycle: "the billing cycle",
+  isKids: "whether it is a kids plan", stripePriceId: "the Stripe price", stripeProductId: "the Stripe product",
+  locationId: "the venue", description: "the description",
+  classLimit: "the class limit", classLimitBasis: "the class limit", classLimitWeeks: "the class limit", classLimitAnchor: "the class limit",
+};
+
+/** A tier as the plan PATCH would send it, for comparing an edit with what was loaded. */
+export function planFieldsOf(t: Pick<MembershipTierRow, "name" | "pricePence" | "currency" | "billingCycle" | "isKids" | "stripePriceId" | "stripeProductId" | "locationId" | "description" | "classLimit" | "classLimitBasis" | "classLimitWeeks" | "classLimitAnchor">): PlanFields {
+  return {
+    name: t.name, pricePence: t.pricePence, currency: t.currency, billingCycle: t.billingCycle, isKids: t.isKids,
+    stripePriceId: t.stripePriceId ?? null, stripeProductId: t.stripeProductId ?? null, locationId: t.locationId ?? null,
+    // As stored: the description raw (not normalised) and the allowance columns, for `expected`.
+    description: t.description ?? null,
+    classLimit: t.classLimit ?? null, classLimitBasis: t.classLimitBasis ?? null, classLimitWeeks: t.classLimitWeeks ?? null, classLimitAnchor: t.classLimitAnchor ?? null,
+  };
+}
+
 export default function MembershipsManager({ initialTiers, primaryColor, timeZone = null }: Props) {
   const { toast } = useToast();
   const [tiers, setTiers] = useState<MembershipTierRow[]>(initialTiers);
@@ -225,7 +248,14 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
   // T7a-2: the description this edit form was opened with, normalised the same
   // way a save normalises it (trimmed; blank = null). Same rule as the limit.
   const [loadedDescription, setLoadedDescription] = useState<string | null>(null);
+  // Round 4: the plan's other fields as this edit form loaded them. A save
+  // sends only the ones the owner changed, each with the value it replaces,
+  // so a save from an older tab cannot put back a price changed since.
+  const loadedPlan = useRef<PlanFields | null>(null);
+  const [planConflict, setPlanConflict] = useState<{ field: string; current: unknown }[] | null>(null);
   const [saving, setSaving] = useState(false);
+  // Round 11 (6.1): a stray tap or Escape asks before throwing an edited plan away.
+  const formDirty = useDirtySince(showModal, form);
   // ADR-001 D2 slice 2: the venue picker appears only once the club has more
   // than one venue; a failed read is said, not shown as "one venue".
   const [venues, setVenues] = useState<{ id: string; name: string }[]>([]);
@@ -254,6 +284,9 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
 
   function openAdd() {
     setEditingId(null);
+    // A conflict from an earlier plan edit belongs to that plan, not to a new one (review of the merge train, 18 Nov).
+    loadedPlan.current = null;
+    setPlanConflict(null);
     setForm({ ...emptyForm, classLimitAnchor: mondayOf(todayIso(new Date(), timeZone)) });
     setShowModal(true);
   }
@@ -263,6 +296,8 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
     const allowance = tierAllowance(tier);
     setLoadedAllowance(allowance);
     setLoadedDescription(normaliseDescription(tier.description ?? ""));
+    loadedPlan.current = planFieldsOf(tier);
+    setPlanConflict(null);
     setForm({
       name: tier.name,
       description: tier.description ?? "",
@@ -279,6 +314,28 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
       locationId: tier.locationId ?? "",
     });
     setShowModal(true);
+  }
+
+  /** The plan's current value of a field, into the form (a conflict's "Use the latest"). */
+  function showPlanValue(field: string, current: unknown) {
+    setForm((f) => {
+      if (field === "pricePence") return { ...f, pricePence: String((typeof current === "number" ? current : 0) / 100) };
+      if (field === "isKids") return { ...f, isKids: current === true };
+      if (field === "billingCycle") return { ...f, billingCycle: isBillingCycle(String(current)) ? (current as BillingCycle) : f.billingCycle };
+      if (field === "name" || field === "currency") return { ...f, [field]: typeof current === "string" ? current : "" };
+      if (field === "stripePriceId" || field === "stripeProductId" || field === "locationId") return { ...f, [field]: typeof current === "string" ? current : "" };
+      if (field === "description") return { ...f, description: typeof current === "string" ? current : "" };
+      if (field === "classLimit") return { ...f, classLimit: typeof current === "number" ? String(current) : "" };
+      if (field === "classLimitBasis") return { ...f, classLimitBasis: (typeof current === "string" ? current : "week") as FormState["classLimitBasis"] };
+      if (field === "classLimitWeeks") return { ...f, classLimitWeeks: typeof current === "number" ? String(current) : f.classLimitWeeks };
+      if (field === "classLimitAnchor") return { ...f, classLimitAnchor: typeof current === "string" ? current.slice(0, 10) : f.classLimitAnchor };
+      return f;
+    });
+  }
+  function rebasePlan(conflicts: { field: string; current: unknown }[]) {
+    for (const c of conflicts) {
+      loadedPlan.current = { ...(loadedPlan.current ?? ({} as PlanFields)), [c.field]: c.current ?? null };
+    }
   }
 
   async function handleSave() {
@@ -339,15 +396,45 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
       };
 
       if (editingId) {
+        // Round 4: only what changed from the loaded plan, each with the value
+        // it replaces. The allowance and description keep their own
+        // send-only-when-changed rule above.
+        const loaded = (loadedPlan.current ?? {}) as Record<string, unknown>;
+        const changedBody: Record<string, unknown> = { ...allowanceBody, ...(description !== undefined ? { description } : {}) };
+        // The description and the allowance keep their send-only-when-changed
+        // rules; when they are sent, they expect what this form loaded too
+        // (review), so two tabs changing the class limit cannot both win.
+        const expected: Record<string, unknown> = {};
+        if (description !== undefined) expected.description = loaded.description ?? null;
+        for (const k of ["classLimit", "classLimitBasis", "classLimitWeeks", "classLimitAnchor"] as const) {
+          if (k in allowanceBody) expected[k] = loaded[k] ?? null;
+        }
+        for (const k of PLAN_FIELDS) {
+          if ((body as Record<string, unknown>)[k] !== (loaded as Record<string, unknown>)[k]) {
+            changedBody[k] = (body as Record<string, unknown>)[k];
+            expected[k] = (loaded as Record<string, unknown>)[k] ?? null;
+          }
+        }
+        if (Object.keys(changedBody).length === 0) {
+          setShowModal(false);
+          return;
+        }
         const res = await fetch(`/api/memberships/${editingId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ ...changedBody, ...(Object.keys(expected).length > 0 ? { expected } : {}) }),
         });
         if (!res.ok) {
-          toast(describeApiError(await res.json().catch(() => null)), "error");
+          const errBody = (await res.json().catch(() => null)) as { reason?: unknown; conflicts?: unknown } | null;
+          if (res.status === 409 && errBody?.reason === "stale_plan" && Array.isArray(errBody.conflicts)) {
+            setPlanConflict(errBody.conflicts as { field: string; current: unknown }[]);
+            toast("Not saved: someone else changed this plan since you opened it. Your changes are still here.", "error");
+            return;
+          }
+          toast(describeApiError(errBody), "error");
           return;
         }
+        setPlanConflict(null);
         const updated = await res.json();
         setTiers((prev) => prev.map((t) => (t.id === editingId ? { ...t, ...updated, createdAt: t.createdAt } : t)));
         toast("Tier updated", "success");
@@ -629,6 +716,7 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
         // Escape and the scrim have to agree with the disabled Cancel button —
         // otherwise a mid-save dismissal loses the in-flight request's result.
         onClose={closeSheet}
+        confirmDiscard={formDirty && !saving}
         title={editingId ? "Edit tier" : "Add tier"}
         footer={
           <>
@@ -641,6 +729,24 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
           </>
         }
       >
+        {planConflict && (
+          <SettingsConflictNotice
+            fields={planConflict.map((c) => c.field)}
+            changed={`Someone else changed ${[...new Set(planConflict.map((c) => PLAN_FIELD_LABELS[c.field] ?? c.field))].join(", ")} since you opened this plan.`}
+            busy={saving}
+            onUseLatest={() => {
+              rebasePlan(planConflict);
+              for (const c of planConflict) showPlanValue(c.field, c.current);
+              setPlanConflict(null);
+            }}
+            onKeepMine={() => {
+              // A knowing overwrite: the save now expects the newer values.
+              rebasePlan(planConflict);
+              setPlanConflict(null);
+              void handleSave();
+            }}
+          />
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label htmlFor="tier-name" className="mb-1 block text-xs text-tx-2">Name *</label>

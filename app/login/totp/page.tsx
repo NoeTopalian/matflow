@@ -2,10 +2,12 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
+import { useToast } from "@/components/ui/Toast";
 import { Loader2, ShieldCheck } from "lucide-react";
 
 export default function TotpPage() {
+  const { toast } = useToast();
   const router = useRouter();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -96,7 +98,9 @@ export default function TotpPage() {
           </button>
 
           <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={async () => {
+              if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+            }}
             className="w-full py-3 text-sm text-center transition-colors"
             style={{ color: "rgba(255,255,255,0.3)" }}
           >

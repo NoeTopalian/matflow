@@ -1,6 +1,6 @@
 "use client";
 
-import { signOut } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldOff, UserCircle } from "lucide-react";
@@ -106,7 +106,9 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
       toast(reason ? `Your other devices are still signed in. ${reason}` : "Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
       return;
     }
-    signOut({ callbackUrl: "/login" });
+    // The version bump above has already ended every session, this one included: go to sign-in even if this
+    // device's own sign-out request fails.
+    if (!(await signOutThisDevice())) window.location.assign("/login");
   }
 
   useEffect(() => {
@@ -253,7 +255,10 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
                   Sign out all devices
                 </button>
                 <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+                  }}
                   className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition-colors hover:bg-black/5"
                   style={{ color: "var(--tx-2)" }}
                   role="menuitem"

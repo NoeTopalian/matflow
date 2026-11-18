@@ -190,10 +190,19 @@ describe("ReportsView — churn is a percentage with its counts, joined beside i
     expect(csv).toContain('Health,Churn this month,10% (4 of 40),"4 cancellations this month, out of 40 members (37 at the start, 3 became members since) · Every cancellation');
   });
 
-  it("payment recovery and 6-month survival carry their counts", () => {
+  it("payment recovery and survival carry their counts", () => {
     renderReports(reports());
     expect(tileFor("Payment recovery rate").textContent).toContain("50% (1 of 2)");
-    expect(screen.getByText(/6-month survival: 75% \(15 of 20\)/)).toBeTruthy();
+    expect(screen.getByText(/Survival: 75% \(15 of 20\)/)).toBeTruthy();
+  });
+
+  // Round 3 close-out (10 Nov 2026): the cohort is named by its join date; it
+  // is 5 to 6 months old, so "6+ months" overstated it. Calculation unchanged.
+  it("names the survival cohort by its join date, never '6+ months'", () => {
+    const base = reports();
+    renderReports({ ...base, retention: { ...base.retention, joinedBefore: "2026-05-31T23:00:00.000Z" } } as never);
+    expect(screen.getByText(/^Members who joined before 1 June 2026: how many are still active today\./)).toBeTruthy();
+    expect(screen.queryByText(/6\+ months/)).toBeNull();
   });
 });
 
@@ -221,7 +230,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
     renderReports(reports());
     expect(screen.getByText("75% (30 of 40) self or QR")).toBeTruthy();
     expect(screen.getByText("75% (30 of 40)")).toBeTruthy();
-    expect(screen.getByText("9/session · fill 45% (90 of 200 places)")).toBeTruthy();
+    expect(screen.getByText("9 per attended session · fill 45% (90 of 200 places in attended sessions)")).toBeTruthy();
     expect(screen.getByTestId("rate-readout-counts").textContent).toBe("(3 of 9)");
   });
 
@@ -238,7 +247,7 @@ describe("ReportsView — every percentage shows its counts, matching the CSV", 
       "75% (15 of 20)",
       "75% (9 of 12)",
       "75% (30 of 40)",
-      "45% (90 of 200 places)",
+      "45% (90 of 200 places in attended sessions)",
     ]) {
       expect(csv).toContain(text);
       expect(document.body.textContent).toContain(text);

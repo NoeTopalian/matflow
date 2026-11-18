@@ -2,6 +2,7 @@
 // same membership gate as the member app's check-in, after the same Class
 // row lock. Acceptance 5: a class the plan does not include cannot be booked.
 import { vi, describe, it, expect, beforeEach } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),

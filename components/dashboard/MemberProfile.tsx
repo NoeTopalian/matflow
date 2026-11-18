@@ -27,6 +27,7 @@ import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { Button } from "@/components/ui/button";
+import { SettingsConflictNotice } from "@/components/dashboard/SettingsConflictNotice";
 import { MANUAL_PAYMENT_METHODS, manualPaymentFormIsValid, methodNeedsNotes, type ManualPaymentMethod } from "@/lib/payment-methods";
 import { Card } from "@/components/ui/card";
 import TeamUpHistory from "@/components/dashboard/TeamUpHistory";
@@ -49,6 +50,8 @@ import { RevokeCardDialog } from "@/components/dashboard/RevokeCardDialog";
 import { LockedPill, MemberUnlockDialog, isSignInLocked } from "@/components/dashboard/UnlockSignIn";
 import AttributionFields, { attributionFromMember, type AttributionValue } from "@/components/dashboard/AttributionFields";
 import { resolveSignupCredit } from "@/lib/signup-credit";
+import { changedKeys, stashDraft, takeDraft } from "@/lib/draft-stash";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { billingSourceLabel, HOLD_ACCESS_ONLY_NOTE, isBilledElsewhere } from "@/lib/billing-source";
 import { paymentStatusLabel } from "@/lib/payment-status";
 import { paymentStatusFromHoldResponse } from "@/lib/member-hold";
@@ -419,6 +422,50 @@ const attendanceColumns: DataTableColumn<AttendanceEntry>[] = [
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+/** The profile edit form's fields, as opened from a member row. */
+function profileFormFrom(m: {
+  name: string; email: string; phone?: string | null; emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null; emergencyContactRelation?: string | null; membershipType?: string | null;
+  membershipTierId?: string | null; status: string; dateOfBirth?: string | null;
+}) {
+  return {
+    name: m.name,
+    email: m.email,
+    phone: m.phone ?? "",
+    emergencyContactName: m.emergencyContactName ?? "",
+    emergencyContactPhone: m.emergencyContactPhone ?? "",
+    emergencyContactRelation: m.emergencyContactRelation ?? "",
+    membershipType: m.membershipType ?? "",
+    membershipTierId: m.membershipTierId ?? "",
+    status: m.status,
+    dateOfBirth: m.dateOfBirth ? m.dateOfBirth.slice(0, 10) : "",
+  };
+}
+
+const PROFILE_FIELD_LABEL: Record<string, string> = {
+  name: "name", email: "email", phone: "phone", emergencyContactName: "emergency contact name",
+  emergencyContactPhone: "emergency contact phone", emergencyContactRelation: "emergency contact relation",
+  membershipType: "membership", membershipTierId: "membership", status: "status", dateOfBirth: "date of birth",
+  attribution: "who brought them in",
+};
+
+/** Round 11 (3.2): what a conflict reload keeps — only what this person changed. */
+type ProfileDraft = {
+  /** This person's new value for each field they changed, and the value it had when they opened Edit. */
+  form: Record<string, string>;
+  opened: Record<string, string>;
+  /** The attribution groups they changed (trial runner; the sign-up credit as one group), new and as opened. */
+  attribution: Record<string, string> | null;
+  attributionOpened: Record<string, string> | null;
+  at: number;
+};
+const DRAFT_MAX_AGE_MS = 30 * 60 * 1000;
+// The sign-up credit is one choice spread over four fields; the trial runner is separate.
+const ATTRIBUTION_GROUPS = [["trialRunById"], ["creditType", "creditedToUserId", "creditedToMemberId", "creditedToLabel"]] as const;
+// Fields whose value means something read aloud in the note (ids and codes are only named).
+const SHOWN_VALUE = new Set(["name", "email", "phone", "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation", "dateOfBirth", "status"]);
+const joinList = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
 export default function MemberProfile({
   member: initial,
   rankOptions,
@@ -438,8 +485,18 @@ export default function MemberProfile({
   // Verifier lane 7 D1/D4: a failed profile save is said inside the form, with
   // the input kept, rather than a toast that vanishes (or nothing at all).
   const [profileError, setProfileError] = useState<string | null>(null);
+  // Round 11 (3.2): the refusal was "someone else changed this member"; Reload keeps what was typed.
+  const [staleConflict, setStaleConflict] = useState(false);
+  // After that reload: which of this person's edits were put back on the fresh record.
+  const [restoredNote, setRestoredNote] = useState<string | null>(null);
+  // What the edit form held when it was opened: changes are measured against this, not
+  // against `member`, which other actions (Mark as inactive) update while the form is open.
+  const editOpenedRef = useRef<{ form: ReturnType<typeof profileFormFrom>; attribution: AttributionValue } | null>(null);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
+  // Round 4: a notes save refused because another admin changed the notes
+  // since this page loaded them. The draft stays in the box.
+  const [notesConflict, setNotesConflict] = useState<{ current: string | null } | null>(null);
   const [form, setForm] = useState({
     name: initial.name,
     email: initial.email,
@@ -467,6 +524,8 @@ export default function MemberProfile({
   const [showRankDrawer, setShowRankDrawer] = useState(false);
   const [rankForm, setRankForm] = useState({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" as string });
   const [promotingSaving, setPromotingSaving] = useState(false);
+  // Round 11 (6.1): a stray tap or Escape asks before throwing a half-filled promotion away.
+  const rankDrawerDirty = useDirtySince(showRankDrawer, rankForm);
 
   // Payments state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
@@ -492,6 +551,9 @@ export default function MemberProfile({
   const [payForm, setPayForm] = useState<{ description: string; amount: string; method: ManualPaymentMethod }>({
     description: "", amount: "", method: "cash",
   });
+  const paymentDrawerDirty = useDirtySince(paymentDrawer, payForm);
+  // The ref stops a double tap within one tick; this state lets the sheet refuse a close mid-save.
+  const [paySaving, setPaySaving] = useState(false);
 
   // Ad-hoc charge drawer
   const [showChargeDrawer, setShowChargeDrawer] = useState(false);
@@ -597,6 +659,76 @@ export default function MemberProfile({
     void loadPayments();
   }, [loadPayments]);
 
+  // Round 11 (3.2): after a conflict reload, put back what this person had changed, on top
+  // of the fresh record, and open the form for them to check it and save.
+  useEffect(() => {
+    // The fresh record may no longer be editable here (archived meanwhile, or a role that cannot edit):
+    // then the draft is left to expire rather than taken.
+    if (!["owner", "manager", "admin"].includes(role) || initial.archivedAt) return;
+    const draft = takeDraft<ProfileDraft>(`member:${initial.id}`);
+    if (!draft || Date.now() - draft.at > DRAFT_MAX_AGE_MS) return;
+    const keys = Object.keys(draft.form ?? {});
+    const attrKeys = Object.keys(draft.attribution ?? {});
+    if (keys.length === 0 && attrKeys.length === 0) return;
+    const fresh = profileFormFrom(initial) as Record<string, string>;
+    const freshAttr = attributionFromMember(initial) as unknown as Record<string, string>;
+    const labels = [...new Set([...keys, ...(attrKeys.length ? ["attribution"] : [])].map((k) => PROFILE_FIELD_LABEL[k] ?? k))];
+    // Fields both people changed: theirs is replaced by this person's, so say what theirs was.
+    const both = [...new Set([
+      ...keys.filter((k) => fresh[k] !== draft.opened?.[k]).map((k) =>
+        SHOWN_VALUE.has(k) ? `${PROFILE_FIELD_LABEL[k] ?? k} (they set “${fresh[k] || "nothing"}”)` : (PROFILE_FIELD_LABEL[k] ?? k)),
+      ...(attrKeys.some((k) => freshAttr[k] !== draft.attributionOpened?.[k]) ? [PROFILE_FIELD_LABEL.attribution] : []),
+    ])];
+    // Deferred so the effect body does not set state synchronously (react-hooks/set-state-in-effect).
+    queueMicrotask(() => {
+      editOpenedRef.current = { form: profileFormFrom(initial), attribution: attributionFromMember(initial) };
+      setForm((f) => ({ ...f, ...draft.form }));
+      if (attrKeys.length) setAttribution((a) => ({ ...a, ...(draft.attribution as Partial<AttributionValue>) }));
+      setEditing(true);
+      setRestoredNote(
+        `Their changes are loaded. Your ${joinList(labels)} ${labels.length === 1 ? "change is" : "changes are"} kept below — check and save.` +
+        (both.length ? ` You both changed ${joinList(both)}; yours is in the form.` : ""),
+      );
+    });
+  }, [initial, role]);
+
+  function openEdit() {
+    // Open on the member as it is now (a status change since the last edit included).
+    const f = profileFormFrom(member);
+    const a = attributionFromMember(member);
+    editOpenedRef.current = { form: f, attribution: a };
+    setForm(f);
+    setAttribution(a);
+    setEditing(true);
+  }
+
+  function reloadKeepingEdits() {
+    const opened = editOpenedRef.current ?? { form: profileFormFrom(member), attribution: attributionFromMember(member) };
+    const keys = changedKeys(opened.form, form);
+    const now = attribution as unknown as Record<string, string>;
+    const was = opened.attribution as unknown as Record<string, string>;
+    const attr: Record<string, string> = {};
+    const attrOpened: Record<string, string> = {};
+    for (const group of ATTRIBUTION_GROUPS) {
+      if (group.some((k) => now[k] !== was[k])) for (const k of group) { attr[k] = now[k]; attrOpened[k] = was[k]; }
+    }
+    const hasAttr = Object.keys(attr).length > 0;
+    const draft: ProfileDraft = {
+      form: Object.fromEntries(keys.map((k) => [k, form[k]])),
+      opened: Object.fromEntries(keys.map((k) => [k, opened.form[k]])),
+      attribution: hasAttr ? attr : null,
+      attributionOpened: hasAttr ? attrOpened : null,
+      at: Date.now(),
+    };
+    if (!stashDraft(`member:${member.id}`, draft)) {
+      // Never reload after promising to keep the input when it cannot be kept.
+      setStaleConflict(false);
+      setProfileError("Someone else changed this member, and this browser won't let MatFlow keep what you've typed through a reload. Note your changes, then reload the page to see theirs.");
+      return;
+    }
+    window.location.reload();
+  }
+
   useEffect(() => {
     if (!showActionsMenu) return;
     function handleClick(e: MouseEvent) {
@@ -700,6 +832,7 @@ export default function MemberProfile({
       // reach the server as null instead of being silently omitted.
       const credit = resolveSignupCredit(attribution);
       setProfileError(null);
+      setStaleConflict(false);
       let res: Response;
       try {
         res = await fetch(`/api/members/${member.id}`, {
@@ -741,11 +874,13 @@ export default function MemberProfile({
       // save failed with nothing said. Parse defensively.
       const body: unknown = await res.json().catch(() => null);
       if (!res.ok) {
+        // The route's other 409 ("Email already in use") carries no
+        // currentUpdatedAt and keeps its own sentence.
+        const stale = res.status === 409 && !!body && typeof (body as { currentUpdatedAt?: unknown }).currentUpdatedAt === "string";
+        setStaleConflict(stale);
         setProfileError(
-          // The route's other 409 ("Email already in use") carries no
-          // currentUpdatedAt and keeps its own sentence.
-          res.status === 409 && body && typeof (body as { currentUpdatedAt?: unknown }).currentUpdatedAt === "string"
-            ? "Someone else changed this member since you opened it. Reload to see their changes, then make yours again."
+          stale
+            ? "Someone else changed this member since you opened it. Reload to see their changes — what you've changed here is kept."
             : describeSaveFailure(res.status, body, "Save").message,
         );
         return;
@@ -772,6 +907,7 @@ export default function MemberProfile({
         creditedToLabel: credit.creditedToLabel,
       }));
       setEditing(false);
+      setRestoredNote(null);
       toast("Profile updated", "success");
     } finally { setSaving(false); }
   }
@@ -800,23 +936,41 @@ export default function MemberProfile({
     } finally { setLeaderboardSaving(false); }
   }
 
-  async function saveNotes() {
+  async function saveNotes(base: string | null = member.notes ?? null) {
     setNotesSaving(true);
     try {
-      const res = await fetch(`/api/members/${member.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notesDraft || null }),
-      });
-      if (!res.ok) { toast("Failed to save notes", "error"); return; }
-      // D1: this PATCH bumps the row version too; carry it so the next
-      // profile save is not refused as a conflict with our own edit.
-      const saved = (await res.json().catch(() => null)) as { updatedAt?: unknown } | null;
-      setMember((m) => ({
-        ...m,
-        notes: notesDraft || null,
-        updatedAt: typeof saved?.updatedAt === "string" ? saved.updatedAt : m.updatedAt ?? null,
-      }));
+      let res: Response;
+      try {
+        res = await fetch(`/api/members/${member.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          // Round 4: the notes this page loaded. The save is refused, not
+          // applied, if someone else changed them since.
+          body: JSON.stringify({ notes: notesDraft || null, expectedNotes: base }),
+        });
+      } catch {
+        toast("No reply from MatFlow, so it isn't known whether the notes were saved. Your text is still here; save again or reload to check.", "error");
+        return;
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { reason?: unknown; currentNotes?: unknown; currentUpdatedAt?: unknown } | null;
+        if (res.status === 409 && body?.reason === "stale_notes") {
+          setNotesConflict({ current: typeof body.currentNotes === "string" ? body.currentNotes : null });
+          toast("Not saved: someone else changed these notes since you opened this member. Your text is still here.", "error");
+          return;
+        }
+        toast("Failed to save notes", "error");
+        return;
+      }
+      setNotesConflict(null);
+      // Round 4 review: a notes save no longer moves the row version, and the
+      // page never takes one from it, so a later profile save is still checked
+      // against the version its fields were loaded with. The notes kept are
+      // the stored (sanitised) text, so the next save expects exactly that.
+      const saved = (await res.json().catch(() => null)) as { notes?: unknown } | null;
+      const stored = saved && "notes" in saved ? (typeof saved.notes === "string" ? saved.notes : null) : notesDraft || null;
+      setMember((m) => ({ ...m, notes: stored }));
+      setNotesDraft(stored ?? "");
       toast("Notes saved", "success");
     } finally { setNotesSaving(false); }
   }
@@ -873,6 +1027,7 @@ export default function MemberProfile({
     if (!manualPaymentFormIsValid(payForm)) return;
     if (addingPaymentRef.current) return;
     addingPaymentRef.current = true;
+    setPaySaving(true);
     setPayError(null);
     const tempId = `local-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     // Snapshot the form values so the POST body and the optimistic entry stay
@@ -950,6 +1105,7 @@ export default function MemberProfile({
       toast("Payment not recorded", "error");
     } finally {
       addingPaymentRef.current = false;
+      setPaySaving(false);
     }
   }
 
@@ -1102,7 +1258,7 @@ export default function MemberProfile({
             />
           )}
           {canEdit && !editing && !member.archivedAt && (
-            <Button variant="secondary" onClick={() => setEditing(true)}>
+            <Button variant="secondary" onClick={openEdit}>
               <Edit2 className="size-4" />
               Edit
             </Button>
@@ -1539,17 +1695,28 @@ export default function MemberProfile({
                   )}
                 </div>
               </div>
+              {restoredNote && !profileError && (
+                <p role="status" data-testid="profile-draft-restored" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--sf-2)", color: "var(--tx-2)" }}>
+                  {restoredNote}
+                </p>
+              )}
               {profileError && (
                 <p role="alert" className="rounded-[var(--r-md)] px-3 py-2 text-sm" style={{ background: "var(--hue-danger-soft, rgba(239,68,68,0.10))", color: "var(--hue-danger-ink)" }}>
                   {profileError}
                 </p>
+              )}
+              {/* Its own element under the alert, so the alert announces the sentence alone (UI-RULES §8). */}
+              {profileError && staleConflict && (
+                <Button variant="secondary" size="compact" onClick={reloadKeepingEdits} className="self-start">
+                  Reload
+                </Button>
               )}
               <div className="flex gap-3 pt-1">
                 <Button onClick={saveProfile} loading={saving}>
                   {!saving && <Check className="size-4" />}
                   {saving ? "Saving…" : "Save"}
                 </Button>
-                <Button variant="secondary" onClick={() => { setEditing(false); setProfileError(null); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
+                <Button variant="secondary" onClick={() => { setEditing(false); setProfileError(null); setStaleConflict(false); setRestoredNote(null); setForm({ name: member.name, email: member.email, phone: member.phone ?? "", emergencyContactName: member.emergencyContactName ?? "", emergencyContactPhone: member.emergencyContactPhone ?? "", emergencyContactRelation: member.emergencyContactRelation ?? "", membershipType: member.membershipType ?? "", membershipTierId: member.membershipTierId ?? "", status: member.status, dateOfBirth: member.dateOfBirth ? member.dateOfBirth.slice(0, 10) : "" }); setAttribution(attributionFromMember(member)); }}>
                   <X className="size-4" /> Cancel
                 </Button>
               </div>
@@ -2036,9 +2203,29 @@ export default function MemberProfile({
             onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
+          {canEdit && notesConflict && (
+            <SettingsConflictNotice
+              fields={["notes"]}
+              changed="These notes were changed by someone else since you opened this member."
+              busy={notesSaving}
+              onUseLatest={() => {
+                setNotesDraft(notesConflict.current ?? "");
+                // The notes only: never another admin's row version (review H).
+                setMember((m) => ({ ...m, notes: notesConflict.current }));
+                setNotesConflict(null);
+              }}
+              onKeepMine={() => {
+                // A knowing overwrite: the save now expects the newer notes.
+                const latest = notesConflict.current;
+                setMember((m) => ({ ...m, notes: latest }));
+                setNotesConflict(null);
+                void saveNotes(latest);
+              }}
+            />
+          )}
           {canEdit && (
             <Button
-              onClick={saveNotes}
+              onClick={() => void saveNotes()}
               loading={notesSaving}
               disabled={notesDraft === (member.notes ?? "")}
             >
@@ -2058,7 +2245,9 @@ export default function MemberProfile({
           four. Behaviour and handlers are unchanged — this is a shell swap. */}
       <Sheet
         open={showRankDrawer}
-        onClose={() => setShowRankDrawer(false)}
+        // Closing discards (review of the 6.1 rollout): the guard's "Discard changes" must be true.
+        onClose={() => { if (promotingSaving) return; setShowRankDrawer(false); setRankForm({ rankSystemId: "", stripes: 0, notes: "", photoUrl: "" }); }}
+        confirmDiscard={rankDrawerDirty && !promotingSaving}
         title="Assign / Promote Rank"
         description={member.name}
         footer={
@@ -2183,7 +2372,8 @@ export default function MemberProfile({
       {/* ── Add payment drawer (Sheet — §4a.3) ── */}
       <Sheet
         open={paymentDrawer}
-        onClose={() => setPaymentDrawer(false)}
+        onClose={() => { if (paySaving) return; setPaymentDrawer(false); setPayForm({ description: "", amount: "", method: "cash" }); setPayError(null); }}
+        confirmDiscard={paymentDrawerDirty && !paySaving}
         title="Record payment"
         description={member.name}
         footer={

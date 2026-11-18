@@ -125,7 +125,7 @@ async function signIn(page, slug, email, password, secret) {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(email);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL((u) => u.pathname !== "/login", { timeout: 60000 });
   if (new URL(page.url()).pathname.startsWith("/login/totp")) {
@@ -411,7 +411,7 @@ try {
   await wp.keyboard.press("Enter");
   await wp.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await wp.getByLabel("Email address").first().fill(club.owner.email);
-  await wp.getByLabel("Password").fill(club.owner.password);
+  await wp.getByLabel("Password", { exact: true }).fill(club.owner.password);
   await wp.getByRole("button", { name: "Sign in", exact: true }).click();
   const refused = await wp.getByRole("alert").filter({ hasText: "Incorrect email or password." }).waitFor({ timeout: 30000 }).then(() => true, () => false);
   const wSession = await api(wp, "GET", "/api/auth/session");

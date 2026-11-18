@@ -11,6 +11,7 @@
 //  - an id that is not a class of this club changes nothing.
 
 import { vi, describe, it, expect, beforeEach, beforeAll } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 
 const TENANT = "tenant_a";
 const KIOSK_TOKEN = "kiosk_token_abcdefghijklmnop";

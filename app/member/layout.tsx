@@ -124,6 +124,10 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
   );
   // Fresh branding from the API — the source of truth, so it wins.
   const [apiBrand, setApiBrand] = useState<BrandPatch>(EMPTY_PATCH);
+  // Round 2 close-out (10 Nov 2026): "the API has answered". A club with no
+  // saved logo answers logoUrl: null, which toBrandPatch drops, so the cached
+  // logo (possibly an unsaved preview) used to show instead.
+  const [apiAnswered, setApiAnswered] = useState(false);
 
   useEffect(() => {
     fetch("/api/me/gym")
@@ -131,6 +135,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
       .then((data: unknown) => {
         if (!data) return;
         setApiBrand(toBrandPatch(data));
+        setApiAnswered(true);
         // Keep localStorage in sync with DB values
         try {
           const raw = localStorage.getItem(GYM_SETTINGS_KEY);
@@ -148,7 +153,7 @@ export default function MemberLayout({ children }: { children: React.ReactNode }
   // admin-local and is not returned by /api/me/gym.
   const gym: GymBrand = {
     name:         apiBrand.name         ?? DEFAULT_GYM.name,
-    logoUrl:      apiBrand.logoUrl      ?? storedBrand.logoUrl      ?? DEFAULT_GYM.logoUrl,
+    logoUrl:      apiAnswered ? (apiBrand.logoUrl ?? null) : (storedBrand.logoUrl ?? DEFAULT_GYM.logoUrl),
     primaryColor: apiBrand.primaryColor ?? storedBrand.primaryColor ?? DEFAULT_GYM.primaryColor,
     logoBg:       storedBrand.logoBg    ?? DEFAULT_GYM.logoBg,
     bgColor:      apiBrand.bgColor      ?? storedBrand.bgColor      ?? DEFAULT_GYM.bgColor,

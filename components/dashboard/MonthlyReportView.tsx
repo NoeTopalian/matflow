@@ -18,9 +18,11 @@ type Report = {
   generatedAt: string;
 };
 
-function formatPeriod(start: string, end: string) {
-  const s = new Date(start);
-  return `${s.toLocaleString("en-GB", { month: "long", year: "numeric" })}`;
+export function formatPeriod(start: string, end: string) {
+  // The middle of the period is in its month in every reader's zone; its
+  // start is the club's midnight, which is the day before west of the club.
+  const mid = new Date((new Date(start).getTime() + new Date(end).getTime()) / 2);
+  return mid.toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
 function MarkdownBullets({ text }: { text: string }) {
@@ -155,7 +157,7 @@ export default function MonthlyReportView({ primaryColor }: { primaryColor: stri
                     <div className="min-w-0">
                       <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>{formatPeriod(r.periodStart, r.periodEnd)}</p>
                       <p className="text-[11px]" style={{ color: "var(--tx-4)" }}>
-                        {r.generationType === "auto" ? "Auto" : "On-demand"} · {r.modelUsed} · {(r.costPence / 100).toFixed(2)}p
+                        {r.generationType === "auto" ? "Auto" : "On-demand"} · {r.modelUsed} · £{(r.costPence / 100).toFixed(2)}
                       </p>
                     </div>
                   </div>

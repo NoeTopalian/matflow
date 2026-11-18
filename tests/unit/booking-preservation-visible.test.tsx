@@ -8,6 +8,7 @@
 //    class, and the member can still cancel the booking;
 //  - the coach register flags a booked member the door now turns away.
 import { describe, it, expect, beforeEach, vi } from "vitest";
+vi.mock("@/lib/class-horizon", () => ({ ensureClassHorizon: async () => {} })); // the session top-up is not under test here (lib/class-horizon.ts has its own tests)
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import React from "react";
 import { ROSTER_REFUSAL_SENTENCE, tierRefusalSentence } from "@/lib/class-tier-gate";
