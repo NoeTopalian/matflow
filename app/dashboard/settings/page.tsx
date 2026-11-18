@@ -195,6 +195,7 @@ export default async function Settings() {
       stripeConnected={settings.stripeConnected}
       stripeAccountId={settings.stripeAccountId}
       supportScope={(session.user as { supportScope?: "view" | "edit" }).supportScope ?? null}
+      session={session}
     />
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useSession } from "next-auth/react";
+import type { Session } from "next-auth";
+import { SessionProvider, useSession } from "next-auth/react";
 import { Upload, FileText, CheckCircle2, AlertCircle, Database } from "lucide-react";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -163,7 +164,20 @@ function refreshValue(field: string, v: string | null): string {
   return v;
 }
 
-export default function ImportPanel({ primaryColor }: { primaryColor: string }) {
+/**
+ * Its own session context: the root layout has none (Round 8 — see app/layout.tsx). Seeded with the server render's
+ * session (required: every mount passes the page's auth() result), so it makes no session request on mount and the
+ * owner gate is decided on the first render; it still re-reads on tab focus and on another tab's sign-in/out.
+ */
+export default function ImportPanel({ primaryColor, session }: { primaryColor: string; session: Session | null }) {
+  return (
+    <SessionProvider session={session}>
+      <ImportPanelBody primaryColor={primaryColor} />
+    </SessionProvider>
+  );
+}
+
+function ImportPanelBody({ primaryColor }: { primaryColor: string }) {
   // All four routes behind this panel are `requireApiOwner`
   // (app/api/admin/import/upload:61, [id]/preview:16, [id]/commit:23, [id]:10).
   // Until this gate existed the panel rendered for anyone who could open the

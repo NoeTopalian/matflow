@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 import { Geist, Geist_Mono } from "next/font/google";
-import { SessionProvider } from "next-auth/react";
 import { ToastProvider } from "@/components/ui/Toast";
 import RegisterSW from "@/components/pwa/RegisterSW";
 import "./globals.css";
@@ -62,12 +61,16 @@ export default async function RootLayout({
   // interview; identical to the parallel session's main-tree fix so the
   // eventual merge converges.
   await connection();
+  // No app-wide next-auth SessionProvider (Round 8, 15 Nov 2026). Mounted here it fetched /api/auth/session twice
+  // on every page load (next-auth 5.0.0-beta.32: the provider's first getSession() broadcasts on a new
+  // BroadcastChannel and its own listener, on a second channel object in the same tab, hears it and fetches again)
+  // and again on every tab focus. The one component that reads it client-side, ImportPanel, now carries its own
+  // provider seeded with the server session (ForcedTotpSetup takes its role from the server instead). Authorisation
+  // and session revocation are enforced on the server and never depended on this context.
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased">
-        <SessionProvider>
-          <ToastProvider>{children}</ToastProvider>
-        </SessionProvider>
+        <ToastProvider>{children}</ToastProvider>
         <RegisterSW />
       </body>
     </html>
