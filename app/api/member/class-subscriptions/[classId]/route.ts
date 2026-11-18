@@ -7,6 +7,7 @@
 import type { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
+import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/csrf";
 import { classTierCovers, tierRefusalSentence } from "@/lib/class-tier-gate";
@@ -37,6 +38,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ classId: strin
   const { classId } = await ctx.params;
   const r = await resolveMember();
   if ("error" in r) return r.error;
+  // Booking a standing place reads the upcoming sessions: top the horizon up first (lib/class-horizon.ts). Never throws.
+  await ensureClassHorizon(r.tenantId);
 
   try {
     const created = await withTenantContext(r.tenantId, async (tx) => {
@@ -232,6 +235,39 @@ async function bookingAllowance(
   if (!snap.allowance) return null;
   const v = allowanceVerdict(snap.allowance, next ? slotMinute(next) : nowAt, snap.visits, nowAt);
   return v.exhausted ? v : null;
+}
+
+/**
+ * GET — whether the member holds this booking, and the same allowance notice a booking answers with (Round 6,
+ * 13 Nov 2026). Read-only: the member schedule asks it after a booking whose reply was lost turns out to have landed,
+ * so the member still hears what the door will say. Nothing is booked, counted or refused here.
+ */
+export async function GET(_req: Request, ctx: { params: Promise<{ classId: string }> }) {
+  const { classId } = await ctx.params;
+  const r = await resolveMember();
+  if ("error" in r) return r.error;
+  try {
+    const result = await withTenantContext(r.tenantId, async (tx) => {
+      const held = await tx.classSubscription.findFirst({
+        where: { classId, memberId: r.memberId, class: { tenantId: r.tenantId } },
+        select: { id: true },
+      });
+      if (!held) return { booked: false, allowanceNotice: null as string | null };
+      // As POST: the notice is information, never a reason to fail; a fault computing it is logged.
+      let allowanceNotice: string | null = null;
+      try {
+        const allowance = await bookingAllowance(tx, r.tenantId, r.memberId, classId);
+        allowanceNotice = allowance ? allowanceBookingNotice(allowance) : null;
+      } catch (e) {
+        console.error("[booking] allowance notice failed", e);
+      }
+      return { booked: true, allowanceNotice };
+    });
+    return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (e) {
+    console.error("[booking] read failed", e);
+    return NextResponse.json({ error: "Failed to read booking" }, { status: 500 });
+  }
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ classId: string }> }) {

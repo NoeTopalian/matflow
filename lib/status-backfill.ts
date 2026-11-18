@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { parseTime, usableTimezone, zoneOffsetMs } from "./class-time";
 import { clubMonthKey } from "./club-month";
 import { recordStatusEventsBulk, type RecordStatusEventInput } from "./member-status";
+import { holdOffMigrations } from "./migration-lock";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -503,6 +504,10 @@ export function monthDelta(after: Record<string, number>, before: Record<string,
 // ── Apply and rollback (one club, inside the caller's withTenantContext) ─────
 
 async function lockClub(tx: TxClient, tenantId: string) {
+  // A schema migration in progress refuses this write at once, and one waits for it (lib/migration-lock.ts). The
+  // migration-lock header always listed the status back-fill among those jobs; until Round 9 (16 Nov 2026) it did not
+  // actually take the shared key.
+  await holdOffMigrations(tx);
   // Two runs for one club serialise here, so the "already applied" check below
   // cannot be raced into a double write. Released when the transaction ends.
   const key = `t8b-status-backfill:${tenantId}`;

@@ -26,6 +26,8 @@ interface WeeklyCount {
   weekStart: string;
   count: number;
   classes: { name: string; date: string }[];
+  /** The club has no attendance records for this week (lib/member-stats.ts): "—", not 0. */
+  noRecords?: boolean;
 }
 
 interface MemberData {
@@ -43,6 +45,8 @@ interface MemberData {
     avgClassesPerWeek?: number;
     badges?: MemberBadge[];
     weeklyCounts?: WeeklyCount[];
+    /** The club has no attendance records since this date (lib/member-stats.ts): show "—", never 0. */
+    noRecordsSince?: string | null;
   };
 }
 
@@ -207,7 +211,7 @@ function HeatStripCard({ weeks }: { weeks: WeeklyCount[] }) {
               type="button"
               onClick={() => setOpenWeek(isOpen ? null : w.weekStart)}
               aria-expanded={isOpen}
-              aria-label={`Week starting ${shortDateGB(w.weekStart)}: ${w.count} session${w.count === 1 ? "" : "s"}`}
+              aria-label={w.noRecords ? `Week starting ${shortDateGB(w.weekStart)}: no attendance records` : `Week starting ${shortDateGB(w.weekStart)}: ${w.count} session${w.count === 1 ? "" : "s"}`}
               className="flex-1 h-9 rounded-md flex items-center justify-center text-[10px] font-semibold tabular-nums"
               style={{
                 background: `color-mix(in srgb, var(--color-primary) ${pct}%, transparent)`,
@@ -219,7 +223,7 @@ function HeatStripCard({ weeks }: { weeks: WeeklyCount[] }) {
                     : "none",
               }}
             >
-              {w.count > 0 ? w.count : ""}
+              {w.count > 0 ? w.count : w.noRecords ? "—" : ""}
             </button>
           );
         })}
@@ -351,12 +355,17 @@ export default function MemberProgressPage() {
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-2.5 mb-6">
-        {[
-          { label: "This Week",      value: stats.thisWeek,          icon: Calendar,   sub: "classes attended" },
-          { label: "This Month",     value: stats.thisMonth,         icon: TrendingUp, sub: "classes attended" },
-          { label: "This Year",      value: stats.thisYear,          icon: Clock,      sub: "classes attended" },
-          { label: "Current Streak", value: `${stats.streakWeeks}w`, icon: Flame,      sub: "weeks in a row" },
-        ].map(({ label, value, icon: Icon, sub }) => (
+        {(() => {
+          // Owner rule (28 Oct 2026): no records is not "did not train". While the club has recorded nothing since its
+          // imported history ended, this week, this month and the streak say so instead of showing 0.
+          const since = stats.noRecordsSince ? `no records since ${shortDateGB(stats.noRecordsSince)}` : null;
+          return [
+            { label: "This Week",      value: since ? "—" : stats.thisWeek,          icon: Calendar,   sub: since ?? "classes attended" },
+            { label: "This Month",     value: since ? "—" : stats.thisMonth,         icon: TrendingUp, sub: since ?? "classes attended" },
+            { label: "This Year",      value: stats.thisYear,                        icon: Clock,      sub: since ? "recorded classes" : "classes attended" },
+            { label: "Current Streak", value: since ? "—" : `${stats.streakWeeks}w`, icon: Flame,      sub: since ?? "weeks in a row" },
+          ];
+        })().map(({ label, value, icon: Icon, sub }) => (
           <div
             key={label}
             className="rounded-2xl border p-4"

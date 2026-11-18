@@ -27,6 +27,7 @@ import { AvatarUploader } from "@/components/ui/AvatarUploader";
 import { Avatar } from "@/components/ui/Avatar";
 import { downscaleImage, IMAGE_MAX_EDGE_PX } from "@/lib/downscale-image";
 import { Button } from "@/components/ui/button";
+import { SettingsConflictNotice } from "@/components/dashboard/SettingsConflictNotice";
 import { MANUAL_PAYMENT_METHODS, manualPaymentFormIsValid, methodNeedsNotes, type ManualPaymentMethod } from "@/lib/payment-methods";
 import { Card } from "@/components/ui/card";
 import TeamUpHistory from "@/components/dashboard/TeamUpHistory";
@@ -437,6 +438,9 @@ export default function MemberProfile({
   const [profileError, setProfileError] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState(initial.notes ?? "");
   const [notesSaving, setNotesSaving] = useState(false);
+  // Round 4: a notes save refused because another admin changed the notes
+  // since this page loaded them. The draft stays in the box.
+  const [notesConflict, setNotesConflict] = useState<{ current: string | null } | null>(null);
   const [form, setForm] = useState({
     name: initial.name,
     email: initial.email,
@@ -773,23 +777,41 @@ export default function MemberProfile({
     } finally { setSaving(false); }
   }
 
-  async function saveNotes() {
+  async function saveNotes(base: string | null = member.notes ?? null) {
     setNotesSaving(true);
     try {
-      const res = await fetch(`/api/members/${member.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notesDraft || null }),
-      });
-      if (!res.ok) { toast("Failed to save notes", "error"); return; }
-      // D1: this PATCH bumps the row version too; carry it so the next
-      // profile save is not refused as a conflict with our own edit.
-      const saved = (await res.json().catch(() => null)) as { updatedAt?: unknown } | null;
-      setMember((m) => ({
-        ...m,
-        notes: notesDraft || null,
-        updatedAt: typeof saved?.updatedAt === "string" ? saved.updatedAt : m.updatedAt ?? null,
-      }));
+      let res: Response;
+      try {
+        res = await fetch(`/api/members/${member.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          // Round 4: the notes this page loaded. The save is refused, not
+          // applied, if someone else changed them since.
+          body: JSON.stringify({ notes: notesDraft || null, expectedNotes: base }),
+        });
+      } catch {
+        toast("No reply from MatFlow, so it isn't known whether the notes were saved. Your text is still here; save again or reload to check.", "error");
+        return;
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { reason?: unknown; currentNotes?: unknown; currentUpdatedAt?: unknown } | null;
+        if (res.status === 409 && body?.reason === "stale_notes") {
+          setNotesConflict({ current: typeof body.currentNotes === "string" ? body.currentNotes : null });
+          toast("Not saved: someone else changed these notes since you opened this member. Your text is still here.", "error");
+          return;
+        }
+        toast("Failed to save notes", "error");
+        return;
+      }
+      setNotesConflict(null);
+      // Round 4 review: a notes save no longer moves the row version, and the
+      // page never takes one from it, so a later profile save is still checked
+      // against the version its fields were loaded with. The notes kept are
+      // the stored (sanitised) text, so the next save expects exactly that.
+      const saved = (await res.json().catch(() => null)) as { notes?: unknown } | null;
+      const stored = saved && "notes" in saved ? (typeof saved.notes === "string" ? saved.notes : null) : notesDraft || null;
+      setMember((m) => ({ ...m, notes: stored }));
+      setNotesDraft(stored ?? "");
       toast("Notes saved", "success");
     } finally { setNotesSaving(false); }
   }
@@ -1985,9 +2007,29 @@ export default function MemberProfile({
             onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
           />
+          {canEdit && notesConflict && (
+            <SettingsConflictNotice
+              fields={["notes"]}
+              changed="These notes were changed by someone else since you opened this member."
+              busy={notesSaving}
+              onUseLatest={() => {
+                setNotesDraft(notesConflict.current ?? "");
+                // The notes only: never another admin's row version (review H).
+                setMember((m) => ({ ...m, notes: notesConflict.current }));
+                setNotesConflict(null);
+              }}
+              onKeepMine={() => {
+                // A knowing overwrite: the save now expects the newer notes.
+                const latest = notesConflict.current;
+                setMember((m) => ({ ...m, notes: latest }));
+                setNotesConflict(null);
+                void saveNotes(latest);
+              }}
+            />
+          )}
           {canEdit && (
             <Button
-              onClick={saveNotes}
+              onClick={() => void saveNotes()}
               loading={notesSaving}
               disabled={notesDraft === (member.notes ?? "")}
             >

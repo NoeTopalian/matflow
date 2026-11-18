@@ -30,7 +30,7 @@ describe("AttendanceView — one session", () => {
   it("shows the recent list with no session chip by default", () => {
     render(<AttendanceView records={ROWS} summary={SUMMARY} primaryColor="#3b82f6" />);
     expect(screen.queryByTestId("attendance-session")).toBeNull();
-    expect(screen.getByText("Showing 2 of 2 records")).toBeTruthy();
+    expect(screen.getByText("2 records.")).toBeTruthy();
     expect(screen.getByText("This Month")).toBeTruthy();
   });
 
@@ -46,8 +46,8 @@ describe("AttendanceView — one session", () => {
     expect(chip.textContent).toContain("Session: Advanced No-Gi · Wed 4 Nov, 19:00");
     const back = screen.getByRole("link", { name: /show all attendance/i });
     expect(back.getAttribute("href")).toBe("/dashboard/attendance");
-    expect(screen.getByText("2 check-ins for this session")).toBeTruthy();
-    expect(screen.queryByText(/Showing 2 of 2 records/)).toBeNull();
+    expect(screen.getByText("2 check-ins for this session.")).toBeTruthy();
+    expect(screen.queryByText("2 records.")).toBeNull();
   });
 
   it("says nobody was checked in rather than 'no records found'", () => {
@@ -60,6 +60,6 @@ describe("AttendanceView — one session", () => {
     render(<AttendanceView records={ROWS} summary={SUMMARY} primaryColor="#3b82f6" sessionNotFound />);
     expect(screen.getByRole("status").textContent).toContain("That session can't be found.");
     expect(screen.queryByTestId("attendance-session")).toBeNull();
-    expect(screen.getByText("Showing 2 of 2 records")).toBeTruthy();
+    expect(screen.getByText("2 records.")).toBeTruthy();
   });
 });

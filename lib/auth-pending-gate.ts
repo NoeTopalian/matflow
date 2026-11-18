@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkSessionVersion } from "@/lib/session-revocation";
+import { sessionIdOf } from "@/lib/session-id";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 
 /**
@@ -31,6 +32,8 @@ export async function refuseRevokedPendingToken(token: {
     userId: typeof token.id === "string" ? token.id : null,
     tokenVersion: token.sessionVersion,
     tenantId: typeof token.tenantId === "string" ? token.tenantId : null,
+    // Signed out at the code prompt (Round 8): this session is over even though the person's version still matches.
+    sid: sessionIdOf(token as Record<string, unknown>),
   });
   if (verdict === "ok") return null;
   if (verdict === "unknown") {
