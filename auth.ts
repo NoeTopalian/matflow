@@ -25,6 +25,7 @@ import {
 import { requiresTotpEnrolment } from "@/lib/mfa-policy";
 import { recordLoginEvent } from "@/lib/login-event";
 import { after } from "next/server";
+import { REVALIDATE_MAX_MS, SESSION_MAX_AGE_SECONDS, isSessionId, newSessionId, sessionIdOf } from "@/lib/session-id";
 import { emailField } from "@/lib/email-normalise";
 import { tenantAdmission, admissionErrorCode } from "@/lib/tenant-admission";
 import { checkSessionVersion } from "@/lib/session-revocation";
@@ -347,7 +348,6 @@ const NO_ACCOUNT_ROW_ID = "no-account";
  * ran. No cached verdict is ever used as a fallback: the marker only refuses.
  */
 const REVALIDATE_CLAIM = "revalidateSince";
-const REVALIDATE_MAX_MS = 24 * 60 * 60 * 1000;
 
 function revalidateSince(token: Record<string, unknown>): number | null {
   const v = token[REVALIDATE_CLAIM];
@@ -386,7 +386,7 @@ export function usableSession<S>(session: S): S | null {
 const nextAuth = NextAuth({
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: SESSION_MAX_AGE_SECONDS, // 30 days; lib/session-id.ts
   },
   pages: {
     signIn: "/login",
@@ -1068,6 +1068,9 @@ const nextAuth = NextAuth({
         token.sessionVersionCheckedAt = Date.now();
         // A real sign-in is never a support carrier.
         delete (token as Record<string, unknown>)[SUPPORT_CARRIER_CLAIM];
+        // A new sign-in is a new session (Round 8, 16 Nov 2026): its own id, which every re-issue keeps and which
+        // "sign out" on this device ends without touching any other (lib/session-id.ts, lib/session-signout.ts).
+        (token as Record<string, unknown>).sid = newSessionId();
         return token;
       }
 
@@ -1078,6 +1081,17 @@ const nextAuth = NextAuth({
         (token as Record<string, unknown>)[SUPPORT_CARRIER_CLAIM] === true
       ) {
         return null;
+      }
+
+      // A token minted before session ids (Round 8, 16 Nov 2026) is given its person's DERIVED id — the same on
+      // every copy, so a delayed response cannot carry a fresh, unrevoked id past a sign-out (lib/session-id.ts).
+      // Never a random one here: only a sign-in mints those. One mid-support has no own identity to derive from:
+      // ended, and the operator starts support again.
+      if (!isSessionId((token as Record<string, unknown>).sid)) {
+        const derived = sessionIdOf(token as Record<string, unknown>);
+        const bag = token as Record<string, unknown>;
+        if (!derived && (bag[SUPPORT_CARRIER_CLAIM] === true || bag[IMPERSONATION_STASH] || bag.impersonatedBy)) return null;
+        if (derived) bag.sid = derived;
       }
 
       // Upgrade stale demo-tenant tokens to real DB ids on next request
@@ -1392,6 +1406,8 @@ const nextAuth = NextAuth({
               userId: token.id as string,
               tokenVersion: token.sessionVersion,
               tenantId: token.tenantId as string,
+              // Signed out on this device (Round 8): refused although the version matches.
+              sid: sessionIdOf(token as Record<string, unknown>),
             },
             // The display name follows a profile edit on every device (8 Oct
             // 2026). The row is the one this check reads anyway.

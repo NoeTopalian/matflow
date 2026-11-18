@@ -638,8 +638,11 @@ try {
 
   const recoveryTile = await pTexts(page.getByTestId("metric-card").filter({ hasText: "Payment recovery rate" }).first());
   L.check("reports", "R5 payment recovery reads x% (n of m), or — on an empty base (never 0%)", recoveryTile[0] === X.recovery, { saw: recoveryTile[0], expected: X.recovery });
-  const survival = norm(await page.locator("p", { hasText: /^6-month survival: / }).first().innerText());
-  L.check("reports", "R6 6-month survival reads x% (n of m)", survival === `6-month survival: ${X.survival}`, { saw: survival, expected: `6-month survival: ${X.survival}` });
+  const survival = norm(await page.locator("p", { hasText: /^Survival: / }).first().innerText());
+  L.check("reports", "R6 survival reads x% (n of m)", survival === `Survival: ${X.survival}`, { saw: survival, expected: `Survival: ${X.survival}` });
+  // Round 3 close-out: the cohort is named by its join date, never "6+ months".
+  const cohortLine = norm(await page.locator("p", { hasText: /^Members who joined before / }).first().innerText());
+  L.check("reports", "R6b survival names its cohort by date (joined before the 1st of the club month five back)", /^Members who joined before 1 [A-Z][a-z]+ \d{4}: how many are still active today\./.test(cohortLine) && (await page.getByText(/6\+ months/).count()) === 0, { saw: cohortLine });
   const statusCardR = page.getByTestId("left-the-club").first().locator("xpath=..");
   const shares = await statusCardR.evaluate((el) => Object.fromEntries(
     [...el.querySelectorAll("span.text-xs.font-semibold")].map((s) => [(s.previousElementSibling?.querySelector("p")?.textContent ?? "").trim(), (s.textContent ?? "").trim()]),
@@ -736,7 +739,7 @@ try {
     joined: row("Health", JOINED_LABEL)?.slice(2), oldJoined: row("Health", "Joined this month"),
     new: row("Health", "New this month")?.slice(2), rejoined: row("Health", "Rejoined this month")?.slice(2),
     tasters: row("Health", "Tasters added this month")?.slice(2), left: row("Health", "Left this month")?.slice(2),
-    recovery: row("Health", "Payment recovery")?.[2], survival: row("Health", "6-month survival")?.[2],
+    recovery: row("Health", "Payment recovery")?.[2], survival: row("Health", "Survival")?.[2],
   };
   const csvHealthExpected = {
     churn: X.churnCsv,
@@ -1001,10 +1004,10 @@ try {
   await page.goto("/dashboard/analysis?period=3m");
   const aSelect = page.getByLabel("Reporting period");
   await aSelect.waitFor({ timeout: 90000 });
-  const aDesc = norm(await page.getByText(/ · AI report$/).first().innerText());
+  const aDesc = norm(await page.getByText(/ · rules-based report$/).first().innerText());
   L.check("period", "P10 Analysis opens on the same period and names its months",
-    (await aSelect.inputValue()) === "3m" && aDesc === `${label3} (to today) · AI report`,
-    { period: await aSelect.inputValue(), description: aDesc, expected: `${label3} (to today) · AI report` });
+    (await aSelect.inputValue()) === "3m" && aDesc === `${label3} (to today) · rules-based report`,
+    { period: await aSelect.inputValue(), description: aDesc, expected: `${label3} (to today) · rules-based report` });
   await shot(page, "reporting-truth-analysis-3m");
 
   // ── Phone width (390 px), same session ─────────────────────────────────────

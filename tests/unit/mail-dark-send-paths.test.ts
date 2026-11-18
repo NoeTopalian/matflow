@@ -64,7 +64,7 @@ vi.mock("@/lib/api-authz", () => ({
 vi.mock("@/lib/support-session", () => ({ refuseSupportSession: () => null }));
 vi.mock("@/lib/review-lock", () => ({ refuseIfReviewLocked: async () => null }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: h.logAudit }));
-vi.mock("@/lib/rate-limit", () => ({
+vi.mock("@/lib/rate-limit", () => ({ resetRateLimit: async () => {}, // Round 4: the chase releases its once-a-minute hit when nothing went;
   checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
   getClientIp: () => "203.0.113.7",
 }));

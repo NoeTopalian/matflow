@@ -123,7 +123,7 @@ describe.skipIf(!HAS_DB)("the session horizon is topped up by the member read â€
   it("member Home, where members check in, tops its club up too (review of PR #93, finding 1)", async () => {
     expect(await instancesOf(ids.homeClass)).toHaveLength(0);
     vi.mocked(auth).mockResolvedValueOnce({ user: { id: `synthetic-member-${ids.memberC}`, role: "member", tenantId: ids.C, memberId: ids.memberC, name: "Synthetic Home Member" } } as never);
-    const res = await homeGET(new Request("https://test.local/api/member/home"));
+    const res = await homeGET();
     expect(res.status).toBe(200);
     expect(await instancesOf(ids.homeClass)).toHaveLength(Math.ceil(ROLLING_WINDOW_DAYS / 7));
   });

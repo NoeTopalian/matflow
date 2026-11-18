@@ -26,6 +26,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { auth } from "@/auth";
 import { getToken, encode } from "next-auth/jwt";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/session-id";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
 import { withTenantContext } from "@/lib/prisma-tenant";
@@ -150,7 +151,7 @@ export async function POST(req: Request) {
   const encoded = await encode({
     token: { ...token, sessionVersion: newVersion, mustChangePassword: false },
     secret: AUTH_SECRET_VALUE,
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
     salt: SESSION_COOKIE_NAME,
   });
   const res = NextResponse.json({ ok: true, signInAgain: false });
@@ -159,7 +160,7 @@ export async function POST(req: Request) {
     sameSite: "lax",
     secure: SESSION_COOKIE_SECURE,
     path: "/",
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
   return res;
 }
