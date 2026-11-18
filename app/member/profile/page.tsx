@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { signOut } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
+import { useToast } from "@/components/ui/Toast";
 import Link from "next/link";
 import { User, Mail, Phone, LogOut, Globe, ExternalLink, X, Pencil, CreditCard } from "lucide-react";
 import ClassPacksWidget from "@/components/member/ClassPacksWidget";
@@ -26,6 +27,7 @@ function hex(h: string, a: number) {
 }
 
 export default function MemberProfilePage() {
+  const { toast } = useToast();
   // The whole "Notifications" card was removed deliberately. "Class reminders"
   // went first (no scheduler); "Belt promotions" and "Gym announcements"
   // followed for the same reason — nothing consults Member.beltPromotions or
@@ -705,7 +707,9 @@ export default function MemberProfilePage() {
       <button
         className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold transition-all active:scale-[0.98]"
         style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.2)" }}
-        onClick={() => signOut({ callbackUrl: "/login" })}
+        onClick={async () => {
+          if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+        }}
       >
         <LogOut className="w-4 h-4" />
         Sign Out
