@@ -174,6 +174,7 @@ export async function GET() {
       const children = await buildMemberChildren(tx, {
         tenantId: session.user.tenantId,
         memberId,
+        clubToday: today.date,
         includeTimetable: true,
       });
       const announcements = await buildAnnouncementsData(tx, {
