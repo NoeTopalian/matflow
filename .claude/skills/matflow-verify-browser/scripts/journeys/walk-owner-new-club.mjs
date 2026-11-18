@@ -108,7 +108,8 @@ try {
 
   // What was set up shows where the owner manages it.
   await page.goto("/dashboard/timetable");
-  const onTimetable = await page.getByText(CLASS).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
+  // The page also holds the hidden phone layout; match the copy that is on screen.
+  const onTimetable = await page.getByText(CLASS).filter({ visible: true }).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
   L.check("manage", "W1 the class from set-up is on the timetable", onTimetable);
   await page.goto("/dashboard/reports");
   const reportsOk = await page.getByRole("heading").first().waitFor({ timeout: 60000 }).then(() => true, () => false);
