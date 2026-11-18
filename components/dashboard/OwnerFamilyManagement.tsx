@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Users, UserPlus, Unlink, Loader2, ChevronRight, ShieldCheck, ShieldOff } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
@@ -581,22 +581,38 @@ function AddChildModal({
   const [name, setName] = useState("");
   const [dob, setDob] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Round 4 (10 Nov 2026): one request id per distinct child, as the Add
+  // member form does. A retry of the same details (after a lost reply) reuses
+  // it and the server returns the child it already created; any edit starts
+  // a new one.
+  const attemptRef = useRef<{ key: string; sig: string } | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !dob) return;
     setSubmitting(true);
+    const sig = JSON.stringify([name.trim(), dob, parentId]);
+    const held = attemptRef.current;
+    const requestId = held && held.sig === sig ? held.key : crypto.randomUUID();
+    attemptRef.current = { key: requestId, sig };
     try {
-      const res = await fetch("/api/members", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          accountType: "kids",
-          parentMemberId: parentId,
-          dateOfBirth: dob,
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/members", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name.trim(),
+            accountType: "kids",
+            parentMemberId: parentId,
+            dateOfBirth: dob,
+            requestId,
+          }),
+        });
+      } catch {
+        toast("No reply from MatFlow, so it isn't known whether the child was added. Add again: the same details won't add them twice.", "error");
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         toast(data.error ?? "Failed to create child", "error");

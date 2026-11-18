@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { useOverlay } from "@/components/ui/overlay";
 import { useRouter } from "next/navigation";
 import { describeSaveFailure } from "@/lib/save-failure";
 import { Camera, Trash2, FileCheck2, AlertTriangle, Loader2, X } from "lucide-react";
@@ -273,6 +274,32 @@ function SignWaiverModal({
   // The server needs the PARENT's emergency contact before they sign for a
   // child; ask for it here rather than refusing with nowhere to enter it.
   const contact = useEmergencyContactGate();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const { ask, dialogProps } = useConfirmDialog();
+  // Round 11 (5.4): a guardian halfway through a drawn signature lost it to one stray tap
+  // on the backdrop. With a name, the box ticked or a mark drawn, Escape, the backdrop and
+  // × ask first; the shared overlay behaviour adds Escape, focus in and a Tab trap.
+  // The guardian's own emergency contact, when asked for here, counts once it differs from what loaded.
+  const contactNow = `${contact.fields.name}|${contact.fields.phone}|${contact.fields.relation}`;
+  const [contactBase, setContactBase] = useState<string | null>(null);
+  if (contact.ask === true && contactBase === null) setContactBase(contactNow);
+  const contactTyped = contact.ask === true && contactBase !== null && contactNow !== contactBase;
+  const started = signerName.trim() !== "" || agreed || hasMark || contactTyped;
+  async function requestClose() {
+    if (signing) return;
+    if (!started) return onClose();
+    const discard = await ask({
+      title: "Discard your changes?",
+      body: "What you've entered here hasn't been saved.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+      destructive: true,
+      navClearance: "member-nav",
+    });
+    if (discard) onClose();
+    else focusBackInto(panelRef.current);
+  }
+  useOverlay({ open: true, onClose: () => void requestClose(), panelRef });
 
   function start(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = padRef.current; if (!c) return;
@@ -356,9 +383,15 @@ function SignWaiverModal({
   // bridge — this form would lose its dark tenant surface. So the layout is
   // fixed here: the panel is capped at the viewport less the nav clearance and
   // a top gap, the header and the Sign button stay put, the middle scrolls.
+  // The question sits outside the backdrop: React clicks bubble through portals.
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" style={{ paddingBottom: "var(--member-nav-clearance)" }} onClick={onClose} aria-modal="true" role="dialog" aria-labelledby="kid-waiver-title">
+    <>
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-end md:items-center justify-center" style={{ paddingBottom: "var(--member-nav-clearance)" }} onClick={() => void requestClose()}>
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="kid-waiver-title"
         className="bg-[var(--member-elevated)] border border-[var(--member-elevated-border)] rounded-t-3xl md:rounded-3xl w-full md:max-w-md flex flex-col overflow-hidden"
         style={{ maxHeight: "calc(100dvh - var(--member-nav-clearance) - max(env(safe-area-inset-top), 12px))" }}
         onClick={(e) => e.stopPropagation()}
@@ -369,7 +402,7 @@ function SignWaiverModal({
             type="button"
             variant="ghost"
             size="compact"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             aria-label="Close"
             className="w-8 px-0 rounded-full"
             style={{ background: "var(--member-surface)", color: "var(--member-text-muted)" }}
@@ -436,5 +469,15 @@ function SignWaiverModal({
         </div>
       </div>
     </div>
+    <ConfirmDialog {...dialogProps} />
+    </>
   );
+}
+
+/** After "Keep editing" the question hands focus back to what it saw on open; a backdrop tap left that as <body>. */
+function focusBackInto(panel: HTMLElement | null, preferred?: HTMLElement | null) {
+  setTimeout(() => {
+    if (!panel || panel.contains(document.activeElement)) return;
+    (preferred ?? panel.querySelector<HTMLElement>("input, textarea, button"))?.focus();
+  }, 0);
 }

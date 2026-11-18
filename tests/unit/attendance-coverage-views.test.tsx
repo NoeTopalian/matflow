@@ -152,6 +152,13 @@ describe("1. a club with no attendance records at all", () => {
     expect(text).toContain("Test club has 10 active members today across 3 classes. No attendance recorded yet, so check-ins and engagement are not reported.");
     expect(text).not.toContain("recorded 0 check-ins");
   });
+
+  // Round 3 (10 Nov 2026): the written analysis is a template, not a model.
+  it("says it is rules-based, not AI", () => {
+    const text = buildReport(metrics(THIS_MONTH(), NONE as never) as never, []);
+    expect(text).toContain("rules-based, not AI");
+    expect(text).not.toContain("MatFlow AI");
+  });
 });
 
 // ── 2. A period wholly before the records start ──────────────────────────────
@@ -292,7 +299,7 @@ describe("5. the CSV follows the same rule: — plus the note in the Detail colu
       "Weekly attendance,23 Feb,—,No records (MatFlow's records start 3 Mar 2026)",
       "Weekly attendance,2 Mar,5,Partly covered (records start 3 Mar 2026)",
       "Weekly attendance,9 Mar,35,",
-      "Top classes,Fundamentals,40,\"Feb – Apr 2026 · Records start 3 Mar 2026, 4/session, fill rate no capacity set\"",
+      "Top classes,Fundamentals,40,\"Feb – Apr 2026 · Records start 3 Mar 2026, 4 per attended session, fill rate no capacity set\"",
     ]) expect(csv).toContain(want);
 
     const COVERED: Coverage = { start: "2025-01-10T00:00:00.000Z", timeZone: LONDON, period: "covered", previous: "covered", thisWeek: "covered", lastWeek: "covered" };

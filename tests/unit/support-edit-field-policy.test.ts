@@ -171,6 +171,8 @@ describe("field classification covers the whole schema (ratchet)", () => {
     "member.update": [
       "email", "status", "paymentStatus", "membershipType", "membershipTierId",
       "trialRunById", "creditedToUserId", "creditedToMemberId", "creditedToLabel",
+      // Round 12 G-1: whether a member shows on the club's public TV board is the club's call, not support's.
+      "leaderboardOptOut",
     ],
     "member.create": [
       "parentMemberId", "accountType", "status",

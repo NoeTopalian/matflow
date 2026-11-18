@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { resolveSettingsPreconditions, type SettingsConflict } from "@/lib/settings-precondition";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { snapshotDiff } from "@/lib/audit-snapshot";
@@ -33,6 +34,15 @@ class TierRefError extends Error {}
 class MatRefError extends Error {}
 /** A new Location would be the club's thirteenth mat: roll the whole edit back. */
 class MatLimitError extends Error {}
+/**
+ * Round 4 (10 Nov 2026): a class field the editor changed was changed by
+ * someone else since it loaded the class. Rolls the whole edit back.
+ */
+class StaleClassFieldsError extends Error {
+  constructor(readonly conflicts: SettingsConflict[]) { super("stale_class"); }
+}
+/** The class fields an edit can carry an `expected` value for (the editor sends these whenever they change). */
+const CLASS_PRECONDITION_FIELDS = ["name", "description", "coachName", "coachUserId", "duration", "maxCapacity", "requiredRankId", "maxRankId", "isKids", "locationId"] as const;
 
 const rosterEntrySchema = z.object({ memberId: z.string().min(1) });
 
@@ -44,6 +54,12 @@ const updateSchema = z.object({
   // deactivate it, because the submitted list was taken as the whole truth.
   // Omitted = legacy behaviour (the list is the truth); the app always sends it.
   baseScheduleIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+  // Round 4 (11 Nov 2026): the squad (active members' ids) the editor loaded.
+  // A save that rewrites or clears the squad (a squad change, or a rank gate,
+  // which clears it by the mutual-exclusion rule) is refused (409
+  // stale_class) if the squad changed since, so a rank set from an older tab
+  // cannot silently wipe a squad someone else just edited.
+  baseRosterIds: z.array(z.string().min(1).max(64)).max(2000).optional(),
   description: z.string().max(500).optional().nullable(),
   coachName: z.string().max(100).optional().nullable(),
   coachUserId: z.string().optional().nullable(),
@@ -441,6 +457,19 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // Round 4: `expected` holds, for each class field being changed, the value
+  // the editor loaded (lib/settings-precondition). A save from an older tab
+  // cannot put back a capacity, coach or name changed since.
+  let expected: Record<string, unknown> | null = null;
+  if (body && typeof body === "object" && !Array.isArray(body) && "expected" in body) {
+    const { expected: given, ...restBody } = body as Record<string, unknown>;
+    if (!given || typeof given !== "object" || Array.isArray(given)) {
+      return NextResponse.json({ error: "`expected` must list the values you last saw, by field" }, { status: 400 });
+    }
+    expected = given as Record<string, unknown>;
+    body = restBody;
+  }
+
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
@@ -448,6 +477,9 @@ export async function PATCH(req: Request, { params }: Params) {
   // A category by id and an old key together: refused before anything is read.
   if (parsed.data.categoryId !== undefined && parsed.data.category !== undefined) {
     return NextResponse.json({ error: CATEGORY_ERRORS.both, reason: "category" }, { status: 400 });
+  }
+  if (expected && Object.keys(expected).some((k) => !(CLASS_PRECONDITION_FIELDS as readonly string[]).includes(k) || !(k in parsed.data))) {
+    return NextResponse.json({ error: "`expected` names a field this save does not change" }, { status: 400 });
   }
 
   // TRUTHY, not merely present. This used to be `!== undefined`, which made
@@ -637,6 +669,27 @@ export async function PATCH(req: Request, { params }: Params) {
       // roster, tier or booking work and holds the lock no longer than needed.
       if (wantsSchedules && parsed.data.baseScheduleIds && !(await schedulesAreFresh(tx, tenantId, id, parsed.data.baseScheduleIds))) {
         throw new StaleScheduleError();
+      }
+      // Round 4: the same for the class's own fields, under the same row lock
+      // and before any write. A field whose stored value is neither the one
+      // the editor loaded nor the one it sends was changed by someone else.
+      if (expected) {
+        const stored = await tx.class.findFirst({
+          where: { id, tenantId },
+          select: { name: true, description: true, coachName: true, coachUserId: true, duration: true, maxCapacity: true, requiredRankId: true, maxRankId: true, isKids: true, locationId: true },
+        });
+        const sent = Object.fromEntries(Object.keys(expected).map((k) => [k, (parsed.data as Record<string, unknown>)[k]]));
+        const { conflicts } = resolveSettingsPreconditions((stored ?? {}) as Record<string, unknown>, sent, expected);
+        if (conflicts.length > 0) throw new StaleClassFieldsError(conflicts);
+      }
+      if ((wantsRoster || wantsRankGate) && parsed.data.baseRosterIds) {
+        const squadNow = (await tx.classRoster.findMany({
+          where: { classId: id, tenantId, member: { archivedAt: null } },
+          select: { memberId: true },
+        })).map((r) => r.memberId);
+        if (!sameIds(squadNow, parsed.data.baseRosterIds)) {
+          throw new StaleClassFieldsError([{ field: "roster", current: [...squadNow].sort() }]);
+        }
       }
       // T6b: whether the class is live once this edit lands. A Resume /
       // Restore makes it live; a pause does not; otherwise it keeps its state.
@@ -867,10 +920,10 @@ export async function PATCH(req: Request, { params }: Params) {
         entityType: "Class",
         entityId: id,
         metadata: {
-          // `baseScheduleIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
+          // `baseScheduleIds`, `baseRosterIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
           // A Location by name (`matName`) is recorded as the columns it sets.
           // An old category key is recorded as the reference it was written as.
-          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
+          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "baseRosterIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
           // Release B's activation signal, durable (runtime logs are not kept long enough to cover the observation
           // window): this save came from a page that knows only the old category keys. This release's form sends
           // `categoryBaseId` with any key it sends on an edit, so only an old page matches.
@@ -948,6 +1001,12 @@ export async function PATCH(req: Request, { params }: Params) {
     }
     if (e instanceof StaleScheduleError) {
       return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
+    }
+    if (e instanceof StaleClassFieldsError) {
+      return NextResponse.json(
+        { error: "Someone changed this class since you opened it. Your changes have not been saved.", reason: "stale_class", conflicts: e.conflicts },
+        { status: 409 },
+      );
     }
     // The mat went between the pre-flight and the write, or the foreign key refused it.
     if (e instanceof MatRefError || isMatForeignKeyError(e)) {

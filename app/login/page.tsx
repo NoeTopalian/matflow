@@ -11,6 +11,7 @@ import { z } from "zod";
 import { Eye, EyeOff, Loader2, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { lookupTenantWithAbort } from "@/lib/login-lookup";
 import type { GymBranding } from "@/lib/login-lookup";
+import { mergeLocalBranding } from "@/lib/login-branding";
 import { FONT_IMPORTS, extractFontName, isSafeFontFamily } from "@/lib/fonts";
 
 const codeSchema = z.object({ code: z.string().min(1, "Enter your club code") });
@@ -126,37 +127,6 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function mergeLocalBranding(branding: GymBranding) {
-  if (typeof window === "undefined") return branding;
-  try {
-    const raw = localStorage.getItem("gym-settings");
-    if (!raw) return branding;
-    const local = JSON.parse(raw) as {
-      slug?: unknown;
-      logoUrl?: unknown;
-      primaryColor?: unknown;
-      secondaryColor?: unknown;
-      textColor?: unknown;
-      bgColor?: unknown;
-      fontFamily?: unknown;
-    };
-    if (typeof local.slug !== "string" || local.slug.toLowerCase() !== branding.slug.toLowerCase()) {
-      return branding;
-    }
-
-    return {
-      ...branding,
-      logoUrl: typeof local.logoUrl === "string" && local.logoUrl.length > 0 ? local.logoUrl : branding.logoUrl,
-      primaryColor: isHexColor(local.primaryColor) ? local.primaryColor : branding.primaryColor,
-      secondaryColor: isHexColor(local.secondaryColor) ? local.secondaryColor : branding.secondaryColor,
-      textColor: isHexColor(local.textColor) ? local.textColor : branding.textColor,
-      bgColor: isHexColor(local.bgColor) ? local.bgColor : branding.bgColor,
-      fontFamily: isSafeFontFamily(local.fontFamily) ? local.fontFamily : branding.fontFamily,
-    };
-  } catch {
-    return branding;
-  }
-}
 
 function getLoginTheme(gym?: GymBranding | null) {
   const primary = isHexColor(gym?.primaryColor) ? gym!.primaryColor : "#3b82f6";
@@ -808,6 +778,8 @@ function LoginStep({
                 <button
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
+                  aria-label={showPw ? "Hide password" : "Show password"}
+                  aria-pressed={showPw}
                   className="absolute right-4 top-1/2 -translate-y-1/2 transition-colors"
                   style={{ color: theme.textSoft }}
                 >

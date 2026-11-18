@@ -194,7 +194,7 @@ describe("Reports CSV (components/dashboard/ReportsView.tsx reportsCsv)", () => 
     expect(rows.find((r) => r[1] === "Rejoined this month")?.[2]).toBe("1");
     expect(rows.find((r) => r[1] === "Payment recovery")?.[2]).toBe("50% (1 of 2)");
     // Undefined rates export as a dash, never "0%".
-    expect(rows.find((r) => r[1] === "6-month survival")?.[2]).toBe("—");
+    expect(rows.find((r) => r[1] === "Survival")?.[2]).toBe("—");
     expect(rows.find((r) => r[1] === "Self-service check-in")?.[2]).toBe("—");
     expect(rows.find((r) => r[1] === "Active share of current members")?.[2]).toBe("89% (8 of 9)");
     // T8c: the window's tally, one movement row per month with its basis, and

@@ -53,6 +53,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
+import { zoneOffsetMs } from "@/lib/class-time";
 
 const T = "tenant-A";
 const periodStart = new Date("2026-09-01T00:00:00Z");
@@ -124,7 +125,12 @@ describe("AI monthly report — imports are never joins (review 25 Oct)", () => 
 
 describe("AI monthly report — previous-period window (review L8)", () => {
   it("1 November run (period 1-31 Oct): previous window is exactly 1-30 September", async () => {
-    const at = (y: number, mo: number, d: number, h = 12, mi = 0) => new Date(y, mo, d, h, mi);
+    // Club wall-clock (Europe/London, the report's default zone since Round 3), not the test process's zone: with
+    // process-local dates the boundaries moved an hour in CI (UTC) and 31 Aug 23:59 fell inside September.
+    const at = (y: number, mo: number, d: number, h = 12, mi = 0) => {
+      const utc = Date.UTC(y, mo, d, h, mi);
+      return new Date(utc - zoneOffsetMs(new Date(utc), "Europe/London"));
+    };
     state.members = [
       member({ joinedAt: at(2026, 7, 31, 23, 59) }), // 31 Aug: before the window
       member({ joinedAt: at(2026, 8, 1, 0, 0) }), // 1 Sep 00:00: first instant of the window
@@ -135,8 +141,8 @@ describe("AI monthly report — previous-period window (review L8)", () => {
     const report = await generateMonthlyReport({
       tenantId: T,
       tenantName: "Total BJJ",
-      periodStart: new Date(2026, 9, 1),
-      periodEnd: new Date(2026, 9, 31, 23, 59, 59, 999),
+      periodStart: at(2026, 9, 1, 0, 0),
+      periodEnd: new Date(at(2026, 10, 1, 0, 0).getTime() - 1),
     });
     expect(report.metricSnapshot.newPrevPeriod).toBe(2);
     expect(report.metricSnapshot.newThisPeriod).toBe(2);
