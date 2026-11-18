@@ -133,6 +133,7 @@ describe("(b) no revenue, and never 'Free'", () => {
     vi.doMock("@/lib/prisma-tenant", () => ({
       withTenantContext: async (_t: string, fn: (tx: unknown) => unknown) =>
         fn({
+          tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
           payment: { findMany: async () => [] },
           member: {
             count: async () => 2,

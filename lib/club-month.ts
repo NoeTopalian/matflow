@@ -173,6 +173,35 @@ export function monthRange(window: Pick<ClubMonthWindow, "monthStart" | "nextMon
   return { gte: new Date(window.monthStart), lt: new Date(window.nextMonthStart) };
 }
 
+/**
+ * The club-zone Monday (as a "YYYY-MM-DD" day key) of the week holding
+ * `instant`. Round 3 (10 Nov 2026): Reports' weeks used the server process's
+ * clock (UTC on Vercel), so a club's Monday started an hour late in BST and
+ * a whole day off for far-away zones.
+ */
+export function clubWeekStartKey(instant: Date, timeZone: string): string {
+  const dayKey = clubDayKey(instant, timeZone);
+  const [y, m, d] = dayKey.split("-").map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  return shiftDayKey(dayKey, -((weekday + 6) % 7));
+}
+
+/** Midnight club time on the Monday starting the week holding `instant`. */
+export function clubWeekStart(instant: Date, timeZone: string): Date {
+  return clubDayWindow(clubWeekStartKey(instant, timeZone), timeZone).start;
+}
+
+/**
+ * The AI monthly report's period: the club's previous calendar month (Tenant.timezone),
+ * periodEnd inclusive (one millisecond before the next month starts). Round 3
+ * (10 Nov 2026): both routes used the server process's months (UTC on
+ * Vercel), so a BST club's month started an hour late.
+ */
+export function previousClubMonthPeriod(now: Date, timeZone: string | null | undefined): { periodStart: Date; periodEnd: Date } {
+  const w = clubMonthWindow(now, timeZone, -1);
+  return { periodStart: new Date(w.monthStart), periodEnd: new Date(new Date(w.nextMonthStart).getTime() - 1) };
+}
+
 /** The month a client falls back to when no server window was passed: the schema-default zone, never the browser's. */
 export function defaultClubMonthWindow(now: Date = new Date()): ClubMonthWindow {
   return clubMonthWindow(now, DEFAULT_TIMEZONE);

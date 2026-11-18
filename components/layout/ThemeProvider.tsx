@@ -15,9 +15,12 @@ export default function ThemeProvider({ primaryColor, secondaryColor, textColor,
   useEffect(() => {
     // Also apply any locally-saved demo overrides
     const local = (() => { try { return JSON.parse(localStorage.getItem("gym-settings") ?? "{}"); } catch { return {}; } })();
-    const primary   = local.primaryColor   ?? primaryColor;
-    const secondary = local.secondaryColor ?? secondaryColor;
-    const text      = local.textColor      ?? textColor;
+    // Round 2 close-out (10 Nov 2026): the club's saved colours (props, from
+    // the tenant row) win; the cache only fills one that is missing. It used
+    // to override them, so a stale or unsaved colour coloured the dashboard.
+    const primary   = primaryColor   || local.primaryColor;
+    const secondary = secondaryColor || local.secondaryColor;
+    const text      = textColor      || local.textColor;
     const bg        = local.bgColor        ?? null;
 
     const root = document.documentElement;

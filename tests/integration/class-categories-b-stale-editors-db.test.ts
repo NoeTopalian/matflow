@@ -253,6 +253,36 @@ describe.skipIf(!HAS_DB)("Release B — editors left open while categories chang
     await expect.poll(async () => count(await marked()), { timeout: 20_000, interval: 500 }).toEqual({ marked: 2, unmarked: 2 });
   });
 
+  // Round 6 merge review (13 Nov 2026), finding 2: Round 4's field preconditions (`expected`) and Release B's category
+  // check meet in one save. Either stale refuses the whole save; nothing of it is written.
+  it("one save with a category change and a field precondition: refused whole when either is stale, applied whole when both are current", async () => {
+    process.env.CLASS_CATEGORY_MANAGEMENT = "on";
+    const T = await club("r4-combined");
+    const gi = await catByKey(T, "gi");
+    const nogi = await catByKey(T, "nogi");
+    const kids = await catByKey(T, "kids");
+    const c = await classOn(T, "Combined", gi.id);
+    // The form opened on Gi, named "Combined". Someone else then moves it to No-Gi and renames it.
+    await moveTo(T, c.id, nogi.id);
+    await directName(T, c.id, "Combined (Mon)");
+    const after = { name: "Combined (Mon)", categoryId: nogi.id };
+
+    // Stale on both: refused on the category, which is checked first.
+    expect(await save(T, c.id, { categoryId: kids.id, categoryBaseId: gi.id, name: "Mine", expected: { name: "Combined" } }))
+      .toMatchObject({ status: 409, error: CATEGORY_ERRORS.changed });
+    expect(await readClass(T, c.id)).toMatchObject(after);
+    // Category current, name stale: refused; the category is not written either.
+    expect((await save(T, c.id, { categoryId: kids.id, categoryBaseId: nogi.id, name: "Mine", expected: { name: "Combined" } })).status).toBe(409);
+    expect(await readClass(T, c.id)).toMatchObject(after);
+    // Name current, category stale: refused; the name is not written either.
+    expect(await save(T, c.id, { categoryId: kids.id, categoryBaseId: gi.id, name: "Mine", expected: { name: "Combined (Mon)" } }))
+      .toMatchObject({ status: 409, error: CATEGORY_ERRORS.changed });
+    expect(await readClass(T, c.id)).toMatchObject(after);
+    // Both current: both applied.
+    expect((await save(T, c.id, { categoryId: kids.id, categoryBaseId: nogi.id, name: "Mine", expected: { name: "Combined (Mon)" } })).status).toBe(200);
+    expect(await readClass(T, c.id)).toMatchObject({ name: "Mine", categoryId: kids.id });
+  });
+
   it("the limit that remains: an old page carries no record of what it saw, so on a class whose category is a starting one (which it can show) its explicit change applies even if someone changed that class since", async () => {
     process.env.CLASS_CATEGORY_MANAGEMENT = "on";
     const T = await club("old-page-limit");

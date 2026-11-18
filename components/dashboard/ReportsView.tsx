@@ -222,10 +222,26 @@ function hex(h: string, a: number) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-/** A class's fill rate with the places behind it (T2b), the denominator named: "45% (90 of 200 places)", or "no capacity set". */
+/**
+ * A class's fill rate with the places behind it (T2b), the denominator named:
+ * "45% (90 of 200 places in attended sessions)", or "no capacity set". The
+ * places are those of sessions with at least one check-in (lib/reports.ts
+ * counts from attendance records), so the label says so (Round 3 close-out).
+ */
 function formatFill(cls: { fillRate: number | null; count: number; capacityTotal?: number }) {
   if (cls.fillRate === null || !cls.capacityTotal) return "no capacity set";
-  return `${formatPct(cls.fillRate, cls.capacityTotal)} (${formatNumber(cls.count)} of ${formatNumber(cls.capacityTotal)} places)`;
+  return `${formatPct(cls.fillRate, cls.capacityTotal)} (${formatNumber(cls.count)} of ${formatNumber(cls.capacityTotal)} places in attended sessions)`;
+}
+
+/**
+ * Who the survival figure is over (Round 3 close-out, 10 Nov 2026): members
+ * who joined before the start of the club month five months back, named by
+ * that date. It used to say "6+ months", which overstated the cohort's age.
+ */
+export function survivalCohort(retention: { joinedBefore?: string | null }, timeZone: string): string {
+  if (!retention.joinedBefore) return "Members who joined at least five months ago";
+  const date = new Date(retention.joinedBefore).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone });
+  return `Members who joined before ${date}`;
 }
 
 /**
@@ -703,7 +719,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
     // Owner instruction of 24 Oct 2026: a failed charge is not a debt until it
     // is reconciled, so it is its own row and in no debt total.
     ["Payments", FAILED_TO_RECONCILE_COPY.label, data.paymentHealth.failedToReconcileCount ?? 0, failedToReconcileDetail(data.paymentHealth.failedToReconcileGuardianCount ?? 0)],
-    ["Health", "6-month survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), "Members who joined 6+ months ago, still active — not the inverse of churn"],
+    ["Health", "Survival", formatRatio(retention.ratePct, retention.survived, retention.cohort), `${survivalCohort(retention, range.timeZone)}, still active — not the inverse of churn`],
     ...membershipCsvRows(data.membership),
     // A bucket the records do not cover is "—" with its note, never 0 (28 Oct 2026).
     ...coverageBuckets.map((row) => (data.attendanceBucket === "month"
@@ -734,7 +750,7 @@ export function reportsCsv(data: ReportsData, attribution: AttributionData): str
           "Top classes",
           row.name,
           row.count,
-          `${attendanceLabel}, ${row.averageAttendance}/session, fill rate ${formatFill(row)}`,
+          `${attendanceLabel}, ${row.averageAttendance} per attended session, fill rate ${formatFill(row)}`,
         ])),
     // Q4 A-2 split: shares over current members; those who have left are a
     // count with no percentage — exactly as the status card shows them.
@@ -1789,7 +1805,7 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
                   key={cls.name}
                   label={cls.name}
                   value={formatNumber(cls.count)}
-                  detail={`${cls.averageAttendance}/session · fill ${formatFill(cls)}`}
+                  detail={`${cls.averageAttendance} per attended session · fill ${formatFill(cls)}`}
                   pct={Math.round((cls.count / maxTopClass) * 100)}
                   color={index === 0 ? primaryColor : hex(primaryColor, 0.62 - index * 0.08)}
                 />
@@ -1951,10 +1967,10 @@ export default function ReportsView({ data, attribution, primaryColor }: Props) 
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>
-              6-month survival: {formatRatio(retention.ratePct, retention.survived, retention.cohort)}
+              Survival: {formatRatio(retention.ratePct, retention.survived, retention.cohort)}
             </p>
             <p className="text-xs mt-0.5" style={{ color: "var(--tx-3)" }}>
-              Of members who joined 6+ months ago, still active today. A different measure from the churn count above — not its inverse.
+              {survivalCohort(retention, range.timeZone)}: how many are still active today. A different measure from the churn count above — not its inverse.
             </p>
           </div>
         </Card>

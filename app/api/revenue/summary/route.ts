@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwner } from "@/lib/api-authz";
+import { clubMonthWindow } from "@/lib/club-month";
 import { ACTIVE_MEMBER } from "@/lib/member-population";
 
 /**
@@ -20,12 +21,10 @@ export async function GET() {
   const { tenantId } = gate;
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
   const baseFilter = { tenantId, status: "succeeded" as const };
 
+  let monthWindows: ReturnType<typeof clubMonthWindow>[] = [];
   const [
     monthPayments,
     lastMonthPayments,
@@ -34,8 +33,17 @@ export async function GET() {
     membershipMix,
     tiers,
     recentPayments,
-  ] = await withTenantContext(tenantId, (tx) =>
-    Promise.all([
+  ] = await withTenantContext(tenantId, async (tx) => {
+    // Round 3 (10 Nov 2026): months are the club's (Tenant.timezone), as on
+    // Reports. They were the server process's (UTC on Vercel), so an hour of
+    // payments either side of a BST month boundary landed in the wrong month.
+    const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+    const month = (offset: number) => clubMonthWindow(now, club?.timezone, offset);
+    monthWindows = [-5, -4, -3, -2, -1, 0].map(month);
+    const startOfMonth = new Date(month(0).monthStart);
+    const startOfLastMonth = new Date(month(-1).monthStart);
+    const sixMonthsAgo = new Date(month(-5).monthStart);
+    return Promise.all([
       tx.payment.findMany({
         where: { ...baseFilter, paidAt: { gte: startOfMonth } },
         select: { amountPence: true },
@@ -70,26 +78,28 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
         take: 6,
       }),
-    ]),
-  );
+    ]);
+  });
 
   const mrr = Math.round(monthPayments.reduce((s, p) => s + p.amountPence, 0) / 100);
   const lastMonthRevenue = Math.round(lastMonthPayments.reduce((s, p) => s + p.amountPence, 0) / 100);
   const arr = mrr * 12;
-  const avgPerMember = activeMembers > 0 ? Math.round(mrr / activeMembers) : 0;
+  // Round 3 (10 Nov 2026): with no active members there is no per-member
+  // figure (null, shown as "—"), not £0.
+  const avgPerMember = activeMembers > 0 ? Math.round(mrr / activeMembers) : null;
   const growthPct = lastMonthRevenue > 0 ? Math.round(((mrr - lastMonthRevenue) / lastMonthRevenue) * 100) : 0;
 
   // Bucket six-month payments by month-of-year, walking from sixMonthsAgo so
   // months with no revenue still show as £0 instead of being absent.
   const history: { month: string; revenue: number }[] = [];
-  for (let i = 5; i >= 0; i--) {
-    const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+  for (const w of monthWindows) {
+    const monthStart = new Date(w.monthStart);
+    const monthEnd = new Date(w.nextMonthStart);
     const total = sixMonthPayments
       .filter((p) => p.paidAt && p.paidAt >= monthStart && p.paidAt < monthEnd)
       .reduce((s, p) => s + p.amountPence, 0);
     history.push({
-      month: monthStart.toLocaleString("en-GB", { month: "short" }),
+      month: monthStart.toLocaleString("en-GB", { month: "short", timeZone: w.timeZone }),
       revenue: Math.round(total / 100),
     });
   }
@@ -126,6 +136,7 @@ export async function GET() {
   const recent = recentPayments.map((p) => ({
     name: p.member?.name ?? "—",
     action: p.status === "refunded" || p.status === "failed" ? "cancelled" : "joined",
+    status: p.status,
     tier: p.member?.membershipType ?? "—",
     date: ago(p.paidAt ?? p.createdAt),
   }));
