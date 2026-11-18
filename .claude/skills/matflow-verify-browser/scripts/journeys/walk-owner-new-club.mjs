@@ -20,7 +20,8 @@ const GYM = `Walk Gym ${TAG}`;
 const CLASS = "Beginner BJJ";
 const errors = [];
 
-await q(`update "Tenant" set "onboardingCompleted" = false where id = $1`, [tenantId]);
+// Back to first set-up, as the owner reset does (app/api/owner/reset-onboarding): S6 must not pass on an earlier run's answers.
+await q(`update "Tenant" set "onboardingCompleted" = false, "onboardingAnswers" = null, "paymentRail" = null where id = $1`, [tenantId]);
 const tenant = async () => (await q(`select name, "onboardingCompleted" as done, timezone from "Tenant" where id = $1`, [tenantId]))[0];
 // Counted the way S3 counts: classes of that name that have sessions.
 const classesWithSessions = async () => q(`select c.id, array_agg(s."dayOfWeek" order by s."dayOfWeek") as days from "Class" c join "ClassSchedule" s on s."classId" = c.id where c."tenantId" = $1 and c.name = $2 group by c.id`, [tenantId, CLASS]);
