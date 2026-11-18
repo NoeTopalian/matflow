@@ -14,6 +14,7 @@
 // re-issued token carries a revalidation marker, and the next request is
 // admitted only after a successful check. On "revoked" the cookie IS cleared.
 
+import { sessionRowRaw } from "./helpers/session-row";
 import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -29,6 +30,9 @@ const tx = {
   user: { findUnique: vi.fn(async () => row()), findFirst: vi.fn() },
   member: { findUnique: vi.fn(async () => row()), findFirst: vi.fn() },
   tenant: { findUnique: vi.fn() },
+  // The revocation check reads the person and the sign-out record in one statement since Round 8 (16 Nov 2026).
+  $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) =>
+    sessionRowRaw({ member: tx.member, user: tx.user })(strings, ...values),
 };
 vi.mock("@/lib/prisma", () => ({ prisma: tx }));
 vi.mock("@/lib/prisma-tenant", () => ({

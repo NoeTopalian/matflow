@@ -14,11 +14,15 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { sessionRowRaw } from "./helpers/session-row";
 
-const { memberFindUniqueMock, userFindUniqueMock, captureExceptionMock } = vi.hoisted(() => ({
+const { memberFindUniqueMock, userFindUniqueMock, captureExceptionMock, revokedSidMock, queryRawCalls, rawOverride } = vi.hoisted(() => ({
   memberFindUniqueMock: vi.fn(),
   userFindUniqueMock: vi.fn(),
   captureExceptionMock: vi.fn(),
+  revokedSidMock: vi.fn(),
+  queryRawCalls: [] as Array<{ sql: string; values: unknown[] }>,
+  rawOverride: { rows: undefined as unknown },
 }));
 
 vi.mock("@sentry/nextjs", () => ({ captureException: captureExceptionMock }));
@@ -27,6 +31,14 @@ vi.mock("@/lib/prisma-tenant", () => ({
     fn({
       member: { findUnique: memberFindUniqueMock },
       user: { findUnique: userFindUniqueMock },
+      $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+        queryRawCalls.push({ sql: strings.join("?"), values });
+        if (rawOverride.rows !== undefined) return Promise.resolve(rawOverride.rows);
+        return sessionRowRaw(
+          { member: { findUnique: memberFindUniqueMock }, user: { findUnique: userFindUniqueMock } },
+          (sid) => revokedSidMock(sid),
+        )(strings, ...values);
+      },
     }),
 }));
 
@@ -34,6 +46,9 @@ import { checkSessionVersion } from "@/lib/session-revocation";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queryRawCalls.length = 0;
+  rawOverride.rows = undefined;
+  revokedSidMock.mockReturnValue(false);
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -214,5 +229,45 @@ describe("display name follows the row (8 Oct 2026, account editing)", () => {
     const verdict = await checkSessionVersion({ userId: "u1", tokenVersion: 3 }, (n) => seen.push(n));
     expect(verdict).toBe("revoked");
     expect(seen).toEqual([]);
+  });
+});
+
+describe("a session signed out on its own device is a revoked session (Round 8, 16 Nov 2026)", () => {
+  it("REVOKES a token whose session id was signed out, even though the person's version still matches", async () => {
+    userFindUniqueMock.mockResolvedValue({ sessionVersion: 3, name: "Sean", tenantId: "t-1", deactivatedAt: null });
+    revokedSidMock.mockImplementation((sid) => sid === "sid-signed-out-0123456789");
+    expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3, tenantId: "t-1", sid: "sid-signed-out-0123456789" })).toBe("revoked");
+    // The same person's other session is fine.
+    expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3, tenantId: "t-1", sid: "sid-other-device-0123456" })).toBe("ok");
+  });
+
+  it("asks in ONE statement: the person's row and the session's record together (no extra round trip)", async () => {
+    memberFindUniqueMock.mockResolvedValue({ sessionVersion: 1, name: "M", tenantId: "t-1", archivedAt: null });
+    await checkSessionVersion({ memberId: "mem-1", tokenVersion: 1, sid: "sid-abcdefghijklmnopqrstu" });
+    expect(queryRawCalls).toHaveLength(1);
+    expect(queryRawCalls[0].sql).toContain('FROM "Member"');
+    expect(queryRawCalls[0].sql).toContain('"RevokedSession"');
+    expect(queryRawCalls[0].values).toEqual(["sid-abcdefghijklmnopqrstu", "mem-1"]);
+  });
+
+  it("an unreadable revocation flag, or more than one row, proves nothing: unknown, never ok", async () => {
+    const good = { sessionVersion: 3, name: "Sean", tenantId: "t-1", deactivatedAt: null };
+    for (const rows of [
+      [{ ...good, sessionRevoked: null }],
+      [{ ...good, sessionRevoked: "t" }],
+      [{ ...good }],
+      [{ ...good, sessionRevoked: false }, { ...good, sessionRevoked: false }],
+      "not rows",
+    ]) {
+      rawOverride.rows = rows;
+      expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3, sid: "sid-abcdefghijklmnopqrstu" }), JSON.stringify(rows)).toBe("unknown");
+    }
+    rawOverride.rows = [{ ...good, sessionRevoked: false }];
+    expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3, sid: "sid-abcdefghijklmnopqrstu" })).toBe("ok");
+  });
+
+  it("a lookup that fails is unknown (the caller refuses the request), never ok", async () => {
+    userFindUniqueMock.mockRejectedValue(Object.assign(new Error("timeout"), { code: "57014" }));
+    expect(await checkSessionVersion({ userId: "user-1", tokenVersion: 3, sid: "sid-abcdefghijklmnopqrstu" })).toBe("unknown");
   });
 });

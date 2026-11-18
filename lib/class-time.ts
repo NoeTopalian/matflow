@@ -258,6 +258,27 @@ export function todayWindow(now: Date, timeZone: string): { start: Date; end: Da
 }
 
 /**
+ * The club's wall clock at `now`: its calendar date, weekday (0 = Sunday, as
+ * `getDay`) and minutes since its midnight. Same arithmetic as `todayWindow`,
+ * so a screen's "today" is the day the server's today (`/api/coach/today`,
+ * check-in) uses. Pure `Intl`: safe in the browser, where the device's zone may
+ * not be the club's (an owner abroad).
+ */
+export function clubWallClock(
+  now: Date,
+  timeZone: string,
+): { year: number; month: number; day: number; dow: number; minutes: number } {
+  const local = new Date(now.getTime() + zoneOffsetMs(now, timeZone));
+  return {
+    year: local.getUTCFullYear(),
+    month: local.getUTCMonth() + 1,
+    day: local.getUTCDate(),
+    dow: local.getUTCDay(),
+    minutes: local.getUTCHours() * 60 + local.getUTCMinutes(),
+  };
+}
+
+/**
  * `Tenant.timezone` as something `Intl` will accept. The column defaults to
  * Europe/London and onboarding writes the owner's browser zone, so a bad value
  * is rare — but `Intl.DateTimeFormat` throws a RangeError on one, and a coach

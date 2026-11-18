@@ -51,6 +51,7 @@ const ALLOW: Record<string, [number, string]> = {
   "app/api/admin/import/[id]/rollback/route.ts#member.updateMany": [1, "refresh rollback: data is refreshWrite(...) — status, payment and billing columns only; never email"],
   "app/api/member/children/[id]/route.ts#member.updateMany": [1, "data is updateData typed { name?, dateOfBirth? } — never email"],
   "app/api/member/children/route.ts#member.create": [1, "a child is created on a fresh synthesised no-login address (synthesiseKidEmail): random, never shared"],
+  "app/api/members/[id]/route.ts#raw executeRaw": [1, "Round 4 notes-only save: UPDATE \"Member\" SET \"notes\" only, conditional on the expected notes; never email"],
   "app/api/members/[id]/link-child/route.ts#member.updateMany": [1, "guardian link columns (parentMemberId, CONFIRMED_BY spread, derived accountType); never email"],
   "app/api/members/route.ts#member.updateMany": [1, "PR 3 restore-on-add: data is extra typed phone / dateOfBirth / membershipTierWrite spread on the archived member being restored; never email"],
   "app/api/members/accept-invite/route.ts#member.update": [1, "sets the password, date of birth and derived accountType on the member the token names; never email"],

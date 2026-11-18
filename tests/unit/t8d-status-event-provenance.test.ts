@@ -97,6 +97,9 @@ function makeTx() {
     importedMembership: {
       createMany: async ({ data }: { data: Record<string, unknown>[] }) => ({ count: data.length }),
       count: async () => 0,
+      // Round 7 P1 history linking: this fake keeps no ledger, so nothing is unlinked.
+      findMany: async () => [],
+      updateMany: async () => ({ count: 0 }),
     },
   };
 }

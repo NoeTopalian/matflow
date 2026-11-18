@@ -48,6 +48,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([]), // Round 4: the member row lock
     notification: {
       create: vi.fn(),
     },

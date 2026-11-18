@@ -116,7 +116,7 @@ try {
   await mp.keyboard.press("Enter");
   await mp.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await mp.getByLabel("Email address").first().fill(member.email);
-  await mp.getByLabel("Password").fill(memberPassword);
+  await mp.getByLabel("Password", { exact: true }).fill(memberPassword);
   await mp.getByRole("button", { name: "Sign in", exact: true }).click();
   await mp.waitForURL(/\/member/, { timeout: 60000 });
   // The control shows while /api/member/home is in flight (by design: the route refuses either way, and a sheet

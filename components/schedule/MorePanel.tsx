@@ -40,6 +40,12 @@ export function useMoreToggle(expanded: boolean, onOpen: () => void, onClose?: (
   };
 }
 
+/** True when `node` is inside a modal dialog that does not itself contain `panel` (a dialog opened over the panel). */
+function insideDialogOver(node: EventTarget | null, panel: HTMLElement | null): boolean {
+  const dialog = node instanceof Element ? node.closest('[aria-modal="true"]') : null;
+  return !!dialog && !!panel && !dialog.contains(panel);
+}
+
 export function MorePanel({
   label,
   onClose,
@@ -69,7 +75,11 @@ export function MorePanel({
   // tap on one of the panel's own rows would blur to nothing and close the panel before the tap landed.)
   useEffect(() => {
     const outside = (e: PointerEvent) => {
-      if (root.current && e.target instanceof Node && !root.current.contains(e.target)) close.current(false);
+      if (!root.current || !(e.target instanceof Node) || root.current.contains(e.target)) return;
+      // A press inside a dialog opened over this panel (a class's detail sheet) is not "outside" (review of #97, M1).
+      // A dialog that CONTAINS the panel does not count: there a press elsewhere in that dialog is still outside.
+      if (insideDialogOver(e.target, root.current)) return;
+      close.current(false);
     };
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
@@ -91,6 +101,9 @@ export function MorePanel({
         // Focus moving to something outside (Tab past the last row): closed. Focus moving to nothing is a tap,
         // handled by the press listener above.
         const next = e.relatedTarget as Node | null;
+        // Focus moving into a dialog this panel opened (a class's detail sheet) keeps the panel, so the row that
+        // opened it is still there to take focus back when the dialog closes (review of #97, M1).
+        if (insideDialogOver(next, root.current)) return;
         if (next && !root.current?.contains(next)) onClose(false);
       }}
     >

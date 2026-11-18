@@ -4,7 +4,7 @@ import { noPaymentYetPayerWhere, overduePayerWhere } from "@/lib/overdue";
 import { loadOtherAccountsOwing, otherOwingTotals } from "@/lib/other-accounts-owing";
 import { ACTIVE_MEMBER, GUARDIAN_ACCOUNT, LEFT_MEMBER_EVER, ON_HOLD, TRAINING_MEMBER } from "@/lib/member-population";
 import { percent, ratePct1dp } from "@/lib/percent";
-import { clubMonthKey, clubMonthWindow, clubMonthWindowForKey, type ClubMonthWindow } from "@/lib/club-month";
+import { clubDayWindow, clubMonthKey, clubMonthWindow, clubMonthWindowForKey, clubWeekStart, clubWeekStartKey, shiftDayKey, type ClubMonthWindow } from "@/lib/club-month";
 import { emptyMembershipReport, loadMembershipForPeriod, type MembershipReport } from "@/lib/membership-report";
 import { inReportRange, reportPeriodCacheKey, resolveReportPeriod, type ReportPeriodParams, type ReportRange } from "@/lib/report-period";
 import { cancellationsOf, churnBaseOf, joinedOf, type MembershipBasis } from "@/lib/membership-movement";
@@ -244,7 +244,18 @@ export interface ReportsData {
   churn: ChurnFigures;
   retentionRate: number | null;
   /** T2b: the counts behind `retentionRate` (members who joined 6+ months ago, and how many are still active). */
-  retention: { ratePct: number | null; survived: number; cohort: number };
+  retention: {
+    ratePct: number | null;
+    survived: number;
+    cohort: number;
+    /**
+     * Round 3 close-out (10 Nov 2026): the cohort is members who joined before
+     * this instant, the start of the club month five months back (so 5 to 6
+     * months ago). The page names this date instead of saying "6+ months".
+     * Optional so older cached shapes still render.
+     */
+    joinedBefore?: string | null;
+  };
   /**
    * @deprecated Joins by joinedAt against members currently cancelled, by
    * cancelledAt (a rejoin vanishes). Kept so the shape stays additive; the Net
@@ -338,7 +349,7 @@ const ATTENDANCE_RATE_MODES: AttendanceRateModeOption[] = [
   {
     mode: "fill-rate",
     label: "Class fill rate",
-    formula: "Check-ins ÷ total class capacity, for classes with capacity set, this window.",
+    formula: "Check-ins ÷ the places in sessions that had at least one check-in, for classes with capacity set, this window.",
   },
 ];
 
@@ -403,21 +414,10 @@ function titleCase(value: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function startOfWeek(date: Date) {
-  const d = new Date(date);
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function addDays(date: Date, days: number) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
-function formatWeek(date: Date) {
-  return `${date.getDate()} ${date.toLocaleString("en-GB", { month: "short" })}`;
+/** "3 Nov" for a "YYYY-MM-DD" week key; the key is already the club's own date. */
+function formatWeekKey(dayKey: string) {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  return `${d} ${new Date(Date.UTC(y, m - 1, d, 12)).toLocaleString("en-GB", { month: "short", timeZone: "UTC" })}`;
 }
 
 function formatMonth(date: Date, timeZone: string) {
@@ -462,7 +462,7 @@ export function createEmptyReportsData(): ReportsData {
     topClasses: [],
     churn: { cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null },
     retentionRate: null,
-    retention: { ratePct: null, survived: 0, cohort: 0 },
+    retention: { ratePct: null, survived: 0, cohort: 0, joinedBefore: null },
     netNewByMonth: [],
     membership: emptyMembershipReport(),
     paymentHealth: {
@@ -538,8 +538,6 @@ export async function getReportsData(
     : undefined;
 
   const now = new Date();
-  const currentWeekStart = startOfWeek(now);
-  const previousWeekStart = addDays(currentWeekStart, -7);
   // The page's period, in club-zone months, half-open [start, end). The
   // server's own zone (UTC on Vercel) and the reader's browser zone play no
   // part (review L4).
@@ -548,6 +546,12 @@ export async function getReportsData(
     now,
     club?.timezone,
   );
+  // Weeks are the club's own too (Round 3, 10 Nov 2026): Monday 00:00 in
+  // range.timeZone, stepped on day keys so a clock change never moves one.
+  const currentWeekKey = clubWeekStartKey(now, range.timeZone);
+  const currentWeekStart = clubDayWindow(currentWeekKey, range.timeZone).start;
+  const previousWeekStart = clubDayWindow(shiftDayKey(currentWeekKey, -7), range.timeZone).start;
+  const nextWeekStart = clubDayWindow(shiftDayKey(currentWeekKey, 7), range.timeZone).start;
   const rangeStart = new Date(range.start);
   const rangeEnd = new Date(range.end);
   const inRange = { gte: rangeStart, lt: rangeEnd };
@@ -558,7 +562,7 @@ export async function getReportsData(
   // Retention's cohort stays "joined 6+ months ago" from today, whatever the period.
   const sixMonthsAgo = new Date(clubMonthWindow(now, range.timeZone, -5).monthStart);
   const attendanceBucket: ReportsData["attendanceBucket"] = range.months.length > 3 ? "month" : "week";
-  const weeksBack = Math.max(1, Math.ceil((Math.min(rangeEnd.getTime(), now.getTime()) - startOfWeek(rangeStart).getTime()) / (7 * 86_400_000)));
+  const weeksBack = Math.max(1, Math.ceil((Math.min(rangeEnd.getTime(), now.getTime()) - clubWeekStart(rangeStart, range.timeZone).getTime()) / (7 * 86_400_000)));
 
   // Attendance-scope filter fragment (Track A, D5): merged into every
   // attendance-derived query below. `classInstance: { classId }` and
@@ -622,8 +626,14 @@ export async function getReportsData(
           by: ["classInstanceId"],
           where: { tenantId, checkInTime: inRange, ...attendanceScope },
           _count: true,
+          // Round 3 (10 Nov 2026): no `take`. This used to keep only the 200
+          // busiest sessions, so over 3, 6 or 12 months Top classes, their
+          // averages and fill rates, the class mix and the club-wide fill
+          // rate were counted over the busiest sessions only. One row per
+          // attended session is read (never per check-in): about 1,040 a year
+          // at 20 attended sessions a week. An estimate, not load-tested
+          // (Round 8).
           orderBy: { _count: { classInstanceId: "desc" } },
-          take: 200,
         })
         .then(async (topRaw) => {
           const instanceIds = topRaw.map((row) => row.classInstanceId);
@@ -632,7 +642,7 @@ export async function getReportsData(
           // right type, so we no longer need the `[]`-cast shortcut.
           const instances = instanceIds.length
             ? await tx.classInstance.findMany({
-                where: { id: { in: instanceIds } },
+                where: { id: { in: instanceIds }, class: { tenantId } },
                 include: { class: { select: { name: true, maxCapacity: true } } },
               })
             : await tx.classInstance.findMany({
@@ -714,14 +724,18 @@ export async function getReportsData(
       buckets.push({ week: formatMonth(new Date(m.monthStart), range.timeZone), isCurrentWeek: m.monthKey === currentMonthKey, inPeriod: true, start: new Date(m.monthStart), end: new Date(m.nextMonthStart) });
     }
   } else {
-    const lastWeek = startOfWeek(new Date(Math.min(rangeEnd.getTime() - 1, now.getTime())));
-    const firstWeek = new Date(Math.min(startOfWeek(rangeStart).getTime(), addDays(lastWeek, -7 * (MIN_CHART_WEEKS - 1)).getTime()));
-    for (let d = firstWeek; d.getTime() <= lastWeek.getTime(); d = addDays(d, 7)) {
-      const end = addDays(d, 7);
+    const tz = range.timeZone;
+    const lastKey = clubWeekStartKey(new Date(Math.min(rangeEnd.getTime() - 1, now.getTime())), tz);
+    const rangeFirstKey = clubWeekStartKey(rangeStart, tz);
+    const contextFirstKey = shiftDayKey(lastKey, -7 * (MIN_CHART_WEEKS - 1));
+    const firstKey = rangeFirstKey < contextFirstKey ? rangeFirstKey : contextFirstKey; // "YYYY-MM-DD" sorts as dates
+    for (let key = firstKey; key <= lastKey; key = shiftDayKey(key, 7)) {
+      const d = clubDayWindow(key, tz).start;
+      const end = clubDayWindow(shiftDayKey(key, 7), tz).start;
       const inPeriod = end.getTime() > rangeStart.getTime();
       buckets.push({
-        week: formatWeek(d),
-        isCurrentWeek: d.getTime() === currentWeekStart.getTime(),
+        week: formatWeekKey(key),
+        isCurrentWeek: key === currentWeekKey,
         inPeriod,
         start: inPeriod && d.getTime() < rangeStart.getTime() ? rangeStart : d,
         end: inPeriod && end.getTime() > rangeEnd.getTime() ? rangeEnd : end,
@@ -762,7 +776,7 @@ export async function getReportsData(
   // The period, the run before it, this week and last week against the records' start.
   const attendanceCoverage: AttendanceCoverage = {
     ...attendanceCoverageFor(coverageStart, range.timeZone, range, range.previous),
-    thisWeek: coverageOf(coverageStart, currentWeekStart, addDays(currentWeekStart, 7)),
+    thisWeek: coverageOf(coverageStart, currentWeekStart, nextWeekStart),
     lastWeek: coverageOf(coverageStart, previousWeekStart, currentWeekStart),
   };
 
@@ -1015,7 +1029,7 @@ export async function getReportsData(
     topClasses,
     churn,
     retentionRate,
-    retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase },
+    retention: { ratePct: retentionRate, survived: retentionActive, cohort: retentionBase, joinedBefore: sixMonthsAgo.toISOString() },
     netNewByMonth,
     membership,
     paymentHealth: {

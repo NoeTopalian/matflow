@@ -454,7 +454,8 @@ function plusDays(d: Date, days: number): Date {
 
 export async function buildMemberChildren(
   tx: TxClient,
-  args: { tenantId: string; memberId: string | undefined; includeTimetable: boolean },
+  /** clubToday: the club's calendar date (YYYY-MM-DD). The 7-day window starts on it, not on the UTC date (Round 11, 5.3). */
+  args: { tenantId: string; memberId: string | undefined; includeTimetable: boolean; clubToday?: string },
 ) {
   const { tenantId, memberId, includeTimetable } = args;
   if (!memberId) return [];
@@ -504,7 +505,10 @@ export async function buildMemberChildren(
     return base.map((kid) => ({ ...kid, timetable: undefined as KidTimetableEntry[] | undefined }));
   }
 
-  const windowStart = startOfTodayUTC();
+  // Sessions are stored on their club date at UTC midnight, so the club's date is the window's first day.
+  const windowStart = args.clubToday && /^\d{4}-\d{2}-\d{2}$/.test(args.clubToday)
+    ? new Date(`${args.clubToday}T00:00:00.000Z`)
+    : startOfTodayUTC();
   const windowEnd = plusDays(windowStart, 7); // exclusive — covers today + next 6 days
 
   const kidIds = base.map((k) => k.id);
