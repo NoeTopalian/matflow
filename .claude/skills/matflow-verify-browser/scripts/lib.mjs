@@ -109,7 +109,7 @@ export async function ownerSignIn(page, club) {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(club.owner.email);
-  await page.getByLabel("Password").fill(club.owner.password);
+  await page.getByLabel("Password", { exact: true }).fill(club.owner.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL(/\/login\/totp/, { timeout: 60000 });
   await page.getByLabel("Six-digit authentication code").fill(await freshCode(club.owner.secret));
@@ -147,7 +147,7 @@ export async function staffSignIn(page, club, user) {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(user.email);
-  await page.getByLabel("Password").fill(user.password);
+  await page.getByLabel("Password", { exact: true }).fill(user.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL((u) => u.pathname !== "/login", { timeout: 60000 });
   if (new URL(page.url()).pathname.startsWith("/login/totp")) {
@@ -338,7 +338,7 @@ export async function memberSignIn(page, club, member) {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(member.email);
-  await page.getByLabel("Password").fill(member.password);
+  await page.getByLabel("Password", { exact: true }).fill(member.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL(/\/member/, { timeout: 60000 });
 }

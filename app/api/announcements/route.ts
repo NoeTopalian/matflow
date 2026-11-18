@@ -1,4 +1,6 @@
 import { auth } from "@/auth";
+import { createHash } from "node:crypto";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { isBlobStoreHost } from "@/lib/blob-url";
@@ -147,6 +149,33 @@ export async function POST(req: Request) {
     if (!ok) return NextResponse.json({ error: "Image must be uploaded through MatFlow for this club" }, { status: 400 });
   }
 
+  // Round 4 (10 Nov 2026): the same notice posted twice within two minutes
+  // (a double click, or a retry after a lost reply) is posted once. The
+  // rate-limit store takes the hit under an advisory lock, so two requests at
+  // once are serial; the repeat gets the notice already posted.
+  // The whole notice counts (review): the same text pinned, with an image or
+  // with an expiry is a different notice, not a repeat.
+  const pinned = parsed.data.pinned ?? false;
+  const imageUrl = parsed.data.imageUrl ?? null;
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify([parsed.data.title, parsed.data.body, pinned, imageUrl, parsed.data.durationDays ?? null]))
+    .digest("hex").slice(0, 32);
+  const onceBucket = `announcement-once:${session.user.tenantId}:${fingerprint}`;
+  const once = await checkRateLimit(onceBucket, 1, 2 * 60 * 1000);
+  if (!once.allowed) {
+    const existing = await withTenantContext(session.user.tenantId, (tx) =>
+      tx.announcement.findFirst({
+        where: { tenantId: session.user.tenantId, title: parsed.data.title, body: parsed.data.body, pinned, imageUrl, createdAt: { gte: new Date(Date.now() - 2 * 60 * 1000) } },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    if (existing) return NextResponse.json(existing, { status: 200 });
+    return NextResponse.json(
+      { error: "This notice is already being posted. Check the announcements list before posting it again.", reason: "announcement_in_flight" },
+      { status: 409 },
+    );
+  }
+
   try {
     const announcement = await withTenantContext(session.user.tenantId, (tx) =>
       tx.announcement.create({
@@ -177,6 +206,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json(announcement, { status: 201 });
   } catch {
+    // Nothing was posted, so a retry must not be told it is a repeat.
+    await resetRateLimit(onceBucket).catch(() => {});
     return NextResponse.json({ error: "Failed to create announcement" }, { status: 500 });
   }
 }

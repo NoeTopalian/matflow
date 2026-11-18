@@ -13,6 +13,7 @@
 // Same harness as tests/unit/impersonation-jwt-claims.test.ts: mock next-auth to
 // capture the REAL callbacks out of the NextAuth({ … }) config in auth.ts.
 
+import { sessionRowRaw } from "./helpers/session-row";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 type Jwt = (args: { token: Record<string, unknown>; user?: unknown }) => Promise<unknown>;
@@ -46,9 +47,11 @@ vi.mock("next-auth/providers/credentials", () => ({ default: (c: unknown) => c }
 vi.mock("next-auth/providers/google", () => ({ default: (c: unknown) => c }));
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 
+const memberFindUniqueForRevocation = vi.fn();
 const tx = {
+  $queryRaw: sessionRowRaw({ member: { findUnique: (a: unknown) => memberFindUniqueForRevocation(a) }, user: { findUnique: (a: unknown) => userFindUnique(a) } }),
   user: { findUnique: userFindUnique, findFirst: vi.fn() },
-  member: { findUnique: vi.fn(), findFirst: vi.fn() },
+  member: { findUnique: memberFindUniqueForRevocation, findFirst: vi.fn() },
   tenant: { findUnique: vi.fn() },
 };
 vi.mock("@/lib/prisma", () => ({ prisma: tx }));
@@ -91,10 +94,13 @@ const COOKIE = {
 };
 const ACTIVE = { payload: COOKIE, target: TARGET_ROW };
 
-/** What Auth.js decodes from the carrier cookie: the claim plus its standard JWT fields. */
+/**
+ * What Auth.js decodes from the carrier cookie: the claim, the carrier's own session id (minted by the route since
+ * Round 8, 16 Nov 2026), and its standard JWT fields.
+ */
 function carrierToken(): Record<string, unknown> {
   const now = Math.floor(Date.now() / 1000);
-  return { supportCarrier: true, iat: now, exp: now + 1800, jti: "jti-carrier" };
+  return { supportCarrier: true, sid: "carrier-sid-0123456789abcd", iat: now, exp: now + 1800, jti: "jti-carrier" };
 }
 
 async function jwt(token: Record<string, unknown>) {
@@ -232,5 +238,26 @@ describe("a browser with a club session keeps today's behaviour", () => {
     expect(after!.id).toBe("u-operator");
     expect(after!.impersonatedBy).toBeUndefined();
     expect(after!.supportCarrier).toBeUndefined();
+  });
+});
+
+describe("a carrier minted before session ids (Round 8, 16 Nov 2026)", () => {
+  it("is ended even while support is live: it has no identity of its own to give a session id to", async () => {
+    hasImpersonationCookie.mockResolvedValue(true);
+    resolveActiveImpersonation.mockResolvedValue(ACTIVE);
+    const { sid: _sid, ...preRelease } = carrierToken();
+    expect(await jwt(preRelease)).toBeNull();
+    expect(resolveActiveImpersonation).not.toHaveBeenCalled();
+  });
+
+  it("keeps its own session id through the swap, so signing out during support ends this carrier and nothing else", async () => {
+    hasImpersonationCookie.mockResolvedValue(true);
+    resolveActiveImpersonation.mockResolvedValue(ACTIVE);
+    const t = await jwt(carrierToken());
+    expect(t!.sid).toBe("carrier-sid-0123456789abcd");
+    expect(checkSessionVersion).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: "u-target", sid: "carrier-sid-0123456789abcd" }),
+      expect.any(Function),
+    );
   });
 });

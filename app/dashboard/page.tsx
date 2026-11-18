@@ -19,6 +19,8 @@ import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
+import { usableTimezone } from "@/lib/class-time";
+import { clubDayKey, clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
 
 /**
  * Wizard v2 SetupBanner support: detect setup gaps for owner accounts that
@@ -65,14 +67,15 @@ async function getSetupGaps(tx: TxClient, tenantId: string, role: string): Promi
   return gaps;
 }
 
-async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[]> {
-  const now = new Date();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
+async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string): Promise<DayClass[]> {
+  // Round 3 (10 Nov 2026): the club's week, not the server's (UTC on
+  // Vercel). A session's `date` is UTC midnight of its club day, so the
+  // window is each day key ± 12 hours, as todayWindow (lib/class-time.ts).
+  const mondayKey = clubWeekStartKey(new Date(), timeZone);
+  const halfDay = 12 * 60 * 60 * 1000;
+  const keyMidnight = (key: string) => Date.parse(`${key}T00:00:00Z`);
+  const monday = new Date(keyMidnight(mondayKey) - halfDay);
+  const nextMonday = new Date(keyMidnight(shiftDayKey(mondayKey, 7)) - halfDay);
 
   const instances = await tx.classInstance.findMany({
     where: {
@@ -80,7 +83,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
       // (on a historical class, or with no recorded end) are history only.
       class: liveClassWhere(tenantId),
       sourceImportJobId: null,
-      date: { gte: monday, lte: sunday },
+      date: { gte: monday, lt: nextMonday },
       isCancelled: false,
     },
     include: {
@@ -103,12 +106,12 @@ async function getWeekClasses(tx: TxClient, tenantId: string): Promise<DayClass[
   }));
 }
 
-async function getStats(tx: TxClient, tenantId: string, role: string, atRisk: AtRiskRead) {
+async function getStats(tx: TxClient, tenantId: string, role: string, atRisk: AtRiskRead, timeZone: string) {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  startOfWeek.setHours(0, 0, 0, 0);
+  // Round 3 (10 Nov 2026): this month and this week start at the club's
+  // midnight (Tenant.timezone), as on Reports; they were the server's.
+  const startOfMonth = new Date(clubMonthWindow(now, timeZone).monthStart);
+  const startOfWeek = clubWeekStart(now, timeZone);
 
   const [
     totalActive,
@@ -272,17 +275,19 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
   // list so they are switched off together (readAtRiskGate: shown only once
   // MatFlow has been the register for the whole 14-day window; imported
   // visits count as visits once it is).
-  const [classes, stats, setupGaps, userTasks, actionItems] = await withTenantContext(
+  const [classes, stats, setupGaps, userTasks, actionItems, todayKey] = await withTenantContext(
     session!.user.tenantId,
     async (tx) => {
       const club = await tx.tenant.findUnique({ where: { id: session!.user.tenantId }, select: { timezone: true } });
       const atRisk = await readAtRisk(tx, session!.user.tenantId, new Date(), club?.timezone);
+      const timeZone = usableTimezone(club?.timezone);
       return Promise.all([
-        getWeekClasses(tx, session!.user.tenantId),
-        getStats(tx, session!.user.tenantId, session!.user.role, atRisk),
+        getWeekClasses(tx, session!.user.tenantId, timeZone),
+        getStats(tx, session!.user.tenantId, session!.user.role, atRisk, timeZone),
         getSetupGaps(tx, session!.user.tenantId, session!.user.role),
         getUserTasks(tx, session!.user.tenantId, session!.user.id),
         getActionItems(tx, session!.user.tenantId, atRisk),
+        clubDayKey(new Date(), timeZone),
       ]);
     },
   );
@@ -292,6 +297,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
       {denied && <DeniedNotice role={session!.user.role} />}
       <SetupBanner items={setupGaps} primaryColor={session!.user.primaryColor} />
       <DashboardStats
+        todayKey={todayKey}
         stats={stats}
         classes={classes}
         tenantName={session!.user.tenantName}
@@ -303,6 +309,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: P
         currentUserRole={session!.user.role}
       />
       <WeeklyCalendar
+        todayKey={todayKey}
         classes={classes}
         primaryColor={session!.user.primaryColor}
         role={session!.user.role}

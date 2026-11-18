@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 vi.mock("next/server", () => ({
   NextResponse: {
@@ -27,7 +27,9 @@ vi.mock("@/lib/prisma-tenant", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findFirst: vi.fn() },
-    attendanceRecord: { count: vi.fn(), findMany: vi.fn() },
+    // findFirst: lib/attendance-coverage.ts (Round 10). No coverage spans here (no club records found).
+    attendanceRecord: { count: vi.fn(), findMany: vi.fn(), findFirst: vi.fn().mockResolvedValue(null) },
+    tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
     // computeMemberStats reads upcoming instances as a list since 30 Sep 2026
     // (pickNextClass, 5f9122d); the mock follows. No assertion changed.
     classInstance: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
@@ -66,25 +68,24 @@ beforeEach(() => {
     user: { tenantId: "tenant-A", memberId: "member-a", email: "alice@a.com" },
   } as never);
   vi.mocked(prisma.member.findFirst as (...args: unknown[]) => unknown).mockResolvedValue(TENANT_A_MEMBER as never);
-  // Tenant A has 2 this-week, 8 this-month, 40 this-year, plus last-8-weeks count for the new avgClassesPerWeek
-  mockCount
-    .mockResolvedValueOnce(2)   // thisWeek
-    .mockResolvedValueOnce(8)   // thisMonth
-    .mockResolvedValueOnce(40)  // thisYear
-    .mockResolvedValueOnce(20); // last8w (Sprint 4-A US-401)
+  // Tenant A has 2 this-week, 8 this-month, 40 this-year. Since Round 10 (16 Nov 2026) the windowed counts come from the
+  // member's own rows (dated by session), not separate COUNTs, so the rows carry the dates: "now" is Wed 18 Nov 2026.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-18T12:00:00Z"));
   // Gamification pass (2026-08): totalClasses derives from the all-time
   // attendance query (memberId-scoped) instead of a separate count — 40 rows
   // here = totalClasses 40. Achievements pass (2026-08): that query is now the
   // ONLY attendance findMany — the 90-day "most attended" list and the heat
   // strip are sliced from these same rows in memory, so each row carries its
   // class as well as its timestamp.
-  mockFindMany.mockResolvedValue(
-    Array.from({ length: 40 }, (_, i) => ({
-      checkInTime: new Date(2025, 0, 1 + Math.floor(i * 8)),
-      classInstance: { class: { id: "c1", name: "Class A" } },
-    })),
-  );
+  const at = (iso: string) => ({ checkInTime: new Date(iso), classInstance: { class: { id: "c1", name: "Class A" } } });
+  mockFindMany.mockResolvedValue([
+    ...Array.from({ length: 32 }, (_, i) => at(`2026-03-${String(1 + (i % 28)).padStart(2, "0")}T18:00:00Z`)), // this year
+    ...Array.from({ length: 6 }, () => at("2026-11-05T18:00:00Z")), // this month, not this week
+    ...Array.from({ length: 2 }, () => at("2026-11-17T18:00:00Z")), // this week
+  ]);
 });
+afterEach(() => vi.useRealTimers());
 
 describe("GET /api/member/me — cross-tenant stats isolation", () => {
   it("returns stats scoped to tenant-A member (not polluted by other tenants)", async () => {
@@ -97,10 +98,16 @@ describe("GET /api/member/me — cross-tenant stats isolation", () => {
 
   it("queries attendanceRecord with the tenant-A memberId only", async () => {
     await GET();
-    const calls = mockCount.mock.calls as [{ where: { memberId: string } }][];
-    for (const call of calls) {
-      expect(call[0].where.memberId).toBe("member-a");
-    }
+    // The member's rows: every findMany is scoped to the tenant-A member, and there is at least one.
+    const calls = mockFindMany.mock.calls as [{ where: { memberId?: string } }][];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call[0].where.memberId).toBe("member-a");
+    // The club's coverage reads (Round 10) are scoped to tenant-A.
+    const cov = vi.mocked(prisma.attendanceRecord.findFirst as (...args: unknown[]) => unknown).mock.calls as [{ where: { tenantId?: string } }][];
+    expect(cov.length).toBeGreaterThan(0);
+    for (const call of cov) expect(call[0].where.tenantId).toBe("tenant-A");
+    // No COUNT is used for the member's windows any more.
+    expect(mockCount).not.toHaveBeenCalled();
   });
 
   it("does not include totalClasses from other tenants (memberId-scoped attendance rows)", async () => {

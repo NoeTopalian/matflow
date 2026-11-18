@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
-import { bookingFailureMessage } from "@/lib/checkin-outcome";
+import { bookingFailureMessage, bookingUnconfirmedMessage } from "@/lib/checkin-outcome";
 import { categoryTag } from "@/lib/class-category";
 import { readableOn } from "@/lib/color";
 import { memberBookedFill, memberClassMark, memberEndedColour } from "@/lib/class-colours";
@@ -11,6 +11,7 @@ import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Button } from "@/components/ui/button";
+import { useOverlay } from "@/components/ui/overlay";
 import {
   minToTime,
   sessionProgress,
@@ -121,17 +122,27 @@ function fmt(d: Date) { return d.toISOString().split("T")[0]; }
 function EventSheet({
   cls,
   isSub,
+  busy = false,
   onToggle,
   onClose,
   primaryColor,
 }: {
   cls: ScheduleClass;
   isSub: boolean;
+  /** This class's booking request is still out: the button waits for it (one request per class at a time). */
+  busy?: boolean;
   onToggle: () => void;
   onClose: () => void;
   primaryColor: string;
 }) {
   const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
+  // Round 11 (4.1): the shared overlay behaviour (components/ui/overlay.tsx)
+  // moves focus in, traps Tab, closes on Escape and returns focus to the class.
+  // Not the Sheet primitive itself: it would turn this into a right-edge
+  // slide-over on desktop and drop the swipe handle and header chips.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useOverlay({ open: true, onClose, panelRef });
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -139,6 +150,10 @@ function EventSheet({
     >
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="relative rounded-t-3xl"
         style={{
           background: "var(--member-elevated)",
@@ -153,7 +168,7 @@ function EventSheet({
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full" style={{ background: primaryColor }} />
-            <h2 className="text-white font-semibold text-base">{cls.name}</h2>
+            <h2 id={titleId} className="text-white font-semibold text-base">{cls.name}</h2>
             {cls.isKids && (
               <span
                 className="rounded-full px-2 text-[10px] font-bold uppercase tracking-wide leading-5"
@@ -175,10 +190,11 @@ function EventSheet({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close class details"
             className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400"
             style={{ background: "var(--member-surface)" }}
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
         <div className="px-5 py-4 space-y-3">
@@ -255,8 +271,12 @@ function EventSheet({
           <button
             onClick={onToggle}
             // A booked member can always cancel their own booking, eligible or not (D2).
+            // While this class's request is out the button waits but stays focusable (aria-disabled, not disabled), so a
+            // keyboard user keeps their place; the page's guard ignores a press meanwhile.
             disabled={!isSub && (cls.eligibility === "rank_below" || cls.eligibility === "rank_above" || cls.eligibility === "tier_not_included")}
-            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-disabled={busy || undefined}
+            aria-busy={busy || undefined}
+            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed aria-disabled:opacity-60 aria-disabled:cursor-progress"
             style={{
               background: isSub ? hex(primaryColor, 0.12) : primaryColor,
               color: isSub ? primaryColor : "var(--tx-on-accent)",
@@ -268,7 +288,11 @@ function EventSheet({
               : <><Bell className="w-4 h-4" />Subscribe to class</>
             }
           </button>
-          {isSub && (
+          {/* Always mounted, filled while waiting: a live region that appears already holding its text is often not announced. */}
+          <p role="status" className="text-xs text-center" style={{ color: "var(--member-text-muted)" }}>
+            {busy ? "Waiting for MatFlow to answer…" : ""}
+          </p>
+          {isSub && !busy && (
             <p className="text-gray-600 text-xs text-center">
               Subscribed classes appear on your home screen
             </p>
@@ -947,8 +971,29 @@ export default function MemberSchedulePage() {
 
   const { toast } = useToast();
 
-  // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
+  // Round 6 close-out: one request per class at a time. A second tap while the first request (or its re-read) is out
+  // could leave the button showing the opposite of what the server holds once both settled (re-review, 13 Nov 2026).
+  // The ref answers at once (two taps in one frame); the state disables the button while it waits.
+  const inFlight = useRef<Set<string>>(new Set());
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = async (classId: string) => {
+    if (inFlight.current.has(classId)) return;
+    inFlight.current.add(classId);
+    setPending(new Set(inFlight.current));
+    try {
+      await runToggle(classId);
+    } finally {
+      inFlight.current.delete(classId);
+      setPending(new Set(inFlight.current));
+    }
+  };
+
+  // A stalled request must not hold the button for ever (review, 13 Nov 2026): after this long it counts as no
+  // reply, which re-reads what the server holds and says it could not be confirmed.
+  const patience = () => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15_000) : undefined);
+
+  // Optimistic toggle: flip the set immediately, fire the API call, roll back on failure.
+  const runToggle = async (classId: string) => {
     const id = classId; // the Class id — never the composite grid-row id
     const wasSubscribed = subscribed.has(id);
     setSubscribed((prev) => {
@@ -958,11 +1003,19 @@ export default function MemberSchedulePage() {
       return n;
     });
     let failure: string | null = null;
+    // Round 6: no answer, or a server error, says nothing about what the
+    // server did. The booking route is idempotent, so the request may well have
+    // committed; what is true is read back below, not guessed.
+    // "no-reply": the request may still be in flight on the server. "server-error": it answered, and rolled back.
+    let unknownOutcome: "no-reply" | "server-error" | null = null;
     try {
       const res = await fetch(`/api/member/class-subscriptions/${id}`, {
         method: wasSubscribed ? "DELETE" : "POST",
+        signal: patience(),
       });
-      if (!res.ok) {
+      if (!res.ok && res.status >= 500) {
+        unknownOutcome = "server-error";
+      } else if (!res.ok) {
         // T6a/T6b: the refusal names the class and the plan (or says the
         // class is paused) — show that, not a guess (the list may be stale).
         const body = await res.json().catch(() => null);
@@ -976,7 +1029,39 @@ export default function MemberSchedulePage() {
         if (typeof body?.allowanceNotice === "string" && body.allowanceNotice) toast(body.allowanceNotice, "warning", 8000);
       }
     } catch {
-      failure = bookingFailureMessage(0, null, wasSubscribed);
+      unknownOutcome = "no-reply";
+    }
+    if (unknownOutcome) {
+      // A failed re-read leaves the outcome unknown (null), said as such below.
+      const truth = await fetch("/api/member/me/subscriptions", { cache: "no-store", signal: patience() })
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then((d: { classIds?: unknown }) => (Array.isArray(d?.classIds) ? new Set(d.classIds.filter((c): c is string => typeof c === "string")) : null))
+        .catch(() => null);
+      if (truth) {
+        // This class only, as the server holds it: another class's booking may be in flight and is not this answer's.
+        const booked = truth.has(id);
+        setSubscribed((prev) => {
+          const n = new Set(prev);
+          if (booked) n.add(id);
+          else n.delete(id);
+          return n;
+        });
+        // Not done: after a server error it rolled back, so say so; with no reply it may still land, so say only
+        // that it could not be confirmed.
+        if (booked === wasSubscribed) {
+          toast(unknownOutcome === "server-error" ? bookingFailureMessage(0, null, wasSubscribed) : bookingUnconfirmedMessage(wasSubscribed), "error");
+        } else if (booked) {
+          // The booking landed: the member still hears the allowance notice the lost answer carried (T7), read back
+          // from the same server rule. Informational: a failed read leaves it unsaid, never an error.
+          const notice = await fetch(`/api/member/class-subscriptions/${id}`, { cache: "no-store", signal: patience() })
+            .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+            .then((d: { allowanceNotice?: unknown }) => (typeof d?.allowanceNotice === "string" && d.allowanceNotice ? d.allowanceNotice : null))
+            .catch(() => null);
+          if (notice) toast(notice, "warning", 8000);
+        }
+        return;
+      }
+      failure = bookingUnconfirmedMessage(wasSubscribed);
     }
     if (failure) {
       // Audit D8: roll back AND tell the member — previously the button
@@ -1178,6 +1263,7 @@ export default function MemberSchedulePage() {
         <EventSheet
           cls={selectedCls}
           isSub={subscribed.has(selectedCls.classId)}
+          busy={pending.has(selectedCls.classId)}
           onToggle={() => toggle(selectedCls.classId)}
           onClose={() => setSelected(null)}
           primaryColor={primaryColor}

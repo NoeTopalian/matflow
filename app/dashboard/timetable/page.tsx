@@ -7,6 +7,7 @@ import { readMatsForTimetable } from "@/lib/mats-store";
 import { isSupportSession } from "@/lib/support-session";
 import { CATEGORY_REF_SELECT, categoryFields, categoryManagementEnabled, listClassCategories } from "@/lib/class-category-store";
 import type { ClassCategoryOption } from "@/lib/class-category";
+import { usableTimezone } from "@/lib/class-time";
 
 export type ClassRow = {
   id: string;
@@ -152,6 +153,12 @@ async function getCategories(tenantId: string): Promise<ClassCategoryOption[]> {
   return withTenantContext(tenantId, (tx) => listClassCategories(tx, tenantId));
 }
 
+/** The club's time zone: the timetable's "today" is the club's day, as /api/coach/today and check-in use. */
+async function getTimeZone(tenantId: string): Promise<string> {
+  const tenant = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+  return usableTimezone(tenant?.timezone);
+}
+
 async function getCoachUsers(tenantId: string): Promise<CoachUserOption[]> {
   return withTenantContext(tenantId, (tx) =>
     tx.user.findMany({
@@ -171,7 +178,7 @@ export default async function TimetablePage() {
   // classes — and invited someone to rebuild a schedule that already exists.
   // Before the mats are read: a list read after a class save that added a mat is the truth about that mat.
   const matsReadAt = new Date().toISOString();
-  const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses, matsAndLayout, categories] = await Promise.all([
+  const [classes, rankSystems, coachUsers, membershipTiers, inactiveClasses, matsAndLayout, categories, timeZone] = await Promise.all([
     getClasses(session!.user.tenantId),
     getRankSystems(session!.user.tenantId),
     getCoachUsers(session!.user.tenantId),
@@ -181,6 +188,7 @@ export default async function TimetablePage() {
     // It runs in its own transaction, so a failed mats statement cannot abort the class read.
     readMatsForTimetable(session!.user.tenantId),
     getCategories(session!.user.tenantId),
+    getTimeZone(session!.user.tenantId),
   ]);
 
   return (
@@ -204,6 +212,7 @@ export default async function TimetablePage() {
       // A read-only support session is refused mats and the split (lib/support-session.ts), so it is offered no
       // control for them; an edit session sees the owner's (RULES §5b). Anything but the literal "edit" is read-only.
       supportReadOnly={isSupportSession(session) && (session!.user as { supportScope?: unknown }).supportScope !== "edit"}
+      timeZone={timeZone}
       primaryColor={session!.user.primaryColor}
       role={session!.user.role}
       currentUserId={session!.user.id}

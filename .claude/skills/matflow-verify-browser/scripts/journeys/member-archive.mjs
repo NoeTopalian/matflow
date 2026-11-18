@@ -162,7 +162,7 @@ try {
   await mpage.keyboard.press("Enter");
   await mpage.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await mpage.getByLabel("Email address").first().fill(sam.email);
-  await mpage.getByLabel("Password").fill(sam.password);
+  await mpage.getByLabel("Password", { exact: true }).fill(sam.password);
   await mpage.getByRole("button", { name: "Sign in", exact: true }).click();
   await mpage.waitForTimeout(4000);
   L.check("journey", "A10 Sam's own sign-in is refused (stays on /login)", new URL(mpage.url()).pathname.startsWith("/login"), new URL(mpage.url()).pathname);

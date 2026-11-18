@@ -22,15 +22,22 @@ interface Props {
   primaryColor: string;
   /** Staff role — gates the per-class check-in shortcut (audit R6). */
   role?: string;
+  /**
+   * Today in the club's zone ("YYYY-MM-DD"), from the server (Round 3, 10 Nov
+   * 2026). The sessions are the club's week, so "today" must be the club's
+   * day too, not the browser's or UTC's. Days are held as UTC noon of their
+   * key and read with UTC getters, so no browser zone can shift them.
+   */
+  todayKey?: string;
 }
 
 function getWeekDays(anchor: Date): Date[] {
-  const day = anchor.getDay(); // 0 = Sun
+  const day = anchor.getUTCDay(); // 0 = Sun
   const monday = new Date(anchor);
-  monday.setDate(anchor.getDate() - ((day + 6) % 7));
+  monday.setUTCDate(anchor.getUTCDate() - ((day + 6) % 7));
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
+    d.setUTCDate(monday.getUTCDate() + i);
     return d;
   });
 }
@@ -47,8 +54,8 @@ function hexToRgba(hex: string, alpha: number) {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
-  const today = new Date();
+export default function WeeklyCalendar({ classes, primaryColor, role, todayKey }: Props) {
+  const today = new Date(`${todayKey ?? new Date().toISOString().slice(0, 10)}T12:00:00Z`);
   const [anchor, setAnchor] = useState(today);
   const [selectedDate, setSelectedDate] = useState(fmt(today));
   const weekDays = getWeekDays(anchor);
@@ -65,13 +72,13 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
 
   function prevWeek() {
     const d = new Date(anchor);
-    d.setDate(d.getDate() - 7);
+    d.setUTCDate(d.getUTCDate() - 7);
     setAnchor(d);
     setSelectedDate(fmt(d));
   }
   function nextWeek() {
     const d = new Date(anchor);
-    d.setDate(d.getDate() + 7);
+    d.setUTCDate(d.getUTCDate() + 7);
     setAnchor(d);
     setSelectedDate(fmt(d));
   }
@@ -88,10 +95,10 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
 
   const weekStart = weekDays[0];
   const weekEnd = weekDays[6];
-  const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
+  const sameMonth = weekStart.getUTCMonth() === weekEnd.getUTCMonth();
   const weekLabel = sameMonth
-    ? `${weekStart.toLocaleDateString("en-GB", { day: "numeric" })}–${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`
-    : `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+    ? `${weekStart.toLocaleDateString("en-GB", { day: "numeric", timeZone: "UTC" })}–${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}`
+    : `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} – ${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`;
 
   return (
     <>
@@ -154,7 +161,7 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
                     className="text-lg font-bold leading-none block"
                     style={{ color: isTod ? primaryColor : "var(--tx-1)" }}
                   >
-                    {day.getDate()}
+                    {day.getUTCDate()}
                   </span>
                   {isTod && (
                     <span
@@ -219,7 +226,7 @@ export default function WeeklyCalendar({ classes, primaryColor, role }: Props) {
                   className="text-lg font-bold leading-none"
                   style={{ color: isSel ? "var(--tx-on-accent)" : isTod ? primaryColor : "var(--tx-1)" }}
                 >
-                  {day.getDate()}
+                  {day.getUTCDate()}
                 </span>
                 {count > 0 && (
                   <span
@@ -273,6 +280,7 @@ function SelectedDayPanel({
     weekday: "long",
     day: "numeric",
     month: "long",
+    timeZone: "UTC",
   });
 
   return (

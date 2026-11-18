@@ -24,6 +24,7 @@ const logAudit = vi.hoisted(() => vi.fn(async (entry: Record<string, unknown>) =
 vi.mock("@/lib/audit-log", () => ({ logAudit }));
 
 const mockPrisma = {
+  $queryRaw: vi.fn(async () => []), // Round 4: the member row lock
   member: { findFirst: vi.fn() },
   rankSystem: { findFirst: vi.fn() },
   memberRank: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn(), create: vi.fn() },

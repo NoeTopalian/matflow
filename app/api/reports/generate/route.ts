@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { generateMonthlyReport } from "@/lib/ai-causal-report";
+import { previousClubMonthPeriod } from "@/lib/club-month";
 import { logAudit } from "@/lib/audit-log";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-error";
@@ -47,14 +48,12 @@ export async function POST(req: Request) {
   const tenant = await withTenantContext(tenantId, (tx) =>
     tx.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, timezone: true },
     }),
   );
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
-  const now = new Date();
-  const periodStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+  const { periodStart, periodEnd } = previousClubMonthPeriod(new Date(), tenant.timezone);
 
   try {
     const result = await generateMonthlyReport({
@@ -62,6 +61,7 @@ export async function POST(req: Request) {
       tenantName: tenant.name,
       periodStart,
       periodEnd,
+      timeZone: tenant.timezone,
     });
 
     const row = await withTenantContext(tenantId, (tx) =>

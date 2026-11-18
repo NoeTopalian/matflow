@@ -39,6 +39,11 @@ vi.mock("@/lib/prisma", () => ({
     attendanceRecord: {
       count: vi.fn(),
       findMany: vi.fn(),
+      // lib/attendance-coverage.ts (Round 10): no club records at all -> no coverage spans.
+      findFirst: vi.fn(async () => null),
+    },
+    tenant: {
+      findUnique: vi.fn(async () => ({ timezone: "Europe/London" })),
     },
     classInstance: {
       // computeMemberStats reads upcoming instances as a list since 30 Sep 2026
@@ -147,15 +152,13 @@ describe("GET /api/member/me — attendanceByClass aggregation", () => {
       dateOfBirth: null, waiverAccepted: false, waiverAcceptedAt: null,
       memberRanks: [], _count: { attendances: 0 }, photos: [],
     } as never);
+    // Since Round 10 the windowed counts come from the member's rows (dated by session), not separate COUNTs:
+    // 20 classes inside the last 8 weeks → 20/8 = 2.5.
+    const recent = new Date(Date.now() - 3 * 24 * 3_600_000);
+    mockAttFindMany.mockResolvedValueOnce(
+      Array.from({ length: 20 }, () => ({ checkInTime: recent, classInstance: null })) as never,
+    );
     mockAttFindMany.mockResolvedValueOnce([] as never);
-    mockAttFindMany.mockResolvedValueOnce([] as never);
-
-    // Order: thisWeek, thisMonth, thisYear, last8w (last8w is the 4th count call)
-    mockAttCount
-      .mockResolvedValueOnce(0 as never)  // thisWeek
-      .mockResolvedValueOnce(0 as never)  // thisMonth
-      .mockResolvedValueOnce(0 as never)  // thisYear
-      .mockResolvedValueOnce(20 as never); // last8w → 20/8 = 2.5
 
     mockInstanceFindMany.mockResolvedValue([] as never);
 

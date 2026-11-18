@@ -104,7 +104,7 @@ describe("getReportsDataCached", () => {
     const empty = createEmptyReportsData();
     expect(empty.churn).toEqual({ cancelled: 0, joined: 0, net: 0, opening: 0, base: 0, ratePct: null });
     expect(empty).not.toHaveProperty("churnRate");
-    expect(empty.retention).toEqual({ ratePct: null, survived: 0, cohort: 0 });
+    expect(empty.retention).toEqual({ ratePct: null, survived: 0, cohort: 0, joinedBefore: null });
     expect(empty.paymentHealth.recovery).toEqual({ ratePct: null, recovered: 0, failedMembers: 0 });
     expect(empty.currentMembersByStatus).toEqual([]);
     expect(empty.summary.currentMembers).toBe(0);

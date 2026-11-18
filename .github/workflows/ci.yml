@@ -18,7 +18,7 @@ concurrency:
 jobs:
   typecheck-test:
     name: Typecheck + Lint + Vitest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned (Round 9, 16 Nov 2026): ubuntu-latest became 26.04, where Playwright refuses to install chromium
     timeout-minutes: 25
 
     # A REAL Postgres. Previously DATABASE_URL was set to localhost:5432 with no
