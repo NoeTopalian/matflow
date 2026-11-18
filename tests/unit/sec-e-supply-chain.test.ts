@@ -102,6 +102,9 @@ describe("forbiddenImports — synthetic", () => {
 });
 
 describe("unexcepted — advisory exceptions expire", () => {
+  // The mechanism is tested against a fixture exception (the mysql2 entry as it stood until 16 Nov 2026), so the test
+  // does not depend on what the real register happens to hold today; the real list is checked separately below.
+  const FIXTURE_EXCEPTIONS = [{ id: "GHSA-3f6p-5ww8-9rcr", pkg: "mysql2", expires: "2026-11-09", reason: "fixture" }];
   const audit = {
     vulnerabilities: {
       mysql2: { via: [{ severity: "high", url: "https://github.com/advisories/GHSA-3f6p-5ww8-9rcr", range: "<3.22.0" }] },
@@ -109,13 +112,21 @@ describe("unexcepted — advisory exceptions expire", () => {
     },
   };
   it("an unexcepted critical always fails", () => {
-    expect(unexcepted(audit, AUDIT_EXCEPTIONS, "2026-10-09")).toEqual(["other GHSA-xxxx-yyyy-zzzz critical *"]);
+    expect(unexcepted(audit, FIXTURE_EXCEPTIONS, "2026-10-09")).toEqual(["other GHSA-xxxx-yyyy-zzzz critical *"]);
   });
   it("a live exception suppresses only its own advisory", () => {
-    expect(unexcepted(audit, AUDIT_EXCEPTIONS, "2026-10-09")).not.toContain(expect.stringMatching(/mysql2/));
+    expect(unexcepted(audit, FIXTURE_EXCEPTIONS, "2026-10-09")).not.toContain(expect.stringMatching(/mysql2/));
   });
   it("the exception lapses after its expiry date", () => {
-    expect(unexcepted(audit, AUDIT_EXCEPTIONS, "2026-11-10").some((s: string) => s.startsWith("mysql2"))).toBe(true);
+    expect(unexcepted(audit, FIXTURE_EXCEPTIONS, "2026-11-10").some((s: string) => s.startsWith("mysql2"))).toBe(true);
+  });
+  it("every real exception names its advisory and package, has a reason and expires (time-boxed)", () => {
+    for (const e of AUDIT_EXCEPTIONS as Array<{ id: string; pkg: string; expires: string; reason: string }>) {
+      expect(e.id).toMatch(/^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$/);
+      expect(e.pkg).toBeTruthy();
+      expect(e.reason.length).toBeGreaterThan(20);
+      expect(e.expires).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
   });
 });
 

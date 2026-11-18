@@ -136,7 +136,9 @@ function makeTx() {
     // writes the per-row ledger (ImportedMembership); a generic CSV has no
     // ledger rows, so these are inert here but must exist on the fake.
     tenant: { findUnique: async () => ({ timezone: "Europe/London" }) },
-    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => { h.ledgerRows += data.length; return { count: data.length }; }, count: async () => h.ledgerRows, deleteMany: async () => ({ count: 0 }) },
+    importedMembership: { createMany: async ({ data }: { data: unknown[] }) => { h.ledgerRows += data.length; return { count: data.length }; }, count: async () => h.ledgerRows, deleteMany: async () => ({ count: 0 }),
+      // Round 7 P1 history linking: this fake counts ledger rows only, so nothing is unlinked.
+      findMany: async () => [], updateMany: async () => ({ count: 0 }) },
   };
 }
 

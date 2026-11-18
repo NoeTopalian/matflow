@@ -10,6 +10,8 @@ import OwnerFamilyManagement, {
 import MemberTotpResetButton from "@/components/dashboard/MemberTotpResetButton";
 import ArchivedMemberBanner from "@/components/dashboard/ArchivedMemberBanner";
 import { Card } from "@/components/ui/card";
+import { MemberExtrasUnavailable } from "@/components/dashboard/MemberExtrasUnavailable";
+import { loadMemberProfileExtras } from "@/lib/member-profile-extras";
 import { shownPaymentStatus } from "@/lib/overdue";
 
 async function getMember(memberId: string, tenantId: string): Promise<MemberDetail | null> {
@@ -377,25 +379,10 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
   // Task 13: rosterMemberships = comp-class roster entries (recurring
   // classes the member was added to via the timetable form's "Select
   // specific people").
-  const { totpRow, rosterMemberships } = await withTenantContext(session!.user.tenantId, async (tx) => {
-    const [tot, roster] = await Promise.all([
-      tx.member.findFirst({
-        where: { id, tenantId: session!.user.tenantId },
-        select: { totpEnabled: true },
-      }),
-      tx.classRoster.findMany({
-        where: { memberId: id, tenantId: session!.user.tenantId },
-        select: {
-          id: true,
-          classId: true,
-          addedAt: true,
-          class: { select: { id: true, name: true } },
-        },
-        orderBy: { addedAt: "desc" },
-      }),
-    ]);
-    return { totpRow: tot, rosterMemberships: roster };
-  }).catch(() => ({ totpRow: null as { totpEnabled: boolean } | null, rosterMemberships: [] as Array<{ id: string; classId: string; addedAt: Date; class: { id: string; name: string } }> }));
+  // Round 2 (10 Nov 2026): 2FA status and the comp-class roster are optional
+  // extras read in one transaction (lib/member-profile-extras). A failure no
+  // longer reads as "no 2FA" and "no roster": `extrasUnavailable` says so.
+  const { totpRow, rosterMemberships, extrasUnavailable } = await loadMemberProfileExtras(session!.user.tenantId, id);
 
   return (
     <>
@@ -431,6 +418,7 @@ export default async function MemberProfilePage({ params }: { params: Promise<{ 
           hidden for the roles that can no longer act on it rather than left
           rendering a button that 403s. A control you can see and cannot use is
           the defect this branch has spent its time removing. */}
+      {extrasUnavailable && <MemberExtrasUnavailable memberId={member.id} mentionTwoFactor={canResetTotp} />}
       {totpRow?.totpEnabled && canResetTotp && (
         <Card padding="tight" className="mt-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tx-3)" }}>

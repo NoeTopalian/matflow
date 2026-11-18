@@ -29,6 +29,7 @@ import {
   type BackfillLedgerRow,
   type BackfillTransition,
 } from "@/lib/status-backfill";
+import { MigrationInProgressError } from "@/lib/migration-lock";
 import {
   MEMBER_STATUS_EVENT_SOURCE_ACTIONS,
   recordStatusEvent,
@@ -312,6 +313,8 @@ function fakeTx(db: Db) {
   const pick = (r: Rec, select?: Record<string, boolean>) => (select ? Object.fromEntries(Object.keys(select).map((k) => [k, r[k] ?? null])) : r);
   const tx = {
     $executeRaw: vi.fn(async () => 1),
+    // lib/migration-lock.ts holdOffMigrations: no migration running, so the shared key is admitted.
+    $queryRaw: vi.fn(async () => [{ ok: true }]),
     tenant: { findUnique: async ({ where, select }: { where: { id: string }; select?: Record<string, boolean> }) => {
       const t = db.tenants.find((x) => x.id === where.id);
       return t ? pick(t, select) : null;
@@ -703,5 +706,19 @@ describe("T8b digests: the apply and rollback gates hash what the preview prints
     expect(backfillRollbackDigest([{ ...preview, eventIds: ["bf2", "bf1"] }])).toBe(d);
     expect(backfillRollbackDigest([{ ...preview, eventIds: ["bf1", "bf3"] }])).not.toBe(d);
     expect(backfillRollbackDigest([preview, { tenantId: "tB", eventIds: ["bf9"], byMonth: { "2024-04": kinds({ start: 1 }) } }])).not.toBe(d);
+  });
+});
+
+describe("a schema migration in progress holds the back-fill off (Round 9, 16 Nov 2026)", () => {
+  it("apply and rollback are refused at once, before the club lock, and write nothing", async () => {
+    const db = club();
+    const tx = fakeTx(db);
+    tx.$queryRaw.mockResolvedValue([{ ok: false }]); // a migration holds Prisma's key
+    const before = db.events.length;
+    await expect(applyTenantBackfill(tx as never, "tA", { runId: "run-1" })).rejects.toBeInstanceOf(MigrationInProgressError);
+    await expect(rollbackTenantBackfill(tx as never, "tA", { runId: "run-1" })).rejects.toBeInstanceOf(MigrationInProgressError);
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(db.events.length).toBe(before);
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });

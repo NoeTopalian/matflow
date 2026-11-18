@@ -25,7 +25,11 @@ import { holdOffMigrations, isMigrationInProgress, MIGRATION_IN_PROGRESS_MESSAGE
 import { type Classification, type ImportConflict } from "@/lib/importers/import-conflicts";
 import { withoutConflictDetail } from "@/app/api/admin/import/upload/route";
 import { blockedParents, classifyAdults, classifyChildren, fileRepeats, needsParent } from "@/lib/importers/import-match";
+import { sincePreview } from "@/lib/importers/since-preview";
 import { PLAN_TIER_SELECT, planForNewMember, tallyPlanReview, type PlanDecision } from "@/lib/importers/plan-match";
+
+/** Not a member an erasure anonymised (its sentinel address; the same test as lib/member-delete.ts). */
+const NOT_ERASED = { NOT: { AND: [{ email: { startsWith: "deleted-" } }, { email: { endsWith: "@deleted.invalid" } }] } };
 
 /** A schema migration holds Prisma Migrate's lock (lib/migration-lock.ts): nothing was written; retry shortly. */
 function migrationInProgress() {
@@ -92,8 +96,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
   // A run that stopped part-way ("running" if it died, "failed" if it was stopped,
-  // e.g. by a schema migration) is resumed: what it saved is its own work.
-  const resumed = job.status === "running" || job.status === "failed";
+  // e.g. by a schema migration) is resumed: what it saved is its own work. So is a
+  // job previewed again after such a run (its status is "preview" again): the people
+  // it already created decide, not the status (Round 7 review N1).
+  const statusSaysResumed = job.status === "running" || job.status === "failed";
   const jobId = job.id;
   const jobSource = job.source;
   const jobExportedAt = job.sourceExportedAt ?? null;
@@ -152,9 +158,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   // A resumed run finds the people it created before it stopped; those are its
   // own work, not "already in the club" (functional review F2, 30 Sep 2026).
-  const ownRowsBeforeRun = resumed
-    ? await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id } }))
-    : 0;
+  // Erased members stay on their row, anonymised, with this job's id; the erasure also took them out of the stored
+  // file. They are no longer this file's people (Round 7 review P2), so they are counted apart.
+  const ownRowsBeforeRun = await withTenantContext(tenantId, (tx) => tx.member.count({ where: { tenantId, importJobId: job.id, ...NOT_ERASED } }));
+  const resumed = statusSaysResumed || ownRowsBeforeRun > 0;
 
   try {
     // Import blobs are written `access: "private"` (app/api/admin/import/upload,
@@ -219,6 +226,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // People this run created or had created (resumed): their plan decisions are the run's to report.
     const newOrOwn = new Set<MemberDraft>();
     let repeatedInFile = 0;
+    // Round 7: the counts the preview also reported, so the manifest can say which no longer hold (sincePreview).
+    let staffLoginRefused = 0;
+    let childrenWithoutParent = 0;
 
     let imported = 0;
     let skippedExisting = 0;
@@ -399,6 +409,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
         imported += inserted;
         skippedExisting += slice.length - inserted - refused.length;
+        staffLoginRefused += refused.length;
         for (const d of refused) {
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
@@ -449,6 +460,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               continue;
             }
             if (!o.classification || !o.parentId) {
+              childrenWithoutParent += 1;
               commitErrors.push({ row: i + idx, email: d.parentEmail, error: `${d.name}: parent ${d.parentEmail ?? "(none)"} was not imported, so this child was not either.` });
               continue;
             }
@@ -477,6 +489,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return { inserted: result.count, refused };
         });
         imported += inserted;
+        staffLoginRefused += refused.length;
         for (const d of refused) {
           commitErrors.push({ row: i + slice.indexOf(d), email: d.email, error: `${d.name}: ${STAFF_LOGIN_REFUSAL}` });
         }
@@ -545,14 +558,55 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return tx.importedMembership.createMany({ data: data.slice(i, i + 500), skipDuplicates: true });
         });
       }
+      // Round 7 review P1: an interrupted run wrote every ledger row, those of people it had not created yet with no
+      // member; this run's inserts of the same rows are skipped as duplicates, so those people would never get their
+      // history. Link them now: a row with no member whose source row (by content, which survives an erasure
+      // rewriting the stored file and renumbering its rows) and disposition belong to a person this job created.
+      const memberOf = new Map<string, string>();
+      for (const r of ledgerRows) {
+        const m = r.sourceKey ? byKey.get(r.sourceKey) : undefined;
+        if (m) memberOf.set(`${r.sourceFingerprint}|${r.disposition}`, m);
+      }
+      if (memberOf.size > 0) {
+        const unlinked = await withTenantContext(tenantId, (tx) =>
+          tx.importedMembership.findMany({
+            where: { tenantId, importJobId: job.id, memberId: null },
+            select: { id: true, sourceFingerprint: true, disposition: true },
+          }),
+        );
+        const toLink = new Map<string, string[]>();
+        for (const u of unlinked) {
+          const m = memberOf.get(`${u.sourceFingerprint}|${u.disposition}`);
+          if (m) toLink.set(m, [...(toLink.get(m) ?? []), u.id]);
+        }
+        // In short transactions (review Q1): one long one could pass the transaction time limit (15 s) on a large
+        // retry, and every later retry would then stop at the same place. A batch is one round trip per person, so 20
+        // people stay well inside the limit even at 226 ms a round trip (Bali to the test branch; re-review of
+        // a1cef92d). Each update is idempotent (`memberId: null` in its where), so a batch that fails leaves nothing
+        // half-linked and the next run carries on.
+        const LINK_BATCH = 20;
+        const pairs = [...toLink];
+        for (let i = 0; i < pairs.length; i += LINK_BATCH) {
+          await withTenantContext(tenantId, async (tx) => {
+            await holdOffMigrations(tx);
+            for (const [memberId, ids] of pairs.slice(i, i + LINK_BATCH)) {
+              await tx.importedMembership.updateMany({ where: { tenantId, id: { in: ids }, memberId: null }, data: { memberId } });
+            }
+          });
+        }
+      }
     }
 
     const manifest = await withTenantContext(tenantId, async (tx) => {
+      // This file's people this job created; anyone erased since is counted apart (no longer in the stored file).
       const created = await tx.member.findMany({
-        where: { tenantId, importJobId: job.id },
+        where: { tenantId, importJobId: job.id, ...NOT_ERASED },
         select: { status: true, accountType: true, membershipType: true, paymentStatus: true, membershipTierId: true },
       });
-      const ledgerCount = ledgerRows ? await tx.importedMembership.count({ where: { tenantId, importJobId: job.id } }) : null;
+      const erasedSinceImport = await tx.member.count({ where: { tenantId, importJobId: job.id, NOT: NOT_ERASED } });
+      const ledgerCount = ledgerRows
+        ? await tx.importedMembership.count({ where: { tenantId, importJobId: job.id, OR: [{ memberId: null }, { member: NOT_ERASED }] } })
+        : null;
       const tally2 = (xs: string[]) => xs.reduce<Record<string, number>>((acc, k) => ((acc[k] = (acc[k] ?? 0) + 1), acc), {});
       // Same rule as the preview: live labels with no tier, history-only apart.
       const unmatched = unmatchedPlanLabels(drafts, new Set(tierByName.keys()));
@@ -640,7 +694,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           created.length + skippedExisting + commitErrors.length === drafts.length &&
           (teamup2 === null || teamup2.ledger.persisted === teamup2.ledger.rows),
         ...(ownRowsBeforeRun > 0 ? { resumedWith: ownRowsBeforeRun } : {}),
+        ...(erasedSinceImport > 0 ? { erasedSinceImport } : {}),
         ...(teamup2 ? { teamup2 } : {}),
+        // Round 7: each count that changed since the preview the owner approved (MatFlow changed in between; the
+        // commit re-classified everyone, so these are true now). Absent when there was no preview.
+        ...(() => {
+          const s = sincePreview(job.dryRunSummary, {
+            created: created.length,
+            duplicates,
+            conflicts: conflicts.filter((c) => c.kind === "conflict").length,
+            ambiguous: conflicts.filter((c) => c.kind === "ambiguous").length,
+            repeatedInFile,
+            staffLoginRefused,
+            childrenWithoutParent,
+          });
+          return s ? { sincePreview: s } : {};
+        })(),
       };
     });
     await withTenantContext(tenantId, (tx) =>

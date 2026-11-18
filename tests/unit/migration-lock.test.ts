@@ -60,9 +60,9 @@ const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const firstInTx = (s: string) => [...s.matchAll(/withTenantContext\(\s*tenantId,\s*async \(tx\) => \{\s*(?:\/\/[^\n]*\n\s*)*await holdOffMigrations\(tx\);/g)].length;
 
 describe("which job transactions hold migrations off", () => {
-  it("TeamUp commit: the claim, both member slices and the ledger chunks (a refresh writes no member since 25 Oct 2026); a slice never swallows the refusal", () => {
+  it("TeamUp commit: the claim, both member slices, the ledger chunks and the history-linking batches (a refresh writes no member since 25 Oct 2026); a slice never swallows the refusal", () => {
     const s = src("app/api/admin/import/[id]/commit/route.ts");
-    expect(firstInTx(s)).toBe(4);
+    expect(firstInTx(s)).toBe(5);
     expect(s.match(/if \(isMigrationInProgress\(e\)\) throw e;/g)?.length).toBe(2);
     expect(s).toMatch(/if \(isMigrationInProgress\(e\)\) return migrationInProgress\(\);/);
   });
@@ -81,5 +81,11 @@ describe("which job transactions hold migrations off", () => {
     expect(engine).toMatch(/async \(tx\) => \{\s*await holdOffMigrations\(tx\);\s*await processBatch\(/);
     // A refusal mid-step gives the lease back and reports busy; it never marks the job failed.
     expect(engine).toMatch(/if \(isMigrationInProgress\(e\)\) \{[\s\S]{0,400}?releaseLease\(tx, tenantId, jobId, token\)\)[\s\S]{0,80}?return \{ kind: "busy" \};/);
+  });
+
+  it("status back-fill: apply and rollback take the shared key first, inside the club lock helper (Round 9, 16 Nov 2026)", () => {
+    const s = src("lib/status-backfill.ts");
+    expect(s).toMatch(/async function lockClub\(tx: TxClient, tenantId: string\) \{[\s\S]{0,400}?await holdOffMigrations\(tx\);[\s\S]{0,300}?pg_advisory_xact_lock/);
+    expect(s.match(/await lockClub\(tx, tenantId\);/g)?.length).toBe(2);
   });
 });
