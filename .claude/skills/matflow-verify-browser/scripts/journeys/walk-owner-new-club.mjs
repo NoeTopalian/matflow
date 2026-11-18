@@ -63,13 +63,13 @@ try {
   await page.getByRole("button", { name: /BJJ/ }).first().click();
   await cont(page).click();
   // Step 3: the BJJ belt system (pre-selected for BJJ, or chosen), then add it.
-  await page.getByText(/^Step 3 of 9$/).waitFor({ timeout: 30000 });
+  await page.getByText(/^Step 3 of 9$/).first().waitFor({ timeout: 30000 });
   const add = page.getByRole("button", { name: /^Add \d+ system/ });
   if (!(await add.isVisible().catch(() => false))) await page.getByRole("button", { name: /BJJ/ }).first().click();
   const rankPosts = [];
   page.on("response", (r) => { if (r.request().method() === "POST" && new URL(r.url()).pathname === "/api/ranks") rankPosts.push(r.status()); });
   await page.getByRole("button", { name: /^Add \d+ system/ }).click();
-  await page.getByText(/^Step 4 of 9$/).waitFor({ timeout: 60000 });
+  await page.getByText(/^Step 4 of 9$/).first().waitFor({ timeout: 60000 });
   const ranks = Number((await q(`select count(*)::int as n from "RankSystem" where "tenantId" = $1 and discipline = 'BJJ'`, [tenantId]))[0].n);
   L.check("setup", "S2 the BJJ belt system is created", rankPosts.length > 0 && rankPosts.every((s) => s < 300 || s === 409) && ranks > 0, { posts: rankPosts.length, ranks });
 
@@ -79,19 +79,19 @@ try {
   const classPost = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/classes", { timeout: 60000 });
   await cont(page).click();
   const cp = await classPost;
-  await page.getByText(/^Step 5 of 9$/).waitFor({ timeout: 60000 });
+  await page.getByText(/^Step 5 of 9$/).first().waitFor({ timeout: 60000 });
   const cls = await q(`select c.id, array_agg(s."dayOfWeek" order by s."dayOfWeek") as days from "Class" c join "ClassSchedule" s on s."classId" = c.id where c."tenantId" = $1 and c.name = $2 group by c.id`, [tenantId, CLASS]);
   L.check("setup", "S3 the class is created with its Monday and Wednesday sessions", cp.ok() && cls.length === classesBefore + 1 && cls.some((c) => JSON.stringify(c.days) === "[1,3]"), { status: cp.status(), classes: cls.length });
 
   // Step 5 branding: skipped. Step 6: questionnaire. Step 7: payment rail. Step 8: authenticator already enrolled.
   await page.getByRole("button", { name: "Skip" }).first().click();
-  await page.getByText(/^Step 6 of 9$/).waitFor({ timeout: 30000 });
+  await page.getByText(/^Step 6 of 9$/).first().waitFor({ timeout: 30000 });
   await page.getByRole("button", { name: "21–50" }).click();
   await cont(page).click();
-  await page.getByText(/^Step 7 of 9$/).waitFor({ timeout: 30000 });
+  await page.getByText(/^Step 7 of 9$/).first().waitFor({ timeout: 30000 });
   await page.getByRole("button", { name: /Pay at desk only/ }).click();
   await cont(page).click();
-  const reached9 = await page.getByText(/^Step 9 of 9$/).waitFor({ timeout: 60000 }).then(() => true, () => false);
+  const reached9 = await page.getByText(/^Step 9 of 9$/).first().waitFor({ timeout: 60000 }).then(() => true, () => false);
   L.check("setup", "S4 with an authenticator already enrolled, the wizard passes its own two-factor step", reached9);
 
   // Step 9: members added manually later. Finish.
