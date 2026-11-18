@@ -296,6 +296,7 @@ export default function MemberShopPage() {
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => updateQty(product.id, -1)}
+                              aria-label={`Remove one ${product.name}`}
                               className="w-7 h-7 rounded-lg flex items-center justify-center"
                               style={{ background: "rgba(255,255,255,0.1)" }}
                             >
@@ -304,6 +305,7 @@ export default function MemberShopPage() {
                             <span className="text-white text-sm font-bold w-4 text-center">{inCart.quantity}</span>
                             <button
                               onClick={() => updateQty(product.id, 1)}
+                              aria-label={`Add one more ${product.name}`}
                               className="w-7 h-7 rounded-lg flex items-center justify-center"
                               style={{ background: primary }}
                             >
@@ -313,6 +315,7 @@ export default function MemberShopPage() {
                         ) : (
                           <button
                             onClick={() => addToCart(product)}
+                            aria-label={`Add ${product.name} to cart`}
                             className="w-8 h-8 rounded-xl flex items-center justify-center transition-transform active:scale-90"
                             style={{ background: primary }}
                           >
@@ -353,7 +356,7 @@ export default function MemberShopPage() {
 
             <div className="flex items-center justify-between px-5 py-3">
               <h2 className="text-white font-bold text-lg">Your Cart</h2>
-              <button onClick={() => setCartOpen(false)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
+              <button onClick={() => setCartOpen(false)} aria-label="Close cart" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
                 <X className="w-4 h-4 text-gray-400" />
               </button>
             </div>
@@ -374,14 +377,14 @@ export default function MemberShopPage() {
                         <p className="text-gray-500 text-xs">£{item.price} each</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => updateQty(item.id, -1)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
+                        <button onClick={() => updateQty(item.id, -1)} aria-label={`Remove one ${item.name}`} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
                           <Minus className="w-3 h-3 text-white" />
                         </button>
                         <span className="text-white text-sm font-bold w-4 text-center">{item.quantity}</span>
-                        <button onClick={() => updateQty(item.id, 1)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
+                        <button onClick={() => updateQty(item.id, 1)} aria-label={`Add one more ${item.name}`} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
                           <Plus className="w-3 h-3 text-white" />
                         </button>
-                        <button onClick={() => removeFromCart(item.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-400 ml-1">
+                        <button onClick={() => removeFromCart(item.id)} aria-label={`Remove ${item.name} from cart`} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-600 hover:text-red-400 ml-1">
                           <X className="w-3 h-3" />
                         </button>
                       </div>

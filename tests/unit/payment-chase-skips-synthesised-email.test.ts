@@ -52,7 +52,7 @@ vi.mock("@/lib/api-authz", () => ({
 
 vi.mock("@/lib/email", () => ({ sendEmail: sendEmailMock }));
 vi.mock("@/lib/audit-log", () => ({ logAudit: logAuditMock }));
-vi.mock("@/lib/rate-limit", () => ({
+vi.mock("@/lib/rate-limit", () => ({ resetRateLimit: async () => {}, // Round 4: the chase releases its once-a-minute hit when nothing went;
   checkRateLimit: vi.fn(async () => ({ allowed: true, retryAfterSeconds: 0 })),
 }));
 vi.mock("@/lib/env-url", () => ({ getBaseUrl: () => "http://localhost:3000" }));

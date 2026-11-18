@@ -83,6 +83,41 @@ export interface SessionVersionCheck {
    * defence in depth, not a reachable path today).
    */
   tenantId?: string | null;
+  /**
+   * The token's session id (lib/session-id.ts `sessionIdOf`). A session signed out on its own device is `revoked`
+   * here even while the person's version still matches (Round 8, 16 Nov 2026).
+   */
+  sid?: string | null;
+}
+
+type SessionRow = {
+  sessionVersion: unknown;
+  name: unknown;
+  tenantId: unknown;
+  archivedAt?: unknown;
+  deactivatedAt?: unknown;
+  sessionRevoked: unknown;
+};
+
+/**
+ * The person's row and this session's revocation record, in ONE statement: the check runs on every request, so a
+ * second query would add a round trip to every request in the product. No row = the person is gone.
+ */
+function readSessionRow(
+  tx: { $queryRaw: <T>(query: TemplateStringsArray, ...values: unknown[]) => Promise<T> },
+  memberId: string | null | undefined,
+  userId: string | null | undefined,
+  sid: string | null,
+): Promise<SessionRow[]> {
+  return memberId
+    ? tx.$queryRaw<SessionRow[]>`
+        SELECT m."sessionVersion", m."name", m."tenantId", m."archivedAt",
+               EXISTS (SELECT 1 FROM "RevokedSession" r WHERE r."sid" = ${sid}) AS "sessionRevoked"
+        FROM "Member" m WHERE m."id" = ${memberId}`
+    : tx.$queryRaw<SessionRow[]>`
+        SELECT u."sessionVersion", u."name", u."tenantId", u."deactivatedAt",
+               EXISTS (SELECT 1 FROM "RevokedSession" r WHERE r."sid" = ${sid}) AS "sessionRevoked"
+        FROM "User" u WHERE u."id" = ${userId as string}`;
 }
 
 function isVersion(v: unknown): v is number {
@@ -100,22 +135,24 @@ export async function checkSessionVersion(
   onCurrentName?: (name: string) => void,
 ): Promise<RevocationVerdict> {
   const { memberId, userId, tokenVersion, tenantId } = check;
+  const sid = check.sid ?? null;
   if (!memberId && !userId) return "unknown";
   // Not minted by us (see the header): nothing to compare, nothing to admit.
   if (!isVersion(tokenVersion)) return "revoked";
 
   try {
-    const row: unknown = await withRlsBypass((tx): Promise<unknown> =>
-      memberId
-        ? tx.member.findUnique({ where: { id: memberId }, select: { sessionVersion: true, name: true, tenantId: true, archivedAt: true } })
-        : tx.user.findUnique({ where: { id: userId as string }, select: { sessionVersion: true, name: true, tenantId: true, deactivatedAt: true } }),
-    );
+    const rows: unknown = await withRlsBypass((tx): Promise<unknown> => readSessionRow(tx, memberId, userId, sid));
 
-    // THE FIX. `row === null` used to be indistinguishable from a match.
-    if (row === null) return "revoked";
     // A result we cannot read proves nothing (SEC-012: malformed results).
-    if (typeof row !== "object") return unknownVerdict(memberId, new Error("malformed revocation row"));
-    const r = row as { sessionVersion?: unknown; name?: unknown; tenantId?: unknown; archivedAt?: unknown; deactivatedAt?: unknown };
+    if (!Array.isArray(rows) || rows.length > 1) return unknownVerdict(memberId, new Error("malformed revocation row"));
+    // THE FIX. A missing row used to be indistinguishable from a match.
+    if (rows.length === 0) return "revoked";
+    const row: unknown = rows[0];
+    if (row === null || typeof row !== "object") return unknownVerdict(memberId, new Error("malformed revocation row"));
+    const r = row as Partial<SessionRow>;
+    // Signed out on its own device (Round 8). Anything but a real boolean proves nothing.
+    if (r.sessionRevoked === true) return "revoked";
+    if (r.sessionRevoked !== false) return unknownVerdict(memberId, new Error("malformed revocation row"));
     // PR 3 (6 Nov 2026): an archived member or a deactivated staff account has
     // no session, whatever its version says (archive and deactivate also bump it).
     if (r.archivedAt != null || r.deactivatedAt != null) return "revoked";

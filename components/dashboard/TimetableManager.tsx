@@ -20,6 +20,7 @@ import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, classColourName, classDotStyle, cl
 import { describeApiError } from "@/lib/api-field-errors";
 import { parseIdParam } from "@/lib/id-param";
 import { duplicateSessionKeys, minToTime, sessionStateLabel, sessionStates, spanMinutes, type SessionState } from "@/lib/schedule-state";
+import { clubWallClock } from "@/lib/class-time";
 import { PosterDay, PosterGrid } from "@/components/schedule/PosterGrid";
 import { MorePanel } from "@/components/schedule/MorePanel";
 import { MoreChip, MoreRow, WeekChip } from "@/components/schedule/WeekChip";
@@ -64,6 +65,12 @@ interface Props {
   supportReadOnly?: boolean;
   /** When the server began reading this page's mats (ISO time): tells a list read after a save from one read before it. */
   matsReadAt?: string;
+  /**
+   * The club's time zone (Tenant.timezone). "Today" (the Today pill, the column with Live / Next / Cancelled, the week
+   * shown, the Today button) is the club's day, the day /api/coach/today and check-in use. The page always passes it;
+   * absent, the device's zone is used, as before it existed.
+   */
+  timeZone?: string;
   primaryColor: string;
   role: string;
   // Session F: drives the "My classes" filter. When null (e.g. no
@@ -180,6 +187,32 @@ function describeSave(change: ScheduleChange | null | undefined): string {
  * squad list or its rank gate — so the owner is shown who it turns away
  * first. A new class is previewed when it is created restricted.
  */
+/** The class fields the editor always sends; on an edit, only changed ones go, with what they replace (Round 4). */
+const CLASS_EDIT_FIELDS = ["name", "description", "coachName", "coachUserId", "duration", "maxCapacity", "requiredRankId", "maxRankId", "isKids", "locationId"] as const;
+
+/**
+ * Round 4 (10 Nov 2026): an edit sends each of these fields only when it
+ * differs from the class as this form loaded it, with the loaded value in
+ * `expected`. The server refuses the save (409 `stale_class`) if someone
+ * changed that field since, so a save from an older tab cannot put back a
+ * capacity, coach or name.
+ */
+export function withClassPreconditions(payload: Record<string, unknown>, initial: Partial<Record<(typeof CLASS_EDIT_FIELDS)[number], unknown>>): Record<string, unknown> {
+  const out = { ...payload };
+  const expected: Record<string, unknown> = {};
+  // A squad save clears any rank gate on the server, so with a roster both
+  // rank fields always travel with what was loaded: a gate set elsewhere since
+  // is then a conflict, not silently cleared (Round 4 review).
+  const keep = new Set<string>(Array.isArray(out.roster) ? ["requiredRankId", "maxRankId"] : []);
+  for (const k of CLASS_EDIT_FIELDS) {
+    if (!(k in out)) continue;
+    const loaded = initial[k] ?? null;
+    if ((out[k] ?? null) === loaded && !keep.has(k)) delete out[k];
+    else expected[k] = loaded;
+  }
+  return Object.keys(expected).length > 0 ? { ...out, expected } : out;
+}
+
 function accessChanged(target: ClassRow | null, data: Record<string, unknown>): boolean {
   const ids = (v: unknown, key: "id" | "memberId") =>
     Array.isArray(v) ? (v as Array<string | Record<string, string>>).map((x) => (typeof x === "string" ? x : x[key])).sort().join(",") : null;
@@ -213,8 +246,8 @@ export type SaveError = { message: string; reason?: string };
 const placeOf = (cls: ClassRow) => cls.location ?? cls.coachUser?.name ?? cls.coachName ?? null;
 
 /**
- * Today's states for one day column of the template: the owner's own device
- * clock, the same rule as the member's day view (lib/schedule-state.ts).
+ * Today's states for one day column of the template, by the club's clock when
+ * `timeZone` is given (the timetable always gives it), else the device's.
  * Returns `null` for any day that is not today.
  */
 export function chipStatesFor(
@@ -222,9 +255,10 @@ export function chipStatesFor(
   isToday: boolean,
   cancelledToday: ReadonlySet<string> = new Set(),
   now: Date = new Date(),
+  timeZone?: string,
 ): (SessionState | null)[] {
   if (!isToday) return sessions.map(() => null);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const nowMin = timeZone ? clubWallClock(now, timeZone).minutes : now.getHours() * 60 + now.getMinutes();
   // Lane 3 D6: the template alone showed a called-off session as LIVE. Today's
   // instances (from /api/coach/today) mark a cancelled one, keyed on
   // class + start time, and lib/schedule-state decides cancellation FIRST —
@@ -243,17 +277,18 @@ export function chipStatesFor(
  */
 export type DaySession = { cls: ClassRow; slot: ClassRow["schedules"][number] };
 
-function getWeekDates(offset: number): Date[] {
+/** The club's today as a calendar day: `todayMidnight` and the week's dates are device-local midnights of the CLUB's dates, so `getDate()` and the labels read the club's calendar in any browser zone. */
+type ClubToday = { year: number; month: number; day: number; dow: number };
+
+function clubToday(timeZone: string | undefined): ClubToday {
+  if (timeZone) return clubWallClock(new Date(), timeZone);
   const now = new Date();
-  const dow = now.getDay();
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() - ((dow + 6) % 7) + offset * 7);
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
+  return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(), dow: now.getDay() };
+}
+
+function getWeekDates(offset: number, today: ClubToday): Date[] {
+  const mondayDate = today.day - ((today.dow + 6) % 7) + offset * 7;
+  return Array.from({ length: 7 }, (_, i) => new Date(today.year, today.month - 1, mondayDate + i));
 }
 
 function fmtWeekLabel(dates: Date[]): string {
@@ -592,6 +627,9 @@ function InactiveClassList({
 }
 
 /** The counted confirmation for an archive (T6b): what is kept, in numbers. */
+/** Added to the Pause / Archive question when the class sheet holds unsaved edits (Round 11). */
+const DISCARDS_EDITS = "Your unsaved changes to this class will be discarded, not saved.";
+
 export function archiveConfirmBody(
   counts: { attendanceCount: number; rosterCount: number; bookingCount: number },
   lifecycle?: ClassRow["lifecycle"],
@@ -806,6 +844,7 @@ function ClassForm({
   onSave,
   onCancel,
   onDirtyChange,
+  locked = false,
   saving,
   error = null,
 }: {
@@ -824,6 +863,8 @@ function ClassForm({
   onCancel: () => void;
   /** Told whether anything differs from what the form opened with (Round 11, 6.1: the Sheet asks before discarding). */
   onDirtyChange?: (dirty: boolean) => void;
+  /** A status change (pause / archive) is in flight for this class: no save and no cancel until it settles. */
+  locked?: boolean;
   saving: boolean;
   /** Why the last save was refused, shown beside the buttons (UI-RULES §7) — never a toast over them. */
   error?: SaveError | null;
@@ -1037,7 +1078,7 @@ function ClassForm({
 
   function submit() {
     if (!canSubmit) return;
-    onSave({
+    const payload: Record<string, unknown> = {
       name: name.trim(),
       // When a User is selected, that's authoritative; coachName is the legacy
       // free-text fallback for clubs that haven't put their coaches in Users yet.
@@ -1076,7 +1117,11 @@ function ClassForm({
       // (409) if the class's days changed since, instead of taking this list
       // as the whole truth and quietly undoing another tab's change.
       ...(initial?.id ? { baseScheduleIds: (initial.schedules ?? []).map((s) => s.id) } : {}),
-    });
+      // Round 4: the squad this form loaded. A squad change or a rank gate (which
+      // clears the squad) is refused if the squad changed since.
+      ...(initial?.id ? { baseRosterIds: (initial.roster ?? []).map((r) => r.memberId) } : {}),
+    };
+    onSave(initial?.id ? withClassPreconditions(payload, initial) : payload);
   }
 
   const loadMembers = useCallback(async () => {
@@ -1668,7 +1713,9 @@ function ClassForm({
             <p role="alert" data-testid="class-form-save-error" className="text-xs flex-1" style={{ color: "var(--hue-danger-ink)" }}>
               {error.message}
             </p>
-            {error.reason === "stale_schedules" && (
+            {/* Round 4: a class field someone else changed is the same kind of refusal: reload to see it (the draft is still on screen until then).
+                Round 6: so is a category refusal (the club's categories or this class's changed); its sentence says to reload, and an installed app has no reload control. */}
+            {(error.reason === "stale_schedules" || error.reason === "stale_class" || error.reason === "category") && (
               <Button variant="secondary" size="compact" onClick={() => window.location.reload()} className="shrink-0">
                 Reload
               </Button>
@@ -1686,10 +1733,10 @@ function ClassForm({
           </p>
         )}
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={onCancel} className="flex-1">
+          <Button variant="secondary" onClick={onCancel} disabled={locked} className="flex-1">
             Cancel
           </Button>
-          <Button onClick={submit} loading={saving} disabled={!canSubmit} className="flex-1">
+          <Button onClick={submit} loading={saving} disabled={!canSubmit || locked} className="flex-1">
             {initial?.id ? "Save changes" : "Create class"}
           </Button>
         </div>
@@ -1707,7 +1754,7 @@ const NO_CLASSES: ClassRow[] = [];
 export default function TimetableManager({
   initialClasses, initialInactiveClasses = NO_CLASSES, rankSystems, coachUsers, membershipTiers = [], categories = NO_CATEGORIES,
   mats: serverMats = NO_MATS, storedLayout = null, matsLoadFailed = false, supportReadOnly = false, matsReadAt, categoryManagement = false,
-  primaryColor, role, currentUserId,
+  timeZone, primaryColor, role, currentUserId,
 }: Props) {
   // A class saved with a new Location adds a mat: it is used at once, before the refresh brings the server's list.
   // It is kept until a server list has it, or until a list read AFTER the save lacks it (the mat was removed since,
@@ -1780,7 +1827,7 @@ export default function TimetableManager({
   const [weekWider, setWeekWider] = useState(false);
   // Which day the one-day view is showing: a phone's only view, and the
   // desktop's Day view. Defaults to today, the day the owner almost always wants.
-  const [agendaDow, setAgendaDow] = useState(() => new Date().getDay());
+  const [agendaDow, setAgendaDow] = useState(() => clubToday(timeZone).dow);
   // A desktop has room for more side-by-side columns in one day than a phone
   // before the day falls back to time. Known only in the browser, so the first
   // render is the phone's (three); a wider window is noticed on mount.
@@ -2194,16 +2241,20 @@ export default function TimetableManager({
   }
 
   // T6b: Pause — off the timetable for now, one click to resume.
+  // Round 11: from the class sheet with unsaved edits, the same question says the edits are discarded (they are
+  // never saved silently); the sheet closes only once the class is paused, so a "no" or a failure keeps the draft.
   const handlePause = useCallback(
-    async (cls: ClassRow) => {
+    async (cls: ClassRow, opts: { discardsEdits?: boolean } = {}): Promise<boolean> => {
       const confirmed = await ask({
         title: `Pause ${cls.name}?`,
         body:
           "It comes off the timetable, the member app, booking and the kiosk, and no new sessions are made. " +
-          "Bookings and check-in history are kept. Resume it any time from Paused and archived, or undo this from Activity.",
-        confirmLabel: "Pause class",
+          "Bookings and check-in history are kept. Resume it any time from Paused and archived, or undo this from Activity." +
+          (opts.discardsEdits ? " " + DISCARDS_EDITS : ""),
+        confirmLabel: opts.discardsEdits ? "Discard changes and pause" : "Pause class",
+        ...(opts.discardsEdits ? { destructive: true } : {}),
       });
-      if (!confirmed) return;
+      if (!confirmed) return false;
       setLifecycleBusy({ id: cls.id, action: "pause" });
       try {
         const res = await fetch(`/api/classes/${cls.id}`, {
@@ -2219,8 +2270,10 @@ export default function TimetableManager({
         setInactiveClasses((prev) => [...prev.filter((c) => c.id !== cls.id), { ...cls, lifecycle: "paused", archivedAt: null }]);
         showToast("Class paused. Resume it from Paused and archived.", "success");
         router.refresh();
+        return true;
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not pause the class. Try again.", "error");
+        return false;
       } finally {
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
@@ -2231,7 +2284,7 @@ export default function TimetableManager({
   // T6b: Archive — a counted confirmation instead of the old 409. The counts
   // are read first; if they cannot be read the archive does not go ahead.
   const handleArchive = useCallback(
-    async (cls: ClassRow) => {
+    async (cls: ClassRow, opts: { discardsEdits?: boolean } = {}): Promise<boolean> => {
       let counts: { attendanceCount: number; rosterCount: number; bookingCount: number };
       // Busy from the click: the history read can take seconds, and an idle
       // button invited a second click and a second confirmation.
@@ -2254,16 +2307,17 @@ export default function TimetableManager({
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not check this class's history. Try again.", "error");
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
-        return;
+        return false;
       }
       const confirmed = await ask({
         title: `Archive ${cls.name}?`,
-        body: archiveConfirmBody(counts, cls.lifecycle),
-        confirmLabel: "Archive class",
+        body: archiveConfirmBody(counts, cls.lifecycle) + (opts.discardsEdits ? " " + DISCARDS_EDITS : ""),
+        confirmLabel: opts.discardsEdits ? "Discard changes and archive" : "Archive class",
+        ...(opts.discardsEdits ? { destructive: true } : {}),
       });
       if (!confirmed) {
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
-        return;
+        return false;
       }
       try {
         const res = await fetch(`/api/classes/${cls.id}`, { method: "DELETE" });
@@ -2276,8 +2330,10 @@ export default function TimetableManager({
         ]);
         showToast("Class archived. Its history is kept — restore it from Paused and archived.", "success");
         router.refresh();
+        return true;
       } catch (err) {
         showToast(err instanceof Error && err.message ? err.message : "Could not archive the class. Try again.", "error");
+        return false;
       } finally {
         setLifecycleBusy((b) => (b?.id === cls.id ? null : b));
       }
@@ -2468,9 +2524,9 @@ export default function TimetableManager({
         <div className="space-y-6">
           {/* Weekly view */}
           {(() => {
-            const weekDates = getWeekDates(weekOffset);
-            const todayMidnight = new Date();
-            todayMidnight.setHours(0, 0, 0, 0);
+            const today = clubToday(timeZone);
+            const weekDates = getWeekDates(weekOffset, today);
+            const todayMidnight = new Date(today.year, today.month - 1, today.day);
             // Every screen follows the split (the week, the Day view, the phone, the members' day), so its control is on all three here.
             // A MatFlow edit support session chooses it as the owner does; a read-only one reads it (RULES §5b).
             const showSplit = !matsLoadFailed;
@@ -2528,8 +2584,8 @@ export default function TimetableManager({
                   </div>
                   {/* On a phone this group is the toolbar's second row: the split control across the width, Mats beside it. */}
                   <div className="flex w-full flex-wrap items-end justify-end gap-2 md:w-auto md:items-center">
-                    {(weekOffset !== 0 || (desktopView === "day" && agendaDow !== new Date().getDay())) && (
-                      <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setAgendaDow(new Date().getDay()); }}>
+                    {(weekOffset !== 0 || (desktopView === "day" && agendaDow !== today.dow)) && (
+                      <Button variant="secondary" size="compact" onClick={() => { setWeekOffset(0); setAgendaDow(clubToday(timeZone).dow); }}>
                         Today
                       </Button>
                     )}
@@ -2659,7 +2715,7 @@ export default function TimetableManager({
                     const sessions = byDay[agendaDow];
                     const agendaDate = weekDates[agendaDow === 0 ? 6 : agendaDow - 1];
                     const agendaIsToday = agendaDate.getTime() === todayMidnight.getTime();
-                    const states = chipStatesFor(sessions, agendaIsToday, cancelledToday);
+                    const states = chipStatesFor(sessions, agendaIsToday, cancelledToday, new Date(), timeZone);
                     const stateOf = new Map(sessions.map(({ slot }, i) => [slot.id, states[i]] as const));
                     const day = phoneGrid.days[0];
                     const countText = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
@@ -2789,7 +2845,7 @@ export default function TimetableManager({
                     const dateOf = (dow: number) => weekDates[dow === 0 ? 6 : dow - 1];
                     const stateByKey = new Map<string, SessionState | null>();
                     for (let dow = 0; dow < 7; dow++) {
-                      const states = chipStatesFor(byDay[dow], dow === todayDow, cancelledToday);
+                      const states = chipStatesFor(byDay[dow], dow === todayDow, cancelledToday, new Date(), timeZone);
                       byDay[dow].forEach(({ slot }, i) => stateByKey.set(slot.id, states[i]));
                     }
                     // Where the box opens: today's live class, else its next one, under the pinned header.
@@ -2958,8 +3014,8 @@ export default function TimetableManager({
         open={drawerOpen}
         title={editTarget ? "Edit class" : "New class"}
         // While a save is in flight the sheet stays: closing it would not stop the save (review of #99, M1).
-        onClose={() => { if (!saving) setDrawerOpen(false); }}
-        confirmDiscard={classFormDirty && !saving}
+        onClose={() => { if (!saving && !lifecycleBusy) setDrawerOpen(false); }}
+        confirmDiscard={classFormDirty && !saving && !lifecycleBusy}
       >
         <ClassForm
           initial={editTarget}
@@ -2971,7 +3027,10 @@ export default function TimetableManager({
           places={places}
           primaryColor={primaryColor}
           onSave={handleSave}
-          onCancel={() => setDrawerOpen(false)}
+          // Not while a pause / archive runs: it would close over a draft the status change may still need (a failure keeps it).
+          onCancel={() => { if (!lifecycleBusy) setDrawerOpen(false); }}
+          // The same condition as onCancel above, so Cancel never looks enabled while it does nothing.
+          locked={!!lifecycleBusy}
           onDirtyChange={setClassFormDirty}
           saving={saving}
           error={saveError}
@@ -2987,10 +3046,11 @@ export default function TimetableManager({
               <Button
                 variant="secondary"
                 size="compact"
-                onClick={() => {
-                  const target = editTarget;
-                  setDrawerOpen(false);
-                  void handlePause(target);
+                // Not while the class form is saving or another status change runs: one write at a time.
+                disabled={saving || !!lifecycleBusy}
+                loading={lifecycleBusy?.id === editTarget.id && lifecycleBusy.action === "pause"}
+                onClick={async () => {
+                  if (await handlePause(editTarget, { discardsEdits: classFormDirty })) setDrawerOpen(false);
                 }}
               >
                 <Pause className="size-3.5" />
@@ -2999,10 +3059,10 @@ export default function TimetableManager({
               <Button
                 variant="ghost"
                 size="compact"
-                onClick={() => {
-                  const target = editTarget;
-                  setDrawerOpen(false);
-                  void handleArchive(target);
+                disabled={saving || !!lifecycleBusy}
+                loading={lifecycleBusy?.id === editTarget.id && lifecycleBusy.action === "archive"}
+                onClick={async () => {
+                  if (await handleArchive(editTarget, { discardsEdits: classFormDirty })) setDrawerOpen(false);
                 }}
               >
                 <Archive className="size-3.5" />

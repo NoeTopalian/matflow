@@ -161,9 +161,9 @@ describe("Reports: a count that is a share of a named population carries its per
     expect(screen.getByText("12 inactive to review · 8% of 150 current members")).toBeTruthy();
   });
 
-  it("a class's fill rate names its denominator: places", () => {
+  it("a class's fill rate names its denominator: places in attended sessions", () => {
     render(<ReportsView data={reports()} attribution={NO_TRIALS} primaryColor="#3b82f6" />);
-    expect(screen.getByText("9/session · fill 45% (90 of 200 places)")).toBeTruthy();
+    expect(screen.getByText("9 per attended session · fill 45% (90 of 200 places in attended sessions)")).toBeTruthy();
   });
 
   it("a share that is the whole by construction reads its count, never an artificial 100%", () => {
@@ -236,7 +236,7 @@ describe("Reports CSV matches the screen", () => {
   it("active members, fill rate and the funnel's drop-offs and coach shares", () => {
     // Quoted: the population note has commas.
     expect(csv).toContain(`Summary,Active members,130,"Includes 12 on hold · 9% of 130 active · 87% of 150 current members · ${POPULATION_COPY.active.excludes}"`);
-    expect(csv).toContain("fill rate 45% (90 of 200 places)");
+    expect(csv).toContain("fill rate 45% (90 of 200 places in attended sessions)");
     expect(csv).toContain("Conversion funnel,Lost before joining,24,52% (24 of 46) of trials · Club-wide · rates need 3+ trials");
     expect(csv).toContain("Conversion funnel,No decision recorded,16,35% (16 of 46) of trials · Club-wide · rates need 3+ trials");
     expect(csv).toContain("Conversion funnel,No longer active,1,17% (1 of 6) of converted · Club-wide · rates need 3+ trials");

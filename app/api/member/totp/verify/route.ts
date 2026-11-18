@@ -8,6 +8,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse } from "next/server";
 import { getToken, encode } from "next-auth/jwt";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/session-id";
 import { verifySync } from "otplib";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
   const encoded = await encode({
     token: newToken,
     secret: AUTH_SECRET_VALUE!,
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
     salt: SESSION_COOKIE_NAME,
   });
 
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
     sameSite: "lax",
     secure: SESSION_COOKIE_SECURE,
     path: "/",
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
   return res;
 }

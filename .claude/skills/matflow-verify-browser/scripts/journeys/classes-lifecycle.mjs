@@ -21,7 +21,7 @@
 //  Doors
 //   desk     POST /api/checkin {classInstanceId, memberId, checkInMethod:"admin"} app/api/checkin/route.ts:84-120,163-204;
 //            refusal body from lib/checkin-refusal.ts:132-133,162-168 (403); audit attendance.mark route.ts:218 (entityId `${inst}:${member}`)
-//            register UI: components/dashboard/RegisterPanel.tsx:651-676 (Search members, Enter marks), :446-453 (role=alert)
+//            register UI: components/dashboard/RegisterPanel.tsx (Search members, Enter marks; a refusal is a role=alert under the ticked row or the search field, Round 11 2.1)
 //   undo     DELETE /api/checkin?classInstanceId&memberId app/api/checkin/route.ts:285-330, audit attendance.override :320
 //   guardian POST /api/checkin {classInstanceId, onBehalfOfMemberId} route.ts:121-143 (self profile), audit attendance.self_checkin :245
 //   kiosk    POST /api/kiosk/[token]/checkin {kioskMemberToken, classInstanceId} app/api/kiosk/[token]/checkin/route.ts:29-32,88-120;
@@ -184,7 +184,7 @@ async function memberSignIn(page, m) {
   await page.keyboard.press("Enter");
   await page.getByLabel("Email address").first().waitFor({ timeout: 60000 });
   await page.getByLabel("Email address").first().fill(m.email);
-  await page.getByLabel("Password").fill(m.password);
+  await page.getByLabel("Password", { exact: true }).fill(m.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL(/\/member/, { timeout: 60000 });
 }

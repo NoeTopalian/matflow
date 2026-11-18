@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
 import { MoreHorizontal, LogOut, X } from "lucide-react";
 import { STAFF_NAV, isNavActive, type StaffRole } from "@/components/layout/routes";
 import { useToast } from "@/components/ui/Toast";
+import { useOverlay } from "@/components/ui/overlay";
 
 interface Props {
   role: string;
@@ -22,6 +23,11 @@ export default function MobileNav({ role, primaryColor }: Props) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const { toast } = useToast();
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // Shared overlay behaviour (components/ui/overlay.tsx): focus moves into the
+  // sheet on open, Tab stays inside, Escape closes, focus returns to More.
+  useOverlay({ open: moreOpen, onClose: () => setMoreOpen(false), panelRef: sheetRef });
 
   // Audit R9: normalise like Sidebar (H13) — a role of "Owner" previously
   // produced a completely empty bottom nav while the desktop sidebar worked.
@@ -41,8 +47,16 @@ export default function MobileNav({ role, primaryColor }: Props) {
         />
       )}
 
-      {/* More sheet */}
+      {/* More sheet — always mounted for the slide; while closed it is inert
+          and hidden, so its items are out of the Tab order and the
+          accessibility tree (Round 11, X.1). */}
       <div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        inert={!moreOpen}
+        aria-hidden={moreOpen ? undefined : true}
         className={`fixed bottom-0 left-0 right-0 z-50 md:hidden transition-transform duration-300 ease-out ${
           moreOpen ? "translate-y-0" : "translate-y-full"
         }`}
@@ -57,7 +71,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
           className="flex justify-between items-center px-5 py-4"
           style={{ borderBottom: "1px solid var(--bd-default)" }}
         >
-          <p className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>More</p>
+          <p id={titleId} className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>More</p>
           <button
             onClick={() => setMoreOpen(false)}
             className="w-8 h-8 rounded-full flex items-center justify-center"
@@ -94,7 +108,9 @@ export default function MobileNav({ role, primaryColor }: Props) {
             );
           })}
           <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={async () => {
+              if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+            }}
             className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98]"
             style={{ color: "var(--hue-danger)" }}
             aria-label="Sign out"
@@ -125,7 +141,9 @@ export default function MobileNav({ role, primaryColor }: Props) {
                 toast(reason ? `Your other devices are still signed in. ${reason}` : "Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
                 return;
               }
-              void signOut({ callbackUrl: "/login" });
+              // The version bump has already ended every session, this one included: go to sign-in even if
+              // this device's own sign-out request fails.
+              if (!(await signOutThisDevice())) window.location.assign("/login");
             }}
             className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98] disabled:opacity-60"
             style={{ color: "var(--tx-2)" }}

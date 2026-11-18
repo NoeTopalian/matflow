@@ -154,9 +154,32 @@ interface Props {
   session?: { id: string; label: string } | null;
   /** ?instance= named a session this club does not have; `records` are the recent list. */
   sessionNotFound?: boolean;
+  /** The most rows the server loads. When `records.length` reaches it, older rows exist and aren't shown. */
+  loadedLimit?: number;
 }
 
-export default function AttendanceView({ records, summary, primaryColor, session = null, sessionNotFound = false }: Props) {
+/**
+ * The footer under the list. `loaded` is how many rows the server sent,
+ * `shown` how many pass the search and method filter, `limit` the most the
+ * server loads. The page only ever has the loaded rows: when `loaded` reaches
+ * the limit, older rows exist that this page does not show, and a search that
+ * finds nothing has searched only the loaded rows. The wording must never
+ * imply that the loaded rows are the whole history.
+ */
+export function attendanceFooter({ loaded, shown, limit, session }: { loaded: number; shown: number; limit?: number; session: boolean }): string {
+  const noun = session ? (loaded === 1 ? "check-in" : "check-ins") : (loaded === 1 ? "record" : "records");
+  const scope = session ? " for this session" : "";
+  const capped = limit !== undefined && loaded >= limit;
+  if (loaded === 0) return session ? "No check-ins for this session." : "No attendance records yet.";
+  const whole = capped ? `Latest ${loaded} ${noun}${scope}. Older ${noun} aren't loaded here.` : `${loaded} ${noun}${scope}.`;
+  if (shown === loaded) return whole;
+  const matches = shown === 0 ? "No matches" : `${shown} ${shown === 1 ? "match" : "matches"}`;
+  return capped
+    ? `${matches} among the latest ${loaded} loaded ${noun}${scope}. Search covers only these loaded ${noun}.`
+    : `${matches} among ${loaded} ${noun}${scope}.`;
+}
+
+export default function AttendanceView({ records, summary, primaryColor, session = null, sessionNotFound = false, loadedLimit }: Props) {
   const [query, setQuery] = useState("");
   const [methodFilter, setMethodFilter] = useState<string>("all");
 
@@ -190,7 +213,7 @@ export default function AttendanceView({ records, summary, primaryColor, session
         <StatCard label="This Month" value={summary.totalThisMonth} sub="check-ins" icon={Calendar} primaryColor={primaryColor} />
         <StatCard label="This Week" value={summary.totalThisWeek} sub="check-ins" icon={TrendingUp} primaryColor={primaryColor} />
         <StatCard label="Members who trained" value={summary.uniqueMembersThisMonth} sub="distinct members checked in this month" icon={Users} primaryColor={primaryColor} />
-        <StatCard label="Top Class" value={summary.topClass ?? "—"} sub="this month" icon={Award} primaryColor={primaryColor} />
+        <StatCard label="Busiest session" value={summary.topClass ?? "—"} sub="most check-ins at one session this month" icon={Award} primaryColor={primaryColor} />
       </div>
       )}
 
@@ -256,7 +279,11 @@ export default function AttendanceView({ records, summary, primaryColor, session
           columns={ATTENDANCE_COLUMNS}
           empty={
             <div className="py-16 text-center text-sm" style={{ color: "var(--tx-3)" }}>
-              {session && records.length === 0 ? "No one was checked in to this session." : "No attendance records found"}
+              {session && records.length === 0
+                ? "No one was checked in to this session."
+                : records.length === 0
+                  ? "No attendance records yet."
+                  : "No matches among the loaded records."}
             </div>
           }
           renderCard={(r) => {
@@ -277,12 +304,8 @@ export default function AttendanceView({ records, summary, primaryColor, session
         />
       </div>
 
-      <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-3)" }}>
-        {session
-          ? filtered.length === records.length
-            ? `${records.length} ${records.length === 1 ? "check-in" : "check-ins"} for this session`
-            : `Showing ${filtered.length} of ${records.length} check-ins for this session`
-          : `Showing ${filtered.length} of ${records.length} records`}
+      <p className="text-xs mt-3 text-center" style={{ color: "var(--tx-3)" }} data-testid="attendance-footer">
+        {attendanceFooter({ loaded: records.length, shown: filtered.length, limit: loadedLimit, session: session !== null })}
       </p>
     </>
   );
