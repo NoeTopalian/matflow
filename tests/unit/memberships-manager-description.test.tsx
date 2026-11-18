@@ -347,6 +347,23 @@ describe("plan edits send only changes, with what they replace (Round 4)", () =>
     expect(writes()[1].body).toEqual({ pricePence: 5000, expected: { pricePence: 7000 } });
   });
 
+  it("a conflict from an edited plan does not follow the owner to Add tier", async () => {
+    renderWith([tier()]);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
+      if (String(input).startsWith("/api/memberships/") && init?.method === "PATCH") return json({ reason: "stale_plan", conflicts: [{ field: "pricePence", current: 7000 }] }, 409);
+      return json({ locations: [] });
+    });
+    openEdit("Plan A");
+    changePrice("50");
+    saveEdit();
+    await screen.findByTestId("settings-conflict");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Add tier/ })[0]);
+    await waitFor(() => expect(screen.getByLabelText("Price")).toBeTruthy());
+    expect(screen.queryByTestId("settings-conflict")).toBeNull();
+  });
+
   it("'Use the latest' puts the newer price in the form and sends nothing", async () => {
     renderWith([tier()]);
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

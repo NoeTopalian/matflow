@@ -73,7 +73,10 @@ async function cleanup() {
   await q(`delete from "Product" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.products]);
   await q(`delete from "Payment" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.payments]);
   await q(`delete from "AttendanceRecord" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.records]);
-  await q(`delete from "ClassInstance" where id = any($1::text[])`, [seeded.instances]);
+  // Sessions the app made itself for the seeded classes (the member Home self-heal, #93) go too, or the class
+  // delete below is refused by ClassInstance_classId_fkey (combined-candidate run, 16 Nov 2026).
+  await q(`delete from "AttendanceRecord" where "tenantId" = $1 and "classInstanceId" in (select id from "ClassInstance" where "classId" = any($2::text[]))`, [tenantId, seeded.classes]);
+  await q(`delete from "ClassInstance" where id = any($1::text[]) or "classId" = any($2::text[])`, [seeded.instances, seeded.classes]);
   await q(`delete from "ClassSchedule" where id = any($1::text[])`, [seeded.schedules]);
   await q(`delete from "Class" where "tenantId" = $1 and id = any($2::text[])`, [tenantId, seeded.classes]);
   // Anything the journey itself created through the app (an initiative via the form).
