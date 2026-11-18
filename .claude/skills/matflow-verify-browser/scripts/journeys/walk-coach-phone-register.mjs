@@ -110,14 +110,21 @@ try {
   const sent = [];
   const onReq = (req) => { if (req.method() === "POST" && new URL(req.url()).pathname === "/api/checkin") sent.push(1); };
   page.on("request", onReq);
+  const retried = page.waitForResponse((res) => res.request().method() === "POST" && new URL(res.url()).pathname === "/api/checkin", { timeout: 60000 });
   await tick(page, members.Retry).tap();
-  await page.waitForTimeout(2500);
+  const rr = await retried;
+  // The test branch answers in seconds from here (226 ms per round trip); wait for the row, then settle.
+  let rows = await stored(members.Retry);
+  for (const end = Date.now() + 15000; rows < 1 && Date.now() < end; rows = await stored(members.Retry)) await new Promise((r) => setTimeout(r, 250));
+  await page.waitForTimeout(1500);
   page.off("request", onReq);
-  L.check("retry", "R1 the retry sends one request and stores the attendance exactly once", sent.length === 1 && (await stored(members.Retry)) === 1, { requests: sent.length, rows: await stored(members.Retry) });
+  L.check("retry", "R1 the retry sends one request and stores the attendance exactly once", sent.length === 1 && rr.ok() && (await stored(members.Retry)) === 1, { requests: sent.length, status: rr.status(), rows: await stored(members.Retry) });
   await page.reload();
   await page.getByRole("button", { name: new RegExp(`${esc(TIME)} · ${esc(CLASS)}`) }).first().click({ timeout: 90000 }).catch(() => {});
-  const shownMarked = await page.getByRole("button", { name: new RegExp(`${esc(members.Retry.name)}.*(attended|absent|Unmark)`, "i") }).first().waitFor({ timeout: 30000 }).then(() => true, () => false);
-  L.note("retry", "N1 after reload the register shows the retried member as marked (control label measured, not asserted)", shownMarked);
+  // After reload the tick no longer offers "Mark … attended" for the stored member.
+  await tick(page, members.Eligible).or(page.getByRole("button", { name: new RegExp(esc(members.Eligible.name)) })).first().waitFor({ timeout: 60000 }).catch(() => {});
+  const stillOffersMark = await tick(page, members.Retry).isVisible().catch(() => false);
+  L.check("retry", "R2 after reload the retried member is shown as marked (no 'Mark … attended' offered)", !stillOffersMark, { stillOffersMark });
 
   // P1: within existing permissions — the server refuses a coach an owner-only change.
   const p1 = await page.request.patch(`${BASE}/api/settings`, { data: { name: "Coach rename attempt" }, failOnStatusCode: false });

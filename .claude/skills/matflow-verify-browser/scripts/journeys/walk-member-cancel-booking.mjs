@@ -41,9 +41,11 @@ async function openSheet(page) {
 }
 const cancelButton = (page) => page.getByRole("button", { name: /Unsubscribe/ }).first();
 const bookButton = (page) => page.getByRole("button", { name: "Subscribe to class" });
+// Tap outside the sheet (its scrim), the way a member on a phone closes it. Escape is checked separately (K3): main's
+// member sheet has no Escape; #97 (Round 11) adds it.
 async function closeSheet(page) {
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
+  await page.mouse.click(20, 20);
+  await page.waitForTimeout(400);
 }
 
 const browser = await chromium.launch();

@@ -23,7 +23,8 @@ await q(`update "Tenant" set "onboardingCompleted" = false where id = $1`, [tena
 const tenant = async () => (await q(`select name, "onboardingCompleted" as done, timezone from "Tenant" where id = $1`, [tenantId]))[0];
 const classesBefore = Number((await q(`select count(*)::int as n from "Class" where "tenantId" = $1 and name = $2`, [tenantId, CLASS]))[0].n);
 const nameBefore = (await tenant()).name;
-const cont = (page) => page.getByRole("button", { name: /^Continue/ }).first();
+// Step 4 names its button after what it saves ("Save 1 class →"); the other steps say "Continue →".
+const cont = (page) => page.getByRole("button", { name: /^(Continue|Save \d+ class)/ }).first();
 const stepLabel = (page) => page.getByText(/^Step \d of 9$/).first().textContent().catch(() => null);
 
 const browser = await chromium.launch();
