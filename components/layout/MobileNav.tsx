@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { SIGN_OUT_FAILED_MESSAGE, signOutThisDevice } from "@/lib/sign-out-client";
 import { MoreHorizontal, LogOut, X } from "lucide-react";
 import { STAFF_NAV, isNavActive, type StaffRole } from "@/components/layout/routes";
 import { useToast } from "@/components/ui/Toast";
@@ -94,7 +94,9 @@ export default function MobileNav({ role, primaryColor }: Props) {
             );
           })}
           <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={async () => {
+              if (!(await signOutThisDevice())) toast(SIGN_OUT_FAILED_MESSAGE, "error", 8000);
+            }}
             className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98]"
             style={{ color: "var(--hue-danger)" }}
             aria-label="Sign out"
@@ -125,7 +127,9 @@ export default function MobileNav({ role, primaryColor }: Props) {
                 toast(reason ? `Your other devices are still signed in. ${reason}` : "Your other devices are still signed in: we could not sign them out. Check your connection and try again.", "error", 8000);
                 return;
               }
-              void signOut({ callbackUrl: "/login" });
+              // The version bump has already ended every session, this one included: go to sign-in even if
+              // this device's own sign-out request fails.
+              if (!(await signOutThisDevice())) window.location.assign("/login");
             }}
             className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98] disabled:opacity-60"
             style={{ color: "var(--tx-2)" }}
