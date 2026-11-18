@@ -389,7 +389,8 @@ describe("dashboard page wiring", () => {
     expect(src.match(/readAtRisk\(/g)).toHaveLength(1);
     expect(src).toMatch(/const atRisk = await readAtRisk\(tx, session!\.user\.tenantId, new Date\(\), club\?\.timezone\);/);
     // The viewer's role stays for the role-aware payments count (#39, round-3 review L5).
-    expect(src).toMatch(/getStats\(tx, session!\.user\.tenantId, session!\.user\.role, atRisk\)/);
+    // Round 3 (10 Nov 2026): the club zone follows, for the week and month boundaries.
+    expect(src).toMatch(/getStats\(tx, session!\.user\.tenantId, session!\.user\.role, atRisk, timeZone\)/);
     expect(src).toMatch(/getActionItems\(tx, session!\.user\.tenantId, atRisk\)/);
   });
 

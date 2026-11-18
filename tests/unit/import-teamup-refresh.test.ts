@@ -195,6 +195,8 @@ function makeTx() {
         for (const m of db.members) if (matches(m, where)) { Object.assign(m, data); count += 1; }
         return { count };
       },
+      // Round 7 N1: every commit counts the job's own (not erased) members first, to recognise a resumed run.
+      count: async ({ where }: { where: Record<string, unknown> }) => db.members.filter((m) => matches(m, where)).length,
       update: async () => { throw new Error("a refresh must not use member.update"); },
       createMany: async () => { throw new Error("a refresh must not create members"); },
     },

@@ -214,3 +214,90 @@ describe("Pause, Resume and Restore", () => {
     expect(screen.getAllByLabelText("Edit Summer Camp").length).toBeGreaterThan(0);
   });
 });
+
+describe("Pause / Archive from the class sheet with unsaved edits (Round 11)", () => {
+  async function openEditAndType() {
+    render(<TimetableManager {...PROPS} initialClasses={[LIVE]} initialInactiveClasses={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Fundamentals BJJ" }));
+    const sheet = await screen.findByRole("dialog", { name: "Edit class" });
+    fireEvent.change(within(sheet).getByRole("textbox", { name: "Class Name" }), { target: { value: "Fundamentals BJJ (renamed)" } });
+    return sheet;
+  }
+  const nameNow = () => (within(screen.getByRole("dialog", { name: "Edit class" })).getByRole("textbox", { name: "Class Name" }) as HTMLInputElement).value;
+
+  it("asks explicitly that the edits will be discarded; No keeps the sheet and the draft, and nothing is sent", async () => {
+    const sheet = await openEditAndType();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Pause class" }));
+    const q = await screen.findByRole("dialog", { name: "Pause Fundamentals BJJ?" });
+    expect(q.textContent).toContain("Your unsaved changes to this class will be discarded, not saved.");
+    fireEvent.click(within(q).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pause Fundamentals BJJ?" })).toBeNull());
+    expect(nameNow()).toBe("Fundamentals BJJ (renamed)");
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("confirmed: pauses without saving the edits, then closes the sheet", async () => {
+    const sheet = await openEditAndType();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Pause class" }));
+    const q = await screen.findByRole("dialog", { name: "Pause Fundamentals BJJ?" });
+    fireEvent.click(within(q).getByRole("button", { name: "Discard changes and pause" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit class" })).toBeNull());
+    const patches = calls.filter((c) => c.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(patches[0].body).toEqual({ isActive: false }); // the edited name was not sent
+  });
+
+  it("a failed pause keeps the sheet open with the draft", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
+      if (method === "PATCH") return { ok: false, json: async () => ({ error: "Could not pause the class right now." }) };
+      return { ok: true, json: async () => [] };
+    }));
+    const sheet = await openEditAndType();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Pause class" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Pause Fundamentals BJJ?" })).getByRole("button", { name: "Discard changes and pause" }));
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith("Could not pause the class right now.", "error"));
+    expect(screen.getByRole("dialog", { name: "Edit class" })).toBeTruthy();
+    expect(nameNow()).toBe("Fundamentals BJJ (renamed)");
+  });
+
+  it("while the pause is in flight, Save and Cancel are off, so the discarded edits cannot be saved or the draft lost", async () => {
+    let answer!: (v: { ok: boolean; json: () => Promise<unknown> }) => void;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/locations") return { ok: true, json: async () => ({ locations: [] }) };
+      if (method === "PATCH") return new Promise((r) => { answer = r; });
+      return { ok: true, json: async () => [] };
+    }));
+    const sheet = await openEditAndType();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Pause class" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Pause Fundamentals BJJ?" })).getByRole("button", { name: "Discard changes and pause" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect((within(sheet).getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(sheet).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    answer({ ok: false, json: async () => ({ error: "Could not pause the class right now." }) });
+    await waitFor(() => expect((within(sheet).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(nameNow()).toBe("Fundamentals BJJ (renamed)");
+  });
+
+  it("Archive with edits says the same, and an untouched sheet asks the ordinary question", async () => {
+    render(<TimetableManager {...PROPS} initialClasses={[LIVE]} initialInactiveClasses={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Fundamentals BJJ" }));
+    const sheet = await screen.findByRole("dialog", { name: "Edit class" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Archive class" }));
+    const plain = await screen.findByRole("dialog", { name: "Archive Fundamentals BJJ?" });
+    expect(plain.textContent).not.toContain("unsaved changes");
+    expect(within(plain).getByRole("button", { name: "Archive class" })).toBeTruthy();
+    fireEvent.click(within(plain).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Archive Fundamentals BJJ?" })).toBeNull());
+    fireEvent.change(within(sheet).getByRole("textbox", { name: "Class Name" }), { target: { value: "Renamed" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Archive class" }));
+    const q = await screen.findByRole("dialog", { name: "Archive Fundamentals BJJ?" });
+    expect(q.textContent).toContain("Your unsaved changes to this class will be discarded, not saved.");
+    expect(within(q).getByRole("button", { name: "Discard changes and archive" })).toBeTruthy();
+  });
+});
+

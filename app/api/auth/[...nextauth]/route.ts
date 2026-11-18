@@ -1,4 +1,5 @@
 import { handlers } from "@/auth";
+import { recordSignOut } from "@/lib/session-signout";
 
 /**
  * GET /api/auth/session while the revocation check cannot run (SF-44, lane A2,
@@ -27,4 +28,15 @@ export async function GET(req: Request): Promise<Response> {
   return out;
 }
 
-export const { POST } = handlers;
+/**
+ * POST /api/auth/signout records this session as ended BEFORE Auth.js clears the cookie (Round 8, 16 Nov 2026;
+ * lib/session-signout.ts). If the record cannot be written the answer is a 503 and Auth.js never runs: the cookie is
+ * kept and the person is told sign-out did not work. Every other action goes straight to Auth.js.
+ */
+export async function POST(req: Request): Promise<Response> {
+  if (new URL(req.url).pathname.endsWith("/signout")) {
+    const refused = await recordSignOut(req);
+    if (refused) return refused;
+  }
+  return (handlers.POST as (r: Request) => Promise<Response>)(req);
+}

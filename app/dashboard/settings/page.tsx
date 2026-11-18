@@ -13,6 +13,9 @@ export type TenantSettings = {
   primaryColor: string;
   secondaryColor: string;
   textColor: string;
+  /** Member-app background and typeface as saved for the club (Tenant.bgColor / fontFamily). */
+  bgColor: string;
+  fontFamily: string;
   subscriptionStatus: string;
   subscriptionTier: string;
   createdAt: string;
@@ -141,6 +144,8 @@ export default async function Settings() {
     primaryColor: tenant.primaryColor,
     secondaryColor: tenant.secondaryColor,
     textColor: tenant.textColor,
+    bgColor: tenant.bgColor,
+    fontFamily: tenant.fontFamily,
     subscriptionStatus: tenant.subscriptionStatus,
     subscriptionTier: tenant.subscriptionTier,
     createdAt: tenant.createdAt.toISOString(),

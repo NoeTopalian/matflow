@@ -23,6 +23,7 @@
 // builds it inline inside `NextAuth({ … })`, so mocking `next-auth` to capture
 // the config object is the only way to get at it.
 
+import { sessionRowRaw } from "./helpers/session-row";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 type Jwt = (args: { token: Record<string, unknown>; user?: unknown }) => Promise<unknown>;
@@ -50,9 +51,11 @@ const { resolveActiveImpersonation, hasImpersonationCookie, userFindUnique, tena
     checkSessionVersion: vi.fn(),
   }));
 
+const memberFindUniqueForRevocation = vi.fn();
 const tx = {
+  $queryRaw: sessionRowRaw({ member: { findUnique: (a: unknown) => memberFindUniqueForRevocation(a) }, user: { findUnique: (a: unknown) => userFindUnique(a) } }),
   user: { findUnique: userFindUnique, findFirst: vi.fn() },
-  member: { findUnique: vi.fn(), findFirst: vi.fn() },
+  member: { findUnique: memberFindUniqueForRevocation, findFirst: vi.fn() },
   tenant: { findUnique: tenantFindUnique },
 };
 

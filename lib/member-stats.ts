@@ -11,7 +11,8 @@
 import type { Prisma } from "@prisma/client";
 import { calculateStreak, getWeekKey } from "@/lib/streak";
 import { resolveCoachName } from "@/lib/class-coach";
-import { parseTime, DEFAULT_TIMEZONE } from "@/lib/class-time";
+import { parseTime, DEFAULT_TIMEZONE, usableTimezone } from "@/lib/class-time";
+import { readAttendanceCoverage } from "@/lib/attendance-coverage";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { liveClassWhere } from "@/lib/class-live";
@@ -78,8 +79,13 @@ export type WeeklyCount = {
   /** ISO date (YYYY-MM-DD) of the Monday starting this week. */
   weekStart: string;
   count: number;
-  /** That week's attended classes — names + ISO check-in dates only. */
+  /** That week's attended classes — names + ISO session dates only. */
   classes: { name: string; date: string }[];
+  /**
+   * The club has no attendance records for this week (imported history ended and nothing has been recorded in MatFlow
+   * since, lib/attendance-coverage.ts): its 0 means "no records", never "did not train" (owner rule, 28 Oct 2026).
+   */
+  noRecords?: boolean;
 };
 
 export type MemberStats = {
@@ -95,6 +101,12 @@ export type MemberStats = {
   badges: MemberBadge[];
   /** Last 12 Monday-based weeks (oldest first, current week last). */
   weeklyCounts: WeeklyCount[];
+  /**
+   * ISO start of the club's no-records span: its imported history ended here and no attendance has been recorded in
+   * MatFlow since. While set, this week/month and the streak are not "0": the page says there are no records since then.
+   * null = the club's records run to today.
+   */
+  noRecordsSince: string | null;
 };
 
 export type NextClassShape = {
@@ -236,16 +248,18 @@ export async function computeMemberStats(
   // than fetched separately. Widening the old 90-day query in place would have
   // been the smaller diff but it would have silently falsified the UI's
   // "Most attended (90 days)" label.
-  const [thisWeek, thisMonth, thisYear, attendanceRows, last8w, upcoming, memberRanks, self] = await Promise.all([
-    tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfWeek } } }),
-    tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfMonth } } }),
-    tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: startOfYear } } }),
+  // Round 10 (16 Nov 2026): training is dated by WHEN THE SESSION RAN, not when the record was made. A coach ticking
+  // Sunday's register on Monday used to move the class into Monday's week (breaking the streak, moving the heat strip
+  // and milestone dates). The windowed counts are derived from the same rows instead of four separate COUNTs.
+  const [rawRows, upcoming, memberRanks, self, tenantRow] = await Promise.all([
     tx.attendanceRecord.findMany({
       where: { memberId },
-      select: { checkInTime: true, classInstance: { select: { class: { select: { id: true, name: true } } } } },
+      select: {
+        checkInTime: true,
+        classInstance: { select: { date: true, startTime: true, class: { select: { id: true, name: true } } } },
+      },
       orderBy: { checkInTime: "asc" },
     }),
-    tx.attendanceRecord.count({ where: { memberId, checkInTime: { gte: eightWeeksAgo } } }),
     // Upcoming instances from a day and a half back — the stored midnight
     // marker can sit on the previous UTC day — so today's later classes are
     // candidates; pickNextClass drops the ones already started.
@@ -286,7 +300,33 @@ export async function computeMemberStats(
     }),
     // T6a: the member's plan, so a class it does not include is not "next".
     tx.member.findFirst({ where: { id: memberId, tenantId }, select: { membershipTierId: true } }),
+    tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
   ]);
+  const zone = usableTimezone(tenantRow?.timezone);
+  const trainedAt = (r: (typeof rawRows)[number]): Date => {
+    const inst = r.classInstance;
+    if (inst?.date && inst.startTime) {
+      const at = parseTime(inst.startTime, inst.date, zone);
+      // The session's start once it has happened (a register caught up later keeps the session's day; a session ticked
+      // in advance takes the session's day once it has run); never a time still in the future (then the record's).
+      if (!Number.isNaN(at.getTime())) return at.getTime() <= now.getTime() ? at : r.checkInTime;
+    }
+    return r.checkInTime;
+  };
+  const attendanceRows = rawRows
+    .map((r) => ({ ...r, at: trainedAt(r) }))
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  const countSince = (from: Date) => attendanceRows.filter((r) => r.at >= from).length;
+  const thisWeek = countSince(startOfWeek);
+  const thisMonth = countSince(startOfMonth);
+  const thisYear = countSince(startOfYear);
+  const last8w = countSince(eightWeeksAgo);
+  // Where the club's records stop (owner rule 28 Oct 2026: missing coverage is not a claim nobody attended).
+  const coverage = await readAttendanceCoverage(tx, tenantId, zone);
+  const noRecordsSince =
+    coverage.historyEnd && !coverage.resumes && coverage.historyEnd.getTime() <= now.getTime() ? coverage.historyEnd : null;
+  // The span with no club records: from the end of the imported history to the first record after it (or to today).
+  const noRecordsSpan = coverage.historyEnd ? { from: coverage.historyEnd, to: coverage.resumes ?? null } : null;
 
   const nextInstance = pickNextClass(upcoming as NextClassCandidate[], memberRanks, now, {
     accountType: args.accountType,
@@ -298,7 +338,7 @@ export async function computeMemberStats(
   // "Most attended (90 days)" label true.
   const classCounts = new Map<string, AttendanceByClass>();
   for (const row of attendanceRows) {
-    if (row.checkInTime < ninetyDaysAgo) continue;
+    if (row.at < ninetyDaysAgo) continue;
     const c = row.classInstance?.class;
     if (!c) continue;
     const existing = classCounts.get(c.id);
@@ -310,13 +350,13 @@ export async function computeMemberStats(
     .slice(0, 3);
   const avgClassesPerWeek = Math.round((last8w / 8) * 10) / 10;
 
-  const datesAsc = attendanceRows.map((r) => r.checkInTime);
+  const datesAsc = attendanceRows.map((r) => r.at);
   const totalClasses = datesAsc.length;
 
   const streakWeeks = calculateStreak(datesAsc, now);
 
   const badges = computeBadges(
-    attendanceRows.map((r) => ({ at: r.checkInTime, classId: r.classInstance?.class?.id ?? null })),
+    attendanceRows.map((r) => ({ at: r.at, classId: r.classInstance?.class?.id ?? null })),
     streakWeeks,
     now,
   );
@@ -324,10 +364,11 @@ export async function computeMemberStats(
   // handing it the full history is harmless.
   const weeklyCounts = computeWeeklyCounts(
     attendanceRows.map((r) => ({
-      checkInTime: r.checkInTime,
+      checkInTime: r.at,
       className: r.classInstance?.class?.name ?? null,
     })),
     now,
+    noRecordsSpan,
   );
 
   return {
@@ -342,6 +383,7 @@ export async function computeMemberStats(
       firstCheckInAt: datesAsc[0]?.toISOString() ?? null,
       badges,
       weeklyCounts,
+      noRecordsSince: noRecordsSince?.toISOString() ?? null,
     },
     nextClass: nextInstance
       ? {
@@ -692,6 +734,7 @@ export function selectVisibleBadges(
 export function computeWeeklyCounts(
   rows: { checkInTime: Date; className: string | null }[],
   now: Date,
+  noRecords: { from: Date; to: Date | null } | null = null,
 ): WeeklyCount[] {
   const currentMonday = new Date(`${getWeekKey(now)}T00:00:00.000Z`);
   const buckets = new Map<string, WeeklyCount>();
@@ -710,7 +753,13 @@ export function computeWeeklyCounts(
     bucket.classes.push({ name: r.className ?? "Check-in", date: r.checkInTime.toISOString() });
   }
   for (const key of order) {
-    buckets.get(key)!.classes.sort((a, b) => a.date.localeCompare(b.date));
+    const b = buckets.get(key)!;
+    b.classes.sort((a, c) => a.date.localeCompare(c.date));
+    // An empty week that overlaps the club's no-records span has no records — not zero. Once the club records again
+    // (`to` set) the weeks of the gap keep saying so.
+    const weekStart = new Date(`${key}T00:00:00.000Z`).getTime();
+    const weekEnd = weekStart + 7 * 86_400_000;
+    if (noRecords && b.count === 0 && weekEnd > noRecords.from.getTime() && (noRecords.to === null || weekStart < noRecords.to.getTime())) b.noRecords = true;
   }
   return order.map((key) => buckets.get(key)!);
 }

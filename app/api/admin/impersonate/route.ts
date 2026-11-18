@@ -32,6 +32,7 @@ import { z } from "zod";
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { isAdminAuthed } from "@/lib/admin-auth";
 import { encode, getToken } from "next-auth/jwt";
+import { newSessionId } from "@/lib/session-id";
 import { SESSION_COOKIE_NAME } from "@/lib/auth-cookie";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import {
@@ -89,7 +90,8 @@ async function hasAuthJsSession(req: Request): Promise<boolean> {
 
 async function mintSupportCarrier(): Promise<string> {
   return encode({
-    token: { supportCarrier: true },
+    // Its own session id (Round 8, lib/session-id.ts): signing out during support ends this carrier and nothing else.
+    token: { supportCarrier: true, sid: newSessionId() },
     secret: AUTH_SECRET_VALUE,
     maxAge: CARRIER_MAX_AGE_SECONDS,
     salt: SESSION_COOKIE_NAME,

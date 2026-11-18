@@ -71,3 +71,11 @@ tests/e2e/.auth/
 
 # OMC project memory is tool state (it records the session commands); never tracked (security campaign 9 Oct 2026)
 .omc/project-memory.json
+
+# Private evidence and browser state: never public (sign-out release, 16 Nov 2026). Storage states hold session cookies;
+# review records and plans can hold production-derived or security-sensitive detail. Files already tracked stay tracked.
+.omc/ralph-harness/
+.omc/reviews/
+.omc/handoffs/
+.omc/scratch/
+.omc/plans/
