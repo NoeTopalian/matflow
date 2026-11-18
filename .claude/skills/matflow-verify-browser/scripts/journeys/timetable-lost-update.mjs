@@ -52,6 +52,11 @@ async function addDay(page, name, cls, fromDay, newDay) {
   expect((await res).status()).toBe(200);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 }
+// Round 11: Escape on an edited form asks "Discard your changes?" first; these steps throw the stale edit away.
+async function discardIfAsked(page) {
+  const btn = page.getByRole("dialog", { name: "Discard your changes?" }).getByRole("button", { name: "Discard changes" });
+  if (await btn.waitFor({ timeout: 3000 }).then(() => true, () => false)) await btn.click();
+}
 async function section(id, desc, fn) {
   try {
     L.check(id, desc, true, await fn());
@@ -108,6 +113,7 @@ try {
 
   await section("reload-then-save", "after a reload tab A sees both days; the same rename saves and keeps Tuesday", async () => {
     await main.keyboard.press("Escape");
+    await discardIfAsked(main);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     await main.reload();
     await expect(chips(main, "Mon", "Gi")).toHaveCount(1, { timeout: 20_000 });
@@ -141,6 +147,7 @@ try {
     expect(roster).toBe(0);
     expect(await activeDays(gi.id)).toEqual([1, 2, 3]);
     await main.keyboard.press("Escape");
+    await discardIfAsked(main);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     return { previewStatus: status, rosterRows: roster, days: await activeDays(gi.id) };
   });
