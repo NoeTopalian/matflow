@@ -82,4 +82,10 @@ describe("which job transactions hold migrations off", () => {
     // A refusal mid-step gives the lease back and reports busy; it never marks the job failed.
     expect(engine).toMatch(/if \(isMigrationInProgress\(e\)\) \{[\s\S]{0,400}?releaseLease\(tx, tenantId, jobId, token\)\)[\s\S]{0,80}?return \{ kind: "busy" \};/);
   });
+
+  it("status back-fill: apply and rollback take the shared key first, inside the club lock helper (Round 9, 16 Nov 2026)", () => {
+    const s = src("lib/status-backfill.ts");
+    expect(s).toMatch(/async function lockClub\(tx: TxClient, tenantId: string\) \{[\s\S]{0,400}?await holdOffMigrations\(tx\);[\s\S]{0,300}?pg_advisory_xact_lock/);
+    expect(s.match(/await lockClub\(tx, tenantId\);/g)?.length).toBe(2);
+  });
 });
