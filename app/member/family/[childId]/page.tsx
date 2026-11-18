@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { computeMemberStats } from "@/lib/member-stats";
+import { DEFAULT_TIMEZONE, usableTimezone } from "@/lib/class-time";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Calendar, Award, FileCheck2, AlertTriangle, Clock, TrendingUp, MapPin } from "lucide-react";
@@ -32,7 +33,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
   // page renders the same shape /api/member/me does for the parent's own
   // dashboard (US-4 shared helper). Photos fetched here too so the client
   // component has its initial list with no extra round-trip.
-  const { child, stats, nextClass, photos, kidsWaiverTitle, kidsWaiverContent } = await withTenantContext(session.user.tenantId, async (tx) => {
+  const { child, stats, nextClass, photos, kidsWaiverTitle, kidsWaiverContent, clubZone } = await withTenantContext(session.user.tenantId, async (tx) => {
     const c = await tx.member.findFirst({
       where: {
         id: childId,
@@ -60,7 +61,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         _count: { select: { attendances: true } },
       },
     });
-    if (!c) return { child: null, stats: null, nextClass: null, photos: [] as Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: Date }>, kidsWaiverTitle: null, kidsWaiverContent: null };
+    if (!c) return { child: null, stats: null, nextClass: null, photos: [] as Array<{ id: string; url: string; caption: string | null; kind: string; uploadedAt: Date }>, kidsWaiverTitle: null, kidsWaiverContent: null, clubZone: DEFAULT_TIMEZONE };
     const [computed, ps, tenant] = await Promise.all([
       computeMemberStats(tx, { memberId: c.id, tenantId: session.user.tenantId }),
       tx.memberPhoto.findMany({
@@ -70,7 +71,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
       }),
       tx.tenant.findUnique({
         where: { id: session.user.tenantId },
-        select: { name: true, kidsWaiverTitle: true, kidsWaiverContent: true },
+        select: { name: true, kidsWaiverTitle: true, kidsWaiverContent: true, timezone: true },
       }),
     ]);
     // The exact text POST /api/waiver/sign-for-child records — the club's own,
@@ -79,6 +80,8 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
     // "…at <club>" (end-user round 2, 30 Sep 2026).
     return {
       child: c, stats: computed.stats, nextClass: computed.nextClass, photos: ps,
+      // Times on this page are the club's, not the server's (Round 10, F-4: Vercel runs in UTC, so a 17:02 BST check-in read 16:02).
+      clubZone: usableTimezone(tenant?.timezone),
       kidsWaiverTitle: tenant?.kidsWaiverTitle ?? buildDefaultKidsWaiverTitle(),
       kidsWaiverContent: tenant?.kidsWaiverContent ?? buildDefaultKidsWaiverContent(tenant?.name),
     };
@@ -150,6 +153,13 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
         </div>
       </div>
 
+      {/* No records is not "did not train" (owner rule, 28 Oct 2026). */}
+      {stats.noRecordsSince && (
+        <p className="text-xs mb-2" style={{ color: "var(--member-text-muted)" }} data-testid="child-no-records">
+          No attendance recorded at the club since{" "}
+          {new Date(stats.noRecordsSince).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: clubZone })}.
+        </p>
+      )}
       {/* Stats grid — same shape as the parent's own /member/home (US-4 parity) */}
       <div className="grid grid-cols-2 gap-3 mb-5">
         <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
@@ -157,14 +167,14 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
             <Calendar className="w-4 h-4 text-gray-500" />
             <span className="text-gray-500 text-xs uppercase tracking-wider">This week</span>
           </div>
-          <p className="text-white text-2xl font-bold">{stats.thisWeek}</p>
+          <p className="text-white text-2xl font-bold">{stats.noRecordsSince ? "—" : stats.thisWeek}</p>
         </div>
         <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
           <div className="flex items-center gap-2 mb-1">
             <Calendar className="w-4 h-4 text-gray-500" />
             <span className="text-gray-500 text-xs uppercase tracking-wider">This month</span>
           </div>
-          <p className="text-white text-2xl font-bold">{stats.thisMonth}</p>
+          <p className="text-white text-2xl font-bold">{stats.noRecordsSince ? "—" : stats.thisMonth}</p>
         </div>
         <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
           <div className="flex items-center gap-2 mb-1">
@@ -172,8 +182,8 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
             <span className="text-gray-500 text-xs uppercase tracking-wider">Streak</span>
           </div>
           <p className="text-white text-2xl font-bold">
-            {stats.streakWeeks}
-            <span className="text-gray-500 text-xs ml-1 font-normal">wk</span>
+            {stats.noRecordsSince ? "—" : stats.streakWeeks}
+            {!stats.noRecordsSince && <span className="text-gray-500 text-xs ml-1 font-normal">wk</span>}
           </p>
         </div>
         <div className="rounded-2xl border p-4" style={{ borderColor: "var(--member-border)" }}>
@@ -254,7 +264,7 @@ export default async function ChildProfilePage({ params }: { params: Promise<{ c
                   {/* An imported visit has no recorded check-in time: show the class start, labelled. */}
                   {a.checkInMethod === "import"
                     ? `Class at ${a.classInstance.startTime}`
-                    : a.checkInTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    : a.checkInTime.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: clubZone })}
                 </span>
               </li>
             ))}

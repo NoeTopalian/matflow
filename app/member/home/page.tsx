@@ -1312,6 +1312,8 @@ export default function MemberHomePage() {
   // hand the next member the previous member's "already onboarded" key.
   const [memberId, setMemberId]             = useState<string | null>(null);
   const [todayClasses, setTodayClasses]     = useState<TodayClass[]>([]);
+  // The club's calendar date from /api/member/home (Round 11, 5.3): the children's "Today" is the club's day.
+  const [clubTodayIso, setClubTodayIso]     = useState<string | null>(null);
   const [announcements, setAnnouncements]   = useState<Announcement[]>([]);
   const [primaryColor, setPrimaryColor]     = useState(PRIMARY);
   const [nextClass, setNextClass]           = useState<{ id: string; name: string; coach: string | null; location: string | null; date: string; startTime: string; endTime: string } | null>(null);
@@ -1446,6 +1448,7 @@ export default function MemberHomePage() {
           // The club's weekday, the day the server paired the sessions with: the device's day can be another one
           // (a phone in another zone, or the hours either side of the club's midnight).
           const dow = typeof data?.today?.dayOfWeek === "number" ? data.today.dayOfWeek : todayDow();
+          if (typeof data?.today?.date === "string") setClubTodayIso(data.today.date);
           const filtered: TodayClass[] = data.schedule
             .filter((c) => c.dayOfWeek === dow)
             .map((c) => ({ id: c.id, name: c.name, time: c.startTime, endTime: c.endTime, coach: c.coach, location: c.location, spots: null, capacity: c.capacity, classInstanceId: c.classInstanceId ?? null, eligibility: c.eligibility }))
@@ -1619,7 +1622,8 @@ export default function MemberHomePage() {
             {kidsRoster.map((k) => {
               const isOpen = expandedKids.has(k.id);
               const upcoming = k.timetable ?? [];
-              const todayIso = new Date().toISOString().slice(0, 10);
+              // The club's date; an older server without it falls back to this device's own date (never UTC's).
+              const todayIso = clubTodayIso ?? deviceDateIso();
               return (
                 <div
                   key={k.id}
@@ -1690,12 +1694,12 @@ export default function MemberHomePage() {
                       style={{ borderColor: hex(primaryColor, 0.18) }}
                     >
                       {upcoming.length === 0 ? (
-                        <p className="text-gray-400 text-xs">
-                          {k.name} isn&apos;t signed up to any classes yet.{" "}
-                          <Link href="/member/schedule" className="underline" style={{ color: "var(--member-ink)" }}>
-                            View the timetable
-                          </Link>
-                          .
+                        // Round 11 (5.1): no link to the timetable here. Booking from it books the
+                        // signed-in guardian, not this child, so the link led a parent to act on the
+                        // wrong person. The list is the child's bookings in the next 7 days, and the
+                        // sentence says exactly that.
+                        <p className="text-gray-400 text-xs" data-testid="child-no-classes">
+                          {k.name} has no classes booked in the next 7 days.
                         </p>
                       ) : (
                         upcoming.map((entry) => {
@@ -1950,4 +1954,10 @@ export default function MemberHomePage() {
       />
     </>
   );
+}
+
+/** This device's calendar date as YYYY-MM-DD (local time, not UTC). */
+function deviceDateIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

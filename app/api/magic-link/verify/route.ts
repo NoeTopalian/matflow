@@ -1,6 +1,7 @@
 import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { NextRequest, NextResponse, after } from "next/server";
 import { encode } from "next-auth/jwt";
+import { SESSION_MAX_AGE_SECONDS, newSessionId } from "@/lib/session-id";
 import { logAudit } from "@/lib/audit-log";
 import { AUTH_SECRET_VALUE } from "@/lib/auth-secret";
 import { SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE } from "@/lib/auth-cookie";
@@ -294,9 +295,10 @@ export async function GET(req: NextRequest) {
       };
 
   const encoded = await encode({
-    token: jwtPayload,
+    // A magic link is a sign-in, so a new session with its own id (Round 8, lib/session-id.ts).
+    token: { ...jwtPayload, sid: newSessionId() },
     secret: AUTH_SECRET_VALUE!,
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
     salt: SESSION_COOKIE_NAME,
   });
 
@@ -336,7 +338,7 @@ export async function GET(req: NextRequest) {
     sameSite: "lax",
     secure: SESSION_COOKIE_SECURE,
     path: "/",
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
   return res;
 }
