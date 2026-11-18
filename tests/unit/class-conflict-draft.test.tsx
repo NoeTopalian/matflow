@@ -104,6 +104,20 @@ describe("class form: a conflict reload keeps what was typed (Round 11, 1.1)", (
     expect(body).not.toHaveProperty("description"); // theirs is not sent back
   });
 
+  it("a restored draft is unsaved work: Escape asks before discarding it, and Pause says the edits will be discarded (#99 with #105)", async () => {
+    store.set(KEY, JSON.stringify({ classId: "c1", form: { name: "Gi Fundamentals" }, opened: { name: "Gi" }, at: Date.now() }));
+    render(<TimetableManager initialClasses={[{ ...GI, description: "Theirs" }]} {...PROPS} />);
+    await act(async () => {});
+    expect((await screen.findByLabelText("Class Name") as HTMLInputElement).value).toBe("Gi Fundamentals");
+    await act(async () => { fireEvent.keyDown(document, { key: "Escape" }); });
+    expect(await screen.findByRole("dialog", { name: "Discard your changes?" })).toBeTruthy();
+    expect((screen.getByLabelText("Class Name") as HTMLInputElement).value).toBe("Gi Fundamentals");
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause class" }));
+    const q = await screen.findByRole("dialog", { name: "Pause Gi?" });
+    expect(q.textContent).toContain("Your unsaved changes to this class will be discarded, not saved.");
+  });
+
   it("if this browser will not keep the input, it does not reload and says so", async () => {
     setItemThrows = true;
     await refusedEdit();
