@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { ChevronLeft, ChevronRight, Bell, BellOff, Lock, X } from "lucide-react";
 import { TIER_LOCKED_LABEL } from "@/lib/class-tier-gate";
 import { bookingFailureMessage, bookingUnconfirmedMessage } from "@/lib/checkin-outcome";
@@ -11,6 +11,7 @@ import { useSwipeToDismiss } from "@/lib/useSwipeToDismiss";
 import { useToast } from "@/components/ui/Toast";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Button } from "@/components/ui/button";
+import { useOverlay } from "@/components/ui/overlay";
 import {
   minToTime,
   sessionProgress,
@@ -135,6 +136,13 @@ function EventSheet({
   primaryColor: string;
 }) {
   const { handleProps, sheetStyle } = useSwipeToDismiss(onClose);
+  // Round 11 (4.1): the shared overlay behaviour (components/ui/overlay.tsx)
+  // moves focus in, traps Tab, closes on Escape and returns focus to the class.
+  // Not the Sheet primitive itself: it would turn this into a right-edge
+  // slide-over on desktop and drop the swipe handle and header chips.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useOverlay({ open: true, onClose, panelRef });
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -142,6 +150,10 @@ function EventSheet({
     >
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="relative rounded-t-3xl"
         style={{
           background: "var(--member-elevated)",
@@ -156,7 +168,7 @@ function EventSheet({
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full" style={{ background: primaryColor }} />
-            <h2 className="text-white font-semibold text-base">{cls.name}</h2>
+            <h2 id={titleId} className="text-white font-semibold text-base">{cls.name}</h2>
             {cls.isKids && (
               <span
                 className="rounded-full px-2 text-[10px] font-bold uppercase tracking-wide leading-5"
@@ -182,7 +194,7 @@ function EventSheet({
             className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400"
             style={{ background: "var(--member-surface)" }}
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
         <div className="px-5 py-4 space-y-3">
