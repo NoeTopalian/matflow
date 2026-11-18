@@ -25,7 +25,7 @@
 //   POST /api/classes/[id]/roster ........ owner, manager, admin  app/api/classes/[id]/roster/route.ts:35-37 "Forbidden"; :84 404 "Class or member not found in this tenant"
 //   DELETE /api/classes/[id]/roster/[m] .. owner, manager, admin  app/api/classes/[id]/roster/[memberId]/route.ts:13-15 "Forbidden"; :41 404 "Roster entry not found"
 //   PATCH /api/members/[id] .............. owner, manager, admin  app/api/members/[id]/route.ts:202-203 "Forbidden"; 404 "Not found" (:546); :264 400 "Membership tier not found"
-//   GET /api/members ..................... staff        app/api/members/route.ts:59-60 "Forbidden"
+//   GET /api/members ..................... staff        app/api/members/route.ts requireApiStaff → "You do not have permission to do this." (since 5 Nov)
 //   GET /api/members/[id] ................ staff        app/api/members/[id]/route.ts:39-40 "Forbidden"; not found 404
 //   POST /api/members .................... owner, manager, admin  app/api/members/route.ts:263-264; :325 404 "Parent member not found in this tenant"; :385 400 "Membership tier not found"
 //   PATCH /api/settings .................. owner        app/api/settings/route.ts:195-196 403 "Only owners can change gym settings" (batch-d :193-194, same)
@@ -275,7 +275,7 @@ const PROBES = [
   { key: "roster.add", method: "POST", path: `/api/classes/${classA}/roster`, body: { memberId: m1 }, allowed: ["owner", "manager", "admin"], err: "Forbidden", snap: rosterSnap },
   { key: "roster.remove", method: "DELETE", path: `/api/classes/${classA}/roster/${m2}`, allowed: ["owner", "manager", "admin"], err: "Forbidden", snap: rosterSnap },
   { key: "member.status", method: "PATCH", path: `/api/members/${m2}`, body: { status: "cancelled" }, allowed: ["owner", "manager", "admin"], err: "Forbidden", snap: m2Snap },
-  { key: "member.list", method: "GET", path: "/api/members", allowed: STAFF, err: "Forbidden" },
+  { key: "member.list", method: "GET", path: "/api/members", allowed: STAFF, err: NO_PERMISSION },
   { key: "member.read", method: "GET", path: `/api/members/${m2}`, allowed: STAFF, err: "Forbidden" },
   { key: "settings.edit", method: "PATCH", path: "/api/settings", body: { contactEmail: `${S}-pm-hijack@example.test` }, allowed: ["owner"], err: "Only owners can change gym settings", snap: tenantSnap },
   { key: "settings.read", method: "GET", path: "/api/settings", allowed: ["owner"], err: NO_PERMISSION },

@@ -242,7 +242,9 @@ export function refuseSupportSessionUnlessEdit(session: unknown, message: string
  * Deliberately refused:
  * - member.update: email (sign-in/recovery address), status (cancellation
  *   cancels a live Stripe subscription), paymentStatus, membershipType,
- *   membershipTierId, trialRunById, creditedTo* (money/attribution).
+ *   membershipTierId, trialRunById, creditedTo* (money/attribution),
+ *   leaderboardOptOut (whether a member shows on the public TV board is the
+ *   club's call; Round 12 G-1).
  * - member.create: parentMemberId and accountType (a staff-created link is
  *   CONFIRMED guardian authority; there is no "suggested by operator" state,
  *   so kid/guardian creation is denied outright), credit attribution.

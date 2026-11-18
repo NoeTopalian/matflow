@@ -39,6 +39,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { Sheet } from "@/components/ui/sheet";
 import { Tab, TabList } from "@/components/ui/tabs";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { Switch } from "@/components/ui/switch";
 import { toBlobProxyUrl } from "@/lib/blob-url";
 import { hex, readableOn } from "@/lib/color";
 import { formatTierPrice } from "@/lib/membership-tier-format";
@@ -72,6 +73,8 @@ export interface MemberDetail {
   paymentStatus?: string | null;
   /** Planned end of a membership hold (paymentStatus "paused"); null when open-ended or not on hold. */
   holdUntil?: string | null;
+  /** Round 12 G-1: hidden from the gym TV leaderboard (staff set it on this page). */
+  leaderboardOptOut?: boolean;
   /** "teamup" while TeamUp collects this member's money (readiness spec v3 §7); "matflow" otherwise. */
   billedBy?: string | null;
   /** Export time of the TeamUp file the standing came from. */
@@ -907,6 +910,30 @@ export default function MemberProfile({
       setRestoredNote(null);
       toast("Profile updated", "success");
     } finally { setSaving(false); }
+  }
+
+  // Round 12 G-1: no optimistic flip (UI-RULES §6): the switch shows the saved value, and a refused save leaves it.
+  const [leaderboardSaving, setLeaderboardSaving] = useState(false);
+  async function saveLeaderboardOptOut(optOut: boolean) {
+    setLeaderboardSaving(true);
+    try {
+      const res = await fetch(`/api/members/${member.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leaderboardOptOut: optOut, ...(member.updatedAt ? { updatedAt: member.updatedAt } : {}) }),
+      });
+      if (res.status === 409) { toast("This member was changed somewhere else. Reload the page to see the latest, then try again.", "error", 8000); return; }
+      if (!res.ok) { toast("Couldn't save the leaderboard setting. Nothing changed; try again.", "error", 8000); return; }
+      const saved = (await res.json().catch(() => null)) as { updatedAt?: unknown } | null;
+      setMember((m) => ({
+        ...m,
+        leaderboardOptOut: optOut,
+        updatedAt: typeof saved?.updatedAt === "string" ? saved.updatedAt : m.updatedAt ?? null,
+      }));
+      toast(optOut ? "Hidden from the leaderboard" : "Shown on the leaderboard", "success");
+    } catch {
+      toast("Couldn't save the leaderboard setting. Nothing changed; try again.", "error", 8000);
+    } finally { setLeaderboardSaving(false); }
   }
 
   async function saveNotes(base: string | null = member.notes ?? null) {
@@ -1852,6 +1879,30 @@ export default function MemberProfile({
                       )}
                     </div>
                   </Card>
+
+                  {canEdit && (
+                    <Card>
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <h3 id="leaderboard-optout-label" className="text-sm font-semibold" style={{ color: "var(--tx-1)" }}>Show on the leaderboard</h3>
+                          <p id="leaderboard-optout-hint" className="text-xs mt-1" style={{ color: "var(--tx-4)" }}>
+                            {member.leaderboardOptOut
+                              ? "Hidden: this member's name and count are left off the gym's leaderboard, including the TV screen."
+                              : "Shown: this member can appear on the gym's leaderboard, including the TV screen."}
+                            {" "}Changes show within about a minute.
+                            {supportEdit ? " Stays with the club owner during a support session." : ""}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={!member.leaderboardOptOut}
+                          onCheckedChange={(show) => saveLeaderboardOptOut(!show)}
+                          disabled={leaderboardSaving || supportEdit || !!member.archivedAt}
+                          aria-labelledby="leaderboard-optout-label"
+                          aria-describedby="leaderboard-optout-hint"
+                        />
+                      </div>
+                    </Card>
+                  )}
 
                   <Card>
                     <h3 className="text-sm font-semibold mb-4" style={{ color: "var(--tx-1)" }}>Recent Activity</h3>

@@ -116,6 +116,9 @@ export const memberUpdateSchema = z.object({
   creditedToUserId: z.string().min(1).max(50).optional().nullable(),
   creditedToMemberId: z.string().min(1).max(50).optional().nullable(),
   creditedToLabel: z.string().max(120).optional().nullable(),
+  // Round 12 G-1: staff hide a member from the gym TV leaderboard (lib/leaderboard.ts honours it). Already in the
+  // route's audit diff and Undo; NOT in the support-edit allowlist, so a support session is refused as before.
+  leaderboardOptOut: z.boolean().optional(),
 }).refine(rejectBothCreditTargets, bothCreditTargetsIssue);
 
 export type MemberUpdateInput = z.infer<typeof memberUpdateSchema>;
