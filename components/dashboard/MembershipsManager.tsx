@@ -281,6 +281,9 @@ export default function MembershipsManager({ initialTiers, primaryColor, timeZon
 
   function openAdd() {
     setEditingId(null);
+    // A conflict from an earlier plan edit belongs to that plan, not to a new one (review of the merge train, 18 Nov).
+    loadedPlan.current = null;
+    setPlanConflict(null);
     setForm({ ...emptyForm, classLimitAnchor: mondayOf(todayIso(new Date(), timeZone)) });
     setShowModal(true);
   }
