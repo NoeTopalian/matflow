@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import {
   Clock,
   Image as ImageIcon,
@@ -354,6 +355,8 @@ export default function AnnouncementsView({
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  // Round 11 (6.1): a stray tap or Escape asks before throwing a drafted announcement away.
+  const draftDirty = useDirtySince(showDrawer, { form, image: imageFile ? imageFile.name : null });
   const [deleting, setDeleting] = useState<string | null>(null);
   const [selected, setSelected] = useState<AnnouncementRow | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -709,6 +712,7 @@ export default function AnnouncementsView({
       <Sheet
         open={showDrawer}
         onClose={resetDrawer}
+        confirmDiscard={draftDirty && !saving && !uploadingImage}
         title="New announcement"
         description="Members see this in their portal feed."
         footer={

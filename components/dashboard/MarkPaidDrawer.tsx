@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { useDirtySince } from "@/lib/use-dirty-since";
 import { CheckCircle2, Banknote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
@@ -35,6 +36,8 @@ export default function MarkPaidDrawer({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // Round 11 (6.1): ask before a stray tap or Escape throws an entered payment away.
+  const dirty = useDirtySince(open, { method, amount, notes, paidAt });
   // Lane 1 iter-2 L1-I2-V-02 fix: synchronous in-flight guard for submit().
   const submittingRef = useRef(false);
   // The route dedupes on requestId and REQUIRES one: held across retries of
@@ -122,7 +125,8 @@ export default function MarkPaidDrawer({
           multi-field form, so the slide-over shape. Submit logic untouched. */}
       <Sheet
         open={open}
-        onClose={() => !saving && setOpen(false)}
+        onClose={() => { if (saving) return; setOpen(false); reset(); }}
+        confirmDiscard={dirty && !saving && !success}
         title="Mark as paid"
         description={memberName}
         footer={
