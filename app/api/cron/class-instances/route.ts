@@ -36,13 +36,42 @@
  *
  *  - Runtime is CAPPED. maxDuration is 300s; we stop starting new tenants (and
  *    new batches within a tenant) after 240s. A truncated sweep reports
- *    `partial: true` and is NOT a failure — the 56-day horizon means there are
- *    weeks of slack before a delayed tenant matters.
+ *    `partial: true` at the top level, with the counts, and logs one warning
+ *    line. It is NOT a failure — the 56-day horizon means there are weeks of
+ *    slack before a delayed tenant matters.
+ *
+ *  - A truncated sweep is FAIR (19 Nov 2026). The clubs used to be read in no
+ *    order and walked from the start every night, and a club already up to
+ *    date costs as much as a stale one, so a sweep that could not finish
+ *    skipped the SAME clubs every night. Now each club carries
+ *    `Tenant.classHorizonSweptAt`, the last time a sweep ATTEMPTED it, and the
+ *    sweep takes the least recently attempted first (never attempted first of
+ *    all, then by id). The stamp is CLAIMED before the club's work, by a
+ *    compare-and-set on the value this run read:
+ *      - a club that fails, or is cut off part way, has still had its turn and
+ *        goes to the back, so it cannot hold the front of the queue and starve
+ *        the clubs behind it;
+ *      - two invocations that read the list at the same moment do not both do
+ *        a club: the one that loses the claim finds the stamp changed, reports
+ *        `claimedElsewhere`, and moves on to work nobody has taken;
+ *      - an invocation that starts while another is part way reads the newer
+ *        stamps, so the clubs the first has already done sort LAST for it. It
+ *        works on what the first has not reached, and only at the end repeats
+ *        the clubs the first did before it started (harmless: the rows are
+ *        deduplicated). Before this, an overlap repeated every club.
+ *    So with N clubs and room for K per run, every club is attempted at least
+ *    once every ceil(N / K) runs. That bound assumes the claim itself succeeds:
+ *    a club whose claim THROWS (a lock wait, a dropped connection) is reported
+ *    as an error and keeps its place at the front, costing each run the time
+ *    of that failed statement until it clears. A run killed between a claim
+ *    and the club's work costs that club one cycle, which the 56-day horizon
+ *    and the read-path top-up absorb. Session rows are still deduplicated by
+ *    @@unique([classId, date, startTime]); the stamp only decides the order.
  */
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/constant-time";
 import { checkCronAuthAttempt } from "@/lib/rate-limit";
-import { withRlsBypass } from "@/lib/prisma-tenant";
+import { withRlsBypass, withTenantContext } from "@/lib/prisma-tenant";
 import { ROLLING_WINDOW_DAYS } from "@/lib/class-instances";
 import { generateClassHorizon } from "@/lib/class-horizon";
 import { clubDayMarker } from "@/lib/today-sessions";
@@ -66,8 +95,12 @@ type TenantResult = {
   tenantId: string;
   created?: number;
   error?: string;
+  /** Not started: the time budget was spent before this club's turn. It is first in line for the next run. */
   skipped?: boolean;
+  /** Started but cut off between batches by the deadline. What it inserted is committed. */
   partial?: boolean;
+  /** Another invocation claimed this club after this run read the list. Nothing was done for it here. */
+  claimedElsewhere?: boolean;
 };
 
 export async function GET(req: Request) {
@@ -110,17 +143,33 @@ export async function GET(req: Request) {
   const tenants = await withRlsBypass((tx) =>
     tx.tenant.findMany({
       where: { subscriptionStatus: { in: ["active", "trial"] }, deletedAt: null },
-      select: { id: true, timezone: true },
+      select: { id: true, timezone: true, classHorizonSweptAt: true },
+      // Least recently attempted first; never attempted first of all. See "A truncated sweep is FAIR" above.
+      orderBy: [{ classHorizonSweptAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
     }),
   );
 
   const results: TenantResult[] = [];
+  // Clubs whose turn this run really claimed. A club whose claim threw is a failure, not an attempt.
+  let attempted = 0;
   for (const tenant of tenants) {
     if (elapsed() > DEADLINE_MS) {
       results.push({ tenantId: tenant.id, skipped: true });
       continue;
     }
     try {
+      // Claim the club's turn BEFORE its work: only if nobody has stamped it since this run read the list.
+      const claim = await withTenantContext(tenant.id, (tx) =>
+        tx.tenant.updateMany({
+          where: { id: tenant.id, classHorizonSweptAt: tenant.classHorizonSweptAt },
+          data: { classHorizonSweptAt: new Date() },
+        }),
+      );
+      if (claim.count === 0) {
+        results.push({ tenantId: tenant.id, claimedElsewhere: true });
+        continue;
+      }
+      attempted += 1;
       const from = clubDayMarker(now, usableTimezone(tenant.timezone));
       results.push({ tenantId: tenant.id, ...(await generateClassHorizon(tenant.id, from, () => elapsed() > DEADLINE_MS)) });
     } catch (e) {
@@ -133,6 +182,19 @@ export async function GET(req: Request) {
   // A failed tenant must be visible to status-code monitoring — 200 + ok:false
   // is invisible to every uptime check. Same call retention/route.ts makes.
   const ok = results.every((r) => !r.error);
+  const skipped = results.filter((r) => r.skipped).length;
+  const claimedElsewhere = results.filter((r) => r.claimedElsewhere).length;
+  const cutOff = results.filter((r) => r.partial).length;
+  const failed = results.filter((r) => r.error).length;
+  // Truncated by the time budget: at least one club was not started, or one was cut off part way.
+  const partial = skipped > 0 || cutOff > 0;
+  if (partial) {
+    // The one line to look for in the logs. A partial sweep every night means the estate has outgrown one run.
+    console.warn(
+      `[cron/class-instances] partial sweep: ${attempted} of ${results.length} clubs attempted in ${elapsed()} ms, ` +
+        `${skipped} not started, ${cutOff} cut off part way, ${failed} failed. The clubs not started are first in line next run.`,
+    );
+  }
   return NextResponse.json(
     {
       ok,
@@ -144,7 +206,14 @@ export async function GET(req: Request) {
       // count of days rather than an end date.
       windowDays: ROLLING_WINDOW_DAYS,
       elapsedMs: elapsed(),
-      tenantsProcessed: results.length,
+      partial,
+      tenantsTotal: results.length,
+      // Clubs this run actually started. It used to count the skipped ones too, which read as "all done".
+      tenantsProcessed: attempted,
+      tenantsSkipped: skipped,
+      tenantsCutOff: cutOff,
+      tenantsClaimedElsewhere: claimedElsewhere,
+      tenantsFailed: failed,
       created: results.reduce((sum, r) => sum + (r.created ?? 0), 0),
       results,
     },

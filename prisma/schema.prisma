@@ -38,6 +38,7 @@ model Tenant {
   stripeAccountStatus    Json? // Fix 3: cached {chargesEnabled, payoutsEnabled, requirementsPastDue, disabledReason, refreshedAt} — see lib/stripe-account-status.ts. Refreshed on account.updated webhook.
   currency               String    @default("GBP") // Wizard v2: CHECK GBP | EUR | USD (enforced by 20260503000001 migration). Default for new MembershipTier / ClassPack / Payment / Order rows.
   timezone               String    @default("Europe/London") // Wizard v2: IANA TZ; defaults from owner browser at onboarding step 1.
+  classHorizonSweptAt    DateTime? // When the nightly class-instances sweep last ATTEMPTED this club (claimed before the work, so a failure still counts). Least recent first; null = never. Migration 20261119090000.
   address                String? // Wizard v2: free-text street address for receipts + waivers.
   country                String? // Wizard v2: CHECK UK | IE | US | EU | OTHER (enforced by 20260503000001 migration).
   checkinWindowBeforeMin Int       @default(30) // CHECK: 0-180 (enforced by migration 20260513000003)
