@@ -14,7 +14,10 @@
  *   - a club skipped tonight is ahead of every club attempted tonight tomorrow;
  *   - however often the budget runs out, every club is attempted within ceil(clubs / clubs-per-run) runs;
  *   - a club that fails has still had its turn, so it cannot hold the front of the queue;
- *   - two overlapping invocations do not do the same club twice.
+ *   - two invocations that read the list together do each club once between them; one that starts while another is
+ *     part way does the clubs the first has not reached, and repeats only the clubs the first did before it started.
+ * Both overlap cases are staged deterministically (a barrier on the list read; a second invocation started from
+ * inside the first one's work), not left to timing.
  * Session rows are still deduplicated by the unique constraint; that is cron-smoke's subject, not this file's.
  *
  * The clubs this test adds are synthetic (`mfv-budget-…`) and removed afterwards. The sweeps also stamp the other
@@ -27,15 +30,42 @@ const horizonCalls: string[] = [];
 let spendBudgetAfter = Infinity;
 let clockOffsetMs = 0;
 let failFor: string | null = null;
+/** Set by a test: runs once, inside the first club's work of the invocation that reaches it. */
+let duringFirstClub: (() => Promise<void>) | null = null;
+/** Set by a test: every cross-tenant read (the route's list read) waits here until `parties` have arrived. */
+let listBarrier: { parties: number; waiting: Array<() => void> } | null = null;
 
 vi.mock("@/lib/class-horizon", () => ({
   generateClassHorizon: vi.fn(async (tenantId: string) => {
     horizonCalls.push(tenantId);
+    if (duringFirstClub) {
+      const hook = duringFirstClub;
+      duringFirstClub = null;
+      await hook();
+    }
     if (horizonCalls.length >= spendBudgetAfter) clockOffsetMs = 241_000;
     if (tenantId === failFor) throw new Error("synthetic failure for the budget test");
     return { created: 0 };
   }),
 }));
+
+vi.mock("@/lib/prisma-tenant", async (orig) => {
+  const real = await orig<typeof import("@/lib/prisma-tenant")>();
+  return {
+    ...real,
+    withRlsBypass: (async (fn: Parameters<typeof real.withRlsBypass>[0]) => {
+      const out = await real.withRlsBypass(fn);
+      const barrier = listBarrier;
+      if (barrier) {
+        await new Promise<void>((go) => {
+          barrier.waiting.push(go);
+          if (barrier.waiting.length >= barrier.parties) for (const release of barrier.waiting) release();
+        });
+      }
+      return out;
+    }) as typeof real.withRlsBypass,
+  };
+});
 
 import { withRlsBypass } from "@/lib/prisma-tenant";
 import { GET as classInstancesCron } from "@/app/api/cron/class-instances/route";
@@ -172,19 +202,54 @@ describe.skipIf(!HAS_DB)("class-instances cron: what happens when the time budge
     }
   }, 600_000);
 
-  it("two overlapping invocations do not do the same club twice, and between them leave no club undone", async () => {
+  it("two invocations that read the club list together do each club exactly once between them", async () => {
     horizonCalls.length = 0;
-    const [a, b] = await Promise.all([classInstancesCron(request()), classInstancesCron(request())]);
-    const bodies = [(await a.json()) as Body, (await b.json()) as Body];
+    // Both invocations hold the same list, read before either has claimed anything.
+    listBarrier = { parties: 2, waiting: [] };
+    let bodies: Body[];
+    try {
+      const [a, b] = await Promise.all([classInstancesCron(request()), classInstancesCron(request())]);
+      bodies = [(await a.json()) as Body, (await b.json()) as Body];
+    } finally {
+      listBarrier = null;
+    }
     const done = [...horizonCalls];
-    expect(new Set(done).size).toBe(done.length);
     expect(done).toHaveLength(total);
+    expect(new Set(done).size).toBe(total);
     // Each club was done by one invocation or the other; the one that lost the claim says so and reports no error.
     for (const id of CLUBS) {
       const rows = bodies.map((body) => body.results.find((r) => r.tenantId === id));
       expect(rows.filter((r) => r && !r.claimedElsewhere && !r.skipped)).toHaveLength(1);
-      expect(rows.some((r) => r?.error)).toBe(false);
+      expect(rows.filter((r) => r?.claimedElsewhere)).toHaveLength(1);
     }
     expect(bodies.every((body) => body.ok && !body.partial)).toBe(true);
+    expect(bodies[0].tenantsProcessed + bodies[1].tenantsProcessed).toBe(total);
+  }, 600_000);
+
+  it("an invocation that starts while another is part way does what the first has not reached, and repeats only what the first had already done", async () => {
+    horizonCalls.length = 0;
+    let second: Body | undefined;
+    let doneBeforeSecondStarted: string[] = [];
+    // The first invocation has claimed and started its first club when the second runs from start to finish.
+    duringFirstClub = async () => {
+      doneBeforeSecondStarted = [...horizonCalls];
+      second = (await (await classInstancesCron(request())).json()) as Body;
+    };
+    const first = (await (await classInstancesCron(request())).json()) as Body;
+    expect(second).toBeDefined();
+    expect(doneBeforeSecondStarted).toHaveLength(1);
+    const [early] = doneBeforeSecondStarted;
+    // No club is left undone and nothing failed.
+    expect(new Set(horizonCalls).size).toBe(total);
+    expect(first.ok && second!.ok).toBe(true);
+    // The second did every club; the one the first had already done came LAST for it.
+    expect(second!.tenantsProcessed).toBe(total);
+    expect(second!.results[second!.results.length - 1].tenantId).toBe(early);
+    // The only club done twice is the one the first did before the second started.
+    const twice = horizonCalls.filter((id, i) => horizonCalls.indexOf(id) !== i);
+    expect(twice).toEqual([early]);
+    // The first then found every other club already claimed, and said so.
+    expect(first.tenantsProcessed).toBe(1);
+    expect(first.tenantsClaimedElsewhere).toBe(total - 1);
   }, 600_000);
 });

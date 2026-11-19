@@ -371,6 +371,19 @@ describe("the sweep order and the claim", () => {
     expect(prisma.tenant.updateMany).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
   });
+
+  it("a club whose claim itself throws is a failure, not an attempt: no work is done for it and it is not counted as processed", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([{ id: "t1" }, { id: "t2" }] as never);
+    vi.mocked(prisma.tenant.updateMany).mockRejectedValueOnce(new Error("lock wait")).mockResolvedValueOnce({ count: 1 } as never);
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as Body;
+    expect(res.status).toBe(500);
+    expect(body.results).toEqual([{ tenantId: "t1", error: "lock wait" }, { tenantId: "t2", created: 8 }]);
+    expect(body).toMatchObject({ tenantsTotal: 2, tenantsProcessed: 1, tenantsFailed: 1 });
+    expect(prisma.class.findMany).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
+  });
 });
 
 describe("large tenants", () => {

@@ -51,14 +51,21 @@
  *      - a club that fails, or is cut off part way, has still had its turn and
  *        goes to the back, so it cannot hold the front of the queue and starve
  *        the clubs behind it;
- *      - two invocations that overlap do not both do a club: the second finds
- *        the stamp changed, reports `claimedElsewhere`, and moves on to work
- *        nobody has taken. An invocation that starts later reads the newer
- *        stamps, so the clubs the first has already done sort LAST for it: it
- *        works on what the first has not reached, and only then may repeat a
- *        club (harmless: the rows are deduplicated).
+ *      - two invocations that read the list at the same moment do not both do
+ *        a club: the one that loses the claim finds the stamp changed, reports
+ *        `claimedElsewhere`, and moves on to work nobody has taken;
+ *      - an invocation that starts while another is part way reads the newer
+ *        stamps, so the clubs the first has already done sort LAST for it. It
+ *        works on what the first has not reached, and only at the end repeats
+ *        the clubs the first did before it started (harmless: the rows are
+ *        deduplicated). Before this, an overlap repeated every club.
  *    So with N clubs and room for K per run, every club is attempted at least
- *    once every ceil(N / K) runs. Session rows are still deduplicated by
+ *    once every ceil(N / K) runs. That bound assumes the claim itself succeeds:
+ *    a club whose claim THROWS (a lock wait, a dropped connection) is reported
+ *    as an error and keeps its place at the front, costing each run the time
+ *    of that failed statement until it clears. A run killed between a claim
+ *    and the club's work costs that club one cycle, which the 56-day horizon
+ *    and the read-path top-up absorb. Session rows are still deduplicated by
  *    @@unique([classId, date, startTime]); the stamp only decides the order.
  */
 import { NextResponse } from "next/server";
@@ -143,6 +150,8 @@ export async function GET(req: Request) {
   );
 
   const results: TenantResult[] = [];
+  // Clubs whose turn this run really claimed. A club whose claim threw is a failure, not an attempt.
+  let attempted = 0;
   for (const tenant of tenants) {
     if (elapsed() > DEADLINE_MS) {
       results.push({ tenantId: tenant.id, skipped: true });
@@ -160,6 +169,7 @@ export async function GET(req: Request) {
         results.push({ tenantId: tenant.id, claimedElsewhere: true });
         continue;
       }
+      attempted += 1;
       const from = clubDayMarker(now, usableTimezone(tenant.timezone));
       results.push({ tenantId: tenant.id, ...(await generateClassHorizon(tenant.id, from, () => elapsed() > DEADLINE_MS)) });
     } catch (e) {
@@ -176,7 +186,6 @@ export async function GET(req: Request) {
   const claimedElsewhere = results.filter((r) => r.claimedElsewhere).length;
   const cutOff = results.filter((r) => r.partial).length;
   const failed = results.filter((r) => r.error).length;
-  const attempted = results.length - skipped - claimedElsewhere;
   // Truncated by the time budget: at least one club was not started, or one was cut off part way.
   const partial = skipped > 0 || cutOff > 0;
   if (partial) {

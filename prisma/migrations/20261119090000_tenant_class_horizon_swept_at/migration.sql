@@ -10,8 +10,9 @@ SET LOCAL statement_timeout = '15s';
 -- order and restarted from the same club every night, so a sweep that ran out of its time budget skipped the SAME
 -- clubs every night. This records when the sweep last ATTEMPTED each club; the sweep now takes the least recently
 -- attempted clubs first (never attempted first of all).
--- Additive: one nullable column and nothing else. Older application code never reads it, so this migration is safe
--- to apply before or after the code that uses it.
+-- Additive: one nullable column and nothing else. Apply it BEFORE the code that uses it (the deploy does: the build
+-- migrates first). Older application code never reads the column, so the migration alone changes nothing; the NEW
+-- code on a database without it fails, because the Prisma client selects every Tenant column.
 ALTER TABLE "Tenant" ADD COLUMN "classHorizonSweptAt" TIMESTAMP(3);
 
 COMMIT;
