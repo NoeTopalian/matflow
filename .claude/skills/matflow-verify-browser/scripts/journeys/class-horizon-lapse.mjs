@@ -26,7 +26,9 @@ const dayOfWeek = todayMarker.getUTCDay(); // Prisma: 0 = Sunday
 const member = await memberLogin(club);
 const cls = randomUUID();
 await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity") values ($1, $2, 'Lapsed Class', 60, 30)`, [cls, tenantId]);
-await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, $3, $4, $4)`, [randomUUID(), cls, dayOfWeek, T]);
+// startDate is the club day, as the app writes it (lib/today-sessions.ts): the column default now() rounds to
+// TOMORROW after 12:00 UTC (dayMarkerUtc takes the nearest midnight), which dropped today from the window.
+await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime", "startDate") values ($1, $2, $3, $4, $4, $5)`, [randomUUID(), cls, dayOfWeek, T, todayMarker]);
 const rows = async () => q(`select date, "startTime", "isCancelled" from "ClassInstance" where "classId" = $1 order by date`, [cls]);
 
 L.check("setup", "S1 the class starts lapsed: a slot today, no session rows", (await rows()).length === 0, { rows: (await rows()).length, todayIso, T });

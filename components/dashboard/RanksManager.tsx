@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect } from "react";
 import { useDirtySince } from "@/lib/use-dirty-since";
 import { Plus, Trash2, Edit2, Award, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
@@ -138,7 +138,9 @@ function RankForm({
   const [stripes, setStripes] = useState(initial?.stripes ?? 0);
   const [order, setOrder] = useState(initial?.order ?? 0);
   const dirty = useDirtySince(true, { name, discipline, newDiscipline, color, stripes, order });
-  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  // Layout effect, not useEffect: an update set here commits before the browser handles the next event, so a dismissal
+  // queued behind the first edit already sees confirmDiscard (from useEffect it landed one task late and lost the edit).
+  useLayoutEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const effectiveDiscipline = discipline === "__new__" ? newDiscipline : discipline;
