@@ -84,7 +84,7 @@ export function assertTestUrl(url, name) {
 /**
  * The database a guarded run may use: the Neon test branch (default, URLs from .env.test), or an ISOLATED database on
  * this machine (MF_DB_TARGET=isolated with MF_ISOLATED_OWNER_URL and MF_ISOLATED_RESTRICTED_URL). An isolated target is
- * accepted only on localhost, which can never be production or the shared branch; anything else is refused.
+ * accepted only when the host node-postgres will use is localhost; anything else is refused.
  */
 export function dbTargets() {
   if ((process.env.MF_DB_TARGET ?? "test-branch") !== "isolated") {
@@ -93,9 +93,15 @@ export function dbTargets() {
   }
   const local = (name) => {
     const url = process.env[name];
-    let host = "";
-    try { host = new URL(url).hostname; } catch { /* refused below */ }
-    if (!url || !["localhost", "127.0.0.1", "[::1]"].includes(host) || url.includes(PROD_HOST) || url.includes(TEST_HOST)) throw new Error(`refusing: ${name} is not a database on localhost (an isolated target must be local)`);
+    // The same rule as isLoopbackDbUrl in tests/db-role-guard.mjs (unit-tested there; not imported, so this module
+    // still loads in a checkout with no node_modules): node-postgres lets a host, hostaddr or options query parameter
+    // override the URL's own host, so the hostname alone is not where the connection goes (review of PR #109, F2).
+    let loopback = false;
+    try {
+      const u = new URL(url);
+      loopback = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname) && !["host", "hostaddr", "options"].some((k) => u.searchParams.has(k));
+    } catch { /* refused below */ }
+    if (!url || !loopback || url.includes(PROD_HOST) || url.includes(TEST_HOST)) throw new Error(`refusing: ${name} is not a database on localhost (an isolated target must be local, with no host, hostaddr or options parameter)`);
     return url;
   };
   return { kind: "isolated", owner: local("MF_ISOLATED_OWNER_URL"), restricted: local("MF_ISOLATED_RESTRICTED_URL") };

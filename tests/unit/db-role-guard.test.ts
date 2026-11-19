@@ -1,6 +1,6 @@
 // The flag-versus-role decision behind tests/global-db-role-guard.ts and the guarded database runner (19 Nov 2026).
 import { describe, it, expect } from "vitest";
-import { dbRoleMismatch, rlsGaps } from "../db-role-guard.mjs";
+import { dbRoleMismatch, rlsGaps, readDbRole, isLoopbackDbUrl } from "../db-role-guard.mjs";
 
 const restricted = { currentUser: "matflow_app", superuser: false, bypassRls: false, serverVersion: "17", sessionBypass: "", tables: 60, rlsTables: 55, ownedUnforced: 0, memberRowsVisible: 0 };
 const owner = { ...restricted, currentUser: "neondb_owner", bypassRls: true, memberRowsVisible: 4883 };
@@ -33,5 +33,29 @@ describe("database role guard", () => {
 
   it("an empty or unmigrated database cannot demonstrate visibility, and is not refused for that", () => {
     expect(rlsGaps({ ...restricted, memberRowsVisible: null })).toEqual([]);
+  });
+
+  it("refuses, before connecting, when PGOPTIONS / PGHOST / PGHOSTADDR could route the connection elsewhere", async () => {
+    for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR"]) {
+      const saved = process.env[k];
+      process.env[k] = "endpoint=somewhere-else";
+      try {
+        // Port 1 is closed: reaching the network would fail with a different message.
+        await expect(readDbRole("postgresql://u:p@127.0.0.1:1/db")).rejects.toThrow(new RegExp(`refusing: ${k} is set`));
+      } finally {
+        if (saved === undefined) delete process.env[k];
+        else process.env[k] = saved;
+      }
+    }
+  });
+
+  it("an isolated target is local only by the host node-postgres will use, not by the URL's hostname alone", () => {
+    expect(isLoopbackDbUrl("postgresql://a:b@localhost:5432/db")).toBe(true);
+    expect(isLoopbackDbUrl("postgresql://a:b@127.0.0.1:5432/db?sslmode=disable")).toBe(true);
+    for (const q of ["host=remote.example.test", "hostaddr=203.0.113.9", "options=endpoint%3Dx"]) {
+      expect(isLoopbackDbUrl(`postgresql://a:b@localhost:5432/db?${q}`)).toBe(false);
+    }
+    expect(isLoopbackDbUrl("postgresql://a:b@db.example.test:5432/db")).toBe(false);
+    expect(isLoopbackDbUrl("not a url")).toBe(false);
   });
 });

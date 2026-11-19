@@ -8,7 +8,7 @@
  * spends the whole budget after BUDGET_CLUBS clubs, and the route's own loop decides the rest.
  *
  * Found: the clubs not reached are reported `skipped` (per club), the response is 200 ok:true with no top-level
- * marker, and the next run walks the clubs in the same order from the start. A club already up to date costs the
+ * marker, and the next run reads the clubs with the same unordered query (in practice the same heap order) from the start. A club already up to date costs the
  * same as a stale one (generateClassHorizon re-derives the 56 days and re-inserts with skipDuplicates), so a sweep
  * that cannot finish tonight stops at about the same club tomorrow: the SAME clubs are missed every night. They are
  * still served by the member and kiosk read paths (lib/class-horizon.ts ensureClassHorizon), which is why this is a

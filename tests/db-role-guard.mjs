@@ -12,9 +12,17 @@ const PROD_NEON_ENDPOINT = "ep-bold-wave";
  * Facts about the connected role. Read-only: one connection, catalogue reads and one uncontexted count.
  * `memberRowsVisible` is the number of "Member" rows this connection can see with NO tenant context set (null when the
  * table does not exist yet). Under enforced RLS it is 0 however many rows the table holds.
+ * Limits: this samples ONE connection. Through a pooler, a session setting leaked on another pooled connection is not
+ * seen, and neither is a SET ROLE inside a test. `ownedUnforced` counts unforced RLS tables whose owner's privileges
+ * this role holds (directly or by membership), since Postgres exempts those from RLS.
  */
 export async function readDbRole(url) {
   if (url.toLowerCase().includes(PROD_NEON_ENDPOINT)) throw new Error("refusing: the role check will not connect to production");
+  // node-postgres applies these from the environment, so an inherited value could route this URL somewhere else
+  // (tests/setup-test-db.ts refuses them for the same reason, but it runs after this check). Refused before connecting.
+  for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR"]) {
+    if (process.env[k]) throw new Error(`refusing: ${k} is set in the environment; node-postgres would apply it to this connection. Unset it.`);
+  }
   const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 20_000 });
   await client.connect();
   try {
@@ -23,7 +31,7 @@ export async function readDbRole(url) {
       current_setting('server_version') AS "serverVersion", coalesce(current_setting('app.bypass_rls', true), '') AS "sessionBypass"
       FROM pg_roles r WHERE r.rolname = current_user`);
     const tables = await one(`SELECT count(*)::int AS "tables", count(*) FILTER (WHERE c.relrowsecurity)::int AS "rlsTables",
-      count(*) FILTER (WHERE c.relrowsecurity AND NOT c.relforcerowsecurity AND pg_get_userbyid(c.relowner) = current_user)::int AS "ownedUnforced"
+      count(*) FILTER (WHERE c.relrowsecurity AND NOT c.relforcerowsecurity AND pg_has_role(current_user, c.relowner, 'USAGE'))::int AS "ownedUnforced"
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'`);
     const hasMember = (await one(`SELECT to_regclass('public."Member"') IS NOT NULL AS "exists"`)).exists;
     const memberRowsVisible = hasMember ? (await one(`SELECT count(*)::int AS n FROM "Member"`)).n : null;
@@ -62,6 +70,17 @@ export function dbRoleMismatch(facts, flag) {
     return `connected as "${facts.currentUser}", a role without BYPASSRLS, but RLS_ENFORCED is not 1. A restricted run must set RLS_ENFORCED=1 (use the guarded runner: .claude/skills/matflow-verify-local/scripts/db-tests.mjs).`;
   }
   return null;
+}
+
+/**
+ * True only when node-postgres will connect to this machine. It lets a `host`, `hostaddr` or `options` query parameter
+ * override the URL's own host (pg-connection-string), so a localhost hostname alone proves nothing (review of #109, F2).
+ */
+export function isLoopbackDbUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return false; }
+  if (["host", "hostaddr", "options"].some((k) => u.searchParams.has(k))) return false;
+  return ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
 }
 
 /** One line for a log: facts only, never a URL. */

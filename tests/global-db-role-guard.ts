@@ -11,15 +11,19 @@ export default async function setup(): Promise<void> {
   if (!url || url.toLowerCase().includes(PROD_NEON_ENDPOINT)) return;
 
   const flag = process.env.RLS_ENFORCED;
+  // A run whose role cannot be read is refused whatever the flag says: letting it through is how a restricted run
+  // without RLS_ENFORCED=1 would slip past (review of PR #109, F1). One retry covers a cold database.
   let facts;
   try {
     facts = await readDbRole(url);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    // An enforcement run that cannot be checked is refused. Otherwise say so and let the suites report the database.
-    if (flag === "1") throw new Error(`[db-role-guard] RLS_ENFORCED=1 but the role could not be read: ${reason}`);
-    process.stderr.write(`[db-role-guard] role not checked (could not connect): ${reason}\n`);
-    return;
+  } catch (first) {
+    if (first instanceof Error && first.message.startsWith("refusing:")) throw new Error(`[db-role-guard] ${first.message}`);
+    try {
+      facts = await readDbRole(url);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`[db-role-guard] refusing this run: a database URL is set but the connected role could not be read (${reason}). Unset the URL to run without a database.`);
+    }
   }
   process.stderr.write(`[db-role-guard] ${describeDbRole(facts)}; RLS_ENFORCED=${flag ?? "unset"}\n`);
   const mismatch = dbRoleMismatch(facts, flag);

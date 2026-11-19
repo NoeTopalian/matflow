@@ -13,8 +13,19 @@ permissions:
 
 on:
   workflow_dispatch:
-  push:
-    branches: [chore/db-runner-guard]
+  pull_request:
+    paths:
+      - "prisma/**"
+      - "tests/integration/**"
+      - "tests/db-role-guard.mjs"
+      - "tests/global-db-role-guard.ts"
+      - "tests/setup-test-db.ts"
+      - "lib/prisma*.ts"
+      - "app/api/cron/**"
+      - "scripts/ci-create-restricted-role.sql"
+      - ".github/workflows/db-isolated.yml"
+      - ".github/db-isolated-files.txt"
+      - ".claude/skills/matflow-verify-local/scripts/**"
 
 concurrency:
   group: db-isolated-${{ github.ref }}
