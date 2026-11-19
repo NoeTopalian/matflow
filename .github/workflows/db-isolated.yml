@@ -53,11 +53,7 @@ jobs:
           --health-retries 10
 
     env:
-      # Throwaway credentials for a container that lives for this job only.
-      ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
       MF_DB_TARGET: isolated
-      MF_ISOLATED_OWNER_URL: postgresql://mf_owner:ci_only_not_a_secret@localhost:5432/matflow_iso?schema=public
-      MF_ISOLATED_RESTRICTED_URL: postgresql://matflow_app:ci_only_not_a_secret@localhost:5432/matflow_iso?schema=public
       MF_REPO: ${{ github.workspace }}
       MF_OUT: ${{ github.workspace }}/.db-isolated-out
       # One file per run on a local database takes seconds; the cap only stops a hang.
@@ -70,35 +66,42 @@ jobs:
           node-version: 24
           cache: npm
 
+      # Throwaway credentials for a container that lives for this job only: made here, masked, never in the repository.
+      - name: Make the job's database credentials
+        run: |
+          pw="$(openssl rand -hex 16)"
+          echo "::add-mask::$pw"
+          {
+            echo "MF_ISO_PW=$pw"
+            echo "MF_ISOLATED_OWNER_URL=postgresql://mf_owner:$pw@localhost:5432/matflow_iso?schema=public"
+            echo "MF_ISOLATED_RESTRICTED_URL=postgresql://matflow_app:$pw@localhost:5432/matflow_iso?schema=public"
+          } >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm ci
 
       - name: Generate Prisma client
-        env:
-          DATABASE_URL: ${{ env.MF_ISOLATED_OWNER_URL }}
-        run: npx prisma generate
+        run: DATABASE_URL="$MF_ISOLATED_OWNER_URL" npx prisma generate
 
       # The owner mirrors the test branch's neondb_owner: NOT a superuser, BYPASSRLS, owns every table. The restricted
       # role exists BEFORE the migrations, as it does on Neon, so the migrations that grant to it take effect.
       - name: Create the isolated database and both roles
+        env:
+          PGPASSWORD: postgres
         run: |
-          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE ROLE mf_owner LOGIN PASSWORD 'ci_only_not_a_secret' NOSUPERUSER BYPASSRLS CREATEDB CREATEROLE;
-          CREATE ROLE matflow_app LOGIN PASSWORD 'ci_only_not_a_secret';
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -v pw="$MF_ISO_PW" <<'SQL'
+          CREATE ROLE mf_owner LOGIN PASSWORD :'pw' NOSUPERUSER BYPASSRLS CREATEDB CREATEROLE;
+          CREATE ROLE matflow_app LOGIN PASSWORD :'pw';
           GRANT matflow_app TO mf_owner;
           CREATE DATABASE matflow_iso OWNER mf_owner;
           SQL
 
       - name: Apply the repository's migrations as the owner role
-        env:
-          DATABASE_URL: ${{ env.MF_ISOLATED_OWNER_URL }}
-        run: npx prisma migrate deploy
+        run: DATABASE_URL="$MF_ISOLATED_OWNER_URL" npx prisma migrate deploy
 
       # The repository's own synthetic demo seed, as ci.yml applies it and as the test branch carries it.
       - name: Seed synthetic demo data
-        env:
-          DATABASE_URL: ${{ env.MF_ISOLATED_OWNER_URL }}
-        run: npm run seed
+        run: DATABASE_URL="$MF_ISOLATED_OWNER_URL" npm run seed
 
       - name: Grant the restricted role its runtime privileges
         run: psql "${MF_ISOLATED_OWNER_URL%%\?*}" -v ON_ERROR_STOP=1 -f scripts/ci-create-restricted-role.sql
