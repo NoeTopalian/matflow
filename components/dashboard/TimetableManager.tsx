@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -1199,7 +1199,9 @@ function ClassForm({
   // class as it was opened before the reload; measured against the restored form it would look untouched.
   const [initialDraft] = useState(() => (restore ? draftOf(openedValues) : draft));
   const dirty = draft !== initialDraft;
-  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  // Layout effect, not useEffect: an update set here commits before the browser handles the next event, so a dismissal
+  // queued behind the first edit already sees confirmDiscard (from useEffect it landed one task late and lost the edit).
+  useLayoutEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   function submit() {

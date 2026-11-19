@@ -52,6 +52,14 @@ async function addDay(page, name, cls, fromDay, newDay) {
   expect((await res).status()).toBe(200);
   await expect(page.getByRole("dialog")).toHaveCount(0);
 }
+// Round 11: Escape on an edited form asks "Discard your changes?" first; these steps throw the stale edit away.
+// The question MUST appear: at both call sites the form is edited and no save is running, so a form that closed
+// without asking after a refused save would be the data loss the guard exists to stop (review of PR #108, F1).
+const discardQuestion = (page) => page.getByRole("dialog", { name: "Discard your changes?" });
+async function discardEdits(page) {
+  await expect(discardQuestion(page)).toBeVisible();
+  await discardQuestion(page).getByRole("button", { name: "Discard changes" }).click();
+}
 async function section(id, desc, fn) {
   try {
     L.check(id, desc, true, await fn());
@@ -61,7 +69,13 @@ async function section(id, desc, fn) {
     process.exitCode = 1;
     if (main && !main.isClosed()) {
       await shot(main, `timetable-lost-update-fail-${id}`);
-      for (let i = 0; i < 3 && (await main.getByRole("dialog").count()); i++) await main.keyboard.press("Escape");
+      // Clean up for the next section. On an edited form Escape asks first, and a second Escape answers "Keep
+      // editing", so the question is answered with Discard here (review of PR #108, F2).
+      for (let i = 0; i < 3 && (await main.getByRole("dialog").count()); i++) {
+        await main.keyboard.press("Escape");
+        const discard = discardQuestion(main).getByRole("button", { name: "Discard changes" });
+        if (await discard.waitFor({ timeout: 1500 }).then(() => true, () => false)) await discard.click();
+      }
     }
   }
 }
@@ -108,6 +122,7 @@ try {
 
   await section("reload-then-save", "after a reload tab A sees both days; the same rename saves and keeps Tuesday", async () => {
     await main.keyboard.press("Escape");
+    await discardEdits(main);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     await main.reload();
     await expect(chips(main, "Mon", "Gi")).toHaveCount(1, { timeout: 20_000 });
@@ -141,6 +156,7 @@ try {
     expect(roster).toBe(0);
     expect(await activeDays(gi.id)).toEqual([1, 2, 3]);
     await main.keyboard.press("Escape");
+    await discardEdits(main);
     await expect(main.getByRole("dialog")).toHaveCount(0);
     return { previewStatus: status, rosterRows: roster, days: await activeDays(gi.id) };
   });
