@@ -41,7 +41,7 @@ vi.mock("@/lib/prisma-tenant", async () => {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    tenant: { findMany: vi.fn() },
+    tenant: { findMany: vi.fn(), updateMany: vi.fn() },
     class: { findMany: vi.fn() },
     classInstance: { createMany: vi.fn() },
   },
@@ -67,8 +67,14 @@ type Body = {
   // for the whole sweep was a lie for every tenant not sharing the host's date.
   windowDays: number;
   created: number;
+  partial: boolean;
+  tenantsTotal: number;
   tenantsProcessed: number;
-  results: Array<{ tenantId: string; created?: number; error?: string; skipped?: boolean; partial?: boolean }>;
+  tenantsSkipped: number;
+  tenantsCutOff: number;
+  tenantsClaimedElsewhere: number;
+  tenantsFailed: number;
+  results: Array<{ tenantId: string; created?: number; error?: string; skipped?: boolean; partial?: boolean; claimedElsewhere?: boolean }>;
 };
 
 /** One class with a single Monday schedule — 8 Mondays inside a 56-day window. */
@@ -87,6 +93,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   process.env.CRON_SECRET = SECRET;
   vi.mocked(prisma.tenant.findMany).mockResolvedValue([{ id: "t1" }] as never);
+  vi.mocked(prisma.tenant.updateMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.class.findMany).mockResolvedValue(MONDAY_CLASS as never);
   vi.mocked(prisma.classInstance.createMany).mockResolvedValue({ count: 8 } as never);
 });
@@ -219,7 +226,9 @@ describe("GET /api/cron/class-instances — scope", () => {
       // `timezone` joined the select with the round-3 day-marker migration:
       // the horizon starts at the CLUB's calendar date, so the job needs each
       // club's own zone rather than the host's clock.
-      select: { id: true, timezone: true },
+      // `classHorizonSweptAt` and the order joined on 19 Nov 2026: least recently attempted first.
+      select: { id: true, timezone: true, classHorizonSweptAt: true },
+      orderBy: [{ classHorizonSweptAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
     });
   });
 
@@ -289,7 +298,82 @@ describe("GET /api/cron/class-instances — one gym cannot break the estate", ()
     expect(body.ok).toBe(true);
     expect(body.results.find((r) => r.tenantId === "t2")).toMatchObject({ skipped: true });
     expect(prisma.class.findMany).toHaveBeenCalledTimes(1);
+    // ...and it says so at the top level, with honest counts: the skipped club is not "processed".
+    expect(body).toMatchObject({ partial: true, tenantsTotal: 2, tenantsProcessed: 1, tenantsSkipped: 1 });
+    // A club that was not started keeps its place: it is not stamped, so it is first in line next run.
+    expect(prisma.tenant.updateMany).toHaveBeenCalledTimes(1);
   });
+
+  it("a sweep that finishes is not partial and logs no warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const body = (await (await GET(req(`Bearer ${SECRET}`))).json()) as Body;
+    expect(body).toMatchObject({ partial: false, tenantsTotal: 1, tenantsProcessed: 1, tenantsSkipped: 0, tenantsFailed: 0 });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("a truncated sweep logs one warning line with the counts", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([{ id: "t1" }, { id: "t2" }, { id: "t3" }] as never);
+    vi.mocked(prisma.class.findMany).mockImplementation((async () => {
+      vi.advanceTimersByTime(241_000);
+      return MONDAY_CLASS;
+    }) as never);
+    await GET(req(`Bearer ${SECRET}`));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toMatch(/partial sweep: 1 of 3 clubs attempted.*2 not started/);
+    warn.mockRestore();
+  });
+});
+
+// ─── A truncated sweep is fair: least recently attempted first, claimed before the work ─────────────────────────────
+
+describe("the sweep order and the claim", () => {
+  it("reads the clubs least recently attempted first, never attempted first of all, then by id", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(vi.mocked(prisma.tenant.findMany).mock.calls[0][0]).toMatchObject({
+      orderBy: [{ classHorizonSweptAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
+    });
+  });
+
+  it("claims the club by compare-and-set on the stamp it read, before doing the club's work", async () => {
+    const read = new Date("2026-08-18T02:40:00.000Z");
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([{ id: "t1", classHorizonSweptAt: read }] as never);
+    const order: string[] = [];
+    vi.mocked(prisma.tenant.updateMany).mockImplementation((async () => { order.push("claim"); return { count: 1 }; }) as never);
+    vi.mocked(prisma.class.findMany).mockImplementation((async () => { order.push("work"); return MONDAY_CLASS; }) as never);
+    await GET(req(`Bearer ${SECRET}`));
+    expect(order).toEqual(["claim", "work"]);
+    expect(vi.mocked(prisma.tenant.updateMany).mock.calls[0][0]).toMatchObject({
+      where: { id: "t1", classHorizonSweptAt: read },
+      data: { classHorizonSweptAt: NOW },
+    });
+  });
+
+  it("a club another invocation has claimed is not done twice: reported claimedElsewhere, no work, not an error", async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([{ id: "t1" }, { id: "t2" }] as never);
+    vi.mocked(prisma.tenant.updateMany).mockResolvedValueOnce({ count: 0 } as never).mockResolvedValueOnce({ count: 1 } as never);
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as Body;
+    expect(res.status).toBe(200);
+    expect(body.results).toEqual([{ tenantId: "t1", claimedElsewhere: true }, { tenantId: "t2", created: 8 }]);
+    expect(prisma.class.findMany).toHaveBeenCalledTimes(1);
+    expect(body).toMatchObject({ partial: false, tenantsProcessed: 1, tenantsClaimedElsewhere: 1 });
+  });
+
+  it("a club that fails has still had its turn (stamped before the failure), so it cannot hold the front of the queue", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(prisma.class.findMany).mockRejectedValue(new Error("boom"));
+    const res = await GET(req(`Bearer ${SECRET}`));
+    const body = (await res.json()) as Body;
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ ok: false, tenantsFailed: 1, tenantsProcessed: 1 });
+    expect(prisma.tenant.updateMany).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
+  });
+});
+
+describe("large tenants", () => {
 
   it("chunks a large tenant into batches so a timeout lands on a committed boundary", async () => {
     // 30 schedules x 8 Mondays = 240 rows… bump it past the 500-row batch.
