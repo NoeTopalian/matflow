@@ -47,7 +47,7 @@ const chipBox = (scope, text) => scope.locator(`[data-cell-key] button[aria-labe
 
 /**
  * Scrolls the week's box so a Tuesday class is under the pinned band, then reads the
- * pixels of the band's seam on Tuesday: the three CSS pixels from 42 to 45 below the box's top, between the day
+ * pixels of the band's seam on Tuesday: the two CSS pixels from 42 to 44 below the box's top, between the day
  * card's side borders. Returns the measured gap between header and mat names and how many of those pixels are not
  * the header's own colour.
  */
@@ -70,7 +70,8 @@ async function seam(page, tag) {
         css: { matTop: getComputedStyle(el.querySelector('[data-day="tue"] [data-mat-head]')).top, headShadow: getComputedStyle(el.querySelector('[data-day-head="tue"]')).boxShadow },
         rects: { box: b.top, head: [head.top - b.top, head.bottom - b.top], mats: mats.map((m) => [m.top - b.top, m.bottom - b.top]), pill: [...el.querySelectorAll('[data-day="tue"] .pg-mat-pill')].map((m) => m.getBoundingClientRect().top - b.top), cell: cells.map((c) => [c.getBoundingClientRect().top - b.top, c.getBoundingClientRect().bottom - b.top]) },
         gap: Math.round((Math.min(...mats.map((m) => m.top)) - head.bottom) * 100) / 100,
-        clip: { x: head.left + 4, y: b.top + 42, width: head.width - 8, height: 3 },
+        // 42 to 44: the header's last pixel and the old gap. The mat names' own pill starts at 45.
+        clip: { x: head.left + 4, y: b.top + 42, width: head.width - 8, height: 2 },
         ref: { x: head.left + 4, y: b.top + 3, width: 4, height: 4 },
       });
     }));
