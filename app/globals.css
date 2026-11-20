@@ -866,6 +866,10 @@ option {
 /* One hairline under the lowest pinned row. */
 .pg-grid:not([data-mats]) .pg-head,
 .pg-grid[data-mats] .pg-mat { box-shadow: 0 1px 0 var(--bd-default); }
+/* The day card's 1 px top border comes out of the header's row, so the pinned
+   header ends 1 px above the pinned mat names and a class scrolling under them
+   showed through as a coloured line. The header paints that pixel itself. */
+.pg-grid[data-mats] .pg-head { box-shadow: 0 2px 0 var(--pg-pin-bg); }
 .pg-empty {
   grid-row: 3 / -1;
   grid-column: calc(var(--d) + 1) / span var(--dt);
