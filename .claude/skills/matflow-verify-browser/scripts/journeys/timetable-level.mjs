@@ -37,7 +37,7 @@ async function section(id, desc, fn) {
   }
 }
 
-const OLD_CSS = `.pg-grid[data-mats] .pg-head{box-shadow:none !important}.pg-grid:not([data-one-day]) .pg-day > .pg-mat{top:44px !important}`;
+const OLD_CSS = `html.old-seam .pg-grid[data-mats] .pg-head{box-shadow:none !important}html.old-seam .pg-grid:not([data-one-day]) .pg-day > .pg-mat{top:44px !important}`;
 
 /** Top, bottom and shown time of the chip whose accessible name contains `text`, inside `scope`. */
 const chipBox = (scope, text) => scope.locator(`[data-cell-key] button[aria-label*="${text}"]`).first().evaluate((b) => {
@@ -67,6 +67,7 @@ async function seam(page, tag) {
       const under = cells.map((c) => c.getBoundingClientRect()).every((r) => r.top < head.bottom && r.bottom > mats[0].bottom);
       done({
         scrolled: el.scrollTop, under,
+        css: { matTop: getComputedStyle(el.querySelector('[data-day="tue"] [data-mat-head]')).top, headShadow: getComputedStyle(el.querySelector('[data-day-head="tue"]')).boxShadow },
         rects: { box: b.top, head: [head.top - b.top, head.bottom - b.top], mats: mats.map((m) => [m.top - b.top, m.bottom - b.top]), pill: [...el.querySelectorAll('[data-day="tue"] .pg-mat-pill')].map((m) => m.getBoundingClientRect().top - b.top), cell: cells.map((c) => [c.getBoundingClientRect().top - b.top, c.getBoundingClientRect().bottom - b.top]) },
         gap: Math.round((Math.min(...mats.map((m) => m.top)) - head.bottom) * 100) / 100,
         clip: { x: head.left + 4, y: b.top + 42, width: head.width - 8, height: 3 },
@@ -89,7 +90,7 @@ async function seam(page, tag) {
     }
   }
   await page.screenshot({ path: `${L.path.replace(/ledger-.*$/, "")}timetable-level-seam-${tag}.png`, clip: { x: geo.clip.x - 4, y: geo.clip.y - 42, width: geo.clip.width + 8, height: 120 } }).catch(() => {});
-  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off, offByImageRow: offRows, imageRows: strip.height, rects: geo.rects };
+  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off, offByImageRow: offRows, imageRows: strip.height, css: geo.css, rects: geo.rects };
 }
 
 const browser = await launchWithScrollbars();
@@ -148,9 +149,10 @@ try {
         watch(page);
         await page.goto("/dashboard/timetable");
         await weekOnFrozenClock(page, "thu", "18:40");
-        const style = await page.addStyleTag({ content: OLD_CSS });
+        await page.addStyleTag({ content: OLD_CSS });
+        await page.evaluate(() => document.documentElement.classList.add("old-seam"));
         const before = await seam(page, `${tag}-old`);
-        await style.evaluate((el) => el.remove());
+        await page.evaluate(() => document.documentElement.classList.remove("old-seam"));
         const after = await seam(page, `${tag}-new`);
         if (!before.classesUnderBand || !after.classesUnderBand) throw new Error(`no class under the band: ${JSON.stringify({ before, after })}`);
         if (!(before.pixelsNotHeaderColour > 0) || after.pixelsNotHeaderColour !== 0 || after.gapPx > 0) throw new Error(`seam: ${JSON.stringify({ before, after })}`);
