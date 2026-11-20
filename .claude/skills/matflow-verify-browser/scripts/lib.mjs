@@ -251,7 +251,9 @@ export function gridInvariants(page, { sessions, grid: testId = "week-grid", wit
       }
     }
     const placed = chips.filter((c) => c.r && c.start !== null);
-    const pulled = (c) => placed.some((o) => o !== c && o.day === c.day && o.start < c.start && c.start - o.start < 30 && o.end !== null && o.end > c.start);
+    // Drawn level with an earlier class of its day: it starts on that class's line (the cell's own `data-row-start`), not its own time's.
+    const line = (c) => c.cell.getAttribute("data-row-start");
+    const pulled = (c) => placed.some((o) => o !== c && o.day === c.day && o.start < c.start && line(o) === line(c));
     for (let i = 0; i < placed.length; i++) {
       for (let j = i + 1; j < placed.length; j++) {
         const a = placed[i], b = placed[j];

@@ -74,7 +74,7 @@ export interface GridMore {
   rowEnd: number;
   startMin: number;
   endMin: number;
-  /** The folded sessions, in time then tie order. */
+  /** The folded sessions, in drawn-time then tie order (`inOrder`). */
   keys: string[];
   /** Every session of the cluster, the ones on show included. */
   clusterKeys: string[];
@@ -163,18 +163,28 @@ function levelDay(sessions: Placed[]): Placed[] {
   // True when every other session drawn inside [from, to) really overlaps `s`.
   const free = (i: number, from: number, to: number) =>
     out.every((k, j) => j === i || !(k.startMin < to && k.endMin > from) || really(k, out[i]));
-  const anchorOf = new Array<number>(out.length).fill(-1);
-  for (let a = 0; a < out.length; a++) {
-    if (anchorOf[a] !== -1) continue;
-    anchorOf[a] = a;
-    for (let j = a + 1; j < out.length; j++) {
-      if (anchorOf[j] !== -1) continue;
-      const later = out[j].realStartMin - out[a].realStartMin;
-      if (later >= LEVEL_WITHIN_MIN || !really(out[a], out[j])) continue;
-      if (later > 0 && !free(j, out[a].realStartMin, out[j].realStartMin)) continue;
-      anchorOf[j] = a;
-      out[j].startMin = out[a].realStartMin;
+  // Each class levels with the one it shares the most time with, among those starting under LEVEL_WITHIN_MIN from
+  // it either way (ties: the earliest). So a short class that happens to start first does not take the 11:00 away
+  // from the 11:20 it runs beside for forty minutes. A class whose partner starts after it stays where it is.
+  const shared = (a: Placed, b: Placed) => Math.min(a.realEndMin, b.realEndMin) - Math.max(a.realStartMin, b.realStartMin);
+  const anchorOf = out.map((_, i) => i);
+  for (let j = 0; j < out.length; j++) {
+    let best = -1;
+    for (let k = 0; k < out.length; k++) {
+      if (k === j || !really(out[k], out[j]) || Math.abs(out[k].realStartMin - out[j].realStartMin) >= LEVEL_WITHIN_MIN) continue;
+      if (best === -1 || shared(out[k], out[j]) > shared(out[best], out[j])) best = k;
     }
+    // Sessions are in start order: a partner at a lower index starts first (or together and sorts first).
+    if (best === -1 || best > j) continue;
+    // The partner may itself have been levelled: this class goes to the same line, if that line is in reach.
+    const a = anchorOf[best];
+    const later = out[j].realStartMin - out[a].realStartMin;
+    if (later >= LEVEL_WITHIN_MIN || !really(out[a], out[j])) continue;
+    if (later > 0 && !free(j, out[a].realStartMin, out[j].realStartMin)) continue;
+    // Never above a class that starts before it: one that stayed on its own line in between keeps this one down too.
+    if (out.some((k, i) => i < j && k.realStartMin < out[j].realStartMin && k.startMin > out[a].realStartMin)) continue;
+    anchorOf[j] = a;
+    out[j].startMin = out[a].realStartMin;
   }
   for (let a = 0; a < out.length; a++) {
     if (anchorOf[a] !== a) continue;
@@ -191,6 +201,8 @@ function levelDay(sessions: Placed[]): Placed[] {
 const inOrder = (a: Placed, b: Placed) =>
   a.startMin - b.startMin ||
   b.endMin - b.startMin - (a.endMin - a.startMin) ||
+  // Drawn level and as long as each other: the one that really starts first comes first, in its lane and in Tab order.
+  a.realStartMin - b.realStartMin ||
   numeric.compare(a.tie, b.tie) ||
   (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 

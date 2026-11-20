@@ -445,6 +445,26 @@ describe("levelling: classes on at once that start under half an hour apart are 
     expect(session(h, "junior").rowEnd).toBeLessThan(session(h, "beginners").rowEnd);
   });
 
+  it("a class levels with the one it shares the most time with: an earlier short class does not pull the 11:00 away from the 11:20", () => {
+    // By time, a 10:45-11:15 beside an 11:00-12:00 that runs forty minutes beside an 11:20-12:10.
+    const g = byTime([s("kids", 6, "10:45", "11:15"), s("adults", 6, "11:00", "12:00"), s("beginners", 6, "11:20", "12:10")]);
+    // The 11:00 is not pulled up to the 10:45: its partner is the 11:20.
+    expect(session(g, "adults").rowStart).toBeGreaterThan(session(g, "kids").rowStart);
+    // And the 11:20 cannot go to 11:00 here, because the 10:45 is still on then and ends before the 11:20 starts:
+    // drawn level they would read as three at once. So this day is drawn to the minute, as before.
+    expect(session(g, "beginners").rowStart).toBeGreaterThan(session(g, "adults").rowStart);
+    expect(g.ticks.map((t) => t.minute)).toEqual([645, 660, 680]);
+    // Without the 10:45 running into it, the pair levels.
+    const h = byTime([s("kids", 6, "10:15", "10:55"), s("adults", 6, "11:00", "12:00"), s("beginners", 6, "11:20", "12:10")]);
+    expect(session(h, "beginners").rowStart).toBe(session(h, "adults").rowStart);
+  });
+
+  it("drawn level and as long as each other, the class that really starts first takes the first lane and comes first in Tab order", () => {
+    const g = byTime([s("late", 6, "11:20", "12:10", "1"), s("early", 6, "11:00", "12:00", "2")]);
+    expect(session(g, "early").col).toBeLessThan(session(g, "late").col);
+    expect(g.items.map((i) => (i.type === "session" ? i.key : i.id))).toEqual(["early", "late"]);
+  });
+
   it("a +N more button still says when its sessions really run", () => {
     const g = buildTimetableGrid(
       [s("a", 6, "11:00", "12:00", "1"), s("b", 6, "11:00", "12:00", "2"), s("c", 6, "11:10", "12:00", "3"), s("d", 6, "11:20", "12:00", "4")],
@@ -469,9 +489,23 @@ describe("levelling: classes on at once that start under half an hour apart are 
         return { ...s(`k${i}`, 6, hhmm(start), hhmm(start + 10 + rand(18) * 5), String(i), rand(3) === 0 ? null : `m${1 + rand(2)}`), start, end: 0 };
       }).map((x) => ({ ...x, end: x.start + (Number(x.endTime.slice(0, 2)) * 60 + Number(x.endTime.slice(3)) - x.start) }));
       for (const layout of ["time", "mat"] as const) {
+        // Folding too: with few lanes every session is still placed or folded exactly once, and no two items share a cell.
+        for (const maxLanes of [2, 3]) {
+          const f = buildTimetableGrid(sessions, { days: [6], layout, mats: MATS, maxLanes });
+          const shown = f.items.flatMap((i) => (i.type === "session" ? [i.key] : i.keys));
+          expect([...shown].sort()).toEqual(sessions.map((x) => x.key).sort());
+          for (const a of f.items) for (const b of f.items) {
+            if (a === b) continue;
+            const rows = a.rowStart < b.rowEnd && b.rowStart < a.rowEnd;
+            const cols = a.col < b.col + b.span && b.col < a.col + a.span;
+            expect(rows && cols, `${run} ${layout} ${maxLanes} items collide`).toBe(false);
+          }
+        }
         const g = buildTimetableGrid(sessions, { days: [6], layout, mats: MATS, maxLanes: 9 });
         const placed = sessions.map((x) => ({ ...x, at: session(g, x.key) }));
         for (const a of placed) {
+          // A later start is never drawn higher.
+          for (const b of placed) if (b.start > a.start) expect(b.at.rowStart, `${run} ${layout} ${a.key} ${b.key} order`).toBeGreaterThanOrEqual(a.at.rowStart);
           // Drawn no later than it starts, no earlier than half an hour before; never cut short.
           const fromMin = g.rows[a.at.rowStart - g.firstTimeLine].fromMin;
           const toMin = g.rows[a.at.rowEnd - 1 - g.firstTimeLine].toMin;
