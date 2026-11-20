@@ -251,10 +251,14 @@ export function gridInvariants(page, { sessions, grid: testId = "week-grid", wit
       }
     }
     const placed = chips.filter((c) => c.r && c.start !== null);
+    const pulled = (c) => placed.some((o) => o !== c && o.day === c.day && o.start < c.start && c.start - o.start < 30 && o.end !== null && o.end > c.start);
     for (let i = 0; i < placed.length; i++) {
       for (let j = i + 1; j < placed.length; j++) {
         const a = placed[i], b = placed[j];
         const [early, late] = a.start <= b.start ? [a, b] : [b, a];
+        // A class drawn level with an earlier one on at once (lib/timetable-grid `levelDay`) leaves its own time's
+        // line, so it is only compared with the classes of its own day.
+        if (a.day !== b.day && (pulled(a) || pulled(b))) continue;
         if (early.start === late.start && Math.abs(early.r.top - late.r.top) > 1) problems.push(`${early.label} and ${late.label}: same start, tops ${early.r.top.toFixed(1)} and ${late.r.top.toFixed(1)}`);
         if (late.start > early.start && late.r.top < early.r.top - 1) problems.push(`${late.label} starts later than ${early.label} but sits higher`);
         // Levelling (lib/timetable-grid `levelDay`): on the same day, two classes on at once that start under half an hour apart may share a line.

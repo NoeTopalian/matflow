@@ -67,6 +67,7 @@ async function seam(page, tag) {
       const under = cells.map((c) => c.getBoundingClientRect()).every((r) => r.top < head.bottom && r.bottom > mats[0].bottom);
       done({
         scrolled: el.scrollTop, under,
+        rects: { box: b.top, head: [head.top - b.top, head.bottom - b.top], mats: mats.map((m) => [m.top - b.top, m.bottom - b.top]), pill: [...el.querySelectorAll('[data-day="tue"] .pg-mat-pill')].map((m) => m.getBoundingClientRect().top - b.top), cell: cells.map((c) => [c.getBoundingClientRect().top - b.top, c.getBoundingClientRect().bottom - b.top]) },
         gap: Math.round((Math.min(...mats.map((m) => m.top)) - head.bottom) * 100) / 100,
         clip: { x: head.left + 4, y: b.top + 42, width: head.width - 8, height: 3 },
         ref: { x: head.left + 4, y: b.top + 3, width: 4, height: 4 },
@@ -79,11 +80,16 @@ async function seam(page, tag) {
   const bg = [ref.data[0], ref.data[1], ref.data[2]];
   const strip = await read(geo.clip);
   let off = 0;
+  const offRows = {};
   for (let i = 0; i < strip.data.length; i += 4) {
-    if (Math.abs(strip.data[i] - bg[0]) > 3 || Math.abs(strip.data[i + 1] - bg[1]) > 3 || Math.abs(strip.data[i + 2] - bg[2]) > 3) off += 1;
+    if (Math.abs(strip.data[i] - bg[0]) > 3 || Math.abs(strip.data[i + 1] - bg[1]) > 3 || Math.abs(strip.data[i + 2] - bg[2]) > 3) {
+      off += 1;
+      const row = Math.floor(i / 4 / strip.width);
+      offRows[row] = (offRows[row] ?? 0) + 1;
+    }
   }
   await page.screenshot({ path: `${L.path.replace(/ledger-.*$/, "")}timetable-level-seam-${tag}.png`, clip: { x: geo.clip.x - 4, y: geo.clip.y - 42, width: geo.clip.width + 8, height: 120 } }).catch(() => {});
-  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off };
+  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off, offByImageRow: offRows, imageRows: strip.height, rects: geo.rects };
 }
 
 const browser = await launchWithScrollbars();
@@ -147,9 +153,7 @@ try {
         await style.evaluate((el) => el.remove());
         const after = await seam(page, `${tag}-new`);
         if (!before.classesUnderBand || !after.classesUnderBand) throw new Error(`no class under the band: ${JSON.stringify({ before, after })}`);
-        expect(before.pixelsNotHeaderColour).toBeGreaterThan(0);
-        expect(after.pixelsNotHeaderColour).toBe(0);
-        expect(after.gapPx).toBeLessThanOrEqual(0);
+        if (!(before.pixelsNotHeaderColour > 0) || after.pixelsNotHeaderColour !== 0 || after.gapPx > 0) throw new Error(`seam: ${JSON.stringify({ before, after })}`);
         return { before, after };
       } finally {
         await sctx.close();
