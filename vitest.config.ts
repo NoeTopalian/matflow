@@ -13,6 +13,9 @@ export default defineConfig({
       "tests/integration/**/*.test.ts",
     ],
     setupFiles: ["./tests/setup-test-db.ts"],
+    // Once per run: a database run whose RLS_ENFORCED flag does not match the connected role is refused
+    // (tests/db-role-guard.mjs). Does nothing when no database is configured.
+    globalSetup: ["./tests/global-db-role-guard.ts"],
     // Windows + vitest 4 + @vitejs/plugin-react: the parallel runner races
     // during module resolution across 80+ files, producing "Vitest failed
     // to find the runner" on every file. Both `pool: "threads"` (default)
