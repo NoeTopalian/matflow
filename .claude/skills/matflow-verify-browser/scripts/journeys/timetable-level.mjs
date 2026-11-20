@@ -46,7 +46,7 @@ const chipBox = (scope, text) => scope.locator(`[data-cell-key] button[aria-labe
 });
 
 /**
- * Scrolls the week's box so Tuesday's 19:00 pair (one class on each mat) is under the pinned band, then reads the
+ * Scrolls the week's box so a Tuesday class is under the pinned band, then reads the
  * pixels of the band's seam on Tuesday: the three CSS pixels from 42 to 45 below the box's top, between the day
  * card's side borders. Returns the measured gap between header and mat names and how many of those pixels are not
  * the header's own colour.
@@ -55,9 +55,11 @@ async function seam(page, tag) {
   const box = page.getByTestId("week-scroller");
   const geo = await box.evaluate((el) => {
     const within = (n) => n.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
-    const cells = [...el.querySelectorAll('[data-day="tue"] [data-cell-key] button')].filter((b) => / 19:00 to 20:30/.test(b.getAttribute("aria-label") ?? ""));
-    if (cells.length !== 2) return { error: `Tuesday 19:00 classes found: ${cells.length}` };
-    el.scrollTop = Math.max(0, within(cells[0]) - 20);
+    // The first Tuesday class tall enough to reach from above the band to below it, that the box can scroll to.
+    const room = el.scrollHeight - el.clientHeight;
+    const cells = [...el.querySelectorAll('[data-day="tue"] [data-cell-key] button')].filter((b) => b.getBoundingClientRect().height >= 70 && within(b) - 20 > 0 && within(b) - 20 <= room).slice(0, 1);
+    if (cells.length !== 1) return { error: `no Tuesday class the box can bring under the band (it scrolls ${room} px)` };
+    el.scrollTop = within(cells[0]) - 20;
     return new Promise((done) => requestAnimationFrame(() => {
       const b = el.getBoundingClientRect();
       const head = el.querySelector('[data-day-head="tue"]').getBoundingClientRect();
@@ -116,7 +118,7 @@ try {
     expect(ticks).toContain("11:00");
     expect(ticks).not.toContain("11:20");
     const inv = await gridInvariants(main, { sessions: POSTER.rows.length });
-    expect(inv.problems).toEqual([]);
+    if (inv.problems.length) throw new Error(inv.problems.join("; "));
     await shot(main, "timetable-level-week");
     return { juniors, beginners, kids, tueBeginners, chips: inv.chips };
   });
@@ -131,8 +133,8 @@ try {
     return { early, free, late };
   });
 
-  for (const [tag, scale, viewport] of [["100", 1, { width: 1440, height: 900 }], ["125", 1.25, { width: 1100, height: 760 }]]) {
-    await section(`seam-${tag}`, `${tag} % scaling, ${viewport.width} px: with the box scrolled so two classes are under the pinned band, the old CSS shows them through the seam and the new CSS shows none of them`, async () => {
+  for (const [tag, scale, viewport] of [["100", 1, { width: 1440, height: 640 }], ["125", 1.25, { width: 1100, height: 640 }]]) {
+    await section(`seam-${tag}`, `${tag} % scaling, ${viewport.width} px: with the box scrolled so a class is under the pinned band, the old CSS shows it through the seam and the new CSS does not`, async () => {
       const sctx = await context(browser, "10.95.7.2", { viewport, deviceScaleFactor: scale, storageState: owner, timezoneId: "Europe/London" });
       try {
         await sctx.clock.setFixedTime(new Date(FROZEN));
@@ -144,8 +146,7 @@ try {
         const before = await seam(page, `${tag}-old`);
         await style.evaluate((el) => el.remove());
         const after = await seam(page, `${tag}-new`);
-        expect(before.classesUnderBand).toBe(true);
-        expect(after.classesUnderBand).toBe(true);
+        if (!before.classesUnderBand || !after.classesUnderBand) throw new Error(`no class under the band: ${JSON.stringify({ before, after })}`);
         expect(before.pixelsNotHeaderColour).toBeGreaterThan(0);
         expect(after.pixelsNotHeaderColour).toBe(0);
         expect(after.gapPx).toBeLessThanOrEqual(0);
