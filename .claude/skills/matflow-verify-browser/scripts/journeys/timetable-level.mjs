@@ -48,8 +48,8 @@ const chipBox = (scope, text) => scope.locator(`[data-cell-key] button[aria-labe
 /**
  * Scrolls the week's box so a Tuesday class is under the pinned band, then reads the
  * pixels of the band's seam on Tuesday: the two CSS pixels from 42 to 44 below the box's top, between the day
- * card's side borders. Returns the measured gap between header and mat names and how many of those pixels are not
- * the header's own colour.
+ * card's side borders. Returns the measured gap between header and mat names and how many of those pixels are neither
+ * the header's own colour nor the mat names' pill.
  */
 async function seam(page, tag) {
   const box = page.getByTestId("week-scroller");
@@ -73,6 +73,7 @@ async function seam(page, tag) {
         // 42 to 44: the header's last pixel and the old gap. The mat names' own pill starts at 45.
         clip: { x: head.left + 4, y: b.top + 42, width: head.width - 8, height: 2 },
         ref: { x: head.left + 4, y: b.top + 3, width: 4, height: 4 },
+        pillRef: (() => { const p = el.querySelector('[data-day="tue"] .pg-mat-pill').getBoundingClientRect(); return { x: p.left + 3, y: p.top + p.height / 2 - 2, width: 4, height: 4 }; })(),
       });
     }));
   });
@@ -80,18 +81,23 @@ async function seam(page, tag) {
   const read = async (clip) => PNG.sync.read(await page.screenshot({ clip }));
   const ref = await read(geo.ref);
   const bg = [ref.data[0], ref.data[1], ref.data[2]];
+  // On a scaled display the strip's last device row can land on the top edge of the mat names' own pill: its colour is not a leak.
+  const pillPng = await read(geo.pillRef);
+  const pill = [pillPng.data[0], pillPng.data[1], pillPng.data[2]];
+  // Header colour, pill colour, or a blend of the two (the pill's rounded corners).
+  const between = (i) => [0, 1, 2].every((k) => strip.data[i + k] >= Math.min(bg[k], pill[k]) - 3 && strip.data[i + k] <= Math.max(bg[k], pill[k]) + 3);
   const strip = await read(geo.clip);
   let off = 0;
   const offRows = {};
   for (let i = 0; i < strip.data.length; i += 4) {
-    if (Math.abs(strip.data[i] - bg[0]) > 3 || Math.abs(strip.data[i + 1] - bg[1]) > 3 || Math.abs(strip.data[i + 2] - bg[2]) > 3) {
+    if (!between(i)) {
       off += 1;
       const row = Math.floor(i / 4 / strip.width);
       offRows[row] = (offRows[row] ?? 0) + 1;
     }
   }
   await page.screenshot({ path: `${L.path.replace(/ledger-.*$/, "")}timetable-level-seam-${tag}.png`, clip: { x: geo.clip.x - 4, y: geo.clip.y - 42, width: geo.clip.width + 8, height: 120 } }).catch(() => {});
-  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off, offByImageRow: offRows, imageRows: strip.height, css: geo.css, rects: geo.rects };
+  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off, headerColour: bg, pillColour: pill, offByImageRow: offRows, imageRows: strip.height, css: geo.css, rects: geo.rects };
 }
 
 const browser = await launchWithScrollbars();
