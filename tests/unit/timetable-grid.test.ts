@@ -459,6 +459,13 @@ describe("levelling: classes on at once that start under half an hour apart are 
     expect(session(h, "beginners").rowStart).toBe(session(h, "adults").rowStart);
   });
 
+  it("three close together level on one line: the 11:20 is not kept off the 11:00 because it shares more time with an 11:25", () => {
+    const g = byTime([s("a", 6, "11:00", "12:00", "1"), s("b", 6, "11:20", "12:10", "2"), s("e", 6, "11:25", "12:10", "3")]);
+    expect(session(g, "b").rowStart).toBe(session(g, "a").rowStart);
+    expect(session(g, "e").rowStart).toBe(session(g, "a").rowStart);
+    expect(g.ticks.map((t) => t.minute)).toEqual([660]);
+  });
+
   it("drawn level and as long as each other, the class that really starts first takes the first lane and comes first in Tab order", () => {
     const g = byTime([s("late", 6, "11:20", "12:10", "1"), s("early", 6, "11:00", "12:00", "2")]);
     expect(session(g, "early").col).toBeLessThan(session(g, "late").col);

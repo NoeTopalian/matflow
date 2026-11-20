@@ -6,7 +6,8 @@
  * on show is a row line; a session spans from its start line to its end line,
  * so two sessions that start together start on the same line on every day.
  * One exception, `levelDay`: classes on at once that start under half an hour
- * apart are drawn level, from one line. Each still says its own times.
+ * apart are drawn level, from one line. Each still says its own times. Side by
+ * side by time, the longer class takes the first lane, as it always has.
  * The component sizes each track to its content (`minmax(floorPx, auto)`), so
  * a session is never shorter than its text, and a stretch nobody teaches in
  * collapses to a thin gap or a "No classes" break row.
@@ -146,10 +147,15 @@ export const LEVEL_WITHIN_MIN = 30;
 /**
  * Levelling (Noe, 21 Nov 2026): an 11:00 class on one mat and an 11:20 class
  * on the next are on at the same time, and drawn to the minute the second sat
- * a few pixels lower than the first, which read as a mistake. A class that
- * overlaps an earlier one and starts under `LEVEL_WITHIN_MIN` after it is
- * drawn from that class's start line; the classes levelled together also end
- * on one line when their ends are under `LEVEL_WITHIN_MIN` apart.
+ * a few pixels lower than the first, which read as a mistake. A class is drawn
+ * from the start line of its partner: the class it shares the most time with,
+ * among those on at once that start under `LEVEL_WITHIN_MIN` from it. If that
+ * partner starts after it, it goes to an earlier partner's line only when the
+ * later one can join that line too; otherwise it stays where it is (a short
+ * class that happens to start first does not pull the 11:00 away from the
+ * 11:20). It is never drawn above a class that starts before it. The classes
+ * levelled together also end on one line when their ends are under
+ * `LEVEL_WITHIN_MIN` apart.
  *
  * Never at the price of a false clash: a class is only stretched over time in
  * which every other class of the day that is on also really overlaps it. So
@@ -163,21 +169,31 @@ function levelDay(sessions: Placed[]): Placed[] {
   // True when every other session drawn inside [from, to) really overlaps `s`.
   const free = (i: number, from: number, to: number) =>
     out.every((k, j) => j === i || !(k.startMin < to && k.endMin > from) || really(k, out[i]));
-  // Each class levels with the one it shares the most time with, among those starting under LEVEL_WITHIN_MIN from
-  // it either way (ties: the earliest). So a short class that happens to start first does not take the 11:00 away
-  // from the 11:20 it runs beside for forty minutes. A class whose partner starts after it stays where it is.
+  // The partner: the class it shares the most time with, among those starting under LEVEL_WITHIN_MIN from it either
+  // way (ties: the earliest).
   const shared = (a: Placed, b: Placed) => Math.min(a.realEndMin, b.realEndMin) - Math.max(a.realStartMin, b.realStartMin);
   const anchorOf = out.map((_, i) => i);
   for (let j = 0; j < out.length; j++) {
     let best = -1;
+    let bestEarlier = -1;
     for (let k = 0; k < out.length; k++) {
       if (k === j || !really(out[k], out[j]) || Math.abs(out[k].realStartMin - out[j].realStartMin) >= LEVEL_WITHIN_MIN) continue;
       if (best === -1 || shared(out[k], out[j]) > shared(out[best], out[j])) best = k;
+      if (k < j && (bestEarlier === -1 || shared(out[k], out[j]) > shared(out[bestEarlier], out[j]))) bestEarlier = k;
     }
+    if (best === -1) continue;
     // Sessions are in start order: a partner at a lower index starts first (or together and sorts first).
-    if (best === -1 || best > j) continue;
+    let partner = best;
+    if (best > j) {
+      // Its partner starts after it. It still goes up to an earlier class's line when the later partner can come to
+      // that line as well (11:00, 11:20 and 11:25 all level); otherwise it stays, and the later one comes to it.
+      if (bestEarlier === -1) continue;
+      const line = out[anchorOf[bestEarlier]];
+      if (!really(line, out[best]) || out[best].realStartMin - line.realStartMin >= LEVEL_WITHIN_MIN) continue;
+      partner = bestEarlier;
+    }
     // The partner may itself have been levelled: this class goes to the same line, if that line is in reach.
-    const a = anchorOf[best];
+    const a = anchorOf[partner];
     const later = out[j].realStartMin - out[a].realStartMin;
     if (later >= LEVEL_WITHIN_MIN || !really(out[a], out[j])) continue;
     if (later > 0 && !free(j, out[a].realStartMin, out[j].realStartMin)) continue;
