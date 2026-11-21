@@ -1,19 +1,17 @@
-// Classes on at once are drawn level, and nothing shows between the pinned day header and the pinned mat names
-// (synthetic data only).
+// Split by mat, classes on at once are drawn level; split by time, every class keeps its own line (synthetic data only).
 //   node run-journeys.mjs timetable-level
 // Seeds the printed week of a two-mat club, split by mat. Saturday has Juniors Squad 11:00-12:00 on Mat 2 and
 // Beginners Course Gi 11:20-12:10 on Mat 1; Tuesday has 17:45 and 17:50; Monday has a 19:00 that follows an 18:40
 // on its own mat and must NOT be pulled up. Then: the week at 1440 px (level pairs, own times kept, no 11:20 line),
-// the pinned band with the box scrolled, measured and read pixel by pixel at 100 % and 125 % scaling (with the old
-// CSS put back first, to show the check sees the gap), the Day view, and a 390 px phone.
-// The clock is frozen at Thursday 5 November 2026 18:45.
+// the Day view, a 390 px phone, the members' day at 390 px, and the same week split by time (nothing levelled).
+// The pinned band's seam has its own journey, timetable-seam. The clock is frozen at Thursday 5 November 2026 18:45
+// for staff; the members' day runs on the real clock.
 import { createRequire } from "node:module";
-import { state, ledger, shot, context, ownerSignIn, launchWithScrollbars, gridInvariants, phoneNoSidewaysScroll, weekGrid, weekOnFrozenClock } from "../lib.mjs";
+import { state, ledger, shot, context, ownerSignIn, memberLogin, memberSignIn, launchWithScrollbars, OUT, gridInvariants, phoneNoSidewaysScroll, weekGrid, weekOnFrozenClock } from "../lib.mjs";
 import { POSTER, FROZEN, seedWeek } from "./data/timetable-weeks.mjs";
 
 const require = createRequire(import.meta.url);
 const expect = require("@playwright/test").expect.configure({ timeout: 20_000 });
-const { PNG } = require("playwright-core/lib/utilsBundle");
 const club = state.club;
 if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture first");
 const L = ledger("timetable-level");
@@ -37,68 +35,22 @@ async function section(id, desc, fn) {
   }
 }
 
-const OLD_CSS = `html.old-seam .pg-grid[data-mats] .pg-head{box-shadow:none !important}html.old-seam .pg-grid:not([data-one-day]) .pg-day > .pg-mat{top:44px !important}`;
-
 /** Top, bottom and shown time of the chip whose accessible name contains `text`, inside `scope`. */
 const chipBox = (scope, text) => scope.locator(`[data-cell-key] button[aria-label*="${text}"]`).first().evaluate((b) => {
   const r = b.getBoundingClientRect();
   return { top: Math.round(r.top * 10) / 10, bottom: Math.round(r.bottom * 10) / 10, left: Math.round(r.left), time: (b.querySelector('[data-chip-part="time"]')?.textContent ?? "").trim() };
 });
 
-/**
- * Scrolls the week's box so a Tuesday class is under the pinned band, then reads the
- * pixels of the band's seam on Tuesday: the two CSS pixels from 42 to 44 below the box's top, between the day
- * card's side borders. Returns the measured gap between header and mat names and how many of those pixels are neither
- * the header's own colour nor the mat names' pill.
- */
-async function seam(page, tag) {
-  const box = page.getByTestId("week-scroller");
-  const geo = await box.evaluate((el) => {
-    const within = (n) => n.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
-    // The first Tuesday class tall enough to reach from above the band to below it, that the box can scroll to.
-    const room = el.scrollHeight - el.clientHeight;
-    const cells = [...el.querySelectorAll('[data-day="tue"] [data-cell-key] button')].filter((b) => b.getBoundingClientRect().height >= 70 && within(b) - 20 > 0 && within(b) - 20 <= room).slice(0, 1);
-    if (cells.length !== 1) return { error: `no Tuesday class the box can bring under the band (it scrolls ${room} px)` };
-    el.scrollTop = within(cells[0]) - 20;
-    return new Promise((done) => requestAnimationFrame(() => {
-      const b = el.getBoundingClientRect();
-      const head = el.querySelector('[data-day-head="tue"]').getBoundingClientRect();
-      const mats = [...el.querySelectorAll('[data-day="tue"] [data-mat-head]')].map((m) => m.getBoundingClientRect());
-      const under = cells.map((c) => c.getBoundingClientRect()).every((r) => r.top < head.bottom && r.bottom > mats[0].bottom);
-      done({
-        scrolled: el.scrollTop, under,
-        css: { matTop: getComputedStyle(el.querySelector('[data-day="tue"] [data-mat-head]')).top, headShadow: getComputedStyle(el.querySelector('[data-day-head="tue"]')).boxShadow },
-        rects: { box: b.top, head: [head.top - b.top, head.bottom - b.top], mats: mats.map((m) => [m.top - b.top, m.bottom - b.top]), pill: [...el.querySelectorAll('[data-day="tue"] .pg-mat-pill')].map((m) => m.getBoundingClientRect().top - b.top), cell: cells.map((c) => [c.getBoundingClientRect().top - b.top, c.getBoundingClientRect().bottom - b.top]) },
-        gap: Math.round((Math.min(...mats.map((m) => m.top)) - head.bottom) * 100) / 100,
-        // 42 to 44: the header's last pixel and the old gap. The mat names' own pill starts at 45.
-        clip: { x: head.left + 4, y: b.top + 42, width: head.width - 8, height: 2 },
-        ref: { x: head.left + 4, y: b.top + 3, width: 4, height: 4 },
-        pillRef: (() => { const p = el.querySelector('[data-day="tue"] .pg-mat-pill').getBoundingClientRect(); return { x: p.left + 3, y: p.top + p.height / 2 - 2, width: 4, height: 4 }; })(),
-      });
-    }));
-  });
-  if (geo.error) throw new Error(geo.error);
-  const read = async (clip) => PNG.sync.read(await page.screenshot({ clip }));
-  const ref = await read(geo.ref);
-  const bg = [ref.data[0], ref.data[1], ref.data[2]];
-  // On a scaled display the strip's last device row can land on the top edge of the mat names' own pill: its colour is not a leak.
-  const pillPng = await read(geo.pillRef);
-  const pill = [pillPng.data[0], pillPng.data[1], pillPng.data[2]];
-  // Header colour, pill colour, or a blend of the two (the pill's rounded corners).
-  const between = (i) => [0, 1, 2].every((k) => strip.data[i + k] >= Math.min(bg[k], pill[k]) - 3 && strip.data[i + k] <= Math.max(bg[k], pill[k]) + 3);
-  const strip = await read(geo.clip);
-  let off = 0;
-  const offRows = {};
-  for (let i = 0; i < strip.data.length; i += 4) {
-    if (!between(i)) {
-      off += 1;
-      const row = Math.floor(i / 4 / strip.width);
-      offRows[row] = (offRows[row] ?? 0) + 1;
-    }
-  }
-  await page.screenshot({ path: `${L.path.replace(/ledger-.*$/, "")}timetable-level-seam-${tag}.png`, clip: { x: geo.clip.x - 4, y: geo.clip.y - 42, width: geo.clip.width + 8, height: 120 } }).catch(() => {});
-  return { scrolled: geo.scrolled, classesUnderBand: geo.under, gapPx: geo.gap, pixelsRead: strip.data.length / 4, pixelsNotHeaderColour: off, headerColour: bg, pillColour: pill, offByImageRow: offRows, imageRows: strip.height, css: geo.css, rects: geo.rects };
+/** A picture of `grid` from its time gutter across, around the two Saturday classes. Returns their boxes, measured after scrolling. */
+async function pairShot(page, grid, name, measure) {
+  await grid.locator("[data-cell-key] button[aria-label*='11:00 to 12:00']").first().evaluate((b) => b.scrollIntoView({ block: "center" }));
+  const [a, b] = await measure();
+  const g = await grid.boundingBox();
+  const top = Math.max(0, Math.min(a.top, b.top) - 90);
+  await page.screenshot({ path: `${OUT}/${name}.png`, clip: { x: Math.max(0, g.x), y: top, width: Math.min(g.width, page.viewportSize().width - Math.max(0, g.x)), height: Math.max(a.bottom, b.bottom) - top + 30 } });
 }
+const setLayout = (page, layout) => page.evaluate(async (l) => (await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: l }) })).status, layout);
+const SAT = ["Juniors Squad, Saturday 11:00 to 12:00", "Beginners Course Gi, Saturday 11:20 to 12:10"];
 
 const browser = await launchWithScrollbars();
 try {
@@ -134,6 +86,7 @@ try {
     const inv = await gridInvariants(main, { sessions: POSTER.rows.length });
     if (inv.problems.length) throw new Error(inv.problems.join("; "));
     await shot(main, "timetable-level-week");
+    await pairShot(main, weekGrid(main), "pair-week-by-mat-1440", () => Promise.all(SAT.map((x) => chipBox(sat, x))));
     return { juniors, beginners, kids, tueBeginners, chips: inv.chips };
   });
 
@@ -146,29 +99,6 @@ try {
     expect(late.top).toBeGreaterThanOrEqual(free.bottom - 1);
     return { early, free, late };
   });
-
-  for (const [tag, scale, viewport] of [["100", 1, { width: 1440, height: 640 }], ["125", 1.25, { width: 1100, height: 640 }]]) {
-    await section(`seam-${tag}`, `${tag} % scaling, ${viewport.width} px: with the box scrolled so a class is under the pinned band, the old CSS shows it through the seam and the new CSS does not`, async () => {
-      const sctx = await context(browser, "10.95.7.2", { viewport, deviceScaleFactor: scale, storageState: owner, timezoneId: "Europe/London" });
-      try {
-        await sctx.clock.setFixedTime(new Date(FROZEN));
-        const page = await sctx.newPage();
-        watch(page);
-        await page.goto("/dashboard/timetable");
-        await weekOnFrozenClock(page, "thu", "18:40");
-        await page.addStyleTag({ content: OLD_CSS });
-        await page.evaluate(() => document.documentElement.classList.add("old-seam"));
-        const before = await seam(page, `${tag}-old`);
-        await page.evaluate(() => document.documentElement.classList.remove("old-seam"));
-        const after = await seam(page, `${tag}-new`);
-        if (!before.classesUnderBand || !after.classesUnderBand) throw new Error(`no class under the band: ${JSON.stringify({ before, after })}`);
-        if (!(before.pixelsNotHeaderColour > 0) || after.pixelsNotHeaderColour !== 0 || after.gapPx > 0) throw new Error(`seam: ${JSON.stringify({ before, after })}`);
-        return { before, after };
-      } finally {
-        await sctx.close();
-      }
-    });
-  }
 
   await section("day-view", "1440 px Day view, Saturday: the 11:00 and 11:20 start and end on one line under their own mats, with one 11:00 label and no 11:20 label", async () => {
     await main.goto("/dashboard/timetable");
@@ -193,6 +123,7 @@ try {
     const inv = await gridInvariants(main, { sessions: 7, grid: "phone-day-grid" });
     expect(inv.problems).toEqual([]);
     await shot(main, "timetable-level-day");
+    await pairShot(main, grid, "pair-day-by-mat-1440", () => Promise.all(SAT.map((x) => chipBox(grid, x))));
     return { juniors, beginners, ticks };
   });
 
@@ -216,9 +147,93 @@ try {
       const inv = await gridInvariants(page, { sessions: 7, grid: "phone-day-grid" });
       expect(inv.problems).toEqual([]);
       await shot(page, "timetable-level-phone");
+      await pairShot(page, grid, "pair-phone-by-mat-390", () => Promise.all(SAT.map((x) => chipBox(grid, x))));
       return { juniors, beginners };
     } finally {
       await pctx.close();
+    }
+  });
+
+  await section("member", "390 px members' day, Saturday, split by mat: the 11:00 and 11:20 start and end on one line under their own mats, each block shows its own time, one 11:00 label and no 11:20 label, nothing scrolls sideways", async () => {
+    const member = await memberLogin(club);
+    const mctx = await context(browser, "10.95.7.5", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: "Europe/London" });
+    try {
+      const page = await mctx.newPage();
+      watch(page);
+      await memberSignIn(page, club, member);
+      await page.goto("/member/schedule");
+      await page.getByRole("button", { name: /^sat\s*\d/i }).click();
+      const grid = page.getByTestId("schedule-pane").getByTestId("schedule-day");
+      await expect(grid).toHaveAttribute("data-day", "sat", { timeout: 30_000 });
+      const block = (text) => grid.locator(`[data-cell-key] button[aria-label^="${text}"]`).first().evaluate((b) => {
+        const r = b.getBoundingClientRect();
+        return { top: Math.round(r.top * 10) / 10, bottom: Math.round(r.bottom * 10) / 10, left: Math.round(r.left), time: (b.querySelector('[data-block-part="time"]')?.textContent ?? "").trim() };
+      });
+      const measure = () => Promise.all([block("Juniors Squad, 11:00 to 12:00"), block("Beginners Course Gi, 11:20 to 12:10")]);
+      const [juniors, beginners] = await measure();
+      expect(Math.abs(juniors.top - beginners.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(juniors.bottom - beginners.bottom)).toBeLessThanOrEqual(1);
+      expect(beginners.left).toBeLessThan(juniors.left);
+      expect(beginners.time).toContain("11:20");
+      expect(juniors.time).toContain("11:00");
+      const ticks = (await grid.locator(".pg-tick").allTextContents()).map((x) => x.trim());
+      expect(ticks).toContain("11:00");
+      expect(ticks).not.toContain("11:20");
+      const wide = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
+      expect(wide.scroll).toBeLessThanOrEqual(wide.width + 1);
+      await shot(page, "timetable-level-member");
+      await pairShot(page, grid, "pair-member-by-mat-390", measure);
+      return { juniors, beginners, ticks, wide };
+    } finally {
+      await mctx.close();
+    }
+  });
+
+  await section("by-time-exact", "split by time, 1440 px week and 390 px phone: nothing is levelled. Saturday's 11:20 starts and ends below the 11:00, the gutter has both labels, and the grid's invariants hold", async () => {
+    expect(await setLayout(main, "time")).toBe(200);
+    try {
+      await main.goto("/dashboard/timetable");
+      const weekButton = main.getByTestId("timetable-view-week");
+      if (await weekButton.count()) await weekButton.click();
+      await weekOnFrozenClock(main, "thu", "18:40");
+      const sat = weekGrid(main).locator('[data-day="sat"]');
+      const measure = () => Promise.all(SAT.map((x) => chipBox(sat, x)));
+      const [juniors, beginners] = await measure();
+      expect(beginners.top).toBeGreaterThan(juniors.top + 5);
+      expect(beginners.bottom).toBeGreaterThan(juniors.bottom + 2);
+      expect(beginners.time).toContain("11:20");
+      const ticks = (await weekGrid(main).locator(".pg-tick").allTextContents()).map((x) => x.trim());
+      expect(ticks).toContain("11:00");
+      expect(ticks).toContain("11:20");
+      const inv = await gridInvariants(main, { sessions: POSTER.rows.length });
+      if (inv.problems.length) throw new Error(inv.problems.join("; "));
+      await shot(main, "timetable-level-week-by-time");
+      await pairShot(main, weekGrid(main), "pair-week-by-time-1440", measure);
+
+      const pctx = await context(browser, "10.95.7.4", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: owner, timezoneId: "Europe/London" });
+      try {
+        await pctx.clock.setFixedTime(new Date(FROZEN));
+        const page = await pctx.newPage();
+        watch(page);
+        await page.goto("/dashboard/timetable");
+        await expect(page.getByRole("tab", { name: /^Thu/ })).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
+        await page.getByRole("tab", { name: /^Sat/ }).click();
+        const grid = page.getByTestId("phone-day-grid");
+        await expect(grid).toHaveAttribute("data-day", "sat");
+        const phone = () => Promise.all(SAT.map((x) => chipBox(grid, x)));
+        const [pj, pb] = await phone();
+        expect(pb.top).toBeGreaterThan(pj.top + 5);
+        expect(pb.bottom).toBeGreaterThan(pj.bottom + 2);
+        const pticks = (await grid.locator(".pg-tick").allTextContents()).map((x) => x.trim());
+        expect(pticks).toContain("11:20");
+        await pairShot(page, grid, "pair-phone-by-time-390", phone);
+        return { week: { juniors, beginners }, phone: { juniors: pj, beginners: pb }, ticks, pticks };
+      } finally {
+        await pctx.close();
+      }
+    } finally {
+      const back = await setLayout(main, "mat");
+      if (back !== 200) throw new Error(`could not put the club back to split by mat: ${back}`);
     }
   });
 

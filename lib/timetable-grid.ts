@@ -5,9 +5,10 @@
  * Rows are the REAL times. Every distinct start and end minute of the sessions
  * on show is a row line; a session spans from its start line to its end line,
  * so two sessions that start together start on the same line on every day.
- * One exception, `levelDay`: classes on at once that start under half an hour
- * apart are drawn level, from one line. Each still says its own times. Side by
- * side by time, the longer class takes the first lane, as it always has.
+ * One exception, `levelDay`, on a day split by mat only: classes on at once
+ * that start under half an hour apart are drawn level, from one line. Each
+ * still says its own times. By time every class keeps its own lines, and side
+ * by side the longer class takes the first lane, as it always has.
  * The component sizes each track to its content (`minmax(floorPx, auto)`), so
  * a session is never shorter than its text, and a stretch nobody teaches in
  * collapses to a thin gap or a "No classes" break row.
@@ -160,6 +161,9 @@ export const LEVEL_WITHIN_MIN = 30;
  * Never at the price of a false clash: a class is only stretched over time in
  * which every other class of the day that is on also really overlaps it. So
  * two classes drawn side by side are always two classes really on at once.
+ *
+ * Only a day split by mat is levelled (Noe, 21 Nov 2026): split by time, a
+ * class starts and ends on its own lines.
  *
  * Takes one day's sessions in `inOrder`; returns them with the drawn times set.
  */
@@ -358,7 +362,17 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
   const maxLanes = opts.maxLanes ?? 3;
   // Only the days on show shape the rows: a session on a day nobody asked for adds no line and no gutter label.
   const onShow = input.filter((s) => opts.days.includes(s.day)).map(onAxis);
-  const all = opts.days.flatMap((day) => levelDay(onShow.filter((s) => s.day === day).sort(inOrder)));
+  // Only a day split by mat is levelled. By time, and on a by-mat day too busy for its screen (laid out by time),
+  // every class keeps its own start and end line.
+  const matDays = new Set<number>();
+  const all = opts.days.flatMap((day) => {
+    const real = onShow.filter((s) => s.day === day).sort(inOrder);
+    if (opts.layout !== "mat" || real.length === 0) return real;
+    const level = levelDay(real).sort(inOrder);
+    if (opts.maxTracks !== undefined && dayByMat(day, level, opts.mats, maxLanes).day.tracks > opts.maxTracks) return real;
+    matDays.add(day);
+    return level;
+  });
   const realOf = new Map(all.map((s) => [s.key, s] as const));
 
   // Rows: the distinct start and end minutes of everything on show.
@@ -400,10 +414,7 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
       days.push({ day, tracks: 1, lanes: 1, layout: opts.layout, fellBack: false, columns: [], count: 0 });
       continue;
     }
-    let layout = opts.layout === "mat" ? dayByMat(day, sessions, opts.mats, maxLanes) : dayByTime(day, sessions, maxLanes, false);
-    if (opts.layout === "mat" && opts.maxTracks !== undefined && layout.day.tracks > opts.maxTracks) {
-      layout = dayByTime(day, sessions, maxLanes, true);
-    }
+    const layout = matDays.has(day) ? dayByMat(day, sessions, opts.mats, maxLanes) : dayByTime(day, sessions, maxLanes, opts.layout === "mat");
     days.push(layout.day);
     const dayItems: { startMin: number; item: GridItem }[] = [
       ...layout.sessions.map((p) => ({
