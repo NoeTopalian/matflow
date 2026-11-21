@@ -5,6 +5,10 @@
  * Rows are the REAL times. Every distinct start and end minute of the sessions
  * on show is a row line; a session spans from its start line to its end line,
  * so two sessions that start together start on the same line on every day.
+ * One exception, `levelDay`, on a day split by mat only: classes on at once
+ * that start under half an hour apart are drawn level, from one line. Each
+ * still says its own times. By time every class keeps its own lines, and side
+ * by side the longer class takes the first lane, as it always has.
  * The component sizes each track to its content (`minmax(floorPx, auto)`), so
  * a session is never shorter than its text, and a stretch nobody teaches in
  * collapses to a thin gap or a "No classes" break row.
@@ -72,7 +76,7 @@ export interface GridMore {
   rowEnd: number;
   startMin: number;
   endMin: number;
-  /** The folded sessions, in time then tie order. */
+  /** The folded sessions, in drawn-time then tie order (`inOrder`). */
   keys: string[];
   /** Every session of the cluster, the ones on show included. */
   clusterKeys: string[];
@@ -126,20 +130,99 @@ const DAY_END = 24 * 60;
 const TIME = /^\d{1,2}:\d{2}$/;
 const numeric = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-type Placed = GridSession & { startMin: number; endMin: number };
+/** `startMin` and `endMin` are where the session is DRAWN; `realStartMin` and `realEndMin` are when it runs. */
+type Placed = GridSession & { startMin: number; endMin: number; realStartMin: number; realEndMin: number };
 
 /** Minutes on the day's own axis: an overnight end stops at 24:00, and a time that cannot be read still gets a place. */
 function onAxis(session: GridSession): Placed {
-  if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10 };
+  if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10, realStartMin: 0, realEndMin: 10 };
   const span = spanMinutes(session.startTime, session.endTime);
   const startMin = Math.min(Math.max(span.startMin, 0), DAY_END - 1);
   const endMin = Math.max(Math.min(span.endMin, DAY_END), startMin + 1);
-  return { ...session, startMin, endMin };
+  return { ...session, startMin, endMin, realStartMin: startMin, realEndMin: endMin };
+}
+
+/** Classes on at once that start (or end) less than this many minutes apart are drawn level. */
+export const LEVEL_WITHIN_MIN = 30;
+
+/**
+ * Levelling (Noe, 21 Nov 2026): an 11:00 class on one mat and an 11:20 class
+ * on the next are on at the same time, and drawn to the minute the second sat
+ * a few pixels lower than the first, which read as a mistake. A class is drawn
+ * from the start line of its partner: the class it shares the most time with,
+ * among those on at once that start under `LEVEL_WITHIN_MIN` from it. If that
+ * partner starts after it, it goes to an earlier partner's line only when the
+ * later one can join that line too; otherwise it stays where it is (a short
+ * class that happens to start first does not pull the 11:00 away from the
+ * 11:20). It is never drawn above a class that starts before it. The classes
+ * levelled together also end on one line when their ends are under
+ * `LEVEL_WITHIN_MIN` apart.
+ *
+ * Never at the price of a false clash: a class is only stretched over time in
+ * which every other class of the day that is on also really overlaps it. So
+ * two classes drawn side by side are always two classes really on at once.
+ *
+ * Only a day split by mat is levelled (Noe, 21 Nov 2026): split by time, a
+ * class starts and ends on its own lines.
+ *
+ * Takes one day's sessions in `inOrder`; returns them with the drawn times set.
+ */
+function levelDay(sessions: Placed[]): Placed[] {
+  const out = sessions.map((s) => ({ ...s }));
+  const really = (a: Placed, b: Placed) => a.realStartMin < b.realEndMin && b.realStartMin < a.realEndMin;
+  // True when every other session drawn inside [from, to) really overlaps `s`.
+  const free = (i: number, from: number, to: number) =>
+    out.every((k, j) => j === i || !(k.startMin < to && k.endMin > from) || really(k, out[i]));
+  // The partner: the class it shares the most time with, among those starting under LEVEL_WITHIN_MIN from it either
+  // way (ties: the earliest).
+  const shared = (a: Placed, b: Placed) => Math.min(a.realEndMin, b.realEndMin) - Math.max(a.realStartMin, b.realStartMin);
+  const anchorOf = out.map((_, i) => i);
+  for (let j = 0; j < out.length; j++) {
+    let best = -1;
+    let bestEarlier = -1;
+    for (let k = 0; k < out.length; k++) {
+      if (k === j || !really(out[k], out[j]) || Math.abs(out[k].realStartMin - out[j].realStartMin) >= LEVEL_WITHIN_MIN) continue;
+      if (best === -1 || shared(out[k], out[j]) > shared(out[best], out[j])) best = k;
+      if (k < j && (bestEarlier === -1 || shared(out[k], out[j]) > shared(out[bestEarlier], out[j]))) bestEarlier = k;
+    }
+    if (best === -1) continue;
+    // Sessions are in start order: a partner at a lower index starts first (or together and sorts first).
+    let partner = best;
+    if (best > j) {
+      // Its partner starts after it. It still goes up to an earlier class's line when the later partner can come to
+      // that line as well (11:00, 11:20 and 11:25 all level); otherwise it stays, and the later one comes to it.
+      if (bestEarlier === -1) continue;
+      const line = out[anchorOf[bestEarlier]];
+      if (!really(line, out[best]) || out[best].realStartMin - line.realStartMin >= LEVEL_WITHIN_MIN) continue;
+      partner = bestEarlier;
+    }
+    // The partner may itself have been levelled: this class goes to the same line, if that line is in reach.
+    const a = anchorOf[partner];
+    const later = out[j].realStartMin - out[a].realStartMin;
+    if (later >= LEVEL_WITHIN_MIN || !really(out[a], out[j])) continue;
+    if (later > 0 && !free(j, out[a].realStartMin, out[j].realStartMin)) continue;
+    // Never above a class that starts before it: one that stayed on its own line in between keeps this one down too.
+    if (out.some((k, i) => i < j && k.realStartMin < out[j].realStartMin && k.startMin > out[a].realStartMin)) continue;
+    anchorOf[j] = a;
+    out[j].startMin = out[a].realStartMin;
+  }
+  for (let a = 0; a < out.length; a++) {
+    if (anchorOf[a] !== a) continue;
+    const members = out.map((_, i) => i).filter((i) => anchorOf[i] === a);
+    const end = Math.max(...members.map((i) => out[i].realEndMin));
+    for (const i of members) {
+      const short = end - out[i].realEndMin;
+      if (short > 0 && short < LEVEL_WITHIN_MIN && free(i, out[i].realEndMin, end)) out[i].endMin = end;
+    }
+  }
+  return out;
 }
 
 const inOrder = (a: Placed, b: Placed) =>
   a.startMin - b.startMin ||
   b.endMin - b.startMin - (a.endMin - a.startMin) ||
+  // Drawn level and as long as each other: the one that really starts first comes first, in its lane and in Tab order.
+  a.realStartMin - b.realStartMin ||
   numeric.compare(a.tie, b.tie) ||
   (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
@@ -278,7 +361,19 @@ function dayByMat(day: number, sessions: Placed[], mats: GridMat[], maxLanes: nu
 export function buildTimetableGrid(input: GridSession[], opts: GridOptions): TimetableGrid {
   const maxLanes = opts.maxLanes ?? 3;
   // Only the days on show shape the rows: a session on a day nobody asked for adds no line and no gutter label.
-  const all = input.filter((s) => opts.days.includes(s.day)).map(onAxis);
+  const onShow = input.filter((s) => opts.days.includes(s.day)).map(onAxis);
+  // Only a day split by mat is levelled. By time, and on a by-mat day too busy for its screen (laid out by time),
+  // every class keeps its own start and end line.
+  const matDays = new Set<number>();
+  const all = opts.days.flatMap((day) => {
+    const real = onShow.filter((s) => s.day === day).sort(inOrder);
+    if (opts.layout !== "mat" || real.length === 0) return real;
+    const level = levelDay(real).sort(inOrder);
+    if (opts.maxTracks !== undefined && dayByMat(day, level, opts.mats, maxLanes).day.tracks > opts.maxTracks) return real;
+    matDays.add(day);
+    return level;
+  });
+  const realOf = new Map(all.map((s) => [s.key, s] as const));
 
   // Rows: the distinct start and end minutes of everything on show.
   const lines = [...new Set(all.flatMap((s) => [s.startMin, s.endMin]))].sort((a, b) => a - b);
@@ -304,7 +399,7 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
     }
   }
 
-  // Gutter labels: every start at least 15 minutes after the last labelled one; each runs to the next label.
+  // Gutter labels: every drawn start at least 15 minutes after the last labelled one; each runs to the next label.
   const starts = [...new Set(all.map((s) => s.startMin))].sort((a, b) => a - b);
   const labelled: number[] = [];
   for (const m of starts) if (labelled.length === 0 || m - labelled[labelled.length - 1] >= 15) labelled.push(m);
@@ -319,10 +414,7 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
       days.push({ day, tracks: 1, lanes: 1, layout: opts.layout, fellBack: false, columns: [], count: 0 });
       continue;
     }
-    let layout = opts.layout === "mat" ? dayByMat(day, sessions, opts.mats, maxLanes) : dayByTime(day, sessions, maxLanes, false);
-    if (opts.layout === "mat" && opts.maxTracks !== undefined && layout.day.tracks > opts.maxTracks) {
-      layout = dayByTime(day, sessions, maxLanes, true);
-    }
+    const layout = matDays.has(day) ? dayByMat(day, sessions, opts.mats, maxLanes) : dayByTime(day, sessions, maxLanes, opts.layout === "mat");
     days.push(layout.day);
     const dayItems: { startMin: number; item: GridItem }[] = [
       ...layout.sessions.map((p) => ({
@@ -350,8 +442,9 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
           span: f.span,
           rowStart: lineOf(f.startMin),
           rowEnd: lineOf(f.endMin),
-          startMin: f.startMin,
-          endMin: f.endMin,
+          // What the button says: when the folded sessions really run, not where they are drawn.
+          startMin: Math.min(...f.keys.map((key) => realOf.get(key)?.realStartMin ?? f.startMin)),
+          endMin: Math.max(...f.keys.map((key) => realOf.get(key)?.realEndMin ?? f.endMin)),
           keys: f.keys,
           clusterKeys: f.clusterKeys,
           clusterRowStart: lineOf(f.clusterStartMin),

@@ -217,7 +217,9 @@ export function gridInvariants(page, { sessions, grid: testId = "week-grid", wit
       const part = (p) => button?.querySelector(`[${partAttr}="${p}"]`) ?? null;
       const label = button?.getAttribute("aria-label") ?? "";
       const t = /(\d\d):(\d\d)/.exec(part("time")?.textContent ?? "");
-      return { cell, button, label, day: cell.closest("[data-day]")?.getAttribute("data-day"), start: t ? Number(t[1]) * 60 + Number(t[2]) : null, time: part("time"), name: part("name"), place: part("place"), r: button ? R(button) : null };
+      // The end comes from the accessible name ("…, Monday 18:40 to 19:30, …"): a narrow chip shows only its start.
+      const e = / to (\d\d):(\d\d)/.exec(label);
+      return { cell, button, label, day: cell.closest("[data-day]")?.getAttribute("data-day"), start: t ? Number(t[1]) * 60 + Number(t[2]) : null, end: e ? Number(e[1]) * 60 + Number(e[2]) : null, time: part("time"), name: part("name"), place: part("place"), r: button ? R(button) : null };
     });
     for (const c of chips) {
       if (!c.button || !c.r) { problems.push("a cell has no chip"); continue; }
@@ -249,13 +251,23 @@ export function gridInvariants(page, { sessions, grid: testId = "week-grid", wit
       }
     }
     const placed = chips.filter((c) => c.r && c.start !== null);
+    // Drawn level with an earlier class of its day: it starts on that class's line (the cell's own `data-row-start`), not its own time's.
+    const line = (c) => c.cell.getAttribute("data-row-start");
+    // The class it was levelled with may be folded behind a "+N more" that starts on the same line.
+    const pulled = (c) => placed.some((o) => o !== c && o.day === c.day && o.start < c.start && line(o) === line(c)) ||
+      [...grid.querySelectorAll("[data-cell-more]")].some((m) => m.closest("[data-day]")?.getAttribute("data-day") === c.day && m.getAttribute("data-row-start") === line(c));
     for (let i = 0; i < placed.length; i++) {
       for (let j = i + 1; j < placed.length; j++) {
         const a = placed[i], b = placed[j];
         const [early, late] = a.start <= b.start ? [a, b] : [b, a];
+        // A class drawn level with an earlier one on at once (lib/timetable-grid `levelDay`) leaves its own time's
+        // line, so it is only compared with the classes of its own day.
+        if (a.day !== b.day && (pulled(a) || pulled(b))) continue;
         if (early.start === late.start && Math.abs(early.r.top - late.r.top) > 1) problems.push(`${early.label} and ${late.label}: same start, tops ${early.r.top.toFixed(1)} and ${late.r.top.toFixed(1)}`);
         if (late.start > early.start && late.r.top < early.r.top - 1) problems.push(`${late.label} starts later than ${early.label} but sits higher`);
-        if (late.start - early.start > 10 && late.r.top <= early.r.top + 1) problems.push(`${late.label} starts over ten minutes after ${early.label} but is not lower`);
+        // Levelling (lib/timetable-grid `levelDay`): on the same day, two classes on at once that start under half an hour apart may share a line.
+        const levelled = early.day === late.day && line(early) === line(late) && late.start - early.start < 30 && early.end !== null && late.start < early.end;
+        if (late.start - early.start > 10 && late.r.top <= early.r.top + 1 && !levelled) problems.push(`${late.label} starts over ten minutes after ${early.label} but is not lower`);
       }
     }
     // "+N more" buttons take a place on the grid like any chip: tall enough, inside their day, on top of nothing.
