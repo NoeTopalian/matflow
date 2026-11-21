@@ -58,6 +58,7 @@ import {
   StepUpRefusedError,
   consumeStepUpGrant,
   findAppliedGrant,
+  grantCoversChange,
   refuseStepUp,
   requireStepUp,
   stepUpTarget,
@@ -112,13 +113,14 @@ function holderOf(claim: Exclude<LoginIdentityClaim, { kind: "none" }>) {
 /**
  * The recorded result of THIS operator's grant for THIS member, if its change
  * committed — read only (nothing is verified as spendable, nothing is spent).
- * The grant's signature binds the operator, action and target; its nonce hash
- * is the outcome row's request id.
+ * The grant's signature binds the operator, action, target and the change
+ * (the new address); its nonce hash is the outcome row's request id.
  */
-async function appliedOutcome(req: Request, operatorId: string, tenantId: string, target: string) {
+async function appliedOutcome(req: Request, operatorId: string, tenantId: string, target: string, newEmail: string) {
   const token = req.headers.get(STEP_UP_HEADER);
   const payload = token ? verifyStepUpGrantToken(token) : null;
   if (!payload || payload.op !== operatorId || payload.act !== "member.contact_email" || payload.tgt !== target) return null;
+  if (!grantCoversChange(payload, "member.contact_email", { newEmail })) return null;
   return withRlsBypass((tx) =>
     findAppliedGrant(tx, { tenantId, actions: [OUTCOME], requestId: sha256Hex(payload.n) }),
   );
@@ -174,7 +176,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (pre.kind !== "ok") {
     // A lost-response re-send of a grant whose change already committed lands
     // here (the address is now the new one): answer it from the record.
-    const applied = await appliedOutcome(req, ctx.operatorId, tenantId, target);
+    const applied = await appliedOutcome(req, ctx.operatorId, tenantId, target, newEmail);
     if (applied) return json({ ok: true, alreadyApplied: true, ...applied });
   }
   if (pre.kind === "managed_record") return json({ error: MANAGED_RECORD_MESSAGE, result: "managed" }, 409);
