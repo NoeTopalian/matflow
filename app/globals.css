@@ -866,6 +866,10 @@ option {
 /* One hairline under the lowest pinned row. */
 .pg-grid:not([data-mats]) .pg-head,
 .pg-grid[data-mats] .pg-mat { box-shadow: 0 1px 0 var(--bd-default); }
+/* No gap between the two pinned rows: a class scrolling under them showed
+   through it as a coloured line. The header paints 2 px below itself, which
+   also covers a hairline left by rounding on a scaled display. */
+.pg-grid[data-mats] .pg-head { box-shadow: 0 2px 0 var(--pg-pin-bg); }
 .pg-empty {
   grid-row: 3 / -1;
   grid-column: calc(var(--d) + 1) / span var(--dt);
@@ -896,6 +900,8 @@ option {
   .pg-day > .pg-empty { grid-column: 1 / -1; }
   .pg-day > .pg-mat,
   .pg-day > .pg-cell { grid-column: var(--c) / span var(--s); }
+  /* The day card's 1 px top border comes out of the header's row: pinned, the header is 43 px tall, not 44. */
+  .pg-grid:not([data-one-day]) .pg-day > .pg-mat { top: 43px; }
 }
 
 /* One day (PosterDay): the staff phone's day and the members' day. The same
