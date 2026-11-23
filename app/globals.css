@@ -639,7 +639,7 @@ option {
   /* ── Landing page (public marketing) ─────────────────────────────────────
      The landing sections are server components (speed pass B1) — hover and
      entrance motion live here as CSS instead of framer-motion + JS handlers.
-     The global prefers-reduced-motion block above neutralises the animations. */
+     Reduced motion is honoured at the end of this block. */
   /* Palette and type for the landing page, defined once (UI-RULES §2: a public
      surface owns its palette). The four colours are the brand kit's
      (brand/MATFLOW-STUDIO-LOGO-GUIDE.md): black ground, off-white ink, blue for
@@ -740,6 +740,12 @@ option {
      app-wide (breaking scrollIntoView-then-measure logic and Next's router
      scroll restoration). */
   html:has(#landing-root) { scroll-behavior: smooth; }
+  /* The global reduced-motion block names other classes, so the entrance
+     rise and the smooth anchor scroll are switched off here. */
+  @media (prefers-reduced-motion: reduce) {
+    .land-rise { animation: none; }
+    html:has(#landing-root) { scroll-behavior: auto; }
+  }
   section[id] { scroll-margin-top: 5rem; }
 }
 /* ── Member top bar: fill the overscroll strip ──────────────────────────────
