@@ -16,7 +16,7 @@ export function Hero() {
             wider than the page column (a centred flex child overflows equally
             on both sides) and its empty top and bottom margins are pulled in;
             the section clips the overhang. */}
-        <div className="flex justify-center mb-10 lg:mb-14 land-rise">
+        <div id="landing-hero-logo" className="flex justify-center mb-10 lg:mb-14 land-rise">
           <Image
             src={mainLogo}
             alt="MatFlow.Studio"

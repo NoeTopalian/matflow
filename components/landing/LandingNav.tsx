@@ -19,11 +19,24 @@ const SECTION_LINKS = [
 export function LandingNav() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  // The opening shows the full logo large, so the short logo in the bar would
+  // only repeat it. It appears once the large one has scrolled under the bar.
+  const [pastHeroLogo, setPastHeroLogo] = useState(false);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
+    const onScroll = () => {
+      setScrolled(window.scrollY > 24);
+      const heroLogo = document.getElementById("landing-hero-logo");
+      // 64 px is the height of the bar. A page without the large logo shows the short one.
+      setPastHeroLogo(heroLogo ? heroLogo.getBoundingClientRect().bottom < 64 : true);
+    };
+    // Once on arrival too: a visitor can land part-way down the page on a section link.
+    const first = requestAnimationFrame(onScroll);
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    return () => {
+      cancelAnimationFrame(first);
+      window.removeEventListener("scroll", onScroll);
+    };
   }, []);
 
   return (
@@ -36,7 +49,15 @@ export function LandingNav() {
             up and the plain-bar version below that, so a phone gets the plain
             bar. Both files carry about 12% of empty margin each side; the
             negative margin lines the lettering up with the page gutter. */}
-        <Link href="/" aria-label="MatFlow.Studio home" className="flex items-center shrink-0">
+        <Link
+          href="/"
+          aria-label="MatFlow.Studio home"
+          aria-hidden={pastHeroLogo ? undefined : true}
+          tabIndex={pastHeroLogo ? undefined : -1}
+          className={`flex items-center shrink-0 transition-opacity duration-300 motion-reduce:transition-none ${
+            pastHeroLogo ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
           <Image
             src={shortLogoSmall}
             alt="MatFlow.Studio"

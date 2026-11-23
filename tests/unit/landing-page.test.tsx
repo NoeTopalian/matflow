@@ -5,7 +5,7 @@
 // out; how it looks at desktop and phone width is the browser run's job.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import React from "react";
 import { LandingNav } from "@/components/landing/LandingNav";
 import { Hero } from "@/components/landing/Hero";
@@ -115,6 +115,47 @@ describe("the two doors", () => {
     render(<Page />);
     expect(new Set(hrefs(/^Apply/))).toEqual(new Set(["/apply"]));
     expect(hrefs("Find my gym")).toEqual(["/#find-my-gym", "/#find-my-gym"]);
+  });
+});
+
+describe("short logo in the top bar", () => {
+  const homeLink = (c: HTMLElement) => c.querySelector('a[aria-label="MatFlow.Studio home"]') as HTMLElement;
+  const frame = () => act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+  /** jsdom lays nothing out, so the large logo is told where it is. */
+  function placeHeroLogo(c: HTMLElement, bottom: number) {
+    const hero = c.querySelector("#landing-hero-logo") as HTMLElement;
+    hero.getBoundingClientRect = () => ({ bottom }) as DOMRect;
+  }
+
+  it("is hidden, and out of the keyboard order, while the large logo is on screen", async () => {
+    const { container } = render(<Page />);
+    placeHeroLogo(container, 400);
+    await frame();
+    const link = homeLink(container);
+    expect(link.getAttribute("aria-hidden")).toBe("true");
+    expect(link.getAttribute("tabindex")).toBe("-1");
+    expect(link.className).toContain("opacity-0 pointer-events-none");
+  });
+
+  it("appears once the large logo has scrolled under the bar, and hides again on the way back", async () => {
+    const { container } = render(<Page />);
+    placeHeroLogo(container, 400);
+    await frame();
+    placeHeroLogo(container, 10);
+    fireEvent.scroll(window);
+    const link = homeLink(container);
+    expect(link.getAttribute("aria-hidden")).toBeNull();
+    expect(link.getAttribute("tabindex")).toBeNull();
+    expect(link.className).toContain("opacity-100");
+    placeHeroLogo(container, 400);
+    fireEvent.scroll(window);
+    expect(homeLink(container).getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("is shown on a page that has no large logo", async () => {
+    const { container } = render(<LandingNav />);
+    await frame();
+    expect(homeLink(container).getAttribute("aria-hidden")).toBeNull();
   });
 });
 

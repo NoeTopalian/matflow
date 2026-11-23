@@ -35,9 +35,10 @@ const srcOf = (img: HTMLElement) => decodeURIComponent(img.getAttribute("src") ?
 afterEach(cleanup);
 
 describe("landing page logo", () => {
-  it("the top bar links home with the short logo, named MatFlow.Studio", () => {
+  it("the top bar links home with the short logo, named MatFlow.Studio", async () => {
     render(<LandingNav />);
-    const home = screen.getByRole("link", { name: "MatFlow.Studio home" });
+    // Shown one frame after arrival, once the bar has looked for the large logo.
+    const home = await screen.findByRole("link", { name: "MatFlow.Studio home" });
     expect(home.getAttribute("href")).toBe("/");
     // Two drawings, one shown at a time: the plain bar on a phone, the striped
     // belt from 640 px, as the brand guide sizes them.
