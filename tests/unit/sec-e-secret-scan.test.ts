@@ -125,12 +125,12 @@ describe("the fail-closed allowlist (external review of PR #30, 14 Oct 2026)", (
     expect(Array.isArray(list)).toBe(true);
     // Exactly these: the documented demo-seed entry, and four invented test values that stopped being exempt on
     // 23 Nov 2026 when a value containing "fake" was no longer a placeholder for that alone. Adding one is a decision.
-    expect(list.map((e: { fingerprint: string; path: string }) => `${e.fingerprint}@${e.path}`)).toEqual([
-      "b94e8093ff12@scripts/seed-demo-rich.mjs",
-      "f8076ca9050b@tests/unit/migration-rehearsal-guards.test.ts",
-      "5c721c64abb6@tests/unit/migration-rehearsal-guards.test.ts",
-      "305865420650@tests/unit/sec-c2-upload-controls.test.ts",
-      "305865420650@docs/security/evidence/R5/scripts/zz-r5-upload.test.ts.txt",
+    expect(list.map((e: { fingerprint: string; rule: string; path: string }) => `${e.fingerprint} ${e.rule} ${e.path}`)).toEqual([
+      "b94e8093ff12 generic-secret-assignment scripts/seed-demo-rich.mjs",
+      "f8076ca9050b postgres-url-with-password tests/unit/migration-rehearsal-guards.test.ts",
+      "5c721c64abb6 postgres-url-with-password tests/unit/migration-rehearsal-guards.test.ts",
+      "305865420650 vercel-blob-token tests/unit/sec-c2-upload-controls.test.ts",
+      "305865420650 vercel-blob-token docs/security/evidence/R5/scripts/zz-r5-upload.test.ts.txt",
     ]);
   });
 

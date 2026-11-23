@@ -68,6 +68,9 @@ describe("a credential is not exempt merely because it contains 1234, example, f
   it.each([
     ["a name followed by 1234", "Marlowe1234"],
     ["a name, 1234 and a symbol", "Marlowe1234!"],
+    ["a credential word followed by 1234", "Password1234"],
+    ["test1234", "test1234"],
+    ["nothing but a digit run", "12345678"],
     ["words around 'example'", "gym-example-2026"],
     ["a word starting Fake", "Fakenham-road-7"],
     ["a word starting dummy", "dummyrun-tuesday"],
@@ -93,7 +96,6 @@ describe("a credential is not exempt merely because it contains 1234, example, f
     ["marker and credential words only", "my-example-password"],
     ["marker and credential words only, camel case", "FakeTokenValue1234"],
     ["dummy key", "dummy-api-key"],
-    ["test1234", "test1234"],
     ["a strong marker beside a weak one", "replace-with-example-1234"],
     ["not-a-real", "not-a-real-key-1234"],
   ])("still a placeholder: %s", (_l, value) => {
@@ -105,6 +107,16 @@ describe("a credential is not exempt merely because it contains 1234, example, f
       expect(k.length, text.slice(0, 12)).toBeGreaterThan(0);
       expect(k.filter((x: string) => !x.endsWith(":placeholder")), `${loc}: ${k.join(",")}`).toEqual([]);
     }
+  });
+
+  it("a word in another script is a word: it is not dropped before the filler check", () => {
+    const f = scanText(join("SMTP", "_PASSWORD=fake-пароль-7\n"), ".env.production");
+    expect(f.map((x: F) => x.classification)).toEqual(["candidate"]);
+  });
+
+  it("a marker in the middle of a random-looking token still leaves a candidate when another marker follows it", () => {
+    const f = scanText(join("SMTP", "_PASSWORD=MbqRtWzLoPnV", "dummy", "probe\n"), ".env.production");
+    expect(f.map((x: F) => x.classification)).toEqual(["candidate"]);
   });
 
   it("in source (not a config file) a readable value with a marker is `literal`, as any readable value is: counted, never hidden", () => {
