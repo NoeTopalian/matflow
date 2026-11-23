@@ -50,7 +50,7 @@ export function LandingNav() {
             height={48}
             unoptimized
             priority
-            className="sm:hidden -ml-4"
+            className="sm:hidden -ml-4 max-w-none"
           />
           <Image
             src={shortLogo}
@@ -59,7 +59,7 @@ export function LandingNav() {
             height={64}
             unoptimized
             priority
-            className="hidden sm:block -ml-5"
+            className="hidden sm:block -ml-5 max-w-none"
           />
         </Link>
 

@@ -41,6 +41,10 @@ describe("landing page logo", () => {
     const [small, striped] = within(home).getAllByRole("img", { name: "MatFlow.Studio" });
     expect(srcOf(small)).toContain("matflow-short-small-on-dark");
     expect(small.className).toContain("sm:hidden");
+    // max-w-none: the negative margin narrows the link, and the default
+    // max-width of 100% would shrink the drawing by the same amount.
+    expect(small.className).toContain("max-w-none");
+    expect(striped.className).toContain("max-w-none");
     expect(Number(small.getAttribute("width"))).toBeLessThan(140);
     expect(srcOf(striped)).toContain("matflow-short-on-dark");
     expect(striped.className).toContain("hidden sm:block");
