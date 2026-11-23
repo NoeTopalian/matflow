@@ -11,29 +11,32 @@ export function Hero() {
   return (
     <section className="relative overflow-hidden">
       <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-14 pb-20 lg:pt-20 lg:pb-28">
+        {/* The logo, large and centred above both doors. The file is 640 x 260
+            with the drawing in the middle 56% of its width, so it is laid out
+            wider than the page column (a centred flex child overflows equally
+            on both sides) and its empty top and bottom margins are pulled in;
+            the section clips the overhang. */}
+        <div className="flex justify-center mb-10 lg:mb-14 land-rise">
+          <Image
+            src={mainLogo}
+            alt="MatFlow.Studio"
+            width={1040}
+            height={423}
+            unoptimized
+            priority
+            className="shrink-0"
+            style={{
+              width: "min(65rem, 165%)",
+              maxWidth: "none",
+              height: "auto",
+              marginTop: "calc(min(65rem, 165%) * -0.085)",
+              marginBottom: "calc(min(65rem, 165%) * -0.03)",
+            }}
+          />
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-14 lg:gap-12 items-center">
           <div className="lg:col-span-7">
-            {/* The file is 640 x 260 with the logo in the middle 56% of its
-                width, so it is drawn wider than the column and pulled left and
-                up by its own empty margin; the section clips the overhang. */}
-            <div className="mb-8 land-rise">
-              <Image
-                src={mainLogo}
-                alt="MatFlow.Studio"
-                width={560}
-                height={228}
-                unoptimized
-                priority
-                style={{
-                  width: "min(35rem, 135%)",
-                  maxWidth: "none",
-                  height: "auto",
-                  marginLeft: "calc(min(35rem, 135%) * -0.215)",
-                  marginTop: "calc(min(35rem, 135%) * -0.09)",
-                }}
-              />
-            </div>
-
             <h1 className="land-display text-5xl sm:text-6xl lg:text-7xl leading-[1.02] mb-6 land-rise land-rise-2">
               Run your academy from the mat.
             </h1>
