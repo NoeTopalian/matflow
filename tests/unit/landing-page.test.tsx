@@ -7,31 +7,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import React from "react";
+import Page from "@/app/page";
 import { LandingNav } from "@/components/landing/LandingNav";
-import { Hero } from "@/components/landing/Hero";
 import { MemberDoor } from "@/components/landing/MemberDoor";
-import { FeaturesGrid } from "@/components/landing/FeaturesGrid";
-import { HowItWorks } from "@/components/landing/HowItWorks";
-import { PricingSection } from "@/components/landing/PricingSection";
-import { FinalCTA } from "@/components/landing/FinalCTA";
-import { LandingFooter } from "@/components/landing/LandingFooter";
+import { normaliseClubCode } from "@/lib/club-code";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
-
-function Page() {
-  return (
-    <main>
-      <LandingNav />
-      <Hero />
-      <FeaturesGrid />
-      <HowItWorks />
-      <PricingSection />
-      <FinalCTA />
-      <LandingFooter />
-    </main>
-  );
-}
+// The real page is rendered, so a section or the root id dropped from app/page.tsx fails here.
+// next/font only runs under the Next compiler; the page needs nothing from it but a class name.
+vi.mock("next/font/google", () => ({
+  Inter: () => ({ variable: "font-body-var" }),
+  Protest_Strike: () => ({ variable: "font-display-var" }),
+}));
 
 const hrefs = (name: string | RegExp) =>
   screen.getAllByRole("link", { name }).map((a) => a.getAttribute("href"));
@@ -70,6 +58,17 @@ describe("member door", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("survives a pasted link with a broken escape, and strips anything that is not a code", () => {
+    render(<MemberDoor />);
+    expect(() => fireEvent.change(box(), { target: { value: "https://matflow.studio/login?club=%" } })).not.toThrow();
+    expect(normaliseClubCode("?club=%")).toBe("");
+    fireEvent.change(box(), { target: { value: "https://evil.example/login?club=<script>alert(1)</script>&next=//evil.example" } });
+    go();
+    // Only letters, digits and hyphens survive, and the destination is always this site's /login.
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0][0]).toMatch(/^\/login\?club=[a-z0-9-]+$/);
+  });
+
   it("still works as a plain form when scripts do not run", () => {
     const { container } = render(<MemberDoor />);
     const form = container.querySelector("form") as HTMLFormElement;
@@ -100,6 +99,15 @@ describe("the two doors", () => {
       "Apply for your club",
     ]);
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
+    expect(document.getElementById("landing-menu")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open menu" }).getAttribute("aria-controls")).toBeNull();
+  });
+
+  it("choosing Find my gym closes the open phone menu, which would cover the club code box", () => {
+    render(<LandingNav />);
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    expect(screen.getByRole("button", { name: "Close menu" }).getAttribute("aria-controls")).toBe("landing-menu");
+    fireEvent.click(screen.getByRole("link", { name: "Find my gym" }));
     expect(document.getElementById("landing-menu")).toBeNull();
   });
 
@@ -160,6 +168,15 @@ describe("short logo in the top bar", () => {
 });
 
 describe("page content", () => {
+  it("is the real page: the root the landing styles hang on, with both type faces", () => {
+    const { container } = render(<Page />);
+    const root = container.querySelector("main#landing-root") as HTMLElement;
+    expect(root).not.toBeNull();
+    expect(root.className).toContain("font-body-var");
+    expect(root.className).toContain("font-display-var");
+    expect(root.querySelectorAll(":scope > nav, :scope > section, :scope > footer").length).toBe(7);
+  });
+
   it("has one main heading and a heading per section", () => {
     render(<Page />);
     expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual([
@@ -212,7 +229,7 @@ describe("page content", () => {
     const { container } = render(<Page />);
     const text = container.textContent ?? "";
     // Card payments by members are not switched on; emails to members are off.
-    expect(text).not.toMatch(/Stripe|pay online|card payment|invite/);
+    expect(text).not.toMatch(/Stripe|pay online|card payment|invite/);
     // Engineer vocabulary and the old single-sport framing.
     expect(text).not.toMatch(/HMAC|RLS|row-level|idempotent|webhook|PWA|tenant|BJJ/i);
     // No dashes used as punctuation.

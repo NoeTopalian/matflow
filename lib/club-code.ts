@@ -13,7 +13,10 @@ export function normaliseClubCode(raw: string): string {
   let s = (raw ?? "").trim();
   if (!s) return "";
   const param = s.match(/[?&]club=([^&#\s]+)/i);
-  if (param) s = decodeURIComponent(param[1]);
+  if (param) {
+    // A broken escape ("?club=%") would throw; keep the text as typed and let the filter below clean it.
+    try { s = decodeURIComponent(param[1]); } catch { s = param[1]; }
+  }
   else if (/^(https?:\/\/|[a-z0-9.-]+\.[a-z]{2,}\/)/i.test(s) || s.includes("/")) {
     const segments = s.replace(/[?#].*$/, "").split("/").filter(Boolean);
     const last = segments[segments.length - 1] ?? "";

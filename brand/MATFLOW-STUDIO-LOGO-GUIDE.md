@@ -92,6 +92,10 @@ The logo files contain no live text, so no font needs to load for them.
 <link rel="apple-touch-icon" href="/brand/png/apple-touch-icon-180.png">
 ```
 
+## Changed in this repository
+
+The three dark files (`matflowstudio-logo-on-dark.svg`, `matflow-short-on-dark.svg`, `matflow-short-small-on-dark.svg`) differ from the original kit in one place, at the owner's request (23 Nov 2026): the black bar on the belt is cut out of the belt, where the kit painted a near-black rectangle over it, and it keeps a hairline off-white edge along its top and bottom. Lettering, stripes, colours and proportions are the kit's. The light and all-white files are untouched.
+
 ## Not done
 
 - No trademark search has been carried out on the name or the logo.

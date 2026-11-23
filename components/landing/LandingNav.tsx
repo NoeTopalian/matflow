@@ -64,7 +64,6 @@ export function LandingNav() {
             width={131}
             height={48}
             unoptimized
-            priority
             className="sm:hidden -ml-4 max-w-none"
           />
           <Image
@@ -73,7 +72,6 @@ export function LandingNav() {
             width={175}
             height={64}
             unoptimized
-            priority
             className="hidden sm:block -ml-5 max-w-none"
           />
         </Link>
@@ -91,6 +89,7 @@ export function LandingNav() {
         <div className="flex items-center gap-2">
           <Link
             href="/#find-my-gym"
+            onClick={() => setOpen(false)}
             className="land-btn-ghost inline-flex items-center px-4 min-h-11 rounded-xl text-sm font-semibold"
           >
             Find my gym
@@ -105,7 +104,7 @@ export function LandingNav() {
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            aria-controls="landing-menu"
+            aria-controls={open ? "landing-menu" : undefined}
             aria-label={open ? "Close menu" : "Open menu"}
             className="land-menu-toggle md:hidden w-11 h-11 rounded-xl flex flex-col items-center justify-center gap-[5px]"
           >

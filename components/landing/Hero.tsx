@@ -23,7 +23,7 @@ export function Hero() {
             width={1040}
             height={423}
             unoptimized
-            priority
+            preload
             className="shrink-0"
             style={{
               width: "min(65rem, 165%)",

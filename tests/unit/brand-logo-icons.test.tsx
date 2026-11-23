@@ -121,9 +121,12 @@ describe("icon set", () => {
     expect(pngSize(publicFile(apple))).toEqual({ width: 180, height: 180 });
     expect(pngSize("app/icon.png").width).toBe(pngSize("app/icon.png").height);
     expect(existsSync(resolve(ROOT, "app/favicon.ico"))).toBe(true);
-    // The layout must not list its own tab icons: they would outrank the plain
-    // MF tile in app/ with the STUDIO-patch tile, which is unreadable at 16 px.
-    expect(icons).not.toMatch(/icon:/);
+    // The only tab icon the layout lists is the plain MF tile. Next adds
+    // app/icon.png by itself only when a layout sets no icons at all, and the
+    // STUDIO-patch tiles under /icons/ are unreadable at 16 px.
+    const listed = [...icons.matchAll(/url: "([^"]+)"/g)].map((m) => m[1]);
+    expect(listed).toEqual(["/icon.png"]);
+    expect(icons).not.toContain("/icons/");
   });
 
   it("the installed app is still called MatFlow under its icon", () => {
