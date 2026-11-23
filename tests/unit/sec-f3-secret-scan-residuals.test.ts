@@ -110,7 +110,7 @@ describe("a credential is not exempt merely because it contains 1234, example, f
   });
 
   it("a word in another script is a word: it is not dropped before the filler check", () => {
-    const f = scanText(join("SMTP", "_PASSWORD=fake-пароль-7\n"), ".env.production");
+    const f = scanText(join("SMTP", "_PASSWORD=fake-пароль\n"), ".env.production");
     expect(f.map((x: F) => x.classification)).toEqual(["candidate"]);
   });
 
