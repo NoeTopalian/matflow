@@ -440,8 +440,8 @@ try {
       const mobile = await context(browser, `10.94.6.${width === 375 ? 30 : 31}`, { viewport: { width, height: 812 }, isMobile: true, hasTouch: true, storageState: await ctx.storageState(), timezoneId: "Europe/London" });
       const phone = await mobile.newPage();
       const before = errors.length;
-      const wasFrozen = frozen;
-      frozen = false;
+      // The phone page reports its own errors below, always. The flag is left alone: the desktop page is still open on
+      // its frozen clock, and its mismatch from the reload just above can arrive after this section has started.
       phone.on("pageerror", (e) => errors.push(`${new URL(phone.url()).pathname}: ${e.message}`));
       try {
         await phone.goto("about:blank");
@@ -473,7 +473,6 @@ try {
         expect(errors.slice(before)).toEqual([]);
         return { rows: heights.length, minRowHeight: Math.min(...heights), counts, sideways };
       } finally {
-        frozen = wasFrozen;
         await mobile.close();
       }
     });

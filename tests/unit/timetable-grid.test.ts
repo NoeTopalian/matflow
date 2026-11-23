@@ -391,3 +391,161 @@ describe("sliver rows", () => {
     expect(rowsOf([s("short", 1, "12:00", "12:10"), s("long", 6, "11:20", "12:50")]).map((r) => r[2])).toEqual([false, false, false]);
   });
 });
+
+describe("levelling: classes on at once that start under half an hour apart are drawn level", () => {
+  const MATS = [{ id: "m1" }, { id: "m2" }];
+  const byMat = (sessions: GridSession[], days = [6]) => buildTimetableGrid(sessions, { days, layout: "mat", mats: MATS });
+
+  it("Noe's Saturday: 11:00-12:00 on Mat 2 and 11:20-12:10 on Mat 1 start and end on the same lines", () => {
+    const g = byMat([s("junior", 6, "11:00", "12:00", "", "m2"), s("beginners", 6, "11:20", "12:10", "", "m1")]);
+    expect(session(g, "beginners").rowStart).toBe(session(g, "junior").rowStart);
+    expect(session(g, "beginners").rowEnd).toBe(session(g, "junior").rowEnd);
+    // One row, one gutter label: no 11:20 line is left behind.
+    expect(g.rows.map((r) => [r.fromMin, r.toMin])).toEqual([[660, 730]]);
+    expect(g.ticks.map((t) => t.minute)).toEqual([660]);
+    // Each still sits under its own mat.
+    expect(session(g, "beginners").col).toBe(1);
+    expect(session(g, "junior").col).toBe(2);
+  });
+
+  it("only inside the day: the same times on two different days keep their own lines", () => {
+    const apart = byMat([s("a", 6, "11:00", "12:00"), s("b", 1, "11:20", "12:10")], [1, 6]);
+    expect(session(apart, "b").rowStart).toBeGreaterThan(session(apart, "a").rowStart);
+  });
+
+  it("split by time nothing is levelled: every class starts and ends on its own line", () => {
+    const g = byTime([s("a", 6, "11:00", "12:00"), s("b", 6, "11:20", "12:10")]);
+    expect(session(g, "b").rowStart).toBeGreaterThan(session(g, "a").rowStart);
+    expect(session(g, "b").rowEnd).toBeGreaterThan(session(g, "a").rowEnd);
+    expect(g.ticks.map((t) => t.minute)).toEqual([660, 680]);
+  });
+
+  it("a by-mat day too busy for its screen is laid out by time, so it is not levelled either", () => {
+    const sessions = [s("a", 6, "11:00", "12:00", "1", "m1"), s("b", 6, "11:00", "12:00", "2", "m1"), s("c", 6, "11:00", "12:00", "3", "m1"), s("d", 6, "11:20", "12:10", "4", "m2")];
+    const g = buildTimetableGrid(sessions, { days: [6], layout: "mat", mats: MATS, maxTracks: 3, maxLanes: 4 });
+    expect(day(g, 6).fellBack).toBe(true);
+    expect(session(g, "d").rowStart).toBeGreaterThan(session(g, "a").rowStart);
+    expect(g.ticks.map((t) => t.minute)).toEqual([660, 680]);
+    // With room for its tracks the same day is by mat, and level.
+    const wide = buildTimetableGrid(sessions, { days: [6], layout: "mat", mats: MATS, maxLanes: 4 });
+    expect(session(wide, "d").rowStart).toBe(session(wide, "a").rowStart);
+  });
+
+  it("thirty minutes or more apart stays staggered", () => {
+    const g = byMat([s("a", 6, "11:00", "12:00"), s("b", 6, "11:30", "12:30")]);
+    expect(session(g, "b").rowStart).toBeGreaterThan(session(g, "a").rowStart);
+    expect(session(g, "b").rowEnd).toBeGreaterThan(session(g, "a").rowEnd);
+  });
+
+  it("levels the start but not the end when the ends are half an hour or more apart", () => {
+    const g = byMat([s("a", 6, "11:00", "12:00"), s("b", 6, "11:20", "12:45")]);
+    expect(session(g, "b").rowStart).toBe(session(g, "a").rowStart);
+    expect(session(g, "b").rowEnd).toBeGreaterThan(session(g, "a").rowEnd);
+  });
+
+  it("classes that follow each other are never levelled, however close", () => {
+    const g = byMat([s("a", 6, "11:00", "11:20"), s("b", 6, "11:20", "12:10")]);
+    expect(session(g, "b").rowStart).toBe(session(g, "a").rowEnd);
+    expect(session(g, "b").col).toBe(session(g, "a").col);
+  });
+
+  it("does not stretch a class over one it does not clash with", () => {
+    // Mat 1: 10:30-11:10 then 11:20-12:10. Mat 2: 11:00-12:00. Pulling the 11:20 up to 11:00 would draw it over the 10:30.
+    const g = byMat([s("early", 6, "10:30", "11:10", "", "m1"), s("junior", 6, "11:00", "12:00", "", "m2"), s("beginners", 6, "11:20", "12:10", "", "m1")]);
+    expect(session(g, "beginners").rowStart).toBeGreaterThan(session(g, "junior").rowStart);
+    expect(session(g, "beginners").rowStart).toBeGreaterThanOrEqual(session(g, "early").rowEnd);
+    // Nor its end over the class after it: Mat 2's 12:00 class blocks the 11:00 from running to 12:10.
+    const h = byMat([s("junior", 6, "11:00", "12:00", "", "m2"), s("beginners", 6, "11:20", "12:10", "", "m1"), s("next", 6, "12:00", "13:00", "", "m2")]);
+    expect(session(h, "beginners").rowStart).toBe(session(h, "junior").rowStart);
+    expect(session(h, "junior").rowEnd).toBe(session(h, "next").rowStart);
+    expect(session(h, "junior").rowEnd).toBeLessThan(session(h, "beginners").rowEnd);
+  });
+
+  it("a class levels with the one it shares the most time with: an earlier short class does not pull the 11:00 away from the 11:20", () => {
+    // In one column, a 10:45-11:15 beside an 11:00-12:00 that runs forty minutes beside an 11:20-12:10.
+    const g = byMat([s("kids", 6, "10:45", "11:15"), s("adults", 6, "11:00", "12:00"), s("beginners", 6, "11:20", "12:10")]);
+    // The 11:00 is not pulled up to the 10:45: its partner is the 11:20.
+    expect(session(g, "adults").rowStart).toBeGreaterThan(session(g, "kids").rowStart);
+    // And the 11:20 cannot go to 11:00 here, because the 10:45 is still on then and ends before the 11:20 starts:
+    // drawn level they would read as three at once. So this day is drawn to the minute, as before.
+    expect(session(g, "beginners").rowStart).toBeGreaterThan(session(g, "adults").rowStart);
+    expect(g.ticks.map((t) => t.minute)).toEqual([645, 660, 680]);
+    // Without the 10:45 running into it, the pair levels.
+    const h = byMat([s("kids", 6, "10:15", "10:55"), s("adults", 6, "11:00", "12:00"), s("beginners", 6, "11:20", "12:10")]);
+    expect(session(h, "beginners").rowStart).toBe(session(h, "adults").rowStart);
+  });
+
+  it("three close together level on one line: the 11:20 is not kept off the 11:00 because it shares more time with an 11:25", () => {
+    const g = byMat([s("a", 6, "11:00", "12:00", "1"), s("b", 6, "11:20", "12:10", "2"), s("e", 6, "11:25", "12:10", "3")]);
+    expect(session(g, "b").rowStart).toBe(session(g, "a").rowStart);
+    expect(session(g, "e").rowStart).toBe(session(g, "a").rowStart);
+    expect(g.ticks.map((t) => t.minute)).toEqual([660]);
+  });
+
+  it("drawn level and as long as each other, the class that really starts first takes the first lane and comes first in Tab order", () => {
+    const g = byMat([s("late", 6, "11:20", "12:10", "1"), s("early", 6, "11:00", "12:00", "2")]);
+    expect(session(g, "early").col).toBeLessThan(session(g, "late").col);
+    expect(g.items.map((i) => (i.type === "session" ? i.key : i.id))).toEqual(["early", "late"]);
+  });
+
+  it("a +N more button still says when its sessions really run", () => {
+    const g = buildTimetableGrid(
+      [s("a", 6, "11:00", "12:00", "1"), s("b", 6, "11:00", "12:00", "2"), s("c", 6, "11:10", "12:00", "3"), s("d", 6, "11:20", "12:00", "4")],
+      { days: [6], layout: "mat", mats: MATS, maxLanes: 3 },
+    );
+    const [more] = mores(g);
+    expect(more.keys).toEqual(["c", "d"]);
+    expect([more.startMin, more.endMin]).toEqual([670, 720]);
+    expect(more.rowStart).toBe(session(g, "a").rowStart);
+  });
+
+  it("two classes drawn side by side are always really on at once (300 random days)", () => {
+    let seed = 20261121;
+    const rand = (n: number) => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed % n;
+    };
+    const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    for (let run = 0; run < 300; run++) {
+      const sessions = Array.from({ length: 2 + rand(7) }, (_, i) => {
+        const start = 540 + rand(37) * 5;
+        return { ...s(`k${i}`, 6, hhmm(start), hhmm(start + 10 + rand(18) * 5), String(i), rand(3) === 0 ? null : `m${1 + rand(2)}`), start, end: 0 };
+      }).map((x) => ({ ...x, end: x.start + (Number(x.endTime.slice(0, 2)) * 60 + Number(x.endTime.slice(3)) - x.start) }));
+      for (const layout of ["time", "mat"] as const) {
+        // Folding too: with few lanes every session is still placed or folded exactly once, and no two items share a cell.
+        for (const maxLanes of [2, 3]) {
+          const f = buildTimetableGrid(sessions, { days: [6], layout, mats: MATS, maxLanes });
+          const shown = f.items.flatMap((i) => (i.type === "session" ? [i.key] : i.keys));
+          expect([...shown].sort()).toEqual(sessions.map((x) => x.key).sort());
+          for (const a of f.items) for (const b of f.items) {
+            if (a === b) continue;
+            const rows = a.rowStart < b.rowEnd && b.rowStart < a.rowEnd;
+            const cols = a.col < b.col + b.span && b.col < a.col + a.span;
+            expect(rows && cols, `${run} ${layout} ${maxLanes} items collide`).toBe(false);
+          }
+        }
+        const g = buildTimetableGrid(sessions, { days: [6], layout, mats: MATS, maxLanes: 9 });
+        const placed = sessions.map((x) => ({ ...x, at: session(g, x.key) }));
+        for (const a of placed) {
+          // A later start is never drawn higher.
+          for (const b of placed) if (b.start > a.start) expect(b.at.rowStart, `${run} ${layout} ${a.key} ${b.key} order`).toBeGreaterThanOrEqual(a.at.rowStart);
+          // Drawn no later than it starts, no earlier than half an hour before; never cut short.
+          const fromMin = g.rows[a.at.rowStart - g.firstTimeLine].fromMin;
+          const toMin = g.rows[a.at.rowEnd - 1 - g.firstTimeLine].toMin;
+          expect(fromMin).toBeLessThanOrEqual(a.start);
+          expect(a.start - fromMin).toBeLessThan(30);
+          expect(toMin).toBeGreaterThanOrEqual(a.end);
+          expect(toMin - a.end).toBeLessThan(30);
+          // Split by time: exactly its own lines.
+          if (layout === "time") expect([fromMin, toMin], `${run} time ${a.key} exact`).toEqual([a.start, a.end]);
+          for (const b of placed) {
+            if (a === b) continue;
+            const drawnTogether = a.at.rowStart < b.at.rowEnd && b.at.rowStart < a.at.rowEnd;
+            const reallyTogether = a.start < b.end && b.start < a.end;
+            if (drawnTogether) expect(reallyTogether, `${run} ${layout} ${a.key} ${b.key}`).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});
