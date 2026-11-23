@@ -35,15 +35,15 @@ const bodyFont = Figtree({
 });
 
 export const metadata: Metadata = {
-  title: "MatFlow — Gym software built for BJJ academies",
+  title: "MatFlow.Studio: Gym software built for BJJ academies",
   description:
     "Belt and stripe tracking, kiosk check-in, attendance-driven promotions, branded member portal. Built specifically for UK Brazilian Jiu-Jitsu academies.",
   openGraph: {
-    title: "MatFlow — Gym software built for BJJ academies",
+    title: "MatFlow.Studio: Gym software built for BJJ academies",
     description:
       "Belt and stripe tracking, kiosk check-in, attendance-driven promotions, branded member portal. Built specifically for UK Brazilian Jiu-Jitsu academies.",
     url: "https://matflow.studio",
-    siteName: "MatFlow",
+    siteName: "MatFlow.Studio",
     locale: "en_GB",
     type: "website",
   },

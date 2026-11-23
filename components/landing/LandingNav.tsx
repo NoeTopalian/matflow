@@ -5,8 +5,11 @@
 // heavier (framer-motion) was removed in the speed pass — entrance motion
 // is CSS (`land-rise` in globals.css).
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import shortLogo from "@/brand/matflow-short-on-dark.svg";
+import shortLogoSmall from "@/brand/matflow-short-small-on-dark.svg";
 
 const SECTION_LINKS = [
   { href: "/#how-it-works", label: "How it works" },
@@ -35,19 +38,29 @@ export function LandingNav() {
       }}
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0"
-            style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-label)" }}
-          >
-            M
-          </div>
-          <span
-            className="font-semibold text-base tracking-tight"
-            style={{ color: "#ede8df", fontFamily: "var(--font-label)" }}
-          >
-            MatFlow
-          </span>
+        {/* The brand guide gives the striped short logo to widths of 140 px and
+            up and the plain-bar version below that, so a phone gets the plain
+            bar. Both files carry about 12% of empty margin each side; the
+            negative margin lines the lettering up with the page gutter. */}
+        <Link href="/" aria-label="MatFlow.Studio home" className="flex items-center shrink-0">
+          <Image
+            src={shortLogoSmall}
+            alt="MatFlow.Studio"
+            width={131}
+            height={48}
+            unoptimized
+            priority
+            className="sm:hidden -ml-4"
+          />
+          <Image
+            src={shortLogo}
+            alt="MatFlow.Studio"
+            width={175}
+            height={64}
+            unoptimized
+            priority
+            className="hidden sm:block -ml-5"
+          />
         </Link>
 
         {/* Section links — desktop */}

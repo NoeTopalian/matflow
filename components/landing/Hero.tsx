@@ -1,7 +1,9 @@
 // Server component — entrance motion is CSS (`land-rise` in globals.css),
 // hover states are CSS classes. No JS shipped for this section (speed pass B1).
 
+import Image from "next/image";
 import Link from "next/link";
+import mainLogo from "@/brand/matflowstudio-logo-on-dark.svg";
 
 const BELT_COLORS: Record<string, string> = {
   white: "#d4d4d4",
@@ -167,6 +169,26 @@ export function Hero() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
           {/* Left: copy */}
           <div className="lg:col-span-7">
+            {/* The file is 640 x 260 with the logo in the middle 56% of its
+                width, so it is drawn wider than the column and pulled left and
+                up by its own empty margin; the section clips the overhang. */}
+            <div className="mb-6 land-rise">
+              <Image
+                src={mainLogo}
+                alt="MatFlow.Studio"
+                width={560}
+                height={228}
+                unoptimized
+                priority
+                style={{
+                  width: "min(35rem, 135%)",
+                  maxWidth: "none",
+                  height: "auto",
+                  marginLeft: "calc(min(35rem, 135%) * -0.215)",
+                  marginTop: "calc(min(35rem, 135%) * -0.09)",
+                }}
+              />
+            </div>
             <div className="mb-6 land-rise">
               <span
                 className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase px-3 py-1.5 rounded-full"

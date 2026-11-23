@@ -1,59 +1,48 @@
 /**
- * Generates the whole MatFlow icon set from ONE source definition.
+ * Generates the whole MatFlow.Studio icon set from the brand kit in `brand/`.
  *
- * Every icon surface (browser tab, PWA install, Android home screen, iOS
- * touch icon) previously drifted: app/favicon.ico was switched to blue in
- * 860e78e while public/icons/*.png and public/apple-touch-icon.png stayed on
- * the black placeholder, so an installed app still showed black. Generating
- * them from a single mark makes that drift impossible.
+ * Every icon surface (browser tab, installed app, Android home screen, iOS
+ * touch icon) is rasterised from the kit's SVG files, so they cannot drift
+ * apart. The kit is used as it is: nothing here redraws or recolours the mark
+ * (brand/MATFLOW-STUDIO-LOGO-GUIDE.md, rule 5).
  *
- *   node scripts/generate-brand-icons.mjs           # write the icon set
- *   node scripts/generate-brand-icons.mjs --preview # only write previews
+ *   node scripts/generate-brand-icons.mjs
  *
- * The mark is the skinny M: thin round-capped strokes, matching the landing
- * wordmark (components/landing/LandingNav.tsx) rather than the heavy stroked
- * M of the old placeholder.
+ * Which drawing goes where follows the guide: the MF tile with the STUDIO
+ * patch at 64 px and above, the plain MF tile below that and in browser tabs.
  */
 import sharp from "sharp";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const TILE = "#111111";
 
-/** Landing brand blue — components/landing/LandingNav.tsx. */
-const BLUE = "#3d8bff";
-const INK = "#ffffff";
+const kit = (name) => readFileSync(resolve(ROOT, "brand", name));
+const STUDIO_ROUNDED = kit("app-icon-mf-studio.svg");
+const STUDIO_SQUARE = kit("app-icon-mf-studio-square.svg");
+const PLAIN = kit("app-icon-mf-plain.svg");
 
-/**
- * Stroke weight is optically sized, not linearly scaled. A stroke that reads
- * as elegantly thin at 512px disappears at 16px, where a favicon is only a
- * handful of device pixels, so small sizes get a proportionally heavier mark.
- */
-function strokeFor(size) {
-  if (size <= 16) return 0.095;
-  if (size <= 32) return 0.075;
-  if (size <= 64) return 0.06;
-  return 0.048;
+/** The kit SVGs are 200 x 200; rasterising above the target size keeps edges sharp. */
+function png(svg, size) {
+  return sharp(svg, { density: Math.ceil((72 * size) / 200) * 2 })
+    .resize(size, size)
+    .png()
+    .toBuffer();
 }
 
 /**
- * The mark, as a stroked polyline on a 100x100 grid: left stem up, down to the
- * central vertex, up to the right apex, right stem down. Round caps and joins
- * keep the thin strokes from looking brittle at the corners.
+ * Maskable icons are cropped by the launcher to a circle 80% of the width, and
+ * the STUDIO patch reaches past that. The square tile is therefore drawn at
+ * 80% on a full-bleed tile of the same black, which keeps the whole mark
+ * inside the safe zone without touching the drawing.
  */
-function markSvg(size, { bg = BLUE, ink = INK } = {}) {
-  const w = strokeFor(size) * 100;
-  const radius = 22; // maskable-safe rounded square
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
-  <rect width="100" height="100" rx="${radius}" ry="${radius}" fill="${bg}"/>
-  <path d="M 30 71 L 30 29 L 50 53 L 70 29 L 70 71"
-        fill="none" stroke="${ink}" stroke-width="${w}"
-        stroke-linecap="round" stroke-linejoin="round"/>
-</svg>`;
-}
-
-async function png(size, opts) {
-  return sharp(Buffer.from(markSvg(size, opts))).png().toBuffer();
+async function maskablePng(size) {
+  const inner = Math.round(size * 0.8);
+  return sharp({ create: { width: size, height: size, channels: 4, background: TILE } })
+    .composite([{ input: await png(STUDIO_SQUARE, inner), gravity: "centre" }])
+    .png()
+    .toBuffer();
 }
 
 /**
@@ -92,30 +81,25 @@ function write(rel, buf) {
   console.log(`  ${rel}  (${buf.length.toLocaleString()} bytes)`);
 }
 
-const previewOnly = process.argv.includes("--preview");
+console.log("Writing icon set:");
 
-console.log(previewOnly ? "Writing previews only:" : "Writing icon set:");
-
-// Preview sheet: the mark at real tab size beside a large rendering, so the
-// letterform can be judged at the size it will actually be seen.
-const previewDir = ".omc/state/assess-loop/artifacts/icon-preview";
-write(`${previewDir}/mark-512.png`, await png(512));
-write(`${previewDir}/mark-64.png`, await png(64));
-write(`${previewDir}/mark-32.png`, await png(32));
-write(`${previewDir}/mark-16.png`, await png(16));
-
-if (!previewOnly) {
-  write("public/icons/icon-192.png", await png(192));
-  write("public/icons/icon-512.png", await png(512));
-  write("public/apple-touch-icon.png", await png(180));
-  write("app/icon.png", await png(512));
-
-  const ico = buildIco([
-    { size: 16, data: await png(16) },
-    { size: 32, data: await png(32) },
-    { size: 48, data: await png(48) },
-  ]);
-  write("app/favicon.ico", ico);
-}
+// Installed app (manifest "any") and notifications.
+write("public/icons/icon-192.png", await png(STUDIO_ROUNDED, 192));
+write("public/icons/icon-512.png", await png(STUDIO_ROUNDED, 512));
+// Installed app on launchers that crop the icon themselves.
+write("public/icons/icon-maskable-192.png", await maskablePng(192));
+write("public/icons/icon-maskable-512.png", await maskablePng(512));
+// iOS rounds the corners itself and needs an opaque square.
+write("public/apple-touch-icon.png", await png(STUDIO_SQUARE, 180));
+// Browser tab.
+write("app/icon.png", await png(PLAIN, 512));
+write(
+  "app/favicon.ico",
+  buildIco([
+    { size: 16, data: await png(PLAIN, 16) },
+    { size: 32, data: await png(PLAIN, 32) },
+    { size: 48, data: await png(PLAIN, 48) },
+  ]),
+);
 
 console.log("Done.");
