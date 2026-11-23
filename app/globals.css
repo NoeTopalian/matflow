@@ -640,26 +640,90 @@ option {
      The landing sections are server components (speed pass B1) — hover and
      entrance motion live here as CSS instead of framer-motion + JS handlers.
      The global prefers-reduced-motion block above neutralises the animations. */
+  /* Palette and type for the landing page, defined once (UI-RULES §2: a public
+     surface owns its palette). The four colours are the brand kit's
+     (brand/MATFLOW-STUDIO-LOGO-GUIDE.md): black ground, off-white ink, blue for
+     buttons. Red belongs to the logo and is not used by the page. */
+  #landing-root {
+    --land-bg: #111111;
+    --land-raise: #1a1a1a;
+    --land-ink: #f3f0e9;
+    --land-muted: rgba(243, 240, 233, 0.72);
+    --land-faint: rgba(243, 240, 233, 0.56);
+    --land-line: rgba(243, 240, 233, 0.12);
+    --land-blue: #3f68d8;
+    --land-blue-press: #3558c2;
+    background: var(--land-bg);
+    color: var(--land-ink);
+    font-family: var(--font-body), system-ui, sans-serif;
+  }
+  /* The app shell behind the page is light; without this the rubber-band
+     overscroll above and below the landing page shows a pale strip. */
+  body:has(#landing-root) { background: #111111; }
+  #landing-root :focus-visible {
+    outline: 2px solid var(--land-ink);
+    outline-offset: 3px;
+    border-radius: 0.75rem;
+  }
+  .land-display {
+    font-family: var(--font-display), Impact, "Arial Black", sans-serif;
+    font-weight: 400;
+    text-wrap: balance;
+  }
+  .land-muted { color: var(--land-muted); }
+  .land-faint { color: var(--land-faint); }
+  .land-rule { border-top: 1px solid var(--land-line); }
+  .land-card {
+    background: var(--land-raise);
+    border: 1px solid var(--land-line);
+    border-radius: 1rem;
+  }
+  .land-step { border-top: 2px solid var(--land-ink); }
+  /* Large display numerals only: blue on black is 3.8:1, enough for type this size. */
+  .land-step-number { color: var(--land-blue); }
+  .land-input {
+    background: var(--land-bg);
+    color: var(--land-ink);
+    border: 1px solid rgba(243, 240, 233, 0.4);
+  }
+  .land-input:hover { border-color: var(--land-ink); }
+  .land-nav {
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    transition: background 0.3s ease, border-color 0.3s ease;
+  }
+  .land-nav-solid {
+    background: rgba(17, 17, 17, 0.94);
+    border-bottom-color: var(--land-line);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .land-menu-toggle { border: 1px solid rgba(243, 240, 233, 0.28); }
+  .land-menu-bar {
+    display: block;
+    width: 1rem;
+    height: 1px;
+    background: var(--land-ink);
+    transition: transform 0.2s ease;
+  }
+  /* White on the brand blue is 5:1; the off-white ink would fall just short of 4.5:1. */
   .land-btn-primary {
-    background: #3d8bff;
-    color: #0a0908;
+    background: var(--land-blue);
+    color: #ffffff;
     transition: background 0.2s ease;
   }
-  .land-btn-primary:hover { background: #5da0ff; }
+  .land-btn-primary:hover { background: var(--land-blue-press); }
   .land-btn-ghost {
-    color: rgba(237, 232, 223, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: color 0.2s ease, border-color 0.2s ease;
+    color: var(--land-ink);
+    border: 1px solid rgba(243, 240, 233, 0.28);
+    transition: border-color 0.2s ease;
   }
-  .land-btn-ghost:hover {
-    color: #ede8df;
-    border-color: rgba(255, 255, 255, 0.2);
-  }
+  .land-btn-ghost:hover { border-color: var(--land-ink); }
   .land-link {
-    color: rgba(237, 232, 223, 0.55);
+    color: var(--land-muted);
     transition: color 0.2s ease;
   }
-  .land-link:hover { color: #ede8df; }
+  .land-link:hover { color: var(--land-ink); }
 
   @keyframes land-rise {
     from { opacity: 0; transform: translateY(20px); }

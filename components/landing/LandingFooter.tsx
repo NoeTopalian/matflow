@@ -12,38 +12,21 @@ const NAV_LINKS = [
 
 export function LandingFooter() {
   return (
-    <footer
-      style={{
-        borderTop: "1px solid rgba(255,255,255,0.05)",
-        background: "#0a0908",
-      }}
-    >
+    <footer className="land-rule">
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10 flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-2.5">
           <Image src={mfIcon} alt="" width={24} height={24} unoptimized className="shrink-0" />
-          <span className="text-sm" style={{ color: "rgba(237,232,223,0.35)" }}>
-            © 2026 MatFlow.Studio
-          </span>
+          <span className="land-faint text-sm">© 2026 MatFlow.Studio</span>
         </div>
 
-        <nav className="flex flex-wrap gap-6">
+        <nav aria-label="Legal and contact" className="flex flex-wrap gap-x-6 gap-y-2">
           {NAV_LINKS.map(({ href, label, external }) =>
             external ? (
-              <a
-                key={label}
-                href={href}
-                className="text-sm opacity-35 hover:opacity-75 transition-opacity duration-200"
-                style={{ color: "#ede8df" }}
-              >
+              <a key={label} href={href} className="land-link text-sm py-2">
                 {label}
               </a>
             ) : (
-              <Link
-                key={label}
-                href={href}
-                className="text-sm opacity-35 hover:opacity-75 transition-opacity duration-200"
-                style={{ color: "#ede8df" }}
-              >
+              <Link key={label} href={href} className="land-link text-sm py-2">
                 {label}
               </Link>
             ),

@@ -6,7 +6,7 @@
 // every icon the manifest names is a real PNG of the size it claims. How it
 // looks is the browser run's job.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import React from "react";
 import { existsSync, readFileSync } from "node:fs";
@@ -15,6 +15,9 @@ import manifest from "@/app/manifest";
 import { LandingNav } from "@/components/landing/LandingNav";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 import { Hero } from "@/components/landing/Hero";
+
+// The opening holds the member door, which asks for the router.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 const ROOT = resolve(__dirname, "../..");
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

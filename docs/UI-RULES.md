@@ -52,7 +52,7 @@ Owner branding — accent colour, font, background — is an **input**, not a th
 
 ## 3. Typography and iconography
 
-- Fonts: **Geist** (chrome), tenant-selected face (member portal, existing 12-font whitelist), landing's three faces stay as-is. The `FONT_IMPORTS` map is defined **once** in `lib/fonts.ts` and imported (currently duplicated in 3 files).
+- Fonts: **Geist** (chrome), tenant-selected face (member portal, existing 12-font whitelist), the landing page uses the brand kit's two faces, Protest Strike for headings and Inter for text (23 Nov 2026, `brand/MATFLOW-STUDIO-LOGO-GUIDE.md`). The `FONT_IMPORTS` map is defined **once** in `lib/fonts.ts` and imported (currently duplicated in 3 files).
 - Icons: **lucide-react only** (already 70 files — the one thing that's consistent; keep it). Inline SVG only inside chart components.
 - No `font-${variable}` dynamic class construction — Tailwind's scanner cannot see it (this is why StatusPill's weight prop never worked). Use a static lookup map of full class names.
 

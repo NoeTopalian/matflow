@@ -1,9 +1,8 @@
 "use client";
 
-// The nav is the landing page's ONE client island (plus the apply form):
-// a scroll-elevation listener and the mobile disclosure menu. Everything
-// heavier (framer-motion) was removed in the speed pass — entrance motion
-// is CSS (`land-rise` in globals.css).
+// One of the landing page's two client islands (the other is the member door):
+// a scroll-elevation listener and the phone menu. Entrance motion is CSS
+// (`land-rise` in globals.css).
 
 import Image from "next/image";
 import Link from "next/link";
@@ -12,9 +11,9 @@ import shortLogo from "@/brand/matflow-short-on-dark.svg";
 import shortLogoSmall from "@/brand/matflow-short-small-on-dark.svg";
 
 const SECTION_LINKS = [
-  { href: "/#how-it-works", label: "How it works" },
-  { href: "/#features", label: "Features" },
-  { href: "/#pricing", label: "Pricing" },
+  { href: "/#features", label: "What you get" },
+  { href: "/#how-it-works", label: "Moving in" },
+  { href: "/#pricing", label: "Price" },
 ] as const;
 
 export function LandingNav() {
@@ -29,13 +28,8 @@ export function LandingNav() {
 
   return (
     <nav
-      className="sticky top-0 z-50 transition-all duration-500 land-rise"
-      style={{
-        background: scrolled || open ? "rgba(10,9,8,0.92)" : "transparent",
-        borderBottom: scrolled || open ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
-        backdropFilter: scrolled || open ? "blur(20px)" : "none",
-        WebkitBackdropFilter: scrolled || open ? "blur(20px)" : "none",
-      }}
+      aria-label="Main"
+      className={`land-nav sticky top-0 z-50 land-rise ${scrolled || open ? "land-nav-solid" : ""}`}
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
         {/* The brand guide gives the striped short logo to widths of 140 px and
@@ -63,66 +57,52 @@ export function LandingNav() {
           />
         </Link>
 
-        {/* Section links — desktop */}
+        {/* Section links, desktop */}
         <div className="hidden md:flex items-center gap-1">
           {SECTION_LINKS.map(({ href, label }) => (
-            <a
-              key={href}
-              href={href}
-              className="land-link px-3.5 py-2 text-sm font-medium rounded-lg"
-              style={{ fontFamily: "var(--font-body)" }}
-            >
+            <a key={href} href={href} className="land-link px-3.5 py-2 text-sm font-medium rounded-lg">
               {label}
             </a>
           ))}
         </div>
 
-        <div className="flex items-center gap-1">
+        {/* The two doors: members to their gym, owners to the application. */}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/#find-my-gym"
+            className="land-btn-ghost inline-flex items-center px-4 min-h-11 rounded-xl text-sm font-semibold"
+          >
+            Find my gym
+          </Link>
           <Link
             href="/apply"
-            className="land-link hidden sm:inline-flex px-4 py-2 text-sm font-medium rounded-lg"
-            style={{ fontFamily: "var(--font-body)" }}
+            className="land-btn-primary hidden sm:inline-flex items-center px-5 min-h-11 rounded-xl text-sm font-semibold"
           >
             Apply
           </Link>
-          <Link
-            href="/login"
-            className="land-btn-primary inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold"
-            style={{ fontFamily: "var(--font-body)" }}
-          >
-            Sign in
-          </Link>
-          {/* Mobile menu toggle */}
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
+            aria-controls="landing-menu"
             aria-label={open ? "Close menu" : "Open menu"}
-            className="md:hidden ml-1 w-10 h-10 rounded-lg flex flex-col items-center justify-center gap-[5px]"
-            style={{ border: "1px solid rgba(255,255,255,0.1)" }}
+            className="land-menu-toggle md:hidden w-11 h-11 rounded-xl flex flex-col items-center justify-center gap-[5px]"
           >
-            <span
-              className="block w-4 h-px transition-transform duration-200"
-              style={{ background: "#ede8df", transform: open ? "translateY(3px) rotate(45deg)" : "none" }}
-            />
-            <span
-              className="block w-4 h-px transition-transform duration-200"
-              style={{ background: "#ede8df", transform: open ? "translateY(-3px) rotate(-45deg)" : "none" }}
-            />
+            <span className="land-menu-bar" style={{ transform: open ? "translateY(3px) rotate(45deg)" : "none" }} />
+            <span className="land-menu-bar" style={{ transform: open ? "translateY(-3px) rotate(-45deg)" : "none" }} />
           </button>
         </div>
       </div>
 
-      {/* Mobile disclosure menu */}
+      {/* Phone menu */}
       {open && (
-        <div className="md:hidden px-6 pb-5 pt-1 flex flex-col gap-1" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+        <div id="landing-menu" className="land-rule md:hidden px-6 pb-5 pt-2 flex flex-col gap-1">
           {SECTION_LINKS.map(({ href, label }) => (
             <a
               key={href}
               href={href}
               onClick={() => setOpen(false)}
               className="land-link px-2 py-3 text-base font-medium rounded-lg"
-              style={{ fontFamily: "var(--font-body)" }}
             >
               {label}
             </a>
@@ -130,9 +110,9 @@ export function LandingNav() {
           <Link
             href="/apply"
             onClick={() => setOpen(false)}
-            className="land-btn-primary mt-2 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-base font-semibold"
+            className="land-btn-primary mt-2 inline-flex items-center justify-center px-5 min-h-12 rounded-xl text-base font-semibold"
           >
-            Apply for an account →
+            Apply for your club
           </Link>
         </div>
       )}

@@ -1,104 +1,45 @@
-// Server component — no JS shipped for this section (speed pass B1).
-// Entrance motion removed with framer-motion; hover states are plain CSS.
+// Server component, no JS shipped for this section.
+// Every card describes something a club can use today. Member payments by
+// card are not listed: they are not switched on.
 
 const FEATURES = [
   {
-    num: "01",
-    title: "Belt & stripe tracking",
-    body: "Per-discipline rank systems with attendance-based eligibility checks. Full promotion history, audit trail, and a queue that surfaces eligible members automatically.",
+    title: "Timetable",
+    body: "Build your week once. Classes that run at the same time sit side by side, by mat or by time, and members see the same timetable on their phone.",
   },
   {
-    num: "02",
-    title: "Kiosk check-in",
-    body: "iPad at the door, HMAC-tokened and isolated from the admin interface. Members tap their name; attendance and class-pack credits write atomically with no double-charge risk.",
+    title: "Check-in at the door",
+    body: "Put a tablet by the door and members tap their name as they arrive. Coaches can mark attendance for a class as well.",
   },
   {
-    num: "03",
-    title: "Branded member portal",
-    body: "Your gym's name, logo and colours on every screen — schedule, announcements, personal attendance, rank progression. One branded PWA, zero app-store fees.",
+    title: "Belts and stripes",
+    body: "Every member's rank and stripes in one place, with the classes they have attended counted towards their next promotion.",
   },
   {
-    num: "04",
-    title: "Attendance-driven promotions",
-    body: "Set minimum sessions and minimum months per rank. The promotion queue runs itself. You confirm; MatFlow provides the evidence.",
-  },
-  {
-    num: "05",
-    title: "Payments that reconcile",
-    body: "Stripe Connect per tenant, idempotent webhooks, refunds with auto-void of class-pack credits. Cash and comp payments recorded with audit metadata. No orphan rows.",
-  },
-  {
-    num: "06",
-    title: "Reports that actually run",
-    body: "Weekly attendance trends, monthly signups, member status mix, top classes by fill rate — live from the database, not a stale CSV export from last Tuesday.",
+    title: "Members and reports",
+    body: "Your member list, plans and attendance together, with reports that show who is training and who has stopped coming.",
   },
 ] as const;
 
 export function FeaturesGrid() {
   return (
-    <section id="features" className="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
-      {/* Section header */}
-      <div className="mb-16 lg:mb-20">
-        <p
-          className="text-xs font-semibold uppercase tracking-[0.18em] mb-4"
-          style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
-        >
-          What you get
+    <section id="features" className="land-rule">
+      <div className="max-w-7xl mx-auto px-6 lg:px-10 py-20 lg:py-28">
+        <h2 className="land-display text-4xl sm:text-5xl mb-4">What you get</h2>
+        <p className="land-muted text-lg max-w-2xl mb-12">
+          The four jobs a club does every day, in one place, under your club&apos;s own name, logo
+          and colours.
         </p>
-        <h2
-          className="text-4xl md:text-5xl lg:text-6xl leading-tight"
-          style={{ fontFamily: "var(--font-display)", color: "#ede8df" }}
-        >
-          Six things every BJJ academy needs.
-          <span className="italic block" style={{ color: "rgba(237,232,223,0.35)" }}>
-            All of them in production.
-          </span>
-        </h2>
-      </div>
 
-      {/* Feature list */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
-        {FEATURES.map(({ num, title, body }, i) => (
-          <div
-            key={num}
-            className="group py-8 pr-8"
-            style={{
-              borderTop: "1px solid rgba(255,255,255,0.06)",
-              borderRight: i % 2 === 0 ? "1px solid rgba(255,255,255,0.06)" : "none",
-            }}
-          >
-            <div className="flex items-start gap-6">
-              <span
-                className="text-4xl leading-none shrink-0 mt-1 transition-colors duration-300"
-                style={{
-                  fontFamily: "var(--font-display)",
-                  color: "rgba(61,139,255,0.25)",
-                }}
-              >
-                {num}
-              </span>
-              <div>
-                <h3
-                  className="text-xl font-semibold mb-3 transition-colors duration-300"
-                  style={{ color: "#ede8df" }}
-                >
-                  {title}
-                </h3>
-                <p className="text-sm leading-relaxed" style={{ color: "rgba(237,232,223,0.48)" }}>
-                  {body}
-                </p>
-              </div>
-            </div>
-          </div>
-        ))}
+        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {FEATURES.map(({ title, body }) => (
+            <li key={title} className="land-card p-6 sm:p-8">
+              <h3 className="land-display text-2xl sm:text-3xl mb-3">{title}</h3>
+              <p className="land-muted text-base leading-relaxed">{body}</p>
+            </li>
+          ))}
+        </ul>
       </div>
-
-      <p
-        className="text-xs mt-8"
-        style={{ color: "rgba(237,232,223,0.25)" }}
-      >
-        Every feature above is live in production today — not a roadmap item.
-      </p>
     </section>
   );
 }
