@@ -187,6 +187,16 @@ describe("page content", () => {
     ]);
   });
 
+  it("shows the product: a timetable picture that says it is an example", () => {
+    render(<Page />);
+    const frame = screen.getByRole("region", { name: "Timetable picture, scrolls sideways" });
+    // Reachable by keyboard, so a phone-width reader without a pointer can scroll it.
+    expect(frame.getAttribute("tabindex")).toBe("0");
+    const picture = within(frame).getByRole("img");
+    expect(picture.getAttribute("alt")).toMatch(/^A club's week in MatFlow\.Studio\./);
+    expect(screen.getByText("The week as your coaches see it. Example club, not a real one.")).toBeTruthy();
+  });
+
   it("does not claim what the product does not do, and reads as plain English", () => {
     const { container } = render(<Page />);
     const text = container.textContent ?? "";

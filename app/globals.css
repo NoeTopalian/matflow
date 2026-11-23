@@ -678,6 +678,12 @@ option {
     border: 1px solid var(--land-line);
     border-radius: 1rem;
   }
+  /* Frame for a product picture; the picture is of the light staff screen. */
+  .land-shot {
+    border: 1px solid var(--land-line);
+    border-radius: 1rem;
+    background: #f5f6f8;
+  }
   .land-step { border-top: 2px solid var(--land-ink); }
   /* Large display numerals only: blue on black is 3.8:1, enough for type this size. */
   .land-step-number { color: var(--land-blue); }

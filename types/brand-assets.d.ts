@@ -5,3 +5,9 @@ declare module "@/brand/*.svg" {
   const content: import("next/image").StaticImageData;
   export default content;
 }
+
+// Product pictures on the landing page (components/landing/shots/).
+declare module "@/components/landing/shots/*.webp" {
+  const content: import("next/image").StaticImageData;
+  export default content;
+}

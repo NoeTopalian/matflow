@@ -2,6 +2,9 @@
 // Every card describes something a club can use today. Member payments by
 // card are not listed: they are not switched on.
 
+import Image from "next/image";
+import timetableWeek from "@/components/landing/shots/timetable-week.webp";
+
 const FEATURES = [
   {
     title: "Timetable",
@@ -30,6 +33,31 @@ export function FeaturesGrid() {
           The four jobs a club does every day, in one place, under your club&apos;s own name, logo
           and colours.
         </p>
+
+        {/* The product itself: the staff timetable of a made-up club on the test
+            system (invented classes, no real club or person). Seven days do
+            not fit a phone, so the picture keeps a readable width and scrolls
+            sideways inside its own frame. */}
+        <figure className="mb-12">
+          <div
+            role="region"
+            aria-label="Timetable picture, scrolls sideways"
+            tabIndex={0}
+            className="land-shot overflow-x-auto"
+          >
+            <Image
+              src={timetableWeek}
+              alt="A club's week in MatFlow.Studio. Each day is split into Mat 1 and Mat 2, with classes such as Beginners, Kickboxing, Kids and Open Mat. Thursday is today: two classes are marked live and two are marked next."
+              width={2240}
+              height={1057}
+              sizes="(min-width: 1280px) 1200px, (min-width: 768px) 94vw, 760px"
+              className="block w-full min-w-[47.5rem] h-auto"
+            />
+          </div>
+          <figcaption className="land-faint text-sm mt-3">
+            The week as your coaches see it. Example club, not a real one.
+          </figcaption>
+        </figure>
 
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           {FEATURES.map(({ title, body }) => (
