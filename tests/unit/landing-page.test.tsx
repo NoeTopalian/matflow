@@ -187,14 +187,25 @@ describe("page content", () => {
     ]);
   });
 
-  it("shows the product: a timetable picture that says it is an example", () => {
-    render(<Page />);
-    const frame = screen.getByRole("region", { name: "Timetable picture, scrolls sideways" });
-    // Reachable by keyboard, so a phone-width reader without a pointer can scroll it.
+  it("shows the product: one real screen per feature, said to be an example club", () => {
+    const { container } = render(<Page />);
+    const features = container.querySelector("#features") as HTMLElement;
+    expect(features.textContent).toContain("These are the real screens, shown with an example club.");
+    // The wide timetable scrolls inside its own frame on a phone, and the frame is keyboard reachable.
+    const frame = within(features).getByRole("region", { name: "Timetable picture, scrolls sideways" });
     expect(frame.getAttribute("tabindex")).toBe("0");
-    const picture = within(frame).getByRole("img");
-    expect(picture.getAttribute("alt")).toMatch(/^A club's week in MatFlow\.Studio\./);
-    expect(screen.getByText("The week as your coaches see it. Example club, not a real one.")).toBeTruthy();
+    const pictures = within(features).getAllByRole("img");
+    expect(pictures.map((img) => (img.getAttribute("alt") ?? "").split(".")[0])).toEqual([
+      "A club's week in MatFlow",
+      "The check-in screen on a tablet, under the club's name",
+      "A member's Progress screen on their phone",
+      "The Members screen",
+    ]);
+    // Every picture is described and sits in a figure with a caption.
+    for (const img of pictures) {
+      expect((img.getAttribute("alt") ?? "").length).toBeGreaterThan(60);
+      expect(img.closest("figure")?.querySelector("figcaption")?.textContent).toBeTruthy();
+    }
   });
 
   it("does not claim what the product does not do, and reads as plain English", () => {
