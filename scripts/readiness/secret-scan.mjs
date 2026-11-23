@@ -134,11 +134,30 @@ const PLACEHOLDER_STRUCTURAL = [
 // MARKERS: words and fillers that usually mean a fixture. A marker downgrades a value ONLY when nothing random-looking
 // is left once the markers (and separators) are removed — so `sk_live_<10>Fake<20>` stays a candidate while
 // `sk_test_000…`, `replace-with-openssl-rand-base64-32` and `not-a-real-key` stay placeholders.
-const PLACEHOLDER_MARKERS = [
-  /not[-_]?(?:a[-_]?)?real/gi, /example/gi, /placeholder/gi, /changeme/gi, /dummy/gi, /fake/gi, /x{6,}/gi, /\.{3,}/g,
+//
+// WEAK markers ("example", "fake", "dummy", a 1234… run) also turn up in passwords people choose (a name followed by
+// 1234, gym-example-2026). On their own they downgrade a value ONLY when everything left over is credential filler
+// (FILLER_WORDS): `my-example-password` and `FakeTokenValue1234` stay placeholders; a value with any other word or
+// number left in it is judged as if the marker were not there. A credential is never exempt merely because it
+// contains one of these (finding of 22 Nov 2026).
+const WEAK_MARKERS = [/example/gi, /dummy/gi, /fake/gi, /1234567890|123456789|12345678|1234/g];
+const STRONG_MARKERS = [
+  /not[-_]?(?:a[-_]?)?real/gi, /placeholder/gi, /changeme/gi, /x{6,}/gi, /\.{3,}/g,
   /your[-_]/gi, /ci[-_]only/gi, /test[-_]secret/gi, /redacted/gi, /\*{3,}/g, /0{12,}/g, /abcdef/gi, /replace[-_]with/gi,
-  /deadbeef/gi, /probe/gi, /1234567890|123456789|12345678|1234/g,
+  /deadbeef/gi, /probe/gi,
 ];
+const PLACEHOLDER_MARKERS = [...STRONG_MARKERS, ...WEAK_MARKERS];
+/** Words that say what a credential IS, not what its value is: the only leftovers a weak marker may be found with. */
+const FILLER_WORDS = new Set([
+  "a", "an", "the", "my", "your", "this", "is", "for", "of", "not", "real", "only", "here",
+  "key", "keys", "secret", "token", "password", "passwd", "pass", "pwd", "pw", "value", "string", "id",
+  "api", "auth", "access", "refresh", "client", "user", "username", "name", "store", "test", "sample",
+]);
+
+/** The words and numbers of a value: split on anything that is not a letter or digit, then at case and digit boundaries. */
+function wordsOf(s) {
+  return String(s).split(/[^0-9A-Za-z]+/).flatMap((run) => run.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/g) ?? []).map((w) => w.toLowerCase());
+}
 // Hosts that cannot be a real database: loopback / container names, and RFC 2606 / 6761 reserved names.
 const PLACEHOLDER_HOST = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|host|db|postgres|\[::1\])$|(?:^|\.)(?:example(?:\.com|\.org|\.net)?|invalid|test|localhost)$/i;
 
@@ -168,12 +187,21 @@ export function isPlaceholder(value) {
   const v = String(value);
   if (PLACEHOLDER_STRUCTURAL.some((re) => re.test(v))) return true;
   let rest = v;
-  let marked = false;
-  for (const re of PLACEHOLDER_MARKERS) {
+  let strong = false;
+  let weak = false;
+  for (const re of STRONG_MARKERS) {
     re.lastIndex = 0;
     const next = rest.replace(re, " ");
-    if (next !== rest) { marked = true; rest = next; }
+    if (next !== rest) { strong = true; rest = next; }
   }
+  for (const re of WEAK_MARKERS) {
+    re.lastIndex = 0;
+    const next = rest.replace(re, " ");
+    if (next !== rest) { weak = true; rest = next; }
+  }
+  // A weak marker alone exempts nothing unless only filler is left with it.
+  if (weak && !strong && !wordsOf(rest).every((w) => FILLER_WORDS.has(w))) return false;
+  const marked = strong || weak;
   // Lane F3 (SF-82 residual): a marker cut out of the MIDDLE of one token leaves the two halves of that token, which
   // count as one stretch — `<8 random>example<8 random>` leaves two runs each below hasRandomRun's length, yet
   // together they are a real password. A marker at a token's edge or between separators splits nothing.
