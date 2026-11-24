@@ -7,8 +7,10 @@
 // The pinned band's seam has its own journey, timetable-seam. The clock is frozen at Thursday 5 November 2026 18:45
 // for staff; the members' day runs on the real clock.
 import { createRequire } from "node:module";
-import { state, ledger, shot, context, ownerSignIn, memberLogin, memberSignIn, launchWithScrollbars, OUT, gridInvariants, phoneNoSidewaysScroll, weekGrid, weekOnFrozenClock } from "../lib.mjs";
-import { POSTER, FROZEN, seedWeek } from "./data/timetable-weeks.mjs";
+import { state, q, ledger, shot, context, ownerSignIn, memberLogin, memberSignIn, launchWithScrollbars, OUT, gridInvariants, phoneNoSidewaysScroll, weekGrid, weekOnFrozenClock } from "../lib.mjs";
+import { POSTER, FROZEN, seedWeek, removeWeek } from "./data/timetable-weeks.mjs";
+
+let seededIds = [];
 
 const require = createRequire(import.meta.url);
 const expect = require("@playwright/test").expect.configure({ timeout: 20_000 });
@@ -60,7 +62,7 @@ try {
   await ownerSignIn(main, club);
   await main.goto("/dashboard/timetable");
 
-  await section("seed", `the poster week on Mat 1 and Mat 2: ${POSTER.rows.length} sessions, split by mat`, () => seedWeek(main, POSTER, { adopt: true }));
+  await section("seed", `the poster week on Mat 1 and Mat 2: ${POSTER.rows.length} sessions, split by mat`, async () => { const r = await seedWeek(main, POSTER, { adopt: true }); seededIds = r.ids; return { classes: r.classes, sessions: r.sessions }; });
   const owner = await ctx.storageState();
   await ctx.clock.setFixedTime(new Date(FROZEN));
 
@@ -246,5 +248,7 @@ try {
   process.exitCode = 1;
 } finally {
   await browser.close();
+  // The week this journey seeded goes, so the next journey in this club seeds into a club without it.
+  await removeWeek(q, club.tenantId, seededIds);
   console.log(`\n${L.summary()} — ledger ${L.path}`);
 }

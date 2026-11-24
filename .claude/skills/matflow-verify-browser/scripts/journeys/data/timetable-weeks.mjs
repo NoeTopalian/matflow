@@ -177,12 +177,26 @@ export const chipName = (s, day) => `${s.name}, ${DAY_NAME[day]} ${s.startTime} 
  */
 export async function seedWeek(page, week, { adopt = false } = {}) {
   const classes = classesOf(week);
+  // A club that already holds this week would hold it twice: two of every class, every one drawn, and every count
+  // doubled (24 Nov 2026: timetable-seam then timetable-level in one club gave 102 sessions for 51). Refuse instead.
+  const already = await page.evaluate(async (names) => {
+    const r = await fetch("/api/classes");
+    if (!r.ok) return { status: r.status };
+    const list = await r.json();
+    return { status: r.status, clash: (Array.isArray(list) ? list : []).filter((c) => names.includes(c.name)).map((c) => c.name) };
+  }, [...new Set(classes.map((c) => c.name))]);
+  if (already.status !== 200) throw new Error(`seedWeek(${week.key}): could not read the club's classes (${already.status})`);
+  if (already.clash.length) throw new Error(`seedWeek(${week.key}): the club already holds ${already.clash.length} classes of this week (${[...new Set(already.clash)].slice(0, 3).join(", ")}…): seed it into a club without them, or remove the earlier copy (removeWeek) first`);
   const statuses = [];
+  const ids = [];
   for (const c of classes) {
-    statuses.push(await page.evaluate(async (body) => {
+    const res = await page.evaluate(async (body) => {
       const r = await fetch("/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      return r.status;
-    }, { name: c.name, location: c.location, color: c.color, duration: toMin(c.schedules[0].endTime) - toMin(c.schedules[0].startTime), schedules: c.schedules }));
+      const created = r.status === 201 ? await r.json().catch(() => null) : null;
+      return { status: r.status, id: created?.id ?? null };
+    }, { name: c.name, location: c.location, color: c.color, duration: toMin(c.schedules[0].endTime) - toMin(c.schedules[0].startTime), schedules: c.schedules });
+    statuses.push(res.status);
+    if (res.id) ids.push(res.id);
   }
   const failed = statuses.filter((s) => s !== 201);
   if (failed.length) throw new Error(`seedWeek(${week.key}): ${failed.length} of ${classes.length} creates were refused (${[...new Set(failed)].join(", ")})`);
@@ -194,5 +208,16 @@ export async function seedWeek(page, week, { adopt = false } = {}) {
     }, week.mats);
     if (status !== 200) throw new Error(`seedWeek(${week.key}): adopting the mats answered ${status}`);
   }
-  return { classes: classes.length, sessions: week.rows.length };
+  return { classes: classes.length, sessions: week.rows.length, ids };
+}
+
+/**
+ * Removes the classes a seedWeek created (by their ids, in this club only), so the next journey in the same club starts
+ * without them. The mats stay: a later seedWeek adopts the same names again. `q` is lib.mjs's test-branch query.
+ */
+export async function removeWeek(q, tenantId, ids) {
+  for (const id of ids ?? []) {
+    for (const t of ["ClassSchedule", "ClassInstance"]) await q(`delete from "${t}" where "classId" = $1`, [id]).catch(() => {});
+    await q(`delete from "Class" where id = $1 and "tenantId" = $2`, [id, tenantId]).catch((e) => console.log(`  (could not remove class ${id}: ${String(e).slice(0, 120)})`));
+  }
 }
