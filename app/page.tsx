@@ -7,6 +7,7 @@ import { Inter, Protest_Strike } from "next/font/google";
 import { LandingNav } from "@/components/landing/LandingNav";
 import { Hero } from "@/components/landing/Hero";
 import { FeaturesGrid } from "@/components/landing/FeaturesGrid";
+import { EverythingIncluded } from "@/components/landing/EverythingIncluded";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 import { PricingSection } from "@/components/landing/PricingSection";
 import { FinalCTA } from "@/components/landing/FinalCTA";
@@ -56,6 +57,7 @@ export default function LandingPage() {
       <LandingNav />
       <Hero />
       <FeaturesGrid />
+      <EverythingIncluded />
       <HowItWorks />
       <PricingSection />
       <FinalCTA />

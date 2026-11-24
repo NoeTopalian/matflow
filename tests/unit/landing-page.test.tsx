@@ -174,7 +174,7 @@ describe("page content", () => {
     expect(root).not.toBeNull();
     expect(root.className).toContain("font-body-var");
     expect(root.className).toContain("font-display-var");
-    expect(root.querySelectorAll(":scope > nav, :scope > section, :scope > footer").length).toBe(7);
+    expect(root.querySelectorAll(":scope > nav, :scope > section, :scope > footer").length).toBe(8);
   });
 
   it("has one main heading and a heading per section", () => {
@@ -185,19 +185,28 @@ describe("page content", () => {
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "Train here?",
       "What you get",
+      "Everything included",
       "How we move you in",
       "Price",
       "Bring your club over.",
     ]);
   });
 
-  it("lists four things a club gets and three steps to move in", () => {
+  it("lists four things a club gets, the full feature list in eight groups, and three steps to move in", () => {
     render(<Page />);
     expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "Timetable",
       "Check-in at the door",
       "Belts and stripes",
       "Members and reports",
+      "Timetable and classes",
+      "Check-in and attendance",
+      "Belts and promotions",
+      "Members and families",
+      "Plans and money",
+      "Running the club",
+      "Your members' app",
+      "Moving in",
       "Apply",
       "Send your member list",
       "Open the doors",
@@ -223,6 +232,17 @@ describe("page content", () => {
       expect((img.getAttribute("alt") ?? "").length).toBeGreaterThan(60);
       expect(img.closest("figure")?.querySelector("figcaption")?.textContent).toBeTruthy();
     }
+  });
+
+  it("the full list has four lines in every group and is honest about card payments", () => {
+    const { container } = render(<Page />);
+    const section = container.querySelector("#everything") as HTMLElement;
+    const groups = Array.from(section.querySelectorAll(":scope ul.grid > li"));
+    expect(groups.length).toBe(8);
+    for (const g of groups) expect(g.querySelectorAll("ul > li").length, g.querySelector("h3")?.textContent ?? "").toBe(4);
+    expect(section.textContent).toContain("Paying by card online is not available yet.");
+    // Things that are not switched on are not listed as features.
+    expect(section.textContent).not.toMatch(/push notification|email|text message|SMS|shop|AI /i);
   });
 
   it("does not claim what the product does not do, and reads as plain English", () => {

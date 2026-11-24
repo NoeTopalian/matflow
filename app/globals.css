@@ -684,6 +684,17 @@ option {
     border-radius: 1rem;
     background: #f5f6f8;
   }
+  /* A plain list with a small square marker in the ink colour. */
+  .land-list > li { position: relative; padding-left: 1rem; }
+  .land-list > li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.6em;
+    width: 0.3rem;
+    height: 0.3rem;
+    background: var(--land-faint);
+  }
   .land-step { border-top: 2px solid var(--land-ink); }
   /* Large display numerals only: blue on black is 3.8:1, enough for type this size. */
   .land-step-number { color: var(--land-blue); }
