@@ -51,16 +51,23 @@ const axis = (page, testId) => page.evaluate((testId) => {
   if (!grid) return { problems: [`no ${testId}`] };
   const ticks = [...grid.querySelectorAll(".pg-tick")].map((t) => ({ row: Number(/^(\d+)/.exec(t.style.gridRow)?.[1]), top: t.getBoundingClientRect().top, text: t.textContent.trim() }));
   const offsets = [];
-  for (const cell of grid.querySelectorAll("[data-cell-key], [data-cell-more]")) {
+  const problems = [];
+  // The chip itself (not its cell) against the time label of the row it starts on: the label must read the chip's own
+  // start time (this journey runs By time, so nothing is levelled onto another class's line), and the chip's top must
+  // sit on the label's line (the cell's 1.5 px inset, within 1 px).
+  for (const cell of grid.querySelectorAll("[data-cell-key]")) {
     const row = Number(cell.getAttribute("data-row-start"));
     const tick = ticks.find((t) => t.row === row);
-    if (tick) offsets.push({ row, off: cell.getBoundingClientRect().top - tick.top, tick: tick.text });
+    const button = cell.querySelector("button");
+    const time = (button?.querySelector('[data-chip-part="time"], [data-block-part="time"]')?.textContent ?? "").trim().slice(0, 5);
+    if (!tick || !button) continue;
+    const off = button.getBoundingClientRect().top - tick.top;
+    offsets.push({ row, off, tick: tick.text, time });
+    if (tick.text !== time) problems.push(`${button.getAttribute("aria-label")}: drawn on the ${tick.text} line but starts ${time}`);
+    if (Math.abs(off - 1.5) > 1) problems.push(`${button.getAttribute("aria-label")}: ${off.toFixed(1)} px from its ${tick.text} label (expected 1.5 ± 1)`);
   }
-  const problems = [];
-  if (offsets.length === 0) problems.push("no cell starts on a labelled row");
+  if (offsets.length === 0) problems.push("no chip starts on a labelled row");
   const offs = offsets.map((o) => o.off);
-  const spread = offs.length ? Math.max(...offs) - Math.min(...offs) : 0;
-  if (spread > 1) problems.push(`cells sit at different distances from their axis labels: ${spread.toFixed(1)} px spread`);
   const heads = [...grid.querySelectorAll("[data-day-head]")].map((h) => { const r = h.getBoundingClientRect(); return { day: h.getAttribute("data-day-head"), top: r.top, bottom: r.bottom, width: r.width }; });
   if (heads.length) {
     const tops = heads.map((h) => h.top), bottoms = heads.map((h) => h.bottom);
@@ -74,7 +81,8 @@ const axis = (page, testId) => page.evaluate((testId) => {
 const contrastOf = (page, selector) => page.evaluate((selector) => {
   const el = document.querySelector(selector);
   if (!el) return null;
-  const parse = (c) => (c.match(/[\d.]+/g) ?? []).map(Number);
+  // rgb()/rgba() only: any other colour syntax (oklch, color()) would be misread, so it fails loudly instead.
+  const parse = (c) => { if (!/^rgba?\(/.test(c)) throw new Error(`unexpected colour format: ${c}`); return (c.match(/[\d.]+/g) ?? []).map(Number); };
   const shell = document.getElementById("member-app");
   const [br, bg, bb] = parse(getComputedStyle(shell).backgroundColor);
   const [r, g, b, a = 1] = parse(getComputedStyle(el).color);
@@ -85,6 +93,7 @@ const contrastOf = (page, selector) => page.evaluate((selector) => {
 }, selector);
 
 let browser;
+let startLayout = null;
 try {
   for (const r of await q(`select id from "Class" where "tenantId" = $1 and name like 'Al %'`, [tenantId])) seeded.push(r.id);
   await cleanup();
@@ -95,6 +104,10 @@ try {
   op.on("pageerror", (e) => errors.push(`owner: ${String(e).slice(0, 200)}`));
   await ownerSignIn(op, club);
   const ownerState = await oc.storageState();
+  // This week has no mats: measure it By time whatever an earlier journey left the club on, and put that back after.
+  startLayout = (await q(`select "timetableLayout" from "Tenant" where id = $1`, [tenantId]))[0]?.timetableLayout ?? null;
+  const toTime = await op.evaluate(async () => (await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: "time" }) })).status);
+  L.check("setup", "the club is set to By time for this week", toTime === 200, { toTime, startLayout });
 
   // ── C1: the members' empty day, on every theme preset (before any class exists, so today is empty) ──
   const startBg = (await q(`select "bgColor" from "Tenant" where id = $1`, [tenantId]))[0]?.bgColor ?? null;
@@ -113,20 +126,22 @@ try {
       // The members' day is three panes (yesterday, today, tomorrow): the one on screen.
       const empty = mp.getByText("No classes today", { exact: true }).filter({ visible: true }).first();
       const shown = await empty.waitFor({ timeout: 30000 }).then(() => true, () => false);
-      await mp.waitForFunction((b) => {
+      // The preset must really be the one on screen, or this row measures the previous theme under the wrong name.
+      const applied = await mp.waitForFunction((b) => {
         const s = getComputedStyle(document.getElementById("member-app")).backgroundColor.match(/\d+/g).map(Number);
         const want = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
         return s.slice(0, 3).every((v, i) => v === want[i]);
-      }, bg, { timeout: 90000 }).catch(() => {});
-      const c = shown ? await empty.evaluate((el) => { el.setAttribute("data-probe", "empty"); return true; }).then(() => contrastOf(mp, '[data-probe="empty"]')) : null;
-      ratios.push({ bg, status, shown, ...c });
+      }, bg, { timeout: 90000 }).then(() => true, () => false);
+      const c = shown && applied ? await empty.evaluate((el) => { el.setAttribute("data-probe", "empty"); return true; }).then(() => contrastOf(mp, '[data-probe="empty"]')) : null;
+      ratios.push({ bg, status, shown, applied, ...c });
       if (bg === "#111111") await shot(mp, "alignment-member-empty-111111");
     }
   } finally {
-    if (startBg) await op.evaluate(async (b) => fetch("/api/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ bgColor: b }) }), startBg).catch(() => {});
+    // Back to how the club started; a club with none set gets the app's default shell colour.
+    await op.evaluate(async (b) => fetch("/api/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ bgColor: b }) }), startBg ?? "#111111").catch(() => {});
   }
-  const low = ratios.filter((r) => !(r.shown && r.ratio >= 4.5));
-  L.check("C1", 'members\' "No classes today" reads at 4.5:1 or better on all 12 theme presets (computed colour on the computed shell)', low.length === 0 && ratios.length === PRESETS.length, { low, ratios: ratios.map((r) => `${r.bg} ${r.ratio}`) });
+  const low = ratios.filter((r) => !(r.status === 200 && r.applied && r.shown && r.ratio >= 4.5));
+  L.check("C1", 'members\' "No classes today" reads at 4.5:1 or better on all 12 theme presets, each one saved (200) and confirmed on screen before it is measured', low.length === 0, { low, ratios: ratios.map((r) => `${r.bg} ${r.status} ${r.applied ? "applied" : "NOT applied"} ${r.ratio}`) });
   await mc.close();
 
   // ── Seed the awkward week ──
@@ -184,6 +199,9 @@ try {
     for (const d of ["Mon", "Sat"]) {
       await tab(d).tap();
       await page.waitForTimeout(400);
+      // Every day carries the same classes, so a tap that did not switch would measure the same day twice.
+      const shownDay = await page.getByTestId("phone-day-grid").getAttribute("data-day");
+      L.check(`T0@${width}`, `phone: the ${d} tab shows ${d}`, shownDay === d.toLowerCase(), { shownDay });
       const inv = await gridInvariants(page, { sessions: DAY_CLASSES.length, grid: "phone-day-grid" });
       L.check(`T1@${width}`, `phone ${d}: every layout rule holds (${DAY_CLASSES.length} sessions)`, inv.problems.length === 0, inv);
       const ax = await axis(page, "phone-day-grid");
@@ -201,6 +219,7 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   await cleanup();
+  await q(`update "Tenant" set "timetableLayout" = $2 where id = $1`, [tenantId, startLayout]).catch(() => {});
   L.check("all", "no uncaught page errors", errors.length === 0, errors);
   console.log(`\n${L.summary()}  ledger ${L.path}`);
   fs.writeFileSync(`${OUT}/timetable-alignment-done.txt`, L.summary());
