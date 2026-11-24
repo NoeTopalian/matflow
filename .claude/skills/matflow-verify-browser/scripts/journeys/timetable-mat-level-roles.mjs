@@ -4,6 +4,7 @@
 //   P1 By mat: each card sits under its own mat's heading; their rendered tops differ by at most 1 CSS px; equal
 //      durations end level. P2: B ends at 12:30 (tops level, B's bottom lower). P3: an earlier 10:30-11:30 class on
 //      Mat 1 only (on screen, under Mat 1, above A; the pair as before).
+//   D  The P1 pair again in the staff desktop Day view (admin, owner, coach at 1280 px): the grid's third staff surface.
 //   F  Thursday has four 11:00 classes on four mats: more than a phone's three tracks, so the staff phone and the
 //      members' day (three tracks at every width) must fall back to time and say so; the staff week at 1280 keeps
 //      mat columns. Either way the pair shares one logical start row.
@@ -63,14 +64,18 @@ async function cleanup() {
 const measure = (page, surface, width, names) => page.evaluate(({ surface, width, names }) => {
   const grid = surface === "member"
     ? document.querySelector('[data-testid="schedule-pane"] [data-testid="schedule-day"]')
-    : width === "390" ? document.querySelector('[data-testid="phone-day-grid"]') : document.querySelector('[data-testid="week-grid"]');
+    : width === "390" ? document.querySelector('[data-testid="phone-day-grid"]')
+    : width === "day" ? document.querySelector('[data-testid="day-view"] [data-testid="phone-day-grid"]')
+    : document.querySelector('[data-testid="week-grid"]');
   if (!grid) return { grid: false };
   const out = { grid: true, cards: {} };
-  for (const name of names) {
-    const all = [...grid.querySelectorAll("[data-cell-key] button")].filter((el) => (el.getAttribute("aria-label") ?? "").includes(`${name}, `) && !el.closest("[inert]"));
+  const found = names.map((name) => [name, [...grid.querySelectorAll("[data-cell-key] button")].filter((el) => (el.getAttribute("aria-label") ?? "").includes(`${name}, `) && !el.closest("[inert]"))]);
+  // One scroll, to the first card, then every card is measured at that same scroll: scrolling to each in turn moved
+  // the page between readings (B, 18 px taller in P2, read 9 px "higher" than A).
+  found[0][1][0]?.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  for (const [name, all] of found) {
     if (all.length === 0) { out.cards[name] = { name, missing: true, copies: 0 }; continue; }
     const btn = all[0];
-    btn.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     const r = btn.getBoundingClientRect();
     const hitEl = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     const cell = btn.closest("[data-cell-key]");
@@ -78,9 +83,13 @@ const measure = (page, surface, width, names) => page.evaluate(({ surface, width
     const matId = cell.getAttribute("data-mat");
     const head = matId && day ? day.querySelector(`[data-mat-head="${matId}"]`) : null;
     const h = head?.getBoundingClientRect();
+    // Visible: wholly on screen, and what answers at its centre is this card or its own cell. A card a role cannot
+    // open is not a hit target itself (the hit lands on its cell); anything else answering there is a layer over it.
+    const hitDesc = hitEl ? `${hitEl.tagName.toLowerCase()}${hitEl.getAttribute("data-testid") ? `[${hitEl.getAttribute("data-testid")}]` : ""}.${String(hitEl.className).split(" ")[0]}${cell.contains(hitEl) ? " (own cell)" : ""}` : null;
     out.cards[name] = {
       name, copies: all.length, day: day?.getAttribute("data-day") ?? null,
-      visible: r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth && !!hitEl && (hitEl === btn || btn.contains(hitEl)),
+      hit: hitDesc, pointer: getComputedStyle(btn).pointerEvents, disabled: btn.disabled,
+      visible: r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth && !!hitEl && (hitEl === btn || cell.contains(hitEl)),
       top: Math.round(r.top * 10) / 10, bottom: Math.round(r.bottom * 10) / 10,
       rowStart: cell.getAttribute("data-row-start"),
       heading: head ? (head.textContent ?? "").trim() : null,
@@ -109,6 +118,14 @@ async function openDay(page, surface, width, day) {
     await page.waitForLoadState("networkidle");
     if (width === "390") {
       const tab = page.getByRole("tab", { name: new RegExp(`^${day.slice(0, 3)}`) }).first();
+      await tab.waitFor({ timeout: 60000 });
+      await tab.click();
+    } else if (width === "day") {
+      // The desktop Day view: switch to it (retried until it reports pressed), then the day's tab inside it.
+      const dayButton = page.getByTestId("timetable-view-day");
+      await dayButton.waitFor({ timeout: 60000 });
+      for (let i = 0; i < 10 && (await dayButton.getAttribute("aria-pressed")) !== "true"; i++) { await dayButton.click(); await page.waitForTimeout(500); }
+      const tab = page.getByTestId("day-view").getByRole("tab", { name: new RegExp(`^${day}`) }).first();
       await tab.waitFor({ timeout: 60000 });
       await tab.click();
     }
@@ -154,9 +171,10 @@ try {
     { tag: "390", opts: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
     { tag: "1280", opts: { viewport: { width: 1280, height: 800 } } },
   ];
-  const run = async (phase, day, names, expectView, expect) => {
-    for (const role of ["admin", "owner", "coach", "member"]) {
-      for (const w of WIDTHS) {
+  const DAY_VIEW = [{ tag: "day", opts: { viewport: { width: 1280, height: 800 } } }];
+  const run = async (phase, day, names, expectView, expect, { roles = ["admin", "owner", "coach", "member"], widths = WIDTHS } = {}) => {
+    for (const role of roles) {
+      for (const w of widths) {
         const surface = role === "member" ? "member" : "staff";
         const ctx = await context(browser, `10.95.9.${20 + matrix.length % 200}`, { ...w.opts, storageState: sessions[role], timezoneId: "Europe/London" });
         const page = await ctx.newPage();
@@ -190,6 +208,8 @@ try {
 
   // P1: equal durations: own headings, tops level, bottoms level.
   await run("P1", "Wednesday", ["Mat Pair A", "Mat Pair B"], byMat, (a, b) => matPair(a, b) && Math.abs(a.bottom - b.bottom) <= 1);
+  // D: the same pair in the staff desktop Day view (1280 px), the third staff surface that draws the grid.
+  await run("D", "Wednesday", ["Mat Pair A", "Mat Pair B"], byMat, (a, b) => matPair(a, b) && Math.abs(a.bottom - b.bottom) <= 1, { roles: ["admin", "owner", "coach"], widths: DAY_VIEW });
 
   // P2: B ends at 12:30. Tops level, B's bottom lower.
   const pairB = (await q(`select id from "Class" where "tenantId" = $1 and name = 'Mat Pair B'`, [tenantId]))[0].id;
