@@ -440,7 +440,11 @@ function DayPane({
             {FELL_BACK}
           </p>
         ) : null}
-        {!loading && dayClasses.length === 0 ? (
+        {loading ? (
+          // Audit F3: while the schedule loads the day says so. It used to draw nothing, which on slow gym Wi-Fi
+          // read as a day with no classes. Same ink as the empty-day line below (measured 5.3:1 and over).
+          <p role="status" className="py-16 text-center text-gray-700 text-sm" data-testid="schedule-loading">Loading classes…</p>
+        ) : dayClasses.length === 0 ? (
           <p className="py-16 text-center text-gray-700 text-sm">No classes today</p>
         ) : dayClasses.length > 0 ? (
           <PosterDay
