@@ -357,11 +357,14 @@ try {
           await press(v, moreBtn);
           const sheet = page.locator('div[role="dialog"]').filter({ has: page.locator('[aria-label="Sign out all devices"]') });
           await page.waitForTimeout(450); // slide
+          // Close must be on screen as the sheet opens; every other item must be on screen once scrolled to.
+          const closeHit = await hit(sheet.getByRole("button", { name: "Close menu", exact: true }));
           const items = sheet.locator("a, button");
           const n = await items.count();
-          const unreachable = [];
+          const unreachable = closeHit.inView && closeHit.onTop ? [] : [{ name: "Close menu (as the sheet opens)", rect: closeHit.rect, topEl: closeHit.topEl }];
           for (let i = 0; i < n; i++) {
             const it = items.nth(i);
+            await it.evaluate(CENTRE);
             const h = await hit(it);
             if (!(h.inView && h.onTop)) unreachable.push({ name: (await it.getAttribute("aria-label")) ?? (await it.textContent())?.trim(), rect: h.rect, topEl: h.topEl });
           }
