@@ -134,10 +134,11 @@ async function openDay(page, surface, width, day) {
 }
 
 let browser;
-let startLayout;
+// Read before anything can fail, so the restore below never writes a value that was not read.
+const startLayout = (await q(`select "timetableLayout" from "Tenant" where id = $1`, [tenantId]))[0]?.timetableLayout ?? null;
+const matsBefore = (await q(`select id from "Mat" where "tenantId" = $1`, [tenantId])).map((m) => m.id);
 try {
   await cleanup();
-  startLayout = (await q(`select "timetableLayout" from "Tenant" where id = $1`, [tenantId]))[0]?.timetableLayout ?? null;
   browser = await chromium.launch();
   // Owner: seeds the week through the app (classes, then the mats adopted from their places), split by mat.
   const oc = await context(browser, "10.95.9.1", { viewport: { width: 1280, height: 800 }, timezoneId: "Europe/London" });
@@ -225,7 +226,7 @@ try {
   await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime") values ($1, $2, 3, '10:30', '11:30')`, [randomUUID(), early]);
   await run("P3", "Wednesday", ["Mat Pair A", "Mat Pair B", "Mat Early"], byMat, (a, b, m) => {
     const e = m.cards["Mat Early"];
-    return matPair(a, b) && b.bottom > a.bottom + 2 && !!e && !e.missing && e.copies === 1 && e.heading === "Mat 1" && e.underHeading && e.top < a.top;
+    return matPair(a, b) && b.bottom > a.bottom + 2 && !!e && !e.missing && e.visible && e.copies === 1 && e.heading === "Mat 1" && e.underHeading && e.top < a.top;
   });
 
   // F: the fallback where it must happen (staff phone; the members' day at both widths); mat columns on the staff week.
@@ -244,8 +245,9 @@ try {
   await browser?.close().catch(() => {});
   await cleanup();
   // Leave the club as found: its layout, and none of the mats this journey adopted.
-  await q(`update "Tenant" set "timetableLayout" = $2 where id = $1`, [tenantId, startLayout ?? null]).catch(() => {});
-  await q(`delete from "Mat" where "tenantId" = $1 and name = any($2)`, [tenantId, WEEK.mats]).catch((e) => console.log(`  (mats kept: ${String(e).slice(0, 120)})`));
+  await q(`update "Tenant" set "timetableLayout" = $2 where id = $1`, [tenantId, startLayout]).catch(() => {});
+  // Only the mats that were not there at the start: a mat another journey's classes sit on keeps its classes.
+  await q(`delete from "Mat" where "tenantId" = $1 and name = any($2) and not (id = any($3))`, [tenantId, WEEK.mats, matsBefore]).catch((e) => console.log(`  (mats kept: ${String(e).slice(0, 120)})`));
   L.check("all", "no uncaught page errors", errors.length === 0, errors);
   fs.writeFileSync(`${OUT}/mat-level-roles-matrix.json`, JSON.stringify(matrix, null, 2));
   console.log("\nMATRIX phase | role | width | view drawn (expected) | day | top diff | B bottom - A bottom | A heading/B heading | rows | copies");

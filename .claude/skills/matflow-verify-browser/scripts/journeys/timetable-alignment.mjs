@@ -4,8 +4,8 @@
 //      same start = same line in every day, a later start never higher, over ten minutes later strictly lower, no two
 //      chips intersect, each inside its day and its mat column, nothing cut) for classes that overlap, last 45 and
 //      75 minutes, start off the hour, and a day with no classes;
-//   T2 every chip sits on the time axis: the offset between a cell and the axis label of its starting row is the same
-//      for every cell (one grid, one axis), and every day header shares one top and one bottom;
+//   T2 every chip sits on the time axis: its row carries a label, the label reads the chip's own start time and the
+//      chip's top is 1.5 px (within 1) below it; every day header shares one top and one bottom;
 //   T3 a day with no classes keeps its column and says so;
 //   C1 the members' "No classes today" reads at WCAG AA (4.5:1) on every member theme preset (8 dark, 4 light),
 //      measured from the computed colour against the shell's computed background.
@@ -60,7 +60,7 @@ const axis = (page, testId) => page.evaluate((testId) => {
     const tick = ticks.find((t) => t.row === row);
     const button = cell.querySelector("button");
     const time = (button?.querySelector('[data-chip-part="time"], [data-block-part="time"]')?.textContent ?? "").trim().slice(0, 5);
-    if (!tick || !button) continue;
+    if (!tick || !button) { problems.push(`${button?.getAttribute("aria-label") ?? cell.getAttribute("data-cell-key")}: ${button ? `no time label on row ${row}` : "no chip in the cell"}`); continue; }
     const off = button.getBoundingClientRect().top - tick.top;
     offsets.push({ row, off, tick: tick.text, time });
     if (tick.text !== time) problems.push(`${button.getAttribute("aria-label")}: drawn on the ${tick.text} line but starts ${time}`);
@@ -93,7 +93,8 @@ const contrastOf = (page, selector) => page.evaluate((selector) => {
 }, selector);
 
 let browser;
-let startLayout = null;
+// Read before anything can fail, so the restore below never writes a value that was not read.
+const startLayout = (await q(`select "timetableLayout" from "Tenant" where id = $1`, [tenantId]))[0]?.timetableLayout ?? null;
 try {
   for (const r of await q(`select id from "Class" where "tenantId" = $1 and name like 'Al %'`, [tenantId])) seeded.push(r.id);
   await cleanup();
@@ -105,7 +106,6 @@ try {
   await ownerSignIn(op, club);
   const ownerState = await oc.storageState();
   // This week has no mats: measure it By time whatever an earlier journey left the club on, and put that back after.
-  startLayout = (await q(`select "timetableLayout" from "Tenant" where id = $1`, [tenantId]))[0]?.timetableLayout ?? null;
   const toTime = await op.evaluate(async () => (await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: "time" }) })).status);
   L.check("setup", "the club is set to By time for this week", toTime === 200, { toTime, startLayout });
 
@@ -166,7 +166,7 @@ try {
     const inv = await gridInvariants(page, { sessions: SESSIONS });
     L.check(`T1@${tag}`, `week grid: every layout rule holds for overlaps, 45 and 75 minute classes and off-the-hour starts (${SESSIONS} sessions)`, inv.problems.length === 0, inv);
     const ax = await axis(page, "week-grid");
-    L.check(`T2@${tag}`, "week grid: every cell is the same distance from its row's time label, and the day headers share one top and bottom", ax.problems.length === 0, ax);
+    L.check(`T2@${tag}`, "week grid: every chip sits on a time label that reads its own start (1.5 px below, within 1), and the day headers share one top and bottom", ax.problems.length === 0, ax);
     // An empty day is drawn narrow by design (a header and a dash); what must hold is that it is there, marked, and
     // nothing of it leaves its column.
     const sunday = await page.evaluate(() => {
@@ -205,7 +205,7 @@ try {
       const inv = await gridInvariants(page, { sessions: DAY_CLASSES.length, grid: "phone-day-grid" });
       L.check(`T1@${width}`, `phone ${d}: every layout rule holds (${DAY_CLASSES.length} sessions)`, inv.problems.length === 0, inv);
       const ax = await axis(page, "phone-day-grid");
-      L.check(`T2@${width}`, `phone ${d}: every cell is the same distance from its row's time label`, ax.problems.length === 0, ax);
+      L.check(`T2@${width}`, `phone ${d}: every chip sits on a time label that reads its own start (1.5 px below, within 1)`, ax.problems.length === 0, ax);
       const side = await phoneNoSidewaysScroll(page);
       L.check(`T1@${width}`, `phone ${d}: nothing scrolls sideways and no chip leaves the day`, side.ok, side);
       if (d === "Mon") await shot(page, `alignment-phone-${width}`);

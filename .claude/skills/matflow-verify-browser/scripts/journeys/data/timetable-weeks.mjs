@@ -173,9 +173,10 @@ export const chipName = (s, day) => `${s.name}, ${DAY_NAME[day]} ${s.startTime} 
 /**
  * Creates the week through the app's own create API from a signed-in page (as timetable-overload does).
  * `adopt: true` (PR 2 onwards) then turns that week's typed places into mats, so the club is split by mat.
- * Returns { classes, sessions }.
+ * Returns { classes, sessions, ids }. Pass `ids` (an array) to have each created class id pushed into it as it is
+ * made, so a caller can still remove the classes when a later create or the adopt throws.
  */
-export async function seedWeek(page, week, { adopt = false } = {}) {
+export async function seedWeek(page, week, { adopt = false, ids = [] } = {}) {
   const classes = classesOf(week);
   // A club that already holds this week would hold it twice: two of every class, every one drawn, and every count
   // doubled (24 Nov 2026: timetable-seam then timetable-level in one club gave 102 sessions for 51). Refuse instead.
@@ -183,12 +184,14 @@ export async function seedWeek(page, week, { adopt = false } = {}) {
     const r = await fetch("/api/classes");
     if (!r.ok) return { status: r.status };
     const list = await r.json();
-    return { status: r.status, clash: (Array.isArray(list) ? list : []).filter((c) => names.includes(c.name)).map((c) => c.name) };
+    if (!Array.isArray(list)) return { status: 0 };
+    return { status: r.status, count: list.length, clash: list.filter((c) => names.includes(c.name)).map((c) => c.name) };
   }, [...new Set(classes.map((c) => c.name))]);
   if (already.status !== 200) throw new Error(`seedWeek(${week.key}): could not read the club's classes (${already.status})`);
+  // The list is capped at 100 rows: a full page cannot show that the week is absent.
+  if (already.count >= 100) throw new Error(`seedWeek(${week.key}): the club holds ${already.count} or more classes, so the list cannot show whether this week is already there`);
   if (already.clash.length) throw new Error(`seedWeek(${week.key}): the club already holds ${already.clash.length} classes of this week (${[...new Set(already.clash)].slice(0, 3).join(", ")}…): seed it into a club without them, or remove the earlier copy (removeWeek) first`);
   const statuses = [];
-  const ids = [];
   for (const c of classes) {
     const res = await page.evaluate(async (body) => {
       const r = await fetch("/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -214,10 +217,13 @@ export async function seedWeek(page, week, { adopt = false } = {}) {
 /**
  * Removes the classes a seedWeek created (by their ids, in this club only), so the next journey in the same club starts
  * without them. The mats stay: a later seedWeek adopts the same names again. `q` is lib.mjs's test-branch query.
+ * Returns how many of the classes are still there afterwards (0 when all went).
  */
 export async function removeWeek(q, tenantId, ids) {
   for (const id of ids ?? []) {
     for (const t of ["ClassSchedule", "ClassInstance"]) await q(`delete from "${t}" where "classId" = $1`, [id]).catch(() => {});
     await q(`delete from "Class" where id = $1 and "tenantId" = $2`, [id, tenantId]).catch((e) => console.log(`  (could not remove class ${id}: ${String(e).slice(0, 120)})`));
   }
+  if (!ids?.length) return 0;
+  return (await q(`select count(*)::int as n from "Class" where "tenantId" = $1 and id = any($2)`, [tenantId, ids]))[0].n;
 }
