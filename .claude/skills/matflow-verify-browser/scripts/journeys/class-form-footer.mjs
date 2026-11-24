@@ -70,6 +70,8 @@ try {
 
       // K2: keyboard height off the viewport, last field focused.
       await page.setViewportSize({ width: vp.width, height: vp.height - kb });
+      // Let the sheet re-measure (its height is in dvh) before focusing, as a keyboard opening ahead of the focus would.
+      await page.waitForTimeout(300);
       const last = sheet.locator("input:not([type=hidden]):not([type=checkbox]), textarea, select").last();
       await last.focus();
       await last.evaluate((el) => el.scrollIntoView({ block: "nearest" }));
