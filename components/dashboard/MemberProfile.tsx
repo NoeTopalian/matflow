@@ -571,6 +571,9 @@ export default function MemberProfile({
   const signInLocked = isSignInLocked(member.lockedUntil);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
+  // Which edge of the button the menu hangs from: its right edge, unless the menu (w-44, 176 px) would then run
+  // past the left of the screen, as it did at 320 px where the button wraps to the left.
+  const [actionsAlignLeft, setActionsAlignLeft] = useState(false);
   // F5 deletion gateway — opens the 3-strategy modal when a parent member is
   // about to be removed. The modal handles the probe + picker + execution.
   const [showRemoveModal, setShowRemoveModal] = useState(false);
@@ -1278,7 +1281,13 @@ export default function MemberProfile({
             <Button
               ref={actionsTriggerRef}
               variant="secondary"
-              onClick={() => setShowActionsMenu((v) => !v)}
+              onClick={() => {
+                if (!showActionsMenu) {
+                  const r = actionsTriggerRef.current?.getBoundingClientRect();
+                  setActionsAlignLeft(!!r && r.right - 176 < 8);
+                }
+                setShowActionsMenu((v) => !v);
+              }}
               // PR 3: an archived profile is read-only; Restore is in the notice above.
               disabled={!!member.archivedAt}
               className="size-9 px-0"
@@ -1289,7 +1298,7 @@ export default function MemberProfile({
             </Button>
             {showActionsMenu && (
               <div
-                className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-40"
+                className={`absolute ${actionsAlignLeft ? "left-0" : "right-0"} top-full mt-1 w-44 rounded-xl border py-1 z-40`}
                 style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
               >
                 {!supportEdit && <button
