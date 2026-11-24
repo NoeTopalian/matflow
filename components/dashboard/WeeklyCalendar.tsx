@@ -61,13 +61,15 @@ export default function WeeklyCalendar({ classes, primaryColor, role, todayKey }
   const weekDays = getWeekDays(anchor);
   const dayScrollRef = useRef<HTMLDivElement>(null);
 
-  // Scroll selected day pill into view on mobile
+  // Centre the selected day pill within the strip on mobile. Only the strip scrolls: scrollIntoView also scrolled the
+  // page down to the strip, so on a phone the dashboard opened at the bottom, past its to-do tiles (audit F1).
   useEffect(() => {
     const idx = weekDays.findIndex((d) => fmt(d) === selectedDate);
-    if (idx >= 0 && dayScrollRef.current) {
-      const pill = dayScrollRef.current.children[idx] as HTMLElement;
-      pill?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-    }
+    const strip = dayScrollRef.current;
+    const pill = idx >= 0 ? (strip?.children[idx] as HTMLElement | undefined) : undefined;
+    if (!strip || !pill) return;
+    const left = strip.scrollLeft + pill.getBoundingClientRect().left - strip.getBoundingClientRect().left - (strip.clientWidth - pill.offsetWidth) / 2;
+    strip.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
   }, [selectedDate]);
 
   function prevWeek() {
