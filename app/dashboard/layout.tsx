@@ -71,6 +71,15 @@ export default async function DashboardLayout({
       secondaryColor={session.user.secondaryColor}
       textColor={session.user.textColor}
     >
+      {/* Audit F14: the first Tab stop on every staff page, so a keyboard user skips the account menu and ~15 sidebar
+          links. Off screen until it has keyboard focus (a pointer never focuses it), then pinned top-left over the
+          chrome without moving anything. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-[var(--r-md)] focus:border focus:border-bd-default focus:bg-sf-1 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-tx-1 focus:shadow-md"
+      >
+        Skip to content
+      </a>
       {/* Super-admin impersonation banner — only renders when an active
           impersonation cookie is present. Fixed-position so it floats above
           the dashboard chrome regardless of viewport. */}
@@ -206,7 +215,8 @@ export default async function DashboardLayout({
               screen — the member-detail tab rail had the identical defect.
               Left/right and BOTTOM padding stay on <main>: only the top edge is
               load-bearing for sticky. */}
-          <main className="flex-1 overflow-y-auto px-4 pb-28 md:px-6 md:pb-6 xl:px-8 xl:pb-8">
+          {/* The skip link's target: focusable by script only (tabIndex -1), with no ring of its own around the page. */}
+          <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto px-4 pb-28 outline-none md:px-6 md:pb-6 xl:px-8 xl:pb-8">
             <div className="dash-content mx-auto w-full max-w-6xl pt-5 md:pt-6 xl:pt-8">{children}</div>
           </main>
 
