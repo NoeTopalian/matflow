@@ -83,7 +83,7 @@ export default function TermsPage() {
         <h2 className="text-lg font-semibold text-white mb-2">7. Data, privacy, and sub-processors</h2>
         <p>
           Our handling of data is described in the <Link href="/legal/privacy" className="underline">Privacy Policy</Link> and
-          our <Link href="/legal/subprocessors" className="underline">sub-processor list</Link>. You confirm that you have a
+          our <Link href="/legal/privacy#sub-processors" className="underline">sub-processor list</Link>. You confirm that you have a
           lawful basis to provide member data to MatFlow and that you have informed your members appropriately.
         </p>
       </section>

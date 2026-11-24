@@ -10,7 +10,6 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
             <Link href="/legal/terms" className="hover:text-white">Terms</Link>
             <Link href="/legal/privacy" className="hover:text-white">Privacy</Link>
             <Link href="/legal/aup" className="hover:text-white">AUP</Link>
-            <Link href="/legal/subprocessors" className="hover:text-white">Sub-processors</Link>
           </nav>
         </div>
       </header>

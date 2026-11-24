@@ -29,10 +29,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "yearly",
       priority: 0.3,
     },
-    {
-      url: `${BASE_URL}/legal/subprocessors`,
-      changeFrequency: "yearly",
-      priority: 0.3,
-    },
   ];
 }
