@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -914,6 +915,7 @@ function ClassForm({
   saving,
   error = null,
   restore = null,
+  footerSlot = null,
 }: {
   initial: Partial<ClassRow> | null;
   rankSystems: RankOption[];
@@ -937,6 +939,8 @@ function ClassForm({
   error?: SaveError | null;
   /** Round 11 (1.1): after a conflict reload, the fields this person had changed, put back on the fresh class. */
   restore?: ClassDraft | null;
+  /** The Sheet's pinned footer: the actions (and what they say) are drawn there, outside the scrolling form (audit F2). */
+  footerSlot?: HTMLElement | null;
 }) {
   // A restored field starts from what was typed before the reload; every other field from the fresh class.
   const rv = <T,>(key: keyof ClassDraftValues, fallback: T): T => (restore && key in restore.form ? (restore.form[key] as T) : fallback);
@@ -1203,6 +1207,9 @@ function ClassForm({
   // queued behind the first edit already sees confirmDiscard (from useEffect it landed one task late and lost the edit).
   useLayoutEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  // Into the Sheet's footer when the Sheet gives one, else in place (audit F2).
+  const placeActions = (node: React.ReactNode) => (footerSlot ? createPortal(node, footerSlot) : node);
 
   function submit() {
     if (!canSubmit) return;
@@ -1828,8 +1835,10 @@ function ClassForm({
           })}
       </div>
 
-      {/* Actions — a disabled button always says why (UI-RULES §7). */}
-      <div className="pt-2 space-y-2">
+      {/* Actions — a disabled button always says why (UI-RULES §7). Drawn in the Sheet's pinned footer when there is one
+          (audit F2): on a phone Create class sat 1,173 px down the form, under the on-screen keyboard. What the buttons
+          say (missing fields, a refused save, Reload) travels with them, so it stays beside them. */}
+      {placeActions(<div className={footerSlot ? "w-full space-y-2" : "pt-2 space-y-2"}>
         {/* A refused Location is said beside its field instead (above). */}
         {error && error.reason !== "location" && (
           // A refused save stays with the form, above the buttons it belongs
@@ -1881,7 +1890,7 @@ function ClassForm({
             {initial?.id ? "Save changes" : "Create class"}
           </Button>
         </div>
-      </div>
+      </div>)}
     </div>
   );
 }
@@ -1946,6 +1955,8 @@ export default function TimetableManager({
   // disabled meanwhile, and each handler clears only its own entry.
   const [lifecycleBusy, setLifecycleBusy] = useState<{ id: string; action: "pause" | "archive" | "restore" } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // The class Sheet's footer node, once mounted: ClassForm portals its actions into it (audit F2).
+  const [classFooter, setClassFooter] = useState<HTMLDivElement | null>(null);
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null);
   // Round 11 (1.1): a class draft kept through a conflict reload, applied when its class's sheet opens once.
   const [restoreDraft, setRestoreDraft] = useState<ClassDraft | null>(null);
@@ -3180,8 +3191,11 @@ export default function TimetableManager({
         // While a save is in flight the sheet stays: closing it would not stop the save (review of #99, M1).
         onClose={() => { if (!saving && !lifecycleBusy) closeDrawer(); }}
         confirmDiscard={classFormDirty && !saving && !lifecycleBusy}
+        // Audit F2: the class form draws Cancel / Save (and what they say) here, pinned below the scrolling form.
+        footer={<div ref={setClassFooter} className="w-full" data-testid="class-form-footer" />}
       >
         <ClassForm
+          footerSlot={classFooter}
           initial={editTarget}
           rankSystems={rankSystems}
           coachUsers={coachUsers}
