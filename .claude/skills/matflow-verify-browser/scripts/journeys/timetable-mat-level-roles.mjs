@@ -69,8 +69,10 @@ const measure = (page, a, b) => page.evaluate(([a, b]) => {
       underHeading: !!h && r.left >= h.left - 1 && r.right <= h.right + 1,
     };
   };
-  const fellBack = [...document.querySelectorAll('[data-testid="phone-day-fallback"], [data-testid="schedule-fallback"]')].some((el) => el.getBoundingClientRect().height > 0);
-  const matHeads = [...document.querySelectorAll("[data-mat-head]")].filter((el) => el.getBoundingClientRect().width > 0).length;
+  // Only what is on screen: the members' day keeps yesterday's and tomorrow's panes beside it, off screen.
+  const onScreen = (el) => { const r = el.getBoundingClientRect(); return r.height > 0 && r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1; };
+  const fellBack = [...document.querySelectorAll('[data-testid="phone-day-fallback"], [data-testid="schedule-fallback"]')].some(onScreen);
+  const matHeads = [...document.querySelectorAll("[data-mat-head]")].filter(onScreen).length;
   return { a: one(a), b: one(b), fellBack, matHeads };
 }, [a, b]);
 
