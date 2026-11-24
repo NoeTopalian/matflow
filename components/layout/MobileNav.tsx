@@ -57,9 +57,10 @@ export default function MobileNav({ role, primaryColor }: Props) {
         aria-labelledby={titleId}
         inert={!moreOpen}
         aria-hidden={moreOpen ? undefined : true}
-        // Never taller than the screen: on a short phone the list scrolls inside the sheet and the header (with
-        // Close) stays on screen. Uncapped, the owner's 12 items ran 282 px above a 320 x 568 screen, out of reach.
-        className={`fixed bottom-0 left-0 right-0 z-50 md:hidden flex max-h-dvh flex-col transition-transform duration-300 ease-out ${
+        // Never taller than the screen below the status bar: on a short phone the list scrolls inside the sheet and
+        // the header (with Close) stays on screen. Uncapped, the owner's 12 items ran 282 px above a 320 x 568
+        // screen, out of reach. The installed app draws under the status bar (viewportFit "cover"), hence the inset.
+        className={`fixed bottom-0 left-0 right-0 z-50 md:hidden flex max-h-[calc(100dvh_-_env(safe-area-inset-top))] flex-col transition-transform duration-300 ease-out ${
           moreOpen ? "translate-y-0" : "translate-y-full"
         }`}
         style={{
