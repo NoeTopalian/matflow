@@ -412,7 +412,7 @@ try {
         await page.waitForLoadState("networkidle");
         const trigger = page.getByRole("button", { name: "Open account menu" });
         if (!(await trigger.isVisible())) {
-          na("C5", T, "no account menu in the top bar at this width (the More menu carries sign-out)");
+          na("C5", `${T}:account-menu`, "no account menu in the top bar at this width (the More menu carries sign-out)");
         } else {
           await trigger.click();
           const menu = page.getByRole("menu");
