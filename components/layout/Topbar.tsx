@@ -119,9 +119,13 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       // Focus on one of the menu's items would fall to the page when the menu unmounts: hand it back to the button.
-      const inMenu = !!menuRef.current?.contains(document.activeElement) && document.activeElement !== menuButtonRef.current;
+      // So does focus on nothing while the menu is open: Safari does not focus a button it clicks, so a menu opened by
+      // mouse there leaves focus on the page body.
+      const a = document.activeElement;
+      const open = !!menuRef.current?.querySelector('[role="menu"]');
+      const back = open && a !== menuButtonRef.current && (!!menuRef.current?.contains(a) || a === document.body);
       setMenuOpen(false);
-      if (inMenu) menuButtonRef.current?.focus();
+      if (back) menuButtonRef.current?.focus();
     }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
