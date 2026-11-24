@@ -511,6 +511,18 @@ try {
         const kbBack = await active(page);
         check("C5", T, 'member "More actions" by keyboard: Escape from inside the menu closes it and focus goes back to "More actions"', kbClosed && kbBack.label === "More actions", { kbClosed, kbBack });
         if (!kbClosed) await trigger.click().catch(() => {});
+        // Focus Tabbed out of the open menu into the page: Escape there is not the menu's, so focus stays put.
+        await trigger.click();
+        await menu.waitFor({ timeout: 10000 });
+        await lastItem.focus();
+        await page.keyboard.press("Tab");
+        const outside = await active(page);
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(200);
+        const afterOut = await active(page);
+        check("C5", T, 'member "More actions": with focus Tabbed out into the page, Escape does not pull focus back to "More actions"',
+          afterOut.tag === outside.tag && afterOut.label === outside.label && afterOut.label !== "More actions", { outside, afterOut });
+        if (await menu.count()) await trigger.click().catch(() => {});
       } catch (e) { check("C5", T, "member More actions case ran to the end", false, String(e).slice(0, 300)); await shot(page, `overlay-c5-error-actions-${T}`); }
       if (!zoom) na("C5", `${T}:row-actions`, "no table in the staff app has a per-row actions menu (DataTable rows are links)");
     }

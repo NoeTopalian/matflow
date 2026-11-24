@@ -743,6 +743,10 @@ export default function MemberProfile({
     // Escape closes the menu (one level) and hands focus back to "More actions", wherever focus was inside it.
     function handleKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      // Only while focus is in the menu (or nowhere): Escape from a drawer opened beside it, or from the page,
+      // belongs to that, and must not close two levels or pull focus back here (review of this fix).
+      const a = document.activeElement;
+      if (a && a !== document.body && !actionsMenuRef.current?.contains(a)) return;
       setShowActionsMenu(false);
       actionsTriggerRef.current?.focus();
     }
