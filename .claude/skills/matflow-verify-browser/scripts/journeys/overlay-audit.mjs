@@ -14,13 +14,17 @@
 //   node journeys/overlay-audit.mjs [--only=C1,C4] [--widths=390,1280]
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, OUT } from "../lib.mjs";
+import { createRequire } from "node:module";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, seedStaff, OUT, APP } from "../lib.mjs";
 
 const club = state.club;
 if (!club) throw new Error("no fixture — run: node fixture.mjs create");
 const tenantId = club.tenantId;
-const L = ledger("overlay-audit");
 const arg = (k) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
+// --browser=webkit: Playwright's WebKit (not real iPhone Safari), from the worktree under test.
+const BROWSER = arg("browser") ?? "chromium";
+const engine = BROWSER === "webkit" ? createRequire(`${APP}/package.json`)("@playwright/test").webkit : chromium;
+const L = ledger(BROWSER === "webkit" ? "overlay-audit-webkit" : "overlay-audit");
 const ONLY = arg("only")?.split(",");
 const runs = (c) => !ONLY || ONLY.includes(c);
 
@@ -101,7 +105,7 @@ try {
   for (const v of VIEWPORTS) await seedClass(`Ov Save ${v.tag}`, saveHours[v.tag]);
   await seedStaff(club, "coach", { name: "Zara Coach" });
 
-  browser = await chromium.launch();
+  browser = await engine.launch();
   // One sign-in (an authenticator code per 30 s step); every width reuses the session.
   const signCtx = await context(browser, "10.98.0.1");
   const sp = await signCtx.newPage();
@@ -400,6 +404,34 @@ try {
           const isActive = await target.evaluate((b) => !!b.querySelector("span.absolute"));
           check("C2", T, `the first tap on the destination works (Settings tab "${label}" becomes the open tab)`, isActive, { label, isActive });
           notTested("C2", T, "a delayed ghost click from the original tap", "iOS Safari and Android dispatch the compatibility click after touchend on real hardware; emulated taps do not (needs real device)");
+
+          // Dismissed without navigating (Close, the backdrop, Escape): nothing left over intercepts the next tap.
+          for (const how of ["Close", "backdrop", "Escape"]) {
+            await page.goto("/dashboard");
+            await page.waitForLoadState("networkidle");
+            await press(v, moreBtn);
+            await page.waitForTimeout(450);
+            const top = await page.evaluate(() => { const el = document.elementFromPoint(innerWidth / 2, 6); return el?.closest('[role="dialog"]') ? "sheet" : "backdrop"; });
+            if (how === "Close") await press(v, sheet.getByRole("button", { name: "Close menu", exact: true }));
+            else if (how === "Escape") await page.keyboard.press("Escape");
+            else if (top === "sheet") { L.note(`C2@${T}`, "backdrop dismissal: no backdrop to tap at this height (the capped sheet fills the screen)", { top }); await press(v, sheet.getByRole("button", { name: "Close menu", exact: true })); continue; }
+            else if (touch(v)) await page.touchscreen.tap(Math.round(v.opts.viewport.width / 2), 6);
+            else await page.mouse.click(Math.round(v.opts.viewport.width / 2), 6);
+            await page.waitForTimeout(450);
+            const left = await page.evaluate(() => ({
+              layers: Array.from(document.querySelectorAll("body *")).filter((el) => {
+                const s = getComputedStyle(el); const r = el.getBoundingClientRect();
+                return s.position === "fixed" && s.pointerEvents !== "none" && s.visibility !== "hidden" && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.5 && r.top < innerHeight && r.bottom > 0 && !el.closest("[inert]");
+              }).map((el) => `${el.tagName}.${String(el.className).slice(0, 60)}`),
+              inert: document.querySelector('[role="dialog"][aria-labelledby]')?.hasAttribute("inert") ?? null,
+            }));
+            const nav = page.locator('nav[aria-label="Main navigation"]').getByRole("link", { name: "Timetable", exact: true });
+            const navHit = await hit(nav);
+            if (navHit.onTop) await press(v, nav);
+            const went = await page.waitForURL(/\/dashboard\/timetable/, { timeout: 30000 }).then(() => true, () => false);
+            check("C2", T, `dismissed by ${how}: no layer is left over the page and the very next tap (Timetable in the bottom bar) works`,
+              left.layers.length === 0 && navHit.onTop && went, { ...left, navHit, went });
+          }
         }
       } catch (e) { check("C2", T, "case ran to the end", false, String(e).slice(0, 300)); await shot(page, `overlay-c2-error-${T}`); }
     }
@@ -523,6 +555,27 @@ try {
         check("C5", T, 'member "More actions": with focus Tabbed out into the page, Escape does not pull focus back to "More actions"',
           afterOut.tag === outside.tag && afterOut.label === outside.label && afterOut.label !== "More actions", { outside, afterOut });
         if (await menu.count()) await trigger.click().catch(() => {});
+        // A drawer opened beside the open menu (Mark paid manually): one Escape closes only the drawer, and focus
+        // goes back to the drawer's own button, not to "More actions".
+        const paid = page.getByRole("button", { name: "Mark paid manually", exact: true });
+        if (await paid.count()) {
+          await trigger.click();
+          await menu.waitFor({ timeout: 10000 });
+          await paid.focus();
+          await page.keyboard.press("Enter");
+          const drawer = page.getByRole("dialog").filter({ hasNot: page.locator('[aria-label="Sign out all devices"]') }).last();
+          const opened = await drawer.waitFor({ timeout: 15000 }).then(() => true, () => false);
+          const menuUnder = await menu.count();
+          await page.keyboard.press("Escape");
+          const drawerGone = await drawer.waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
+          await page.waitForTimeout(200);
+          const f = await active(page);
+          check("C5", T, 'a drawer opened beside the open "More actions" menu: one Escape closes only the drawer and focus returns to its own button',
+            opened && drawerGone && f.label !== "More actions" && /Mark paid manually/.test(f.label ?? ""), { opened, menuUnder, drawerGone, f });
+          if (await menu.count()) await trigger.click().catch(() => {});
+        } else {
+          L.note(`C5@${T}`, 'no "Mark paid manually" button on this profile: the drawer-beside-menu case was not run', {});
+        }
       } catch (e) { check("C5", T, "member More actions case ran to the end", false, String(e).slice(0, 300)); await shot(page, `overlay-c5-error-actions-${T}`); }
       if (!zoom) na("C5", `${T}:row-actions`, "no table in the staff app has a per-row actions menu (DataTable rows are links)");
     }
@@ -573,7 +626,7 @@ try {
   await browser?.close().catch(() => {});
   await cleanup();
   L.check("all", "no uncaught page errors", errors.length === 0, errors);
-  fs.writeFileSync(`${OUT}/overlay-audit-matrix.json`, JSON.stringify(matrix, null, 2));
+  fs.writeFileSync(`${OUT}/overlay-audit-matrix${BROWSER === "webkit" ? "-webkit" : ""}.json`, JSON.stringify(matrix, null, 2));
   console.log("\nMATRIX");
   for (const [c, cells] of Object.entries(matrix)) console.log(`${c}: ${Object.entries(cells).map(([t, r]) => `${t}=${r.result}`).join("  ")}`);
   console.log(`\n${L.summary()}  ledger ${L.path}`);
