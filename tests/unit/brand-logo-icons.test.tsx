@@ -35,32 +35,32 @@ const srcOf = (img: HTMLElement) => decodeURIComponent(img.getAttribute("src") ?
 afterEach(cleanup);
 
 describe("landing page logo", () => {
-  it("the top bar links home with the short logo, named MatFlow.Studio", async () => {
+  it("the top bar links home with the primary logo, named MatFlow.Studio", async () => {
     render(<LandingNav />);
     // Shown one frame after arrival, once the bar has looked for the large logo.
     const home = await screen.findByRole("link", { name: "MatFlow.Studio home" });
     expect(home.getAttribute("href")).toBe("/");
-    // Two drawings, one shown at a time: the plain bar on a phone, the striped
-    // belt from 640 px, as the brand guide sizes them.
-    const [small, striped] = within(home).getAllByRole("img", { name: "MatFlow.Studio" });
-    expect(srcOf(small)).toContain("matflow-short-small-on-dark");
-    expect(small.className).toContain("sm:hidden");
-    // max-w-none: the negative margin narrows the link, and the default
-    // max-width of 100% would shrink the drawing by the same amount.
-    expect(small.className).toContain("max-w-none");
-    expect(striped.className).toContain("max-w-none");
-    expect(Number(small.getAttribute("width"))).toBeLessThan(140);
-    expect(srcOf(striped)).toContain("matflow-short-on-dark");
-    expect(striped.className).toContain("hidden sm:block");
-    expect(Number(striped.getAttribute("width"))).toBeGreaterThanOrEqual(140);
-    expect(Number(striped.getAttribute("width"))).toBeLessThan(320);
+    const logo = within(home).getByRole("img", { name: "MatFlow.Studio" });
+    // The same file as the large logo, on the white page: the light version, strip and all.
+    expect(srcOf(logo)).toContain("matflowstudio-logo-on-light");
+    // Seen through a window that cuts the file's empty margin off.
+    expect(home.className).toContain("land-corner-logo");
+    expect(home.className).toContain("overflow-hidden");
   });
 
-  it("the opening carries the full logo at 320 px or wider", () => {
-    render(<Hero />);
+  it("the opening carries the full logo at 320 px or wider, written out in two parts", () => {
+    const { container } = render(<Hero />);
     const logo = screen.getByRole("img", { name: "MatFlow.Studio" });
-    expect(srcOf(logo)).toContain("matflowstudio-logo-on-dark");
+    expect(srcOf(logo)).toContain("matflowstudio-logo-on-light");
     expect(Number(logo.getAttribute("width"))).toBeGreaterThanOrEqual(320);
+    // Lettering and belt first, then the .Studio strip: two copies of the one file, the second hidden from readers.
+    const stage = container.querySelector("#landing-hero-logo") as HTMLElement;
+    const copies = Array.from(stage.querySelectorAll("img"));
+    expect(copies.map((img) => img.className.match(/land-logo-(word|strip)/)?.[1])).toEqual(["word", "strip"]);
+    expect(copies.map((img) => img.parentElement?.className.match(/land-write-(word|strip)/)?.[1])).toEqual(["word", "strip"]);
+    expect(copies[1].getAttribute("alt")).toBe("");
+    expect(copies[1].parentElement?.getAttribute("aria-hidden")).toBe("true");
+    expect(srcOf(copies[1])).toBe(srcOf(copies[0]));
   });
 
   it("the footer names the product in full beside the MF icon", () => {
@@ -76,7 +76,7 @@ describe("landing page logo", () => {
 
   it("no brand file contains live text, a script or an embedded image", () => {
     for (const name of [
-      "matflow-short-on-dark.svg",
+      "matflowstudio-logo-on-light.svg",
       "matflowstudio-logo-on-dark.svg",
       "app-icon-mf-plain.svg",
       "app-icon-mf-studio.svg",

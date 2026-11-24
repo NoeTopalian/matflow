@@ -94,7 +94,9 @@ The logo files contain no live text, so no font needs to load for them.
 
 ## Changed in this repository
 
-The three dark files (`matflowstudio-logo-on-dark.svg`, `matflow-short-on-dark.svg`, `matflow-short-small-on-dark.svg`) differ from the original kit in one place, at the owner's request (23 Nov 2026): the black bar on the belt is cut out of the belt, where the kit painted a near-black rectangle over it, and it keeps a hairline off-white edge along its top and bottom. Lettering, stripes, colours and proportions are the kit's. The light and all-white files are untouched.
+The three dark files (`matflowstudio-logo-on-dark.svg`, `matflow-short-on-dark.svg`, `matflow-short-small-on-dark.svg`) differ from the original kit in one place, at the owner's request (23 Nov 2026): the black bar on the belt is cut out of the belt, where the kit painted a near-black rectangle over it, and it keeps a hairline off-white edge along its top and bottom. Lettering, stripes, colours and proportions are the kit's. The belts of the light and all-white files are untouched.
+
+On the .Studio strip of all three full logos the S and the T overlapped; the dot and S are moved slightly left and T, U, D, I, O slightly right so the two letters no longer touch (24 Nov 2026).
 
 ## Not done
 

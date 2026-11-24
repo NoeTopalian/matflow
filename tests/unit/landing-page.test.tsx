@@ -79,10 +79,17 @@ describe("member door", () => {
 });
 
 describe("the two doors", () => {
-  it("the top bar offers Find my gym and Apply", () => {
+  it("the top bar offers Sign in to your club and Apply", () => {
     render(<LandingNav />);
     const nav = screen.getByRole("navigation", { name: "Main" });
-    expect(within(nav).getByRole("link", { name: "Find my gym" }).getAttribute("href")).toBe("/#find-my-gym");
+    const signIn = within(nav).getByRole("link", { name: "Sign in to your club" });
+    // The sign-in page itself, where members and staff enter their club code.
+    expect(signIn.getAttribute("href")).toBe("/login");
+    // The full wording from 640 px, a short one on a phone where the bar is tight.
+    expect(Array.from(signIn.querySelectorAll("span")).map((s) => `${s.className}|${s.textContent}`)).toEqual([
+      "sm:hidden|Sign in",
+      "hidden sm:inline|Sign in to your club",
+    ]);
     expect(within(nav).getByRole("link", { name: "Apply" }).getAttribute("href")).toBe("/apply");
   });
 
@@ -103,11 +110,11 @@ describe("the two doors", () => {
     expect(screen.getByRole("button", { name: "Open menu" }).getAttribute("aria-controls")).toBeNull();
   });
 
-  it("choosing Find my gym closes the open phone menu, which would cover the club code box", () => {
+  it("choosing Sign in to your club closes the open phone menu", () => {
     render(<LandingNav />);
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     expect(screen.getByRole("button", { name: "Close menu" }).getAttribute("aria-controls")).toBe("landing-menu");
-    fireEvent.click(screen.getByRole("link", { name: "Find my gym" }));
+    fireEvent.click(screen.getByRole("link", { name: "Sign in to your club" }));
     expect(document.getElementById("landing-menu")).toBeNull();
   });
 
@@ -122,7 +129,8 @@ describe("the two doors", () => {
   it("every apply button goes to /apply and the page ends with both doors", () => {
     render(<Page />);
     expect(new Set(hrefs(/^Apply/))).toEqual(new Set(["/apply"]));
-    expect(hrefs("Find my gym")).toEqual(["/#find-my-gym", "/#find-my-gym"]);
+    expect(hrefs("Sign in to your club")).toEqual(["/login"]);
+    expect(hrefs("Find my gym")).toEqual(["/#find-my-gym"]);
   });
 });
 

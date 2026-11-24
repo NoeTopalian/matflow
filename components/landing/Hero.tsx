@@ -4,35 +4,52 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import mainLogo from "@/brand/matflowstudio-logo-on-dark.svg";
+import mainLogo from "@/brand/matflowstudio-logo-on-light.svg";
 import { MemberDoor } from "@/components/landing/MemberDoor";
 
 export function Hero() {
   return (
     <section className="relative overflow-hidden">
       <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-14 pb-20 lg:pt-20 lg:pb-28">
-        {/* The logo, large and centred above both doors. The file is 640 x 260
-            with the drawing in the middle 56% of its width, so it is laid out
-            wider than the page column (a centred flex child overflows equally
-            on both sides) and its empty top and bottom margins are pulled in;
-            the section clips the overhang. */}
-        <div id="landing-hero-logo" className="flex justify-center mb-10 lg:mb-14 land-rise">
-          <Image
-            src={mainLogo}
-            alt="MatFlow.Studio"
-            width={1040}
-            height={423}
-            unoptimized
-            preload
-            className="shrink-0"
+        {/* The logo, large and centred above both doors, written out on arrival:
+            the lettering and belt first, then the .Studio strip (the two
+            copies and their cuts are explained in globals.css). The file is
+            640 x 260 with the drawing in the middle 56% of its width, so the
+            stage is wider than the page column (a centred flex child overflows
+            equally on both sides) and its empty top and bottom margins are
+            pulled in; the section clips the overhang. */}
+        <div id="landing-hero-logo" className="flex justify-center mb-10 lg:mb-14">
+          <div
+            className="relative shrink-0"
             style={{
               width: "min(65rem, 165%)",
-              maxWidth: "none",
-              height: "auto",
+              aspectRatio: "640 / 260",
               marginTop: "calc(min(65rem, 165%) * -0.085)",
               marginBottom: "calc(min(65rem, 165%) * -0.03)",
             }}
-          />
+          >
+            <div className="absolute inset-0 land-write-word">
+              <Image
+                src={mainLogo}
+                alt="MatFlow.Studio"
+                width={1040}
+                height={423}
+                unoptimized
+                preload
+                className="land-logo-word block w-full h-full max-w-none"
+              />
+            </div>
+            <div className="absolute inset-0 land-write-strip" aria-hidden>
+              <Image
+                src={mainLogo}
+                alt=""
+                width={1040}
+                height={423}
+                unoptimized
+                className="land-logo-strip block w-full h-full max-w-none"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-14 lg:gap-12 items-center">

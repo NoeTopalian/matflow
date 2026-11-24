@@ -7,8 +7,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import shortLogo from "@/brand/matflow-short-on-dark.svg";
-import shortLogoSmall from "@/brand/matflow-short-small-on-dark.svg";
+import mainLogo from "@/brand/matflowstudio-logo-on-light.svg";
 
 const SECTION_LINKS = [
   { href: "/#features", label: "What you get" },
@@ -45,35 +44,20 @@ export function LandingNav() {
       className={`land-nav sticky top-0 z-50 land-rise ${scrolled || open ? "land-nav-solid" : ""}`}
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
-        {/* The brand guide gives the striped short logo to widths of 140 px and
-            up and the plain-bar version below that, so a phone gets the plain
-            bar. Both files carry about 12% of empty margin each side; the
-            negative margin lines the lettering up with the page gutter. */}
+        {/* The corner logo is the primary logo, strip and all. Its file is
+            mostly empty margin (the drawing is the middle 56% of the width and
+            59% of the height), so it is drawn at 250 px and shown through a
+            142 x 60 window that cuts the margin off. */}
         <Link
           href="/"
           aria-label="MatFlow.Studio home"
           aria-hidden={pastHeroLogo ? undefined : true}
           tabIndex={pastHeroLogo ? undefined : -1}
-          className={`flex items-center shrink-0 transition-opacity duration-300 motion-reduce:transition-none ${
+          className={`land-corner-logo block shrink-0 overflow-hidden transition-opacity duration-300 motion-reduce:transition-none ${
             pastHeroLogo ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
         >
-          <Image
-            src={shortLogoSmall}
-            alt="MatFlow.Studio"
-            width={131}
-            height={48}
-            unoptimized
-            className="sm:hidden -ml-4 max-w-none"
-          />
-          <Image
-            src={shortLogo}
-            alt="MatFlow.Studio"
-            width={175}
-            height={64}
-            unoptimized
-            className="hidden sm:block -ml-5 max-w-none"
-          />
+          <Image src={mainLogo} alt="MatFlow.Studio" width={250} height={102} unoptimized className="max-w-none" />
         </Link>
 
         {/* Section links, desktop */}
@@ -85,14 +69,16 @@ export function LandingNav() {
           ))}
         </div>
 
-        {/* The two doors: members to their gym, owners to the application. */}
+        {/* The two doors: sign in to your club (members and staff), or apply for one. */}
         <div className="flex items-center gap-2">
           <Link
-            href="/#find-my-gym"
+            href="/login"
+            aria-label="Sign in to your club"
             onClick={() => setOpen(false)}
-            className="land-btn-ghost inline-flex items-center px-4 min-h-11 rounded-xl text-sm font-semibold"
+            className="land-btn-ghost inline-flex items-center px-4 min-h-11 rounded-xl text-sm font-semibold whitespace-nowrap"
           >
-            Find my gym
+            <span className="sm:hidden">Sign in</span>
+            <span className="hidden sm:inline">Sign in to your club</span>
           </Link>
           <Link
             href="/apply"
