@@ -1090,9 +1090,12 @@ function ClassForm({
     setCustomError(false);
   }
   function choosePreset(value: string) {
-    setColor(value);
-    // A preset clears any half-typed code and its error; an open box shows the preset's code instead.
-    setCustomText(value);
+    // The saved colour re-picked in other letter case stays exactly as stored, so a conflict reload never carries a
+    // case-only "change" over someone else's colour (lib/draft-stash.ts changedKeys compares exactly).
+    setColor(canonicalClassColour(value, initial?.color ?? null));
+    // A swatch clears any half-typed code and its error; an open box shows the swatch's code — as a code the box
+    // accepts, or empty for a saved value that is not one ("teal"), so re-picking it never blocks Save.
+    setCustomText(opaqueHexOf(value) ?? "");
     setCustomError(false);
   }
   function toggleCustom() {
@@ -1857,7 +1860,9 @@ function ClassForm({
                     setCustomText(picked);
                     chooseCustom(picked);
                   }}
-                  className="ui-fixed-size block h-9 w-12 cursor-pointer rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-1"
+                  // A raw input: the native colour picker has no primitive (UI-RULES §9). `ui-field`: it sits in the row
+                  // beside the hex box and grows with it to the 44 px touch floor on a coarse pointer (globals.css).
+                  className="ui-field ui-fixed-size block h-9 w-12 cursor-pointer rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-1"
                 />
               </div>
               <div className="min-w-0 flex-1">
@@ -1885,7 +1890,12 @@ function ClassForm({
                     else if (text.trim() === "") setCustomError(false);
                   }}
                   // Said once the person has finished typing (left the box), never on every keystroke.
-                  onBlur={() => { if (customHalfTyped) setCustomError(true); }}
+                  // Not when focus moves to a swatch or the toggle: both clear the code, so the error would flash.
+                  onBlur={(e) => {
+                    const to = e.relatedTarget as HTMLElement | null;
+                    if (to?.closest("[data-testid='class-colour-swatches'], [data-testid='class-colour-custom-toggle']")) return;
+                    if (customHalfTyped) setCustomError(true);
+                  }}
                 />
               </div>
             </div>

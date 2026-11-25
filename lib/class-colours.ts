@@ -146,11 +146,6 @@ export function parseCustomClassColour(input: string): string | null {
 }
 
 /**
- * The value a chosen custom colour is held as: the class's saved colour exactly as stored when it is that one (so no
- * change is sent), a palette colour's own value when it is one (so its swatch is chosen and no duplicate custom
- * swatch appears), else the colour as given.
- */
-/**
  * A stored colour as the native colour picker's value, "#rrggbb" in lower case: "#abc" widened, an alpha channel
  * dropped (it is painted opaque). Null for null or anything that is not a hex code.
  */
@@ -161,7 +156,15 @@ export function opaqueHexOf(value: string | null | undefined): string | null {
   return /^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(v) ? `#${v.slice(0, 6).toLowerCase()}` : null;
 }
 
+/**
+ * The value a chosen colour is held as: the class's saved colour exactly as stored when it is that one — in any
+ * letter case, or "#aabbcc" for a saved "#abc" — so no change is sent; a palette colour's own value when it is one (so
+ * its swatch is chosen and no duplicate custom swatch appears); else the colour as given.
+ */
 export function canonicalClassColour(value: string, saved: string | null): string {
-  if (saved && sameClassColour(value, saved)) return saved;
+  // A saved 8-digit value is not the same as its opaque six: the member schedule cannot paint the eight, so typing
+  // the six is a real change.
+  const savedOpaque = saved && /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.test(saved.trim()) ? opaqueHexOf(saved) : null;
+  if (saved && (sameClassColour(value, saved) || (savedOpaque !== null && savedOpaque === opaqueHexOf(value)))) return saved;
   return CLASS_COLOURS.find((c) => sameClassColour(c.value, value))?.value ?? value;
 }

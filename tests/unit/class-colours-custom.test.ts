@@ -94,5 +94,18 @@ describe("one colour in any letter case", () => {
     expect(canonicalClassColour("#abcdef", "#ABCDEF")).toBe("#ABCDEF");
     expect(canonicalClassColour("#3b82f6", "#3B82F6")).toBe("#3B82F6");
     expect(canonicalClassColour("#123456", "#abcdef")).toBe("#123456");
+    // A saved "#abc" is "#aabbcc"; a saved 8-digit value is not its opaque six (the member schedule cannot paint it).
+    expect(canonicalClassColour("#aabbcc", "#AbC")).toBe("#AbC");
+    expect(canonicalClassColour("#112233", "#11223344")).toBe("#112233");
+    // A swatch re-picked on a class saved with it in capitals is held as stored.
+    expect(canonicalClassColour("#3b82f6", "#3B82F6")).toBe("#3B82F6");
+  });
+
+  it("the server takes a 3- or 6-digit hex code or null, nothing else (lib/schemas/class.ts)", async () => {
+    const { classColourSchema } = await import("@/lib/schemas/class");
+    for (const ok of ["#abc", "#1a2b3c", "#ABCDEF"]) expect(classColourSchema.safeParse(ok).success).toBe(true);
+    for (const bad of ["#1234", "#12345", "#1234567", "#11223344", "1a2b3c", "red", "url(//x.example/a)", "#12345g", ""]) {
+      expect(classColourSchema.safeParse(bad).success, bad).toBe(false);
+    }
   });
 });

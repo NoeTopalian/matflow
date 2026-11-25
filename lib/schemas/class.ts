@@ -20,9 +20,10 @@ const clockTime = /^([01]\d|2[0-3]):[0-5]\d$/;
  * Until 25 Nov 2026 any string of up to 20 characters was accepted, so `url(…)` or a colour name could be stored and
  * then painted as a `background`. The only sender is the class form, which sends a swatch or a custom colour (both
  * "#rrggbb") and never re-sends a stored colour it did not change, so a class saved earlier with anything else keeps
- * it until someone picks a new one. 3–8 digits, as lib/color.ts isHexColor and the parsers that paint it accept.
+ * it until someone picks a new one. Three or six digits only: an opaque colour, and the forms the member schedule
+ * can paint (app/member/schedule/page.tsx normalizeHex falls back to the default blue for anything else).
  */
-export const classColourSchema = z.string().regex(/^#[0-9a-fA-F]{3,8}$/, "Colour must be a hex code such as #1a2b3c");
+export const classColourSchema = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "Colour must be a hex code such as #1a2b3c");
 
 export const scheduleSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),

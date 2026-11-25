@@ -826,6 +826,7 @@ export async function PATCH(req: Request, { params }: Params) {
       // class.updateMany; listing the columns makes that impossible to get
       // wrong the next time a field is added to updateSchema. Every value here
       // may be `undefined`, which Prisma treats as "leave alone".
+      const colourUnchanged = parsed.data.color != null && sameClassColour(parsed.data.color, owned[0].color);
       const classFields = {
         name: parsed.data.name,
         description: parsed.data.description,
@@ -840,8 +841,8 @@ export async function PATCH(req: Request, { params }: Params) {
         // mode clears the rank columns outright.
         requiredRankId: wantsRoster ? null : parsed.data.requiredRankId,
         maxRankId: wantsRoster ? null : parsed.data.maxRankId,
-        // The stored colour in other letter case is the same colour: not written, so no Activity row says it changed.
-        color: parsed.data.color != null && sameClassColour(parsed.data.color, owned[0].color) ? undefined : parsed.data.color,
+        // The stored colour (in any letter case) is the same colour: not written, and not listed as a changed field.
+        color: colourUnchanged ? undefined : parsed.data.color,
         isActive: parsed.data.isActive,
         // T6b: resume / restore clears the archive marker too, so a restored
         // class is never "active but hidden everywhere". Pausing leaves an
@@ -904,7 +905,7 @@ export async function PATCH(req: Request, { params }: Params) {
       };
       return {
         cls, scheduleChange, before, tiersBefore, tiersAfter, keptBookings, sessionsCreatedOnResume,
-        lifecycleChange, legacyArchivedOn, locationAdded,
+        lifecycleChange, legacyArchivedOn, locationAdded, colourUnchanged,
       };
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -926,7 +927,8 @@ export async function PATCH(req: Request, { params }: Params) {
           // `baseScheduleIds`, `baseRosterIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
           // A Location by name (`matName`) is recorded as the columns it sets.
           // An old category key is recorded as the reference it was written as.
-          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "baseRosterIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
+          // A colour sent as the stored colour (in any letter case) was not written, so it is not a changed field.
+          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "baseRosterIds" || k === "categoryBaseId" || (k === "color" && updated.colourUnchanged) ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
           // Release B's activation signal, durable (runtime logs are not kept long enough to cover the observation
           // window): this save came from a page that knows only the old category keys. This release's form sends
           // `categoryBaseId` with any key it sends on an edit, so only an old page matches.

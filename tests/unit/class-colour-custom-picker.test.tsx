@@ -227,6 +227,38 @@ describe("saved colours are left alone", () => {
     await save();
     expect(lastPatchBody()).not.toHaveProperty("color");
   });
+
+  it("re-picking a non-hex saved colour (Current colour) with the panel open leaves the box empty and never blocks Save", async () => {
+    const group = await openEdit(makeClass("c1", "Advanced", "teal"));
+    const { hex } = openCustom();
+    fireEvent.click(within(group).getByRole("button", { name: "Class colour: Navy" }));
+    fireEvent.click(within(group).getByRole("button", { name: "Class colour: Current colour" }));
+    expect(hex.value).toBe("");
+    await save();
+    expect(screen.queryByTestId("class-colour-hex-error")).toBeNull();
+    expect(lastPatchBody()).not.toHaveProperty("color");
+  });
+
+  it("a saved three-digit code re-typed as its six digits is the same colour: nothing sent", async () => {
+    const group = await openEdit(makeClass("c1", "Advanced", "#AbC"));
+    const { hex } = openCustom();
+    expect(hex.value).toBe("#aabbcc");
+    fireEvent.change(hex, { target: { value: "aabbcc" } });
+    expect(within(group).getByRole("button", { name: "Class colour: Current colour" }).getAttribute("aria-pressed")).toBe("true");
+    await save();
+    expect(lastPatchBody()).not.toHaveProperty("color");
+  });
+
+  it("leaving a half-typed box for a swatch shows no error at all (the swatch clears the code)", async () => {
+    const group = await openEdit(makeClass("c1", "Advanced", "#3b82f6"));
+    const { hex } = openCustom();
+    fireEvent.change(hex, { target: { value: "12" } });
+    const pink = within(group).getByRole("button", { name: "Class colour: Pink" });
+    fireEvent.blur(hex, { relatedTarget: pink });
+    expect(screen.queryByTestId("class-colour-hex-error")).toBeNull();
+    fireEvent.click(pink);
+    expect(screen.queryByTestId("class-colour-hex-error")).toBeNull();
+  });
 });
 
 describe("a failed save", () => {
@@ -236,7 +268,7 @@ describe("a failed save", () => {
     const { hex } = openCustom();
     fireEvent.change(hex, { target: { value: "#224466" } });
     await save();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("class-form-save-error")).toBeTruthy());
     expect(pressed(group)).toEqual(["Class colour: Custom colour"]);
     expect((screen.getByLabelText("Custom colour: hex code") as HTMLInputElement).value).toBe("#224466");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));

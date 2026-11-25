@@ -81,9 +81,12 @@ describe.skipIf(!HAS_DB)("class colour: what an edit stores", () => {
     expect(r.status).toBe(200);
     expect(await colourOf()).toBe("#1A2B3C");
     expect(lastAuditColour().recorded).toBe(false);
+    // Nor is it listed as a changed field (the Activity feed shows "Fields: …" from this list).
+    const fields = (audit.calls.at(-1)?.metadata as { fields?: string[] } | undefined)?.fields ?? [];
+    expect(fields).not.toContain("color");
   });
 
-  it.each(["url(//x.example/a)", "red", "#12345g", "1a2b3c", "#", "#123456789", "rgb(1,2,3)"])("refuses %j and changes nothing", async (bad) => {
+  it.each(["url(//x.example/a)", "red", "#12345g", "1a2b3c", "#", "#123456789", "rgb(1,2,3)", "#11223344", "#1234"])("refuses %j and changes nothing", async (bad) => {
     await setColour("#224466");
     as("A");
     const r = await patch({ color: bad });
