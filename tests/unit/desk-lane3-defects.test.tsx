@@ -105,7 +105,8 @@ describe("D1 — cancel one session from the register", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Restore session" })).toBeTruthy());
     const patch = calls.find((c) => c.init?.method === "PATCH");
     expect(patch?.url).toBe("/api/classes/cls-1/instances/inst-1");
-    expect(JSON.parse(String(patch?.init?.body))).toEqual({ isCancelled: true, cancellationReason: "Coach ill" });
+    // registerDay: the club date the list was read for (lib/register-day.ts).
+    expect(JSON.parse(String(patch?.init?.body))).toEqual({ isCancelled: true, cancellationReason: "Coach ill", registerDay: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
     // Refreshed: the day was read again after the change.
     expect(calls.filter((c) => c.url === "/api/coach/today").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Cancelled: Coach ill").some((el) => el.tagName === "P")).toBe(true);

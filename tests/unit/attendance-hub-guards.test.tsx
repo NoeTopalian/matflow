@@ -56,6 +56,8 @@ type StubOpts = {
   ada?: { attended?: boolean; waiverAccepted?: boolean };
   /** The server's clock less the device's, in ms (a device clock that is wrong). */
   serverAheadMs?: number;
+  /** The server refuses every write: the register's day has passed by its clock (409 REGISTER_DAY_STALE). */
+  serverSaysStale?: boolean;
 };
 const clubKey = (ms: number) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: ZONE }).format(new Date(ms));
 function stub(opts: StubOpts = {}) {
@@ -66,6 +68,9 @@ function stub(opts: StubOpts = {}) {
     calls.push({ url, method, body });
     const json = (status: number, b: unknown, h: Record<string, string> = {}) =>
       ({ ok: status < 300, status, type: "basic", headers: { get: (n: string) => h[n] ?? (n.toLowerCase() === "content-type" ? "application/json" : null) }, json: async () => b });
+    if (opts.serverSaysStale && method !== "GET") {
+      return json(409, { error: "This register is for Wednesday 25 November. It is now Thursday 26 November at the club. Reload to see today's classes.", code: "REGISTER_DAY_STALE", clubDate: "2026-11-26" });
+    }
     if (url === "/api/coach/today") {
       if (opts.holdToday?.current) await opts.holdToday.current.promise;
       const server = Date.now() + (opts.serverAheadMs ?? 0);
@@ -355,6 +360,71 @@ describe("2: across the club's midnight (Asia/Makassar) with no focus or visibil
     await tick(50);
     expect(writes(calls)).toHaveLength(1);
     expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
+  });
+});
+
+describe("A: the server refuses a write for a register day that has passed (its clock, not the device's)", () => {
+  // The device's clock still says 23:50 on the 25th, so the client's own guard lets the write go; the server,
+  // past the club's midnight, answers 409 REGISTER_DAY_STALE. The screen must say so and switch nothing.
+  const body = (c: Call) => c.body as Record<string, unknown> | null;
+
+  it("a mark: sent once with the register day, refused, the dated notice shows, the class is unchanged", async () => {
+    vi.setSystemTime(BEFORE_CLUB_MIDNIGHT);
+    const calls = stub({ serverSaysStale: true });
+    hub("coach", "tick");
+    await tick(50);
+    fireEvent.click(screen.getByRole("button", { name: "Mark Ada Example attended" }));
+    await tick(50);
+    expect(writes(calls).map((c) => [c.method, c.url, body(c)?.registerDay])).toEqual([["POST", "/api/checkin", "2026-11-25"]]);
+    expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+    expect(screen.queryByTestId("register-mark-error")).toBeNull();
+  });
+
+  it("an un-mark: the register day rides on the DELETE; refused, the notice shows", async () => {
+    vi.setSystemTime(BEFORE_CLUB_MIDNIGHT);
+    const calls = stub({ serverSaysStale: true, ada: { attended: true } });
+    hub("coach", "tick");
+    await tick(50);
+    fireEvent.click(screen.getByRole("button", { name: "Mark Ada Example absent" }));
+    await tick(50);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove check-in" }));
+    await tick(50);
+    expect(writes(calls).map((c) => c.url)).toEqual(["/api/checkin?classInstanceId=a&memberId=ada&registerDay=2026-11-25"]);
+    expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+  });
+
+  it("a card: sent with the register day, refused, the notice shows, the class is unchanged", async () => {
+    vi.setSystemTime(BEFORE_CLUB_MIDNIGHT);
+    const calls = stub({ serverSaysStale: true });
+    hub("coach", "scan");
+    await tick(50);
+    await startCamera();
+    inView = ["card-1"];
+    await tick(1500);
+    expect(cardPosts(calls).map((c) => body(c)?.registerDay)).toEqual(["2026-11-25"]);
+    expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+  });
+
+  it("a cancel: sent with the register day, refused; the confirmation closes, the notice shows, nothing is re-read", async () => {
+    vi.setSystemTime(BEFORE_CLUB_MIDNIGHT);
+    const calls = stub({ serverSaysStale: true });
+    hub("owner", "tick");
+    await tick(50);
+    const reads = calls.filter((c) => c.url === "/api/coach/today").length;
+    fireEvent.click(screen.getByRole("button", { name: /Session details/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel this session" }));
+    const confirm = screen.getByRole("dialog");
+    fireEvent.change(within(confirm).getByLabelText(/Reason/), { target: { value: "Coach ill" } });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel this session" }));
+    await tick(50);
+    expect(writes(calls).map((c) => [c.method, body(c)?.registerDay])).toEqual([["PATCH", "2026-11-25"]]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+    expect(calls.filter((c) => c.url === "/api/coach/today").length).toBe(reads);
   });
 });
 

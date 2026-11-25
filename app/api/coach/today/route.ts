@@ -6,6 +6,7 @@ import { classStatus, sessionBounds, todayWindow, usableTimezone, type ClassStat
 import { countRunning, pickRegisterSession } from "@/lib/register-default";
 import { ensureTodayInstances } from "@/lib/today-sessions";
 import { liveClassWhere } from "@/lib/class-live";
+import { clubDateKey } from "@/lib/register-day";
 
 export async function GET() {
   const gate = await requireApiStaff();
@@ -160,7 +161,7 @@ export async function GET() {
         // attendance compares the club's date now against the first, reckoned from the second, so a device
         // whose clock is wrong neither marks into yesterday's classes nor locks itself out. Headers, so every
         // reader that takes the body as an array keeps working.
-        "X-Club-Date": new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz }).format(listedAt),
+        "X-Club-Date": clubDateKey(tz, listedAt),
         "X-Server-Time": String(Date.now()),
       },
     },

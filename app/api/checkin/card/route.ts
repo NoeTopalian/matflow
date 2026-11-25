@@ -40,6 +40,7 @@ import { loadCheckinInstance, performCheckin } from "@/lib/checkin";
 import { logAudit } from "@/lib/audit-log";
 import { allowanceStaffSentence } from "@/lib/class-allowance";
 import { checkinRefusal } from "@/lib/checkin-refusal";
+import { isRegisterDay, registerDayRefusal } from "@/lib/register-day";
 
 /**
  * One request per card is what the client actually sends, so a dropped
@@ -65,6 +66,8 @@ const SCAN_RATE_WINDOW_MS = 5 * 60 * 1000;
 const schema = z.object({
   classInstanceId: z.string().min(1),
   tokens: z.array(z.string().min(1).max(4096)).min(1).max(MAX_TOKENS_PER_REQUEST),
+  // The club date the register was read for (lib/register-day.ts); absent, nothing changes.
+  registerDay: z.string().refine(isRegisterDay).optional(),
   // The scanner admits past nothing on a coach's say-so: not the squad list,
   // not the membership list, not the plan allowance (owner decisions, 20 and
   // 27 Oct 2026). A scanner loaded before then may still resend a card with
@@ -129,7 +132,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid data" }, { status: 400 });
   }
-  const { classInstanceId, tokens } = parsed.data;
+  const { classInstanceId, tokens, registerDay } = parsed.data;
 
   let rl;
   try {
@@ -170,6 +173,9 @@ export async function POST(req: Request) {
   if (instance.isCancelled) {
     return NextResponse.json({ error: "That class was cancelled" }, { status: 409 });
   }
+  // A register read for a club date that has since passed records no card.
+  const stale = registerDay === undefined ? null : registerDayRefusal(registerDay, instance.class.tenant?.timezone);
+  if (stale) return NextResponse.json(stale.body, { status: stale.status });
 
   // De-duplicate by exact string before touching the database. This is only
   // sound because lib/card-token.ts decodes canonically: one card is exactly

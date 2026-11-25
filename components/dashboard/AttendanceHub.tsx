@@ -165,6 +165,12 @@ export default function AttendanceHub({
   // page is looked at again, the club's date is worked out again; if the day
   // has moved on, the controls give way to a notice and a Reload. The class is
   // never switched by itself.
+  /** The server refused a write because the register's day has passed (409 REGISTER_DAY_STALE). */
+  const onDayStale = useCallback((clubDate: string | null) => {
+    setStaleNow(clubDate && /^\d{4}-\d{2}-\d{2}$/.test(clubDate) ? dayFromKey(clubDate).label : clubDay(timeZone, Date.now() + clockOffsetRef.current).label);
+    setPlacement(null);
+  }, [timeZone]);
+
   useEffect(() => {
     const check = () => {
       if (document.visibilityState === "hidden") return;
@@ -325,6 +331,8 @@ export default function AttendanceHub({
                     onCountChange={onCountChange}
                     detailsSlot={detailsSlot}
                     beforeWrite={stillToday}
+                    registerDay={loadedDay?.key}
+                    onDayStale={onDayStale}
                   />
                   <p className="text-sm text-tx-3" aria-live="polite" data-testid="checked-in-count">
                     {counts
@@ -340,6 +348,8 @@ export default function AttendanceHub({
                   // list is being read again (after a cancel or restore): it resumes when the list is back.
                   paused={pickerOpen || cancelOpen || listLoading}
                   beforeWrite={stillToday}
+                  registerDay={loadedDay?.key}
+                  onDayStale={onDayStale}
                   onUseName={() => changeMode("tick")}
                 />
               )}
@@ -385,6 +395,8 @@ export default function AttendanceHub({
                         session={selected}
                         onOpenChange={setCancelOpen}
                         beforeWrite={stillToday}
+                        registerDay={loadedDay?.key}
+                        onDayStale={onDayStale}
                         onChanged={async () => {
                           const changedId = selected.id;
                           await load(false);

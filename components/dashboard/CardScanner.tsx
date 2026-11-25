@@ -348,6 +348,8 @@ export default function CardScanner({
   paused = false,
   onUseName,
   beforeWrite,
+  registerDay,
+  onDayStale,
 }: {
   instance: ScannerInstance;
   /**
@@ -361,6 +363,10 @@ export default function CardScanner({
   onUseName?: () => void;
   /** Asked just before a card is sent; false means "send nothing" (the club's day has moved on). */
   beforeWrite?: () => boolean;
+  /** The club date the register was read for, sent with every card (lib/register-day.ts). */
+  registerDay?: string;
+  /** The server refused a card because that date has passed (409 REGISTER_DAY_STALE): the club's date now. */
+  onDayStale?: (clubDate: string | null) => void;
 }) {
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
   const [rows, setRows] = useState<ScanRow[]>([]);
@@ -409,9 +415,11 @@ export default function CardScanner({
   }, [paused]);
 
   const beforeWriteRef = useRef(beforeWrite);
+  const dayRef = useRef({ registerDay, onDayStale });
   useEffect(() => {
     beforeWriteRef.current = beforeWrite;
-  }, [beforeWrite]);
+    dayRef.current = { registerDay, onDayStale };
+  }, [beforeWrite, registerDay, onDayStale]);
 
   const submitToken = useCallback(async (token: string) => {
     const classInstanceId = selectedRef.current;
@@ -457,6 +465,7 @@ export default function CardScanner({
         body: JSON.stringify({
           classInstanceId,
           tokens: [token],
+          ...(dayRef.current.registerDay ? { registerDay: dayRef.current.registerDay } : {}),
         }),
         // Never follow a redirect: the proxy answers an expired session with a
         // 307 to /login, and following it hands back the login PAGE as a 200,
@@ -471,6 +480,15 @@ export default function CardScanner({
         return;
       }
       if (!res.ok) {
+        // The register's day has passed by the server's clock: nothing was recorded, and the screen says so.
+        if (res.status === 409) {
+          const refusal = await res.json().catch(() => null);
+          if (refusal?.code === "REGISTER_DAY_STALE") {
+            settle("request_failed");
+            dayRef.current.onDayStale?.(typeof refusal.clubDate === "string" ? refusal.clubDate : null);
+            return;
+          }
+        }
         settle(
           res.status === 401
             ? "signed_out"

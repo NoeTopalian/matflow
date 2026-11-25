@@ -110,11 +110,15 @@ export const CAN_CANCEL_SESSION_ROLES = ["owner", "manager"] as const;
  * session); restore clears it. Shown only to the roles the route admits; on
  * any refusal the route's own sentence is shown, never a silent no-op.
  */
+const STALE = Symbol("register day stale");
+
 export function SessionCancelControl({
   session,
   onChanged,
   onOpenChange,
   beforeWrite,
+  registerDay,
+  onDayStale,
 }: {
   session: TodaySession;
   onChanged: () => void | Promise<void>;
@@ -126,6 +130,10 @@ export function SessionCancelControl({
   onOpenChange?: (open: boolean) => void;
   /** Asked just before the cancel or restore is sent; false means "send nothing" (the club's day has moved on). */
   beforeWrite?: () => boolean;
+  /** The club date the register was read for, sent with the cancel or restore (lib/register-day.ts). */
+  registerDay?: string;
+  /** The server refused because that date has passed (409 REGISTER_DAY_STALE): the club's date now. */
+  onDayStale?: (clubDate: string | null) => void;
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -141,15 +149,20 @@ export function SessionCancelControl({
   // Gone while open (another class was chosen): the confirmation went with it.
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
 
-  async function patch(isCancelled: boolean, cancellationReason?: string): Promise<string | null> {
+  /** null when it was saved; a sentence when it failed; STALE when the server says the register's day has passed. */
+  async function patch(isCancelled: boolean, cancellationReason?: string): Promise<string | null | typeof STALE> {
     try {
       const res = await fetch(`/api/classes/${session.classId}/instances/${session.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isCancelled ? { isCancelled, cancellationReason } : { isCancelled }),
+        body: JSON.stringify({ ...(isCancelled ? { isCancelled, cancellationReason } : { isCancelled }), ...(registerDay ? { registerDay } : {}) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
+        if (res.status === 409 && body?.code === "REGISTER_DAY_STALE") {
+          onDayStale?.(typeof body.clubDate === "string" ? body.clubDate : null);
+          return STALE;
+        }
         return describeApiError(body);
       }
       return null;
@@ -169,6 +182,10 @@ export function SessionCancelControl({
       return;
     }
     const failure = await patch(true, trimmed);
+    if (failure === STALE) {
+      close();
+      return;
+    }
     if (failure) {
       setError(failure);
       return;
@@ -185,6 +202,7 @@ export function SessionCancelControl({
     setRestoring(true);
     const failure = await patch(false);
     setRestoring(false);
+    if (failure === STALE) return;
     if (failure) {
       toast(failure, "error");
       return;

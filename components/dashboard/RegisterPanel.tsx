@@ -132,6 +132,8 @@ export default function RegisterPanel({
   onCountChange,
   detailsSlot,
   beforeWrite,
+  registerDay,
+  onDayStale,
 }: {
   instance: TodaySession;
   /**
@@ -139,6 +141,10 @@ export default function RegisterPanel({
    * has moved on since the list was read, and the screen now says so).
    */
   beforeWrite?: () => boolean;
+  /** The club date the register was read for, sent with every mark and un-mark (lib/register-day.ts). */
+  registerDay?: string;
+  /** The server refused a write because that date has passed (409 REGISTER_DAY_STALE): the club's date now. */
+  onDayStale?: (clubDate: string | null) => void;
   primaryColor: string;
   /**
    * Where the session's "who it is for" lines are drawn when the screen has a
@@ -185,6 +191,14 @@ export default function RegisterPanel({
     if (mountedRef.current) setMarkError({ memberId, message, from });
     else if (what === "unmark") showToast(`${name ?? "That member"} is still marked in to ${classWhen}: ${message}`, "error");
     else showToast(`${name ?? "That member"} was not marked in to ${classWhen}: ${message}`, "error");
+  }
+
+  /** The server refused the write because the register's day has passed: the hub shows the dated notice. */
+  function staleDay(status: number, body: unknown): boolean {
+    const b = body as { code?: unknown; clubDate?: unknown } | null;
+    if (status !== 409 || b?.code !== "REGISTER_DAY_STALE") return false;
+    onDayStale?.(typeof b.clubDate === "string" ? b.clubDate : null);
+    return true;
   }
 
   /** Resolves true when the register loaded. */
@@ -364,9 +378,11 @@ export default function RegisterPanel({
           memberId,
           checkInMethod: "admin",
           ...(acknowledged.length > 0 ? { acknowledged } : {}),
+          ...(registerDay ? { registerDay } : {}),
         }),
       });
       const body = await res.json().catch(() => null);
+      if (staleDay(res.status, body)) return false;
       const outcome = classifyCheckinResponse(res.status, body);
       // "Already checked in" is the truth, not a failure: the reload shows it.
       // Any other refusal (cancelled class, closed window, not on the squad
@@ -410,9 +426,10 @@ export default function RegisterPanel({
     setError(null);
     setMarkError(null);
     try {
-      const res = await fetch(`/api/checkin?classInstanceId=${instance.id}&memberId=${memberId}`, { method: "DELETE" });
+      const res = await fetch(`/api/checkin?classInstanceId=${instance.id}&memberId=${memberId}${registerDay ? `&registerDay=${registerDay}` : ""}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
+        if (staleDay(res.status, body)) return;
         reportMarkError(memberId, name, describeApiError(body), "row", "unmark");
         return;
       }

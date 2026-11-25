@@ -243,7 +243,8 @@ describe("the class on screen receives the attendance", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark Ben Sample attended" }));
     await settle();
     const posts = calls.filter((c) => c.url === "/api/checkin" && c.method === "POST");
-    expect(posts.map((p) => p.body)).toEqual([{ classInstanceId: "b", memberId: "ben", checkInMethod: "admin" }]);
+    // registerDay: the club date the list was read for (lib/register-day.ts).
+    expect(posts.map((p) => p.body)).toEqual([{ classInstanceId: "b", memberId: "ben", checkInMethod: "admin", registerDay: "2026-11-25" }]);
     expect(screen.getByTestId("checked-in-count").textContent).toContain("1 checked in");
     expect(screen.queryByText("Ada Example")).toBeNull();
   });

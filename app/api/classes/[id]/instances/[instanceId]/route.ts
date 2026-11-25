@@ -22,6 +22,7 @@ import { requireApiOwnerOrManager } from "@/lib/api-authz";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
+import { isRegisterDay, registerDayRefusal, type RegisterDayRefusal } from "@/lib/register-day";
 
 type Params = { params: Promise<{ id: string; instanceId: string }> };
 
@@ -31,6 +32,9 @@ const cancelSchema = z.object({
   // trimmed. 200 characters is a sentence — "Coach ill, back Thursday" — not a
   // notice board.
   cancellationReason: z.string().trim().max(200).optional().nullable(),
+  // The club date the staff register was read for (lib/register-day.ts). Mark attendance sends it; the
+  // timetable does not, and nothing changes for it.
+  registerDay: z.string().refine(isRegisterDay, "registerDay must be a date written YYYY-MM-DD").optional(),
 });
 
 export async function PATCH(req: Request, { params }: Params) {
@@ -76,6 +80,13 @@ export async function PATCH(req: Request, { params }: Params) {
       });
       if (!owned) return null;
 
+      // After ownership: a register read for a club date that has since passed changes nothing.
+      if (parsed.data.registerDay !== undefined) {
+        const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+        const stale = registerDayRefusal(parsed.data.registerDay, club?.timezone);
+        if (stale) return { stale };
+      }
+
       // Idempotent: cancelling an already-cancelled session is a 200 and no
       // second audit row, so a double-tap on a phone cannot write twice.
       if (owned.isCancelled === parsed.data.isCancelled) {
@@ -98,6 +109,10 @@ export async function PATCH(req: Request, { params }: Params) {
     });
 
     if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if ("stale" in result) {
+      const { stale } = result as { stale: RegisterDayRefusal };
+      return NextResponse.json(stale.body, { status: stale.status });
+    }
 
     if (result.changed) {
       await logAudit({
