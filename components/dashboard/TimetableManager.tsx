@@ -2585,30 +2585,9 @@ export default function TimetableManager({
         action={
           canManage ? (
             <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  try {
-                    const res = await fetch("/api/instances/generate", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ weeks: 4 }),
-                    });
-                    // Same fix as the sibling handler above: without the res.ok
-                    // check a 200-with-error-body toasted "Generated undefined
-                    // instances" as a SUCCESS. The fix was applied there and
-                    // not here.
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const d = (await res.json()) as { created?: number };
-                    showToast(`Generated ${d.created ?? 0} instances for next 4 weeks`, "success");
-                  } catch {
-                    showToast("Failed to generate", "error");
-                  }
-                }}
-              >
-                <RefreshCw className="size-3.5" />
-                Generate 4 weeks
-              </Button>
+              {/* "Generate 4 weeks" was removed from here (24 Nov 2026): the nightly job keeps 56 days of sessions ahead
+                  and creating or editing a class makes its own, so on a healthy club it reported "Generated 0
+                  instances". POST /api/instances/generate is unchanged and kept for support. */}
               <Button onClick={openAdd}>
                 <Plus className="size-4" />
                 Add class
