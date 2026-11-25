@@ -671,14 +671,16 @@ try {
       await picker(page).waitFor();
       await page.waitForTimeout(400);
       const mb = await more.boundingBox();
-      const atMore = await page.evaluate(({ x, y }) => { const el = document.elementFromPoint(x, y); return { insideNav: !!el?.closest('nav[aria-label="Main navigation"]'), isMore: !!el?.closest('[aria-label="More options"]'), insidePicker: !!el?.closest('[role="dialog"]') }; }, { x: mb.x + mb.width / 2, y: mb.y + mb.height / 2 });
+      const atMore = await page.evaluate(({ x, y }) => { const el = document.elementFromPoint(x, y); return { insideNav: !!el?.closest('nav[aria-label="Main navigation"]'), isMore: !!el?.closest('[aria-label="More options"]'), insidePicker: !!el?.closest('[role="dialog"]'), row: el?.closest("[data-session-id]")?.innerText.replace(/\s+/g, " ").slice(0, 60) ?? null }; }, { x: mb.x + mb.width / 2, y: mb.y + mb.height / 2 });
       const dialogsWithPicker = await openDialogs();
       await page.touchscreen.tap(mb.x + mb.width / 2, mb.y + mb.height / 2);
       await page.waitForTimeout(600);
-      const afterTap = { picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
+      // The sheet sits over the navigation, so a tap there is a tap on the sheet: on a session row it chooses that
+      // row (the ordinary one switch), on the scrim it closes the sheet. Either way it never reaches More.
+      const afterTap = { selected: await selectedName(page), picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
       if (afterTap.picker) { await page.keyboard.press("Escape"); await picker(page).waitFor({ state: "detached" }); }
-      L.check("X@390", "picker open: the More button is covered (not on top), and a tap where it is never opens More over the picker; never two overlays",
-        !atMore.isMore && !atMore.insideNav && afterTap.moreExpanded !== "true" && dialogsWithPicker.length === 1 && afterTap.dialogs.length <= 1, { atMore, dialogsWithPicker, afterTap });
+      L.check("X@390", "picker open: the sheet covers the More button; a tap there lands on the sheet (the row under it is chosen, or the scrim closes it) and never opens More; never two overlays",
+        !atMore.isMore && !atMore.insideNav && afterTap.moreExpanded !== "true" && dialogsWithPicker.length === 1 && (atMore.row === null || atMore.row.startsWith(afterTap.selected.slice(0, 30))) && afterTap.dialogs.length <= 1, { atMore, dialogsWithPicker, afterTap });
       // More open: what a tap on Change class does, and where focus goes.
       await more.tap();
       await page.waitForTimeout(500);
@@ -698,7 +700,7 @@ try {
       await picker(page).waitFor({ state: "detached" }).catch(() => {});
       const focusBack = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? null);
       L.check("X@390", "More open: Change class is under its backdrop (a tap there closes More and opens nothing); never two overlays; afterwards Change class opens the picker alone and focus returns to it",
-        dialogsWithMore.length === 1 && !atChange.isChange && afterChangeTap.dialogs.length <= 1 && !(afterChangeTap.picker && afterChangeTap.moreExpanded === "true") && pickerAgain && dialogsAgain.length === 1 && focusBack === "Change class" && (await selectedName(page)) === "Reg Fundamentals",
+        dialogsWithMore.length === 1 && !atChange.isChange && afterChangeTap.dialogs.length <= 1 && !(afterChangeTap.picker && afterChangeTap.moreExpanded === "true") && pickerAgain && dialogsAgain.length === 1 && focusBack === "Change class" && (await selectedName(page)) === afterTap.selected,
         { dialogsWithMore, atChange, afterChangeTap, pickerAgain, dialogsAgain, focusBack });
       await ctx.close();
     }
