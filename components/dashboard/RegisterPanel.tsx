@@ -18,6 +18,7 @@
 // is un-ticked disappears because the server no longer lists them.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle, AlertTriangle, CalendarCheck, Check, Heart, Loader2, Search, ShieldAlert, ShieldCheck,
 } from "lucide-react";
@@ -129,9 +130,16 @@ export default function RegisterPanel({
   instance,
   primaryColor,
   onCountChange,
+  detailsSlot,
 }: {
   instance: TodaySession;
   primaryColor: string;
+  /**
+   * Where the session's "who it is for" lines are drawn when the screen has a
+   * Session details panel (Mark attendance, 25 Nov 2026). Without one they
+   * stay at the top of the register, as before.
+   */
+  detailsSlot?: HTMLElement | null;
   onCountChange: (checkedIn: number, expected: number, capacity?: number | null) => void;
 }) {
   const [register, setRegister] = useState<RegisterResponse | null>(null);
@@ -469,6 +477,9 @@ export default function RegisterPanel({
         </div>
       )}
 
+      {(() => {
+        const lines = (
+          <>
       {register?.instance?.rosterOnly && (
         // T6d: a squad / comp class. Only members on the roster may attend —
         // at every door, this register included; the kiosk lists only them.
@@ -490,11 +501,103 @@ export default function RegisterPanel({
           For: {register.instance.allowedTiers.map((t) => t.name).join(", ")}
         </p>
       )}
+          </>
+        );
+        return detailsSlot ? createPortal(lines, detailsSlot) : lines;
+      })()}
 
-      {register && expected.length === 0 ? (
+      {/* Find a member: anyone, booked or not. First, because a coach looking
+          for one person should not scroll past the whole register to do it. */}
+      {register && (
+        <div className="space-y-2">
+          <label htmlFor="register-search" className="block text-sm font-medium text-tx-2">
+            Find a member
+          </label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-tx-3" />
+            <input
+              id="register-search"
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // A search refusal is about the name that was typed; editing the search ends it.
+                if (markError?.from === "search") setMarkError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                const winner = pendingId ? candidates?.find((c) => c.id === pendingId) : undefined;
+                if (winner && marking !== winner.id) void markFromSearch(winner);
+              }}
+              aria-describedby="register-search-hint"
+              placeholder="Search members..."
+              aria-label="Search members"
+              autoComplete="off"
+              className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm transition-colors focus:outline-none"
+              style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
+            />
+          </div>
+          <p id="register-search-hint" className="text-[11px] text-tx-3">
+            Tap a name to mark them in. When only one name matches, Enter marks it.
+          </p>
+          {markError?.from === "search" && <MarkError message={markError.message} />}
+          {candidatesError && (
+            <p role="alert" className="text-xs" style={{ color: "var(--hue-danger)" }}>
+              Couldn&rsquo;t load the member list — the register below still works.{" "}
+              <button type="button" className="underline" onClick={() => void loadCandidates()}>Try again</button>
+            </p>
+          )}
+          {query.trim() && candidates && (
+            <ul className="space-y-1" aria-label="Members matching your search">
+              {searchable.length === 0 && (
+                <li className="px-1 py-2 text-sm text-tx-3">No one matches — check the spelling.</li>
+              )}
+              {searchable.map((m) => m.cancelled ? (
+                // Cancelled: named, so the coach is not told to check the
+                // spelling of someone who exists (end-user round 2, 4.6), and
+                // not offered as a tap — the desk reinstates, the register does not.
+                <li
+                  key={m.id}
+                  className="flex min-h-11 items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-sm"
+                  style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}
+                >
+                  <span className="truncate text-tx-2">{m.name} is cancelled</span>
+                  <span className="shrink-0 text-xs text-tx-3">Cancelled · not marked</span>
+                </li>
+              ) : (
+                <li key={m.id}>
+                  <button
+                    type="button"
+                    onClick={() => void markFromSearch(m)}
+                    disabled={marking === m.id}
+                    className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-left text-sm transition-colors hover:bg-sf-2 disabled:opacity-50"
+                    style={{
+                      borderColor: "var(--bd-default)",
+                      background: "var(--sf-1)",
+                      outline: pendingId === m.id ? `2px dashed ${primaryColor}` : undefined,
+                      outlineOffset: pendingId === m.id ? 2 : undefined,
+                    }}
+                  >
+                    <span className="truncate text-tx-1">{m.name}</span>
+                    <span className="shrink-0 text-xs text-tx-3">{marking === m.id ? "Marking…" : "Mark in"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* No register (it did not load): Try again above, and nothing here that
+          could be acted on under the wrong heading. */}
+      {!register ? null : expected.length === 0 ? (
         <Card padding="none">
           <p className="p-5 text-center text-sm text-tx-3">
-            No bookings for this session — search a name below to mark them in.
+            No bookings yet. Search above to check someone in.
           </p>
         </Card>
       ) : (
@@ -655,89 +758,6 @@ export default function RegisterPanel({
           })}
         </ul>
       )}
-
-      {/* Add someone who is not booked. */}
-      <div className="space-y-2 pt-1">
-        <label htmlFor="register-search" className="block text-sm font-medium text-tx-2">
-          Add someone
-        </label>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-tx-3" />
-          <input
-            id="register-search"
-            ref={searchRef}
-            type="text"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              // A search refusal is about the name that was typed; editing the search ends it.
-              if (markError?.from === "search") setMarkError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              const winner = pendingId ? candidates?.find((c) => c.id === pendingId) : undefined;
-              if (winner && marking !== winner.id) void markFromSearch(winner);
-            }}
-            aria-describedby="register-search-hint"
-            placeholder="Search members..."
-            aria-label="Search members"
-            autoComplete="off"
-            className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm transition-colors focus:outline-none"
-            style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--bd-default)"; }}
-          />
-        </div>
-        <p id="register-search-hint" className="text-[11px] text-tx-3">
-          Tap a name to mark them in. When only one name matches, Enter marks it.
-        </p>
-        {markError?.from === "search" && <MarkError message={markError.message} />}
-        {candidatesError && (
-          <p role="alert" className="text-xs" style={{ color: "var(--hue-danger)" }}>
-            Couldn&rsquo;t load the member list — the register above still works.{" "}
-            <button type="button" className="underline" onClick={() => void loadCandidates()}>Try again</button>
-          </p>
-        )}
-        {query.trim() && candidates && (
-          <ul className="space-y-1" aria-label="Members matching your search">
-            {searchable.length === 0 && (
-              <li className="px-1 py-2 text-sm text-tx-3">No one matches — check the spelling.</li>
-            )}
-            {searchable.map((m) => m.cancelled ? (
-              // Cancelled: named, so the coach is not told to check the
-              // spelling of someone who exists (end-user round 2, 4.6), and
-              // not offered as a tap — the desk reinstates, the register does not.
-              <li
-                key={m.id}
-                className="flex min-h-11 items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-sm"
-                style={{ borderColor: "var(--bd-default)", background: "var(--sf-2)" }}
-              >
-                <span className="truncate text-tx-2">{m.name} is cancelled</span>
-                <span className="shrink-0 text-xs text-tx-3">Cancelled · not marked</span>
-              </li>
-            ) : (
-              <li key={m.id}>
-                <button
-                  type="button"
-                  onClick={() => void markFromSearch(m)}
-                  disabled={marking === m.id}
-                  className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2 text-left text-sm transition-colors hover:bg-sf-2 disabled:opacity-50"
-                  style={{
-                    borderColor: "var(--bd-default)",
-                    background: "var(--sf-1)",
-                    outline: pendingId === m.id ? `2px dashed ${primaryColor}` : undefined,
-                    outlineOffset: pendingId === m.id ? 2 : undefined,
-                  }}
-                >
-                  <span className="truncate text-tx-1">{m.name}</span>
-                  <span className="shrink-0 text-xs text-tx-3">{marking === m.id ? "Marking…" : "Mark in"}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
 
       {register && register.waitlist.length > 0 && (
         <Card padding="tight" style={{ background: tint("var(--hue-warning)", 6), borderColor: tint("var(--hue-warning)", 25) }}>

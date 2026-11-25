@@ -343,7 +343,22 @@ type CameraState =
   | { kind: "denied" }
   | { kind: "failed"; message: string };
 
-export default function CardScanner({ instance }: { instance: ScannerInstance }) {
+export default function CardScanner({
+  instance,
+  paused = false,
+  onUseName,
+}: {
+  instance: ScannerInstance;
+  /**
+   * The class picker (or any other question) is open over the camera. A card
+   * read meanwhile is dropped, not held back and sent later: the coach is
+   * choosing a class, and a scan must never land in whichever one that turns
+   * out to be (25 Nov 2026).
+   */
+  paused?: boolean;
+  /** Switch this screen to marking by name, keeping the class. */
+  onUseName?: () => void;
+}) {
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
   const [rows, setRows] = useState<ScanRow[]>([]);
   /**
@@ -380,9 +395,18 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     selectedRef.current = instance.id;
   }, [instance.id]);
 
+  /** Mirrors `paused` for the detect loop, which closes over its first render. */
+  const pausedRef = useRef(paused);
+  useEffect(() => {
+    // Nothing is recorded while paused (the loop returns before the hold
+    // tracker sees a read), so a card still under the lens when the picker
+    // closes is read then, as a new hold, into the class shown then.
+    pausedRef.current = paused;
+  }, [paused]);
+
   const submitToken = useCallback(async (token: string) => {
     const classInstanceId = selectedRef.current;
-    if (!classInstanceId) return;
+    if (!classInstanceId || pausedRef.current) return;
     // Captured now: a late response must re-arm the tracker this token was
     // read into, never a later session's fresh one.
     const holds = holdsRef.current;
@@ -650,6 +674,8 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       }
       if (stale()) return;
       consecutiveFailures = 0;
+      // Paused (the class picker is open): nothing read now is sent, now or later.
+      if (pausedRef.current) return;
       const now = Date.now();
       for (const code of codes) {
         const token = code.rawValue?.trim();
@@ -671,7 +697,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
   return (
     <div className="space-y-6">
       <p className="text-sm text-tx-3">
-        Hold your phone about 20 cm over each card in turn. Every scan goes into the session selected above.
+        Scan each member&rsquo;s MatFlow card: hold your phone about 20 cm over the QR code on each card in turn. Every scan goes into the class selected above.
       </p>
 
       {/* Always mounted, so the first scan of a stack is announced. A region
@@ -765,8 +791,13 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                   "Scanning needs a phone with a camera the browser can use — Chrome on Android, or Safari on an iPhone. "}
                 {camera.kind === "denied" &&
                   "Allow the camera for this site in your browser settings — or, if the camera never appears, in Android Settings → Apps → Chrome → Permissions — then start again. "}
-                You can tick names instead — it is the other section of this screen — and nothing is lost.
+                You can mark by name instead, and nothing is lost.
               </p>
+              {onUseName && (
+                <Button variant="secondary" className="mt-3" onClick={onUseName}>
+                  Use name instead
+                </Button>
+              )}
             </div>
           )}
         </div>

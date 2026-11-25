@@ -1,5 +1,7 @@
 import { requireStaff } from "@/lib/authz";
 import AttendanceHub from "@/components/dashboard/AttendanceHub";
+import { withTenantContext } from "@/lib/prisma-tenant";
+import { usableTimezone } from "@/lib/class-time";
 
 export const metadata = { title: "Mark Attendance | MatFlow" };
 
@@ -19,12 +21,17 @@ export default async function CheckinPage({
   // write is decided by the routes (the instructorId narrowing is gone at all
   // five sites), not by hiding the screen.
   const { session } = await requireStaff();
+  // The picker names the day in the CLUB's zone, not the phone's.
+  const tenantId = session.user.tenantId;
+  const tenant = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+  const dateLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: usableTimezone(tenant?.timezone) }).format(new Date());
   return (
     <AttendanceHub
       initialMode={mode === "scan" ? "scan" : "tick"}
       preselectClassId={classId ?? null}
       role={session.user.role}
       primaryColor={session.user.primaryColor ?? "#3b82f6"}
+      dateLabel={dateLabel}
     />
   );
 }
