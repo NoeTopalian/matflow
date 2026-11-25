@@ -1,6 +1,7 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
-import { requireApiStaff, isSupportSession } from "@/lib/api-authz";
+import { requireApiStaff } from "@/lib/api-authz";
+import { isSupportSession } from "@/lib/support-session";
 import { classStatus, sessionBounds, todayWindow, usableTimezone, type ClassStatusVariant } from "@/lib/class-time";
 import { countRunning, pickRegisterSession } from "@/lib/register-default";
 import { ensureTodayInstances } from "@/lib/today-sessions";
