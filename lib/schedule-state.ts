@@ -20,10 +20,11 @@
  * when several share that start minute they are all "next" (a tie is shown as
  * a tie, not resolved by list order). Sessions on other days are "upcoming".
  *
- * Whose clock: both shells compute `nowMin` from the VIEWER's device clock —
- * the member's phone in the club, the owner's laptop at the desk. Nothing
- * currently carries `Tenant.timezone` to either screen; when it does, the
- * caller converts and this file does not change.
+ * Whose clock: the CLUB's. Both shells convert to the club's wall clock before
+ * calling (the staff timetable with `clubWallClock`, the member's day with
+ * `clubNow`, from the zone /api/member/schedule sends), so a phone or laptop
+ * in another zone sees the club's today, live and next. This file only takes
+ * minutes.
  *
  * The overnight rule is the check-in window's (lib/class-time.ts
  * `endsNextDay` / `sessionBounds`): end at or before start = the next day.
