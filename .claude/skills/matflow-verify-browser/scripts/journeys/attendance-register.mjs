@@ -9,6 +9,11 @@
 //      the switch goes into the new class once. The camera is SIMULATED (fake detector and stream);
 //   R  an out-of-order register answer and a failed register load never show one class's rows under another;
 //   W  a mark made by name and answered after the coach switched class is announced with the first class's name;
+//   Q  (owner, Scan QR) a card held while the picker or the cancel confirmation is open is never sent; after
+//      dismissal one hold records once into the class on screen. SIMULATED camera;
+//   N  the club's midnight passes under an open page with no focus event (Playwright's page clock): the next mark
+//      or card read writes nothing and the dated Reload notice shows, the class unchanged;
+//   X  390 wide: the bottom navigation's More menu and the class picker never stack, and focus comes back;
 //   D  dismissing the picker (Close, Escape, outside tap) changes nothing, returns focus, and the next tap works;
 //   C  cancel and kiosk for the owner; neither for a coach; the bottom navigation never covers the last control.
 //   node journeys/attendance-register.mjs            (the redesign)
@@ -509,6 +514,178 @@ try {
       const stored = (await attendance()).filter((x) => x.endsWith("Member 1"));
       L.check("W", "a mark by name answered after the switch: the toast names the class it went into (with its start), the record is in that class and not the one now on screen",
         switchedBeforeAnswer && toast === want && stored.includes(`${first}:Member 1`) && !stored.includes(`${second}:Member 1`) && (await selectedName(page)) === second, { switchedBeforeAnswer, toast, stored, selected: await selectedName(page) });
+      await ctx.close();
+    }
+
+    // A page with the simulated camera: window.__mfCard says whether the card is under the lens.
+    const withCamera = async (ctx, tok) => ctx.addInitScript((tk) => {
+      window.__mfCard = false;
+      class FakeBarcodeDetector {
+        static async getSupportedFormats() { return ["qr_code"]; }
+        async detect() { return window.__mfCard ? [{ rawValue: tk, format: "qr_code" }] : []; }
+      }
+      window.BarcodeDetector = FakeBarcodeDetector;
+      const canvas = document.createElement("canvas");
+      canvas.width = 640; canvas.height = 480;
+      const g = canvas.getContext("2d");
+      setInterval(() => { g.fillStyle = `hsl(${Date.now() % 360} 60% 50%)`; g.fillRect(0, 0, 640, 480); }, 50);
+      if (!navigator.mediaDevices) Object.defineProperty(navigator, "mediaDevices", { value: {}, configurable: true });
+      navigator.mediaDevices.getUserMedia = async () => canvas.captureStream(15);
+    }, tok);
+    const cardPosts = (page) => {
+      const sentTo = [];
+      page.on("request", (r) => {
+        if (r.method() !== "POST" || new URL(r.url()).pathname !== "/api/checkin/card") return;
+        const sent = JSON.parse(r.postData() ?? "{}");
+        if (!(sent.tokens ?? []).includes("warm-up")) sentTo.push(sent.classInstanceId);
+      });
+      return sentTo;
+    };
+
+    // ── Q: the scanner is paused by the picker AND by the cancel confirmation (owner) ──
+    {
+      stage = "Q";
+      const cls2 = "Reg Wrestling";
+      const token2 = signCardToken({ tenantId: t, memberId: m2.id, cardVersion: m2.cardVersion });
+      const { ctx, page } = await open("390", 19);
+      await withCamera(ctx, token2);
+      const posts = cardPosts(page);
+      await ready(page);
+      await page.getByRole("button", { name: "Change class" }).tap();
+      await picker(page).locator(`[data-session-id="${inst[cls2]}"]`).tap();
+      await picker(page).waitFor({ state: "detached" });
+      await page.getByRole("tab", { name: "Scan QR" }).tap();
+      await page.getByRole("button", { name: "Start camera" }).tap();
+      await page.getByRole("button", { name: "Stop camera" }).waitFor({ timeout: 30000 });
+      const before = await attendance();
+      // (a) the picker is open with the card under the lens.
+      await page.getByRole("button", { name: "Change class" }).tap();
+      await picker(page).waitFor();
+      await page.evaluate(() => { window.__mfCard = true; });
+      await page.waitForTimeout(2500);
+      const duringPicker = posts.length;
+      await page.evaluate(() => { window.__mfCard = false; });
+      await page.keyboard.press("Escape");
+      await picker(page).waitFor({ state: "detached" });
+      await page.waitForTimeout(1500);
+      // (b) the cancel confirmation is open with the card under the lens.
+      await page.getByRole("button", { name: /Session details/ }).tap();
+      await page.getByRole("button", { name: "Cancel this session" }).tap();
+      const confirm = page.getByRole("dialog", { name: /^Cancel / });
+      await confirm.waitFor();
+      await page.evaluate(() => { window.__mfCard = true; });
+      await page.waitForTimeout(2500);
+      const duringConfirm = posts.length;
+      await page.evaluate(() => { window.__mfCard = false; });
+      await confirm.getByRole("button", { name: "Keep it" }).tap();
+      await confirm.waitFor({ state: "detached" });
+      const afterDismiss = { posts: posts.length, stored: await attendance() };
+      L.check("Q", "owner, Scan QR running: a card held while (a) the picker and (b) the cancel confirmation is open sends no request and records nothing",
+        duringPicker === 0 && duringConfirm === 0 && afterDismiss.posts === 0 && JSON.stringify(afterDismiss.stored) === JSON.stringify(before), { duringPicker, duringConfirm, ...afterDismiss });
+      // After dismissal: one hold records once, into the class on screen.
+      await page.waitForTimeout(1500);
+      await page.evaluate(() => { window.__mfCard = true; });
+      const settled = await Promise.race([
+        page.getByText(/Last: Member 2/).waitFor({ timeout: 40000 }).then(() => "member", () => "none"),
+        page.getByText(/Last: No answer yet/).waitFor({ timeout: 40000 }).then(() => "timeout", () => "none"),
+      ]);
+      await page.evaluate(() => { window.__mfCard = false; });
+      await page.waitForTimeout(3000);
+      const added = (await attendance()).filter((x) => !before.includes(x));
+      L.check("Q", "after dismissal one hold sends one request, to the class on screen, and records once there",
+        posts.length === 1 && posts[0] === inst[cls2] && JSON.stringify(added) === JSON.stringify([`${cls2}:Member 2`]) && (await selectedName(page)) === cls2, { settled, posts: posts.length, toShown: posts[0] === inst[cls2], added });
+      await ctx.close();
+    }
+
+    // ── N: the club's midnight passes under an open page, with no focus or visibility event ──
+    {
+      stage = "N";
+      // Five minutes past the club's next midnight, as the page's clock (Playwright's page.clock: Date only; timers run).
+      const nowMs = Date.now();
+      const midnight = new Date(nowMs + ((1440 - nowMin) * 60 - new Date(nowMs).getUTCSeconds()) * 1000 + 5 * 60000);
+      const fmt = (d) => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: tz }).format(d);
+      const notice = `It is now ${fmt(midnight)}. This register is for ${dateLabel}. Reload to see today\u2019s classes.`;
+      // (i) by name: Member 1 is booked into Fundamentals, the class this page opens on.
+      {
+        const { ctx, page } = await open("390", 20);
+        const writes = [];
+        page.on("request", (r) => { if (r.method() !== "GET" && new URL(r.url()).pathname.startsWith("/api/checkin")) writes.push(r.method()); });
+        await ready(page);
+        await page.getByRole("button", { name: "Mark Member 1 attended" }).waitFor({ timeout: 30000 });
+        const before = await attendance();
+        await page.clock.setFixedTime(midnight);
+        const moved = await page.evaluate(() => new Date().toISOString());
+        await page.getByRole("button", { name: "Mark Member 1 attended" }).tap();
+        const shown = await page.getByTestId("stale-day").innerText({ timeout: 15000 }).catch(() => null);
+        await page.waitForTimeout(1500);
+        L.check("N", "by name: after the club's midnight (page clock moved, no focus event) a mark writes nothing, the dated notice shows, the class is unchanged",
+          moved === midnight.toISOString() && writes.length === 0 && JSON.stringify(await attendance()) === JSON.stringify(before) && (shown ?? "").includes(notice) && (await selectedName(page)) === "Reg Fundamentals" && (await page.getByRole("button", { name: "Reload" }).count()) === 1,
+          { pageClock: moved, writes: writes.length, shown, selected: await selectedName(page) });
+        await ctx.close();
+      }
+      // (ii) a card held after midnight.
+      {
+        const token1 = signCardToken({ tenantId: t, memberId: m1.id, cardVersion: m1.cardVersion });
+        const { ctx, page } = await open("390", 21);
+        await withCamera(ctx, token1);
+        const posts = cardPosts(page);
+        await ready(page);
+        await page.getByRole("tab", { name: "Scan QR" }).tap();
+        await page.getByRole("button", { name: "Start camera" }).tap();
+        await page.getByRole("button", { name: "Stop camera" }).waitFor({ timeout: 30000 });
+        const before = await attendance();
+        await page.clock.setFixedTime(midnight);
+        const moved = await page.evaluate(() => new Date().toISOString());
+        await page.evaluate(() => { window.__mfCard = true; });
+        const shown = await page.getByTestId("stale-day").innerText({ timeout: 15000 }).catch(() => null);
+        await page.waitForTimeout(2000);
+        L.check("N", "card: after the club's midnight a card held is not sent, the dated notice shows, the class is unchanged",
+          moved === midnight.toISOString() && posts.length === 0 && JSON.stringify(await attendance()) === JSON.stringify(before) && (shown ?? "").includes(notice) && (await selectedName(page)) === "Reg Fundamentals",
+          { pageClock: moved, posts: posts.length, shown, selected: await selectedName(page) });
+        await ctx.close();
+      }
+    }
+
+    // ── X: the phone's More menu and the class picker (390 wide) ──
+    {
+      stage = "X";
+      const { ctx, page } = await open("390", 22);
+      await ready(page);
+      const more = page.getByRole("button", { name: "More options" });
+      const openDialogs = () => page.evaluate(() => [...document.querySelectorAll('[role="dialog"]')].filter((d) => !d.closest("[inert]") && d.getAttribute("aria-hidden") !== "true" && d.getBoundingClientRect().height > 0 && d.getBoundingClientRect().top < innerHeight).map((d) => d.getAttribute("aria-label") || document.getElementById(d.getAttribute("aria-labelledby") ?? "")?.textContent?.trim() || "?"));
+      // Picker open: what is on top where the More button is, and what a tap there does.
+      await page.getByRole("button", { name: "Change class" }).tap();
+      await picker(page).waitFor();
+      await page.waitForTimeout(400);
+      const mb = await more.boundingBox();
+      const atMore = await page.evaluate(({ x, y }) => { const el = document.elementFromPoint(x, y); return { insideNav: !!el?.closest('nav[aria-label="Main navigation"]'), isMore: !!el?.closest('[aria-label="More options"]'), insidePicker: !!el?.closest('[role="dialog"]') }; }, { x: mb.x + mb.width / 2, y: mb.y + mb.height / 2 });
+      const dialogsWithPicker = await openDialogs();
+      await page.touchscreen.tap(mb.x + mb.width / 2, mb.y + mb.height / 2);
+      await page.waitForTimeout(600);
+      const afterTap = { picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
+      if (afterTap.picker) { await page.keyboard.press("Escape"); await picker(page).waitFor({ state: "detached" }); }
+      L.check("X@390", "picker open: the More button is covered (not on top), and a tap where it is never opens More over the picker; never two overlays",
+        !atMore.isMore && !atMore.insideNav && afterTap.moreExpanded !== "true" && dialogsWithPicker.length === 1 && afterTap.dialogs.length <= 1, { atMore, dialogsWithPicker, afterTap });
+      // More open: what a tap on Change class does, and where focus goes.
+      await more.tap();
+      await page.waitForTimeout(500);
+      const dialogsWithMore = await openDialogs();
+      const cb = await page.getByRole("button", { name: "Change class" }).boundingBox();
+      const atChange = await page.evaluate(({ x, y }) => { const el = document.elementFromPoint(x, y); return { isChange: el?.closest("button")?.textContent?.trim() === "Change class" }; }, { x: cb.x + cb.width / 2, y: cb.y + cb.height / 2 });
+      await page.touchscreen.tap(cb.x + cb.width / 2, cb.y + cb.height / 2);
+      await page.waitForTimeout(600);
+      const afterChangeTap = { picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
+      // Then Change class works as normal, and closes back onto itself.
+      if (afterChangeTap.picker) { await page.keyboard.press("Escape"); await picker(page).waitFor({ state: "detached" }); }
+      await page.getByRole("button", { name: "Change class" }).tap();
+      const pickerAgain = await picker(page).waitFor({ timeout: 10000 }).then(() => true, () => false);
+      const dialogsAgain = await openDialogs();
+      await page.keyboard.press("Escape");
+      await picker(page).waitFor({ state: "detached" }).catch(() => {});
+      const focusBack = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? null);
+      L.check("X@390", "More open: Change class is under its backdrop (a tap there closes More and opens nothing); never two overlays; afterwards Change class opens the picker alone and focus returns to it",
+        dialogsWithMore.length === 1 && !atChange.isChange && afterChangeTap.dialogs.length <= 1 && !(afterChangeTap.picker && afterChangeTap.moreExpanded === "true") && pickerAgain && dialogsAgain.length === 1 && focusBack === "Change class" && (await selectedName(page)) === "Reg Fundamentals",
+        { dialogsWithMore, atChange, afterChangeTap, pickerAgain, dialogsAgain, focusBack });
       await ctx.close();
     }
 
