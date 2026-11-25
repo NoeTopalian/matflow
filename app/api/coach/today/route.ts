@@ -67,22 +67,24 @@ export async function GET() {
         _count: { select: { attendances: true, waitlists: { where: { member: { archivedAt: null } } } } },
       },
       // A cancelled session is still part of the day, so it keeps its place in
-      // the running order rather than being swept to the end.
-      orderBy: { startTime: "asc" },
+      // the running order rather than being swept to the end. The id settles
+      // ties, so the dedupe below keeps the same row on every request.
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
     });
     return { rows, tz };
   });
 
   // Dedupe by class+startTime so legacy pre-DST seed rows (the same class
-  // written under two spellings of the same day) don't double-count.
-  const seen = new Set<string>();
-  const todays = instances
-    .filter((inst) => {
-      const k = `${inst.class.id}|${inst.startTime}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
+  // written under two spellings of the same day) don't double-count. Of two
+  // such rows the one that is not cancelled is kept, else the lower id: the
+  // surviving id is the same on every request, so the open register keeps it.
+  const kept = new Map<string, (typeof instances)[number]>();
+  for (const inst of instances) {
+    const k = `${inst.class.id}|${inst.startTime}`;
+    const had = kept.get(k);
+    if (!had || (had.isCancelled && !inst.isCancelled)) kept.set(k, inst);
+  }
+  const todays = instances.filter((inst) => kept.get(`${inst.class.id}|${inst.startTime}`) === inst);
 
   // The session on NOW comes first and is what the client preselects; then
   // the next one; then the rest of the day; finished sessions last. Mark

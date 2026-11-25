@@ -93,7 +93,7 @@ function stubHubFetch(opts: { patchStatus?: number; patchBody?: unknown } = {}) 
 describe("D1 — cancel one session from the register", () => {
   it("cancel sends the reason to the instance route and reloads the picker", async () => {
     const calls = stubHubFetch();
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="manager" primaryColor="#3b82f6" dateLabel="Wednesday 25 November" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="manager" primaryColor="#3b82f6" timeZone="Europe/London" />);
 
     // Cancelling is not routine check-in: it sits under Session details (25 Nov 2026).
     fireEvent.click(await screen.findByRole("button", { name: /Session details/ }));
@@ -113,7 +113,7 @@ describe("D1 — cancel one session from the register", () => {
 
   it("refuses to send without a reason", async () => {
     const calls = stubHubFetch();
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" dateLabel="Wednesday 25 November" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" timeZone="Europe/London" />);
     // Cancelling is not routine check-in: it sits under Session details (25 Nov 2026).
     fireEvent.click(await screen.findByRole("button", { name: /Session details/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel this session" }));
@@ -125,7 +125,7 @@ describe("D1 — cancel one session from the register", () => {
 
   it("shows the route's refusal sentence", async () => {
     stubHubFetch({ patchStatus: 403, patchBody: { error: "Only an owner or manager can do that" } });
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" dateLabel="Wednesday 25 November" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" timeZone="Europe/London" />);
     // Cancelling is not routine check-in: it sits under Session details (25 Nov 2026).
     fireEvent.click(await screen.findByRole("button", { name: /Session details/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel this session" }));
@@ -137,7 +137,7 @@ describe("D1 — cancel one session from the register", () => {
 
   it("is not offered to a coach (the route admits owner and manager only)", async () => {
     stubHubFetch();
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="coach" primaryColor="#3b82f6" dateLabel="Wednesday 25 November" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="coach" primaryColor="#3b82f6" timeZone="Europe/London" />);
     await screen.findByTestId("register");
     expect(screen.queryByRole("button", { name: "Cancel this session" })).toBeNull();
   });

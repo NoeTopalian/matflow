@@ -51,14 +51,14 @@ export default function AttendanceHub({
   preselectClassId,
   role,
   primaryColor,
-  dateLabel,
+  timeZone,
 }: {
   initialMode: Mode;
   preselectClassId: string | null;
   role: string;
   primaryColor: string;
-  /** The club's date in the club's zone, for the class picker. */
-  dateLabel: string;
+  /** The club's time zone: the day the list is for, and the picker's date, are the club's. */
+  timeZone: string;
 }) {
   const [sessions, setSessions] = useState<TodaySession[] | null>(null);
   const [error, setError] = useState(false);
@@ -72,10 +72,18 @@ export default function AttendanceHub({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsSlot, setDetailsSlot] = useState<HTMLElement | null>(null);
   const [kioskOpen, setKioskOpen] = useState(false);
+  // The club's date the list was read for, and whether that is no longer today.
+  const [loadedDay, setLoadedDay] = useState<{ key: string; label: string } | null>(null);
+  const [stale, setStale] = useState(false);
   const changeRef = useRef<HTMLButtonElement | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const load = useCallback(async () => {
     setError(false);
+    const day = clubDay(timeZone);
     try {
       const res = await fetch("/api/coach/today");
       const data = await res.json().catch(() => null);
@@ -87,20 +95,48 @@ export default function AttendanceHub({
       // The class already on screen stays, whatever the list now says is "on
       // now": only the first load, or a session that no longer exists, chooses.
       setSelectedId((current) => (current && list.some((s) => s.id === current) ? current : pickDefault(list, preselectClassId)));
+      setLoadedDay(day);
+      setStale(false);
     } catch {
       setSessions(null);
       setError(true);
+      // The picker goes with the list: a failed re-read must not leave it to reopen by itself, or the scanner paused.
+      setPlacement(null);
     }
-  }, [preselectClassId]);
+  }, [preselectClassId, timeZone]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const onCountChange = useCallback((checkedIn: number, expected: number, capacity?: number | null) => setCounts({ checkedIn, expected, capacity: capacity ?? null }), []);
+  // A tab left open overnight must not mark into yesterday's class. When the
+  // page is looked at again, the club's date is worked out again; if the day
+  // has moved on, the controls give way to a notice and a Reload. The class is
+  // never switched by itself.
+  useEffect(() => {
+    if (!loadedDay) return;
+    const check = () => {
+      if (document.visibilityState === "hidden") return;
+      if (clubDay(timeZone).key !== loadedDay.key) {
+        setStale(true);
+        setPlacement(null);
+      }
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [loadedDay, timeZone]);
+
+  const onCountChange = useCallback((c: { checkedIn: number; expected: number; capacity: number | null } | null) => setCounts(c), []);
 
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
-  const onNow = sessions?.filter((s) => !s.isCancelled && s.status === "ongoing").length ?? 0;
+  // The server's count rides on the session it chose (worked out on the club's
+  // clock, with the pick); the local count is the fallback.
+  const serverOnNow = sessions?.find((s) => typeof s.onNowCount === "number")?.onNowCount;
+  const onNow = serverOnNow ?? sessions?.filter((s) => !s.isCancelled && s.status === "ongoing").length ?? 0;
   const canCancel = (CAN_CANCEL_SESSION_ROLES as readonly string[]).includes(role);
   const pickerOpen = placement !== null;
 
@@ -113,6 +149,12 @@ export default function AttendanceHub({
     button.focus({ preventScroll: true });
     const r = button.getBoundingClientRect();
     setPlacement(placePicker({ top: r.top, bottom: r.bottom, left: r.left }, { width: window.innerWidth, height: window.innerHeight }));
+  }
+
+  function changeMode(m: Mode) {
+    if (m === mode) return;
+    setMode(m);
+    setCounts(null);
   }
 
   function choose(id: string) {
@@ -135,6 +177,11 @@ export default function AttendanceHub({
         <ErrorState message="Couldn't load today's classes — tap to retry" onRetry={() => void load()} />
       ) : sessions === null ? (
         <p className="text-sm text-tx-3" role="status">Loading today&rsquo;s classes…</p>
+      ) : stale && loadedDay ? (
+        <div role="alert" className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-5" data-testid="stale-day">
+          <p className="text-sm text-tx-1">This list is from {loadedDay.label}. Reload to see today&rsquo;s classes.</p>
+          <Button className="mt-3" variant="secondary" onClick={() => void load()}>Reload</Button>
+        </div>
       ) : sessions.length === 0 ? (
         <div className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-5" data-testid="no-classes-today">
           <h2 className="text-sm font-semibold text-tx-1">No classes today</h2>
@@ -201,8 +248,9 @@ export default function AttendanceHub({
                       aria-selected={active}
                       variant={active ? "primary" : "secondary"}
                       className="min-h-12 text-[15px]"
-                      // Changing method writes nothing: it only swaps the section below.
-                      onClick={() => setMode(m)}
+                      // Changing method writes nothing: it only swaps the section below
+                      // (and clears the count, which the register gives again when it is back).
+                      onClick={() => changeMode(m)}
                     >
                       <Icon className="size-4" aria-hidden="true" />
                       {label}
@@ -234,23 +282,28 @@ export default function AttendanceHub({
                   key={`${selected.id}-${revision}`}
                   instance={selected}
                   paused={pickerOpen}
-                  onUseName={() => setMode("tick")}
+                  onUseName={() => changeMode("tick")}
                 />
               )}
 
               {/* C. Everything that is not routine check-in. */}
               <section className="rounded-[var(--r-md)] border border-bd-default bg-sf-1" data-testid="session-details">
                 <h2>
-                  <Button
-                    variant="ghost"
-                    aria-expanded={showDetails}
-                    aria-controls="session-details-panel"
-                    onClick={() => setDetailsOpen((o) => !o)}
-                    className="h-auto min-h-12 w-full justify-between px-4 py-3 text-left text-tx-1"
-                  >
-                    Session details
-                    <span aria-hidden="true" className="font-normal text-tx-3">{showDetails ? "Hide" : "Show"}</span>
-                  </Button>
+                  {selected.isCancelled ? (
+                    // A cancelled session's details (and its Restore) stay open: no toggle that would do nothing.
+                    <span className="flex min-h-12 items-center px-4 py-3 text-sm font-medium text-tx-1">Session details</span>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      aria-expanded={showDetails}
+                      aria-controls="session-details-panel"
+                      onClick={() => setDetailsOpen((o) => !o)}
+                      className="h-auto min-h-12 w-full justify-between px-4 py-3 text-left text-tx-1"
+                    >
+                      Session details
+                      <span aria-hidden="true" className="font-normal text-tx-3">{showDetails ? "Hide" : "Show"}</span>
+                    </Button>
+                  )}
                 </h2>
                 {/* Mounted while closed, so the register can place its lines in it. */}
                 <div id="session-details-panel" hidden={!showDetails} className="space-y-3 border-t border-bd-default px-4 py-3">
@@ -270,9 +323,14 @@ export default function AttendanceHub({
                     // apart from routine check-in, behind its own confirmation.
                     <div className="border-t border-bd-default pt-3">
                       <SessionCancelControl
+                        key={selected.id}
                         session={selected}
                         onChanged={async () => {
+                          const changedId = selected.id;
                           await load();
+                          // Only the session the change was made to starts again; if the coach has
+                          // moved to another class meanwhile, that one is left as it is.
+                          if (selectedIdRef.current !== changedId) return;
                           setCounts(null);
                           setRevision((n) => n + 1);
                         }}
@@ -288,7 +346,7 @@ export default function AttendanceHub({
             placement={placement}
             sessions={sessions}
             selectedId={selectedId}
-            dateLabel={dateLabel}
+            dateLabel={loadedDay?.label ?? ""}
             onSelect={choose}
             onClose={() => setPlacement(null)}
           />
@@ -320,4 +378,13 @@ export default function AttendanceHub({
       </section>
     </div>
   );
+}
+
+/** The club's date now, as a key to compare and as the label the picker shows. */
+function clubDay(timeZone: string): { key: string; label: string } {
+  const now = new Date();
+  return {
+    key: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone }).format(now),
+    label: new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone }).format(now),
+  };
 }

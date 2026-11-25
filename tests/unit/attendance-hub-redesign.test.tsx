@@ -5,13 +5,15 @@
 // server: the class on the card is the class that receives the attendance,
 // whatever order answers arrive in.
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, act, within, cleanup } from "@testing-library/react";
 import React from "react";
 import AttendanceHub from "@/components/dashboard/AttendanceHub";
 import { groupByStart, pickDefault, placePicker, type TodaySession } from "@/components/dashboard/SessionPicker";
+import { Popover } from "@/components/ui/popover";
 
-vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
+const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }));
+vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: toastMock }) }));
 
 const session = (id: string, name: string, startTime: string, endTime: string, extra: Partial<TodaySession> = {}): TodaySession => ({
   id, classId: `class-${id}`, name, coachName: null, location: null, color: null, startTime, endTime,
@@ -34,7 +36,18 @@ const deferred = (): Deferred => {
   return { promise, release };
 };
 
-function stub(opts: { day?: TodaySession[] | (() => TodaySession[]); registers?: Record<string, Reg>; hold?: Record<string, Deferred>; candidates?: Array<{ id: string; name: string }> } = {}) {
+type StubOpts = {
+  /** A function may return null: the day's list then fails (500). */
+  day?: TodaySession[] | (() => TodaySession[] | null);
+  registers?: Record<string, Reg>;
+  hold?: Record<string, Deferred>;
+  candidates?: Array<{ id: string; name: string }>;
+  /** Held POST /api/checkin; `postStatus` >= 400 refuses it. */
+  holdPost?: Deferred;
+  postStatus?: number;
+  holdPatch?: Deferred;
+};
+function stub(opts: StubOpts = {}) {
   const calls: Array<{ url: string; method: string; body: unknown }> = [];
   const attended = new Set<string>();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -42,7 +55,10 @@ function stub(opts: { day?: TodaySession[] | (() => TodaySession[]); registers?:
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     calls.push({ url, method, body });
     const json = (status: number, b: unknown) => ({ ok: status < 300, status, json: async () => b });
-    if (url === "/api/coach/today") return json(200, typeof opts.day === "function" ? opts.day() : opts.day ?? DAY);
+    if (url === "/api/coach/today") {
+      const day = typeof opts.day === "function" ? opts.day() : opts.day ?? DAY;
+      return day ? json(200, day) : json(500, { error: "x" });
+    }
     const reg = /^\/api\/coach\/instances\/([^/]+)\/register$/.exec(url);
     if (reg) {
       const id = reg[1];
@@ -57,8 +73,14 @@ function stub(opts: { day?: TodaySession[] | (() => TodaySession[]); registers?:
     }
     if (url.startsWith("/api/checkin/members")) return json(200, (opts.candidates ?? []).map((c) => ({ ...c, accountType: "adult" })));
     if (url === "/api/checkin" && method === "POST") {
+      if (opts.holdPost) await opts.holdPost.promise;
+      if (opts.postStatus && opts.postStatus >= 400) return json(opts.postStatus, { error: "Not on this class's squad list." });
       attended.add(`${body.classInstanceId}:${body.memberId}`);
       return json(201, { success: true });
+    }
+    if (/^\/api\/classes\/[^/]+\/instances\/[^/]+$/.test(url) && method === "PATCH") {
+      if (opts.holdPatch) await opts.holdPatch.promise;
+      return json(200, { ok: true });
     }
     if (url === "/api/settings/kiosk") return json(200, { enabled: false, issuedAt: null });
     return json(404, { error: "Not found" });
@@ -67,7 +89,7 @@ function stub(opts: { day?: TodaySession[] | (() => TodaySession[]); registers?:
 }
 
 const hub = (props: Partial<React.ComponentProps<typeof AttendanceHub>> = {}) =>
-  render(<AttendanceHub initialMode="tick" preselectClassId={null} role="coach" primaryColor="#3b82f6" dateLabel="Wednesday 25 November" {...props} />);
+  render(<AttendanceHub initialMode="tick" preselectClassId={null} role="coach" primaryColor="#3b82f6" timeZone="Europe/London" {...props} />);
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 5)); });
 const card = () => screen.getByTestId("selected-class");
 const openPicker = () => { fireEvent.click(screen.getByRole("button", { name: "Change class" })); return screen.getByRole("dialog", { name: "Change class" }); };
@@ -75,7 +97,9 @@ const openPicker = () => { fireEvent.click(screen.getByRole("button", { name: "C
 // jsdom has no layout: say the window is a phone, so the picker is the sheet.
 const asPhone = () => { Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 }); Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 }); };
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+// The club's clock: Wednesday 25 November, 10:00 in London. Only Date is faked; timers run.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-25T10:00:00Z")); toastMock.mockReset(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("selected class", () => {
   it("opens on the session the server chose and says why, with time, mat and how many are on now", async () => {
@@ -339,5 +363,185 @@ describe("by name, details and kiosk", () => {
     hub({ role: "coach" });
     await settle();
     expect(within(screen.getByTestId("kiosk-section")).queryByRole("button", { name: "Open kiosk" })).toBeNull();
+  });
+});
+
+describe("review of 8e7630c0 (should-fix items and nits)", () => {
+  const REG = {
+    a: { rows: [{ memberId: "ada", name: "Ada Example" }] },
+    b: { rows: [] },
+  };
+  const markCaraThenSwitch = async (extra: Partial<StubOpts>) => {
+    asPhone();
+    const holdPost = deferred();
+    const calls = stub({ registers: REG, candidates: [{ id: "cara", name: "Cara Example" }], holdPost, ...extra });
+    hub();
+    await settle();
+    const search = screen.getByLabelText("Find a member");
+    fireEvent.change(search, { target: { value: "Cara" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    await settle();
+    // The mark is on the wire; the coach moves to another class at once.
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /No-Gi Advanced/ }));
+    await settle();
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("No-Gi Advanced");
+    await act(async () => { holdPost.release(); await new Promise((r) => setTimeout(r, 5)); });
+    return calls;
+  };
+
+  it("1: a mark made under one class and answered after a switch is announced with that class's name and time", async () => {
+    const calls = await markCaraThenSwitch({});
+    const posts = calls.filter((c) => c.url === "/api/checkin" && c.method === "POST");
+    expect(posts.map((p) => (p.body as { classInstanceId: string }).classInstanceId)).toEqual(["a"]);
+    expect(toastMock).toHaveBeenCalledWith("Marked in: Cara Example — Fundamentals at 18:00", "success");
+  });
+
+  it("1: a refusal that arrives after the switch is told in a toast naming the member and the class, not dropped", async () => {
+    await markCaraThenSwitch({ postStatus: 403 });
+    expect(toastMock).toHaveBeenCalledWith("Cara Example was not marked in to Fundamentals at 18:00: Not on this class's squad list.", "error");
+    expect(screen.queryByTestId("register-mark-error")).toBeNull();
+  });
+
+  it("2: a list from a day that has passed gives way to a notice and Reload, and never switches class by itself", async () => {
+    asPhone();
+    const calls = stub({ registers: REG });
+    hub();
+    await settle();
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+    // The tab is left open overnight and looked at again the next morning.
+    vi.setSystemTime(new Date("2026-11-26T08:00:00Z"));
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 5)); });
+    expect(screen.getByTestId("stale-day").textContent).toContain("This list is from Wednesday 25 November. Reload to see today\u2019s classes.");
+    expect(screen.queryByRole("button", { name: "Change class" })).toBeNull();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.queryByLabelText("Find a member")).toBeNull();
+    const reads = calls.filter((c) => c.url === "/api/coach/today").length;
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    await settle();
+    expect(calls.filter((c) => c.url === "/api/coach/today").length).toBe(reads + 1);
+    expect(screen.queryByTestId("stale-day")).toBeNull();
+    expect(within(openPicker()).getByText("Thursday 26 November")).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  const WITH_CANCELLED: TodaySession[] = [
+    ...DAY,
+    session("off", "Called Off", "12:00", "13:00", { status: "ended", isCancelled: true }),
+  ];
+
+  it("3: a restore answered after the coach moved to another class does not restart that class's register", async () => {
+    asPhone();
+    const holdPatch = deferred();
+    const calls = stub({ day: WITH_CANCELLED, registers: REG, holdPatch });
+    hub({ role: "owner" });
+    await settle();
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /Called Off/ }));
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Restore session" }));
+    await settle();
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /Fundamentals/ }));
+    await settle();
+    const readsOfA = () => calls.filter((c) => c.url === "/api/coach/instances/a/register").length;
+    const before = readsOfA();
+    // Fundamentals' own control is its own: it is not left "restoring".
+    fireEvent.click(screen.getByRole("button", { name: /Session details/ }));
+    expect(screen.getByRole("button", { name: "Cancel this session" })).toBeTruthy();
+    await act(async () => { holdPatch.release(); await new Promise((r) => setTimeout(r, 5)); });
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+    expect(readsOfA()).toBe(before);
+  });
+
+  it("4: a failed re-read of the day with the picker open does not leave the picker to reopen after Retry", async () => {
+    asPhone();
+    const holdPatch = deferred();
+    let fail = false;
+    stub({ day: () => (fail ? null : WITH_CANCELLED), registers: REG, holdPatch });
+    hub({ role: "owner" });
+    await settle();
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /Called Off/ }));
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Restore session" }));
+    await settle();
+    openPicker();
+    fail = true;
+    await act(async () => { holdPatch.release(); await new Promise((r) => setTimeout(r, 5)); });
+    expect(screen.getByText(/Couldn't load today's classes/)).toBeTruthy();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: /retry|Try again/i }));
+    await settle();
+    expect(screen.getByRole("button", { name: "Change class" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Change class" })).toBeNull();
+  });
+
+  it("5: choosing a class with nobody booked leaves focus on Change class, and a re-read never moves it", async () => {
+    asPhone();
+    stub({ registers: REG });
+    hub();
+    await settle();
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /No-Gi Advanced/ }));
+    await settle();
+    expect(screen.getByText(/No bookings yet/)).toBeTruthy();
+    const change = screen.getByRole("button", { name: "Change class" });
+    expect(document.activeElement).toBe(change);
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 5)); });
+    expect(document.activeElement).toBe(change);
+  });
+
+  it("5: with nothing focused, an empty register still puts the cursor in the search, once", async () => {
+    stub({ registers: REG, day: [session("b", "No-Gi Advanced", "18:00", "19:00", { status: "ongoing", auto: "on_now" })] });
+    hub();
+    await settle();
+    expect(document.activeElement).toBe(screen.getByLabelText("Find a member"));
+  });
+
+  it("6 is pinned in coach-today-auto-pick.test.ts; nit: the count goes with a change of method and with a failed re-read", async () => {
+    const hold: Record<string, Deferred> = {};
+    const registers: Record<string, Reg> = { ...REG };
+    stub({ registers, hold });
+    hub();
+    await settle();
+    const count = () => screen.getByTestId("checked-in-count").textContent;
+    expect(count()).toBe("0 checked in of 1 expected");
+    hold.a = deferred();
+    fireEvent.click(screen.getByRole("tab", { name: "Scan QR" }));
+    fireEvent.click(screen.getByRole("tab", { name: "By name" }));
+    await settle();
+    expect(count()).toBe("");
+    await act(async () => { hold.a.release(); await new Promise((r) => setTimeout(r, 5)); });
+    expect(count()).toBe("0 checked in of 1 expected");
+    registers.a = { status: 500, rows: [] };
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 5)); });
+    expect(count()).toBe("");
+  });
+
+  it("nit: 'N classes on now' is the server's count when it sends one", async () => {
+    stub({ day: DAY.map((s) => (s.id === "a" ? { ...s, onNowCount: 3 } : s)) });
+    hub();
+    await settle();
+    expect(screen.getByTestId("classes-on-now").textContent).toBe("3 classes on now");
+  });
+
+  it("nit: a cancelled class's Session details are open with no toggle that does nothing", async () => {
+    asPhone();
+    stub({ day: WITH_CANCELLED, registers: REG });
+    hub({ role: "owner" });
+    await settle();
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /Called Off/ }));
+    await settle();
+    expect(screen.queryByRole("button", { name: /Session details/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Restore session" })).toBeTruthy();
+  });
+
+  it("nit: the popover closes on a press that starts and ends on the layer, not on a drag out of the panel", () => {
+    const onClose = vi.fn();
+    render(<Popover placement={{ left: 10, width: 300, maxHeight: 400, top: 10 }} title="Change class" onClose={onClose}><p>rows</p></Popover>);
+    const panel = screen.getByRole("dialog", { name: "Change class" });
+    const layer = panel.parentElement as HTMLElement;
+    fireEvent.pointerDown(panel);
+    fireEvent.click(layer);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.pointerDown(layer);
+    fireEvent.click(layer);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

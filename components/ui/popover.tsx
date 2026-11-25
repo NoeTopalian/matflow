@@ -63,6 +63,8 @@ export function Popover({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // A press that started inside the panel and was let go outside it is a drag, not a dismissal.
+  const pressedOnLayer = useRef(false);
   const titleId = useId();
   const descriptionId = useId();
   useOverlay({ open: true, onClose, panelRef, initialFocusRef });
@@ -75,8 +77,13 @@ export function Popover({
     <div
       className="fixed inset-0 z-50"
       data-slot="popover-layer"
+      onPointerDown={(e) => {
+        pressedOnLayer.current = e.target === e.currentTarget;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        const onLayer = pressedOnLayer.current && e.target === e.currentTarget;
+        pressedOnLayer.current = false;
+        if (onLayer) onClose();
       }}
     >
       <div

@@ -117,4 +117,15 @@ describe("GET /api/coach/today — which session the register opens on", () => {
     expect(rows.find((r) => r.id === "six-mat2")).toMatchObject({ matName: "Mat 2", matOrder: 1 });
     expect(rows.find((r) => r.id === "am")).toMatchObject({ matName: null, matOrder: null });
   });
+
+  it("two rows for one class at one start: the list is read in id order, and the live one is kept, else the lower id", async () => {
+    // A legacy duplicate: the same class written twice for the day. The cancelled twin has the lower id.
+    const twin = (id: string, isCancelled: boolean) => ({ ...inst(id, "18:00", "19:00", { isCancelled }), class: { ...inst("dup", "18:00", "19:00").class } });
+    const rows = await at("18:20", { rows: [twin("x1", true), twin("x2", false)] });
+    expect(instanceFindManyMock.mock.calls.at(-1)?.[0].orderBy).toEqual([{ startTime: "asc" }, { id: "asc" }]);
+    expect(rows.map((r) => r.id)).toEqual(["x2"]);
+    expect(chosen(rows)).toEqual(["x2:on_now"]);
+    // Neither cancelled: the lower id, on every request.
+    expect((await at("18:20", { rows: [twin("y1", false), twin("y2", false)] })).map((r) => r.id)).toEqual(["y1"]);
+  });
 });

@@ -426,10 +426,6 @@ export default function CardScanner({
       const { reason, message } = detail;
       setRows((prev) => {
         const i = prev.findIndex((r) => r.token === token && r.at === at);
-        // No row: a session switch cleared the list while this was in flight.
-        // The scan still recorded, into the class it was sent to — Stop cannot
-        // recall a request already on the wire — so the outcome is shown,
-        // never dropped. Labelling the row with its own session is later work.
         if (i === -1) return [{ token, status, memberName, reason, message, at }, ...prev];
         const next = prev.slice();
         next[i] = { ...prev[i], status, memberName, reason, message };

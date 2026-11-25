@@ -103,7 +103,7 @@ describe("RegisterPanel search never marks by typing alone", () => {
     const body = JSON.parse(posts()[0].init!.body as string);
     expect(body).toMatchObject({ memberId: "m1", classInstanceId: "inst-1", checkInMethod: "admin" });
     expect(body.acknowledged).toBeUndefined();
-    expect(toastSpy).toHaveBeenCalledWith("Marked in: Noe Topalian", "success");
+    expect(toastSpy).toHaveBeenCalledWith("Marked in: Noe Topalian — Beginner BJJ at 10:00", "success");
   });
 
   it("Enter does nothing when the query matches more than one member", async () => {

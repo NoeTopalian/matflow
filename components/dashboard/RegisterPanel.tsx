@@ -140,7 +140,8 @@ export default function RegisterPanel({
    * stay at the top of the register, as before.
    */
   detailsSlot?: HTMLElement | null;
-  onCountChange: (checkedIn: number, expected: number, capacity?: number | null) => void;
+  /** `null` while there is no register to count (loading, or it failed to load). */
+  onCountChange: (counts: { checkedIn: number; expected: number; capacity: number | null } | null) => void;
 }) {
   const [register, setRegister] = useState<RegisterResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -164,6 +165,20 @@ export default function RegisterPanel({
   const { toast: showToast } = useToast();
   const { ask, dialogProps } = useConfirmDialog();
   const searchRef = useRef<HTMLInputElement>(null);
+  // A mark answered after the coach moved to another class lands on an unmounted
+  // panel: its outcome is then told in a toast that names this class.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const classWhen = `${instance.name} at ${instance.startTime}`;
+
+  /** A refused or failed mark: under the row or search, or, once this panel is gone, in a toast naming the class. */
+  function reportMarkError(memberId: string, name: string | undefined, message: string, from: "row" | "search") {
+    if (mountedRef.current) setMarkError({ memberId, message, from });
+    else showToast(`${name ?? "That member"} was not marked in to ${classWhen}: ${message}`, "error");
+  }
 
   /** Resolves true when the register loaded. */
   const loadRegister = useCallback(async (): Promise<boolean> => {
@@ -262,13 +277,22 @@ export default function RegisterPanel({
   const attendedIds = useMemo(() => new Set(attended.map((m) => m.memberId)), [attended]);
 
   useEffect(() => {
-    if (register) onCountChange(attended.length, register.expected.length, register.instance?.maxCapacity ?? null);
+    onCountChange(register ? { checkedIn: attended.length, expected: register.expected.length, capacity: register.instance?.maxCapacity ?? null } : null);
   }, [register, attended.length, onCountChange]);
 
   // When nobody is booked, the search IS the register: focus it so the coach
-  // can type a name at once.
+  // can type a name at once. Once per mount, not on every re-read, and only
+  // when nothing else has focus: after a class is chosen from the picker focus
+  // is on Change class and stays there (on a phone a focused search opens the
+  // keyboard), and a re-read never pulls focus out from behind a dialog.
+  const focusedOnceRef = useRef(false);
   useEffect(() => {
-    if (register && register.expected.length === 0) searchRef.current?.focus();
+    if (!register || focusedOnceRef.current) return;
+    focusedOnceRef.current = true;
+    if (register.expected.length !== 0) return;
+    const a = document.activeElement;
+    if (a && a !== document.body) return;
+    searchRef.current?.focus();
   }, [register]);
 
   /** Resolves true only when a check-in was recorded (or already existed). */
@@ -342,16 +366,16 @@ export default function RegisterPanel({
       // with no class-pack credit) is shown in the server's own words.
       if (outcome.kind === "refused" || outcome.kind === "signed_out") {
         const hasFields = !!body && typeof body === "object" && "details" in body;
-        setMarkError({ memberId, message: hasFields ? describeApiError(body) : outcome.message, from });
+        reportMarkError(memberId, who?.name, hasFields ? describeApiError(body) : outcome.message, from);
         return false;
       }
       const over = (body as { overCapacity?: { taken: number; maxCapacity: number } } | null)?.overCapacity;
       // `taken` is the count before this admission, so the sentence adds the one just admitted.
-      if (over) showToast(`Admitted over capacity — this class holds ${over.maxCapacity} and now has ${over.taken + 1} checked in`, "error");
+      if (over) showToast(`Admitted over capacity — ${classWhen} holds ${over.maxCapacity} and now has ${over.taken + 1} checked in`, "error");
       await loadRegister();
       return true;
     } catch {
-      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again.", from });
+      reportMarkError(memberId, who?.name, "Couldn't reach MatFlow — check your signal and try again.", from);
       return false;
     } finally {
       setMarking(null);
@@ -431,7 +455,7 @@ export default function RegisterPanel({
     const recorded = await mark(c.id, c, "search");
     if (recorded) {
       setQuery("");
-      showToast(`Marked in: ${c.name}`, "success");
+      showToast(`Marked in: ${c.name} — ${classWhen}`, "success");
     }
   }
 
@@ -533,7 +557,7 @@ export default function RegisterPanel({
               }}
               aria-describedby="register-search-hint"
               placeholder="Search members..."
-                autoComplete="off"
+              autoComplete="off"
               className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm transition-colors focus:outline-none"
               style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
               onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
