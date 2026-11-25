@@ -692,6 +692,7 @@ try {
       if (afterChangeTap.picker) { await page.keyboard.press("Escape"); await picker(page).waitFor({ state: "detached" }); }
       await page.getByRole("button", { name: "Change class" }).tap();
       const pickerAgain = await picker(page).waitFor({ timeout: 10000 }).then(() => true, () => false);
+      await page.waitForTimeout(400); // the sheet slides up from below the window; counted once it is in view
       const dialogsAgain = await openDialogs();
       await page.keyboard.press("Escape");
       await picker(page).waitFor({ state: "detached" }).catch(() => {});
