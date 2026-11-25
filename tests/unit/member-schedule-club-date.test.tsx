@@ -35,6 +35,9 @@ const ROWS = [
   row("tue", "Tuesday Morning", 2, "07:00", "08:00"),
   row("wed", "Evening Gi", 3, "20:00", "21:00"),
   row("thu", "Thursday Morning", 4, "07:00", "08:00"),
+  row("monam", "Monday Morning", 1, "07:00", "08:00"),
+  row("sunpm", "Sunday Open Mat", 0, "17:00", "18:00"),
+  row("sunnt", "Sunday Night", 0, "21:00", "22:00"),
 ];
 
 let scheduleUrls: string[] = [];
@@ -81,9 +84,9 @@ function dayLine(): string {
   const p = screen.getAllByText((_, el) => el?.tagName === "P" && /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day/.test(el.textContent ?? ""));
   return p[0].textContent ?? "";
 }
-/** Session states in the visible day pane, by class name. */
-async function states(): Promise<Record<string, string | null>> {
-  const pane = await screen.findByTestId("schedule-pane");
+/** Session states in a day pane (the visible one, or the one before or after it), by class name. */
+async function states(testId = "schedule-pane"): Promise<Record<string, string | null>> {
+  const pane = await screen.findByTestId(testId);
   const day = await within(pane).findByTestId("schedule-day");
   const out: Record<string, string | null> = {};
   for (const b of day.querySelectorAll<HTMLElement>("[data-session-state]")) {
@@ -170,6 +173,46 @@ describe("device a day BEHIND the club (Honolulu)", () => {
   });
 });
 
+describe("live and next only on the club's today, by date: side panes and week edges", () => {
+  it("club Wed 25 Nov 20:30 (Bali): from Tuesday, the next pane (Wed 25) has Evening Gi live; next week's Wednesday does not", async () => {
+    at(BALI, "2026-11-25T20:30:00Z");
+    stub(LONDON);
+    render(<MemberSchedulePage />);
+    await opened("Wednesday");
+    fireEvent.click(screen.getByRole("button", { name: /Tue\s*24/ }));
+    await opened("Tuesday");
+    expect((await states("schedule-pane-next"))["Evening Gi"]).toBe("live");
+    fireEvent.click(screen.getByRole("button", { name: /Wed\s*25/ }));
+    await opened("Wednesday");
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Wed\s*2\b/ })).toBeTruthy());
+    expect((await states())["Evening Gi"]).toBe("upcoming");
+  });
+
+  it("week edge, device BEHIND: club Mon 30 Nov 07:30 (Honolulu Sun 29 21:30) opens Monday of 30 Nov; Sunday's pane has nothing live", async () => {
+    at(HONOLULU, "2026-11-30T07:30:00Z");
+    stub(LONDON);
+    render(<MemberSchedulePage />);
+    await opened("Monday");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/30 Nov/);
+    expect((await states())["Monday Morning"]).toBe("live");
+    const sun = await states("schedule-pane-prev");
+    expect(sun["Sunday Night"]).toBe("upcoming");
+    expect(Object.values(sun).some((s) => s === "live" || s === "next")).toBe(false);
+  });
+
+  it("week edge, device AHEAD: club Sun 29 Nov 17:30 (Bali Mon 30 01:30) opens Sunday of 23–29 Nov; Monday's pane has nothing live or next", async () => {
+    at(BALI, "2026-11-29T17:30:00Z");
+    stub(LONDON);
+    render(<MemberSchedulePage />);
+    await opened("Sunday");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/23/);
+    expect((await states())["Sunday Open Mat"]).toBe("live");
+    const mon = await states("schedule-pane-next");
+    expect(Object.values(mon).some((s) => s === "live" || s === "next")).toBe(false);
+  });
+});
+
 describe("before the club's day is known", () => {
   it("names no day while the first read is out, then the club's (never the phone's Thursday first)", async () => {
     at(BALI, "2026-11-25T20:30:00Z");
@@ -178,6 +221,16 @@ describe("before the club's day is known", () => {
     render(<MemberSchedulePage />);
     await waitFor(() => expect(scheduleUrls.length).toBe(1));
     expect(screen.queryAllByText((_, el) => el?.tagName === "P" && /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day/.test(el.textContent ?? ""))).toHaveLength(0);
+    release();
+    await opened("Wednesday");
+  });
+
+  it("Today pressed before the first read lands still opens on the club's today", async () => {
+    at(BALI, "2026-11-25T20:30:00Z");
+    let release!: () => void;
+    stub(LONDON, new Promise<void>((r) => { release = r; }));
+    render(<MemberSchedulePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
     release();
     await opened("Wednesday");
   });

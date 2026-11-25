@@ -712,7 +712,8 @@ export default function MemberSchedulePage() {
   const today = now.date;
   const [anchor, setAnchor] = useState(() => clubNow(null).date);
   const [selectedDay, setSelectedDay] = useState(() => clubNow(null).dow - 1);
-  // Once the member has picked a day or week, the club's today never moves them off it.
+  // Once the member has picked a day or week, the club's today never moves them off it (Today clears it: pressed
+  // before the first read lands, the club's today still arrives).
   const dayChosenRef = useRef(false);
   const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
   // A guardian's children (Round 11, 5.1): the class sheet says the booking is the
@@ -744,8 +745,8 @@ export default function MemberSchedulePage() {
   const weekDays    = getWeekDays(anchor);
   // Until the first read says which day is the club's today, no day is marked selected or today and the day line
   // is blank: the phone's day is never shown and then swapped for the club's. A server that names no zone (demo,
-  // an older build) settles on the phone's day once the read is in.
-  const dayKnown = zone !== null || !scheduleLoading;
+  // an older build) settles on the phone's day once the read is in; a failed first read names no day.
+  const dayKnown = zone !== null || (!scheduleLoading && !loadError);
   // Audit iter-1-member-surface A5H-3: read tenant brand primaryColor from
   // localStorage (same pattern as app/member/shop/page.tsx:31-36). The
   // previous hardcoded `PRIMARY` ignored tenant branding entirely.
@@ -1192,7 +1193,7 @@ export default function MemberSchedulePage() {
             <h1 className="text-white text-sm font-medium ml-1">{weekLabel}</h1>
           </div>
           <button
-            onClick={() => { dayChosenRef.current = true; setAnchor(today); setSelectedDay(now.dow - 1); }}
+            onClick={() => { dayChosenRef.current = false; setAnchor(today); setSelectedDay(now.dow - 1); }}
             className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white transition-all"
           >
             Today
