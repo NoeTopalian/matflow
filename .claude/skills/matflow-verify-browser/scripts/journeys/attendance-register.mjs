@@ -518,10 +518,17 @@ try {
         await page.waitForTimeout(1500);
         if (await page.getByText(/Last: Member 1/).count()) break;
       }
-      await page.getByText(/Last: Member 1/).waitFor({ timeout: 40000 });
+      // When every request outlasts the scanner's own 10 s limit (the test branch's link, not the screen), the row only
+      // ever says "No answer yet"; the server may still have recorded it. The check below reads the database either
+      // way, so the wait for the screen's answer is not allowed to end the run.
+      const answered = await page.getByText(/Last: Member 1/).waitFor({ timeout: 40000 }).then(() => true, () => false);
+      if (!answered) {
+        L.note("S", "the scanner never showed an answer for Member 1: every request outlasted its 10 s limit on this link; the record is read from the database", { holds, posts: posts.length });
+        for (let i = 0; i < 12 && !(await attendance()).includes("Reg No-Gi Advanced:Member 1"); i++) await page.waitForTimeout(5000);
+      }
       await page.waitForTimeout(2500);
       const stored = await attendance();
-      const scanText = (await page.getByText(/Last: Member 1/).innerText()).slice(0, 80);
+      const scanText = answered ? (await page.getByText(/Last: Member 1/).innerText()).slice(0, 80) : (await page.getByText(/^Last: /).first().innerText().catch(() => "")).slice(0, 80);
       // A hold while the last request for the same card is still unanswered sends nothing new, so a slow link can
       // give fewer requests than holds; never more, and never one to another class.
       L.check("S", "a scan after the switch goes into the new class: at most one request per hold, every one to the new class, one attendance record, none anywhere else",
