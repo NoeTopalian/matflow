@@ -90,8 +90,10 @@ const members = await q(`select id, name, "cardVersion" from "Member" where "ten
 const [m1, m2] = members;
 if (!m1 || !m2) throw new Error("fixture has no Member 1 and Member 2");
 await q(`update "Member" set "waiverAccepted" = true where "tenantId" = $1 and id = any($2)`, [t, [m1.id, m2.id]]);
-// Member 1 is booked into Fundamentals; Member 2 is the walk-in.
+// Member 1 is booked into Fundamentals; Member 2 is the walk-in, and is booked into No-Gi Advanced so that class's
+// register has a row and a count of its own (R tells it apart from the class before it by them).
 await q(`insert into "ClassSubscription" (id, "memberId", "classId") values ($1, $2, $3)`, [randomUUID(), m1.id, cls["Reg Fundamentals"]]);
+await q(`insert into "ClassSubscription" (id, "memberId", "classId") values ($1, $2, $3)`, [randomUUID(), m2.id, cls["Reg No-Gi Advanced"]]);
 
 const attendance = async () => {
   const rows = await q(`select c.name, a."memberId" from "AttendanceRecord" a join "ClassInstance" i on i.id = a."classInstanceId" join "Class" c on c.id = i."classId" where a."tenantId" = $1 and c.name = any($2) order by c.name`, [t, NAMES]);
@@ -393,17 +395,28 @@ try {
       // ("Connection terminated unexpectedly" in the server log, answered 500): that is the database link, not this
       // screen, so the coach's own remedy is used once more, and the drop is recorded. The check below still needs
       // Try again to load the register.
+      let answer = null;
       for (let attempt = 1; ; attempt++) {
         const retried = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/instances/${inst["Reg No-Gi Advanced"]}/register`), { timeout: 60000 });
         await page.getByRole("button", { name: "Try again" }).click();
-        const answer = await retried;
+        answer = await retried;
         if (answer.status() === 200) break;
         L.note("R", "the retried register request did not answer 200 (the real server answered; see the server log)", { attempt, status: answer.status(), body: (await answer.text().catch(() => "")).slice(0, 200) });
         if (answer.status() < 500 || attempt >= 2) break;
         await page.getByRole("button", { name: "Try again" }).waitFor({ timeout: 30000 });
       }
       await page.getByLabel("Find a member").waitFor({ timeout: 30000 });
-      L.check("R", "Try again loads that class's register", (await selectedName(page)) === "Reg No-Gi Advanced" && (await page.getByText(/No bookings yet/).count()) === 1, {});
+      await page.getByTestId("checked-in-count").filter({ hasText: /checked in/ }).waitFor({ timeout: 30000 }).catch(() => {});
+      const r3 = {
+        request: `${answer.request().method()} ${new URL(answer.url()).pathname}`,
+        status: answer.status(),
+        name: await selectedName(page),
+        rows: await page.getByRole("button", { name: /^Mark .* (attended|absent)$/ }).evaluateAll((els) => els.map((e) => e.getAttribute("aria-label"))),
+        count: (await page.getByTestId("checked-in-count").innerText()).trim(),
+      };
+      // No-Gi's own register: its one booking (Member 2) and its own count; nothing of Kids Tigers (no bookings, "0 checked in").
+      L.check("R", "Try again fetches the failed class's own register (GET .../<No-Gi id>/register, 200) and shows its rows and its own count",
+        r3.name === "Reg No-Gi Advanced" && r3.request === `GET /api/coach/instances/${inst["Reg No-Gi Advanced"]}/register` && r3.status === 200 && JSON.stringify(r3.rows) === JSON.stringify(["Mark Member 2 attended"]) && /^0 checked in of 1 expected/.test(r3.count), r3);
       await ctx.close();
     }
 
