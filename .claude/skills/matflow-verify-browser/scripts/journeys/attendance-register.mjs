@@ -531,8 +531,10 @@ try {
       const scanText = answered ? (await page.getByText(/Last: Member 1/).innerText()).slice(0, 80) : (await page.getByText(/^Last: /).first().innerText().catch(() => "")).slice(0, 80);
       // A hold while the last request for the same card is still unanswered sends nothing new, so a slow link can
       // give fewer requests than holds; never more, and never one to another class.
-      L.check("S", "a scan after the switch goes into the new class: at most one request per hold, every one to the new class, one attendance record, none anywhere else",
-        posts.length >= 1 && posts.length <= holds && posts.every((p) => p === inst["Reg No-Gi Advanced"]) && stored.filter((s) => s.endsWith("Member 1")).join() === "Reg No-Gi Advanced:Member 1" && JSON.stringify(stored.filter((s) => !s.endsWith("Member 1"))) === JSON.stringify(before), { holds, posts: posts.length, allToNewClass: posts.every((p) => p === inst["Reg No-Gi Advanced"]), stored, scanText });
+      // Unanswered is only accepted as the scanner's own timeout state, never a blank or an error row.
+      const rowKnown = answered ? /^Last: Member 1/.test(scanText) : /^Last: No answer yet/.test(scanText);
+      L.check("S", "a scan after the switch goes into the new class: at most one request per hold, every one to the new class, one attendance record, none anywhere else; the scanner row names the member, or says it has no answer yet",
+        rowKnown && posts.length >= 1 && posts.length <= holds && posts.every((p) => p === inst["Reg No-Gi Advanced"]) && stored.filter((s) => s.endsWith("Member 1")).join() === "Reg No-Gi Advanced:Member 1" && JSON.stringify(stored.filter((s) => !s.endsWith("Member 1"))) === JSON.stringify(before), { holds, posts: posts.length, allToNewClass: posts.every((p) => p === inst["Reg No-Gi Advanced"]), stored, scanText });
       await ctx.close();
     }
 
