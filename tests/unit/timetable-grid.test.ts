@@ -50,9 +50,10 @@ describe("rows are the real times", () => {
 
   it("floors a longer track at 0.6 px a minute; a sliver its class shares with a longer track is fixed at that scale", () => {
     const g = byTime([s("a", 1, "16:45", "17:45"), s("b", 2, "16:50", "17:35")]);
-    // tracks: 16:45–16:50 (5 min), 16:50–17:35 (45 min), 17:35–17:45 (10 min)
+    // tracks: 16:45–16:50 (5 min), 16:50–17:35 (45 min), 17:35–17:45 (10 min). The first sliver carries the 16:45
+    // label up to the 16:50 one, so it is a label's 16 px (25 Nov 2026); the last stays at its scale.
     expect(g.rows.map((r) => [r.kind, r.floorPx, r.fixed === true])).toEqual([
-      ["used", 3, true],
+      ["used", 16, true],
       ["used", 27, false],
       ["used", 6, true],
     ]);
@@ -66,9 +67,9 @@ describe("rows are the real times", () => {
     expect(g.rows[1]).toMatchObject({ fromMin: 480, toMin: 540 });
   });
 
-  it("labels a start only when it is at least 15 minutes after the last labelled one", () => {
+  it("labels every start time on show (25 Nov 2026: a close earlier start no longer takes a label away)", () => {
     const g = byTime([s("a", 1, "17:45", "18:40"), s("b", 2, "17:50", "18:40"), s("c", 5, "18:00", "19:00"), s("d", 1, "18:40", "19:00")]);
-    expect(g.ticks.map((t) => t.minute)).toEqual([17 * 60 + 45, 18 * 60, 18 * 60 + 40]);
+    expect(g.ticks.map((t) => t.minute)).toEqual([17 * 60 + 45, 17 * 60 + 50, 18 * 60, 18 * 60 + 40]);
     // each label runs to the next labelled line
     expect(g.ticks[0].rowEnd).toBe(g.ticks[1].rowStart);
   });
@@ -447,12 +448,23 @@ describe("every class on its own time's line (Noe, 25 Nov 2026: all the 19:00 cl
     const g = byMat([
       s("kids", 2, "17:45", "18:40", "", "m2"), s("beg", 2, "17:50", "18:40", "", "m1"), s("judo", 5, "18:00", "19:00", "", "m1"),
     ], [2, 5]);
-    expect(g.ticks.map((t) => t.minute)).toEqual([1065, 1080]);
-    const span = g.rows.filter((r) => r.fromMin >= 1065 && r.toMin <= 1080);
-    const tall = span.reduce((h, r) => h + (r.kind === "used" ? r.floorPx : r.kind === "break" ? BREAK_ROW_PX : GAP_ROW_PX), 0);
-    expect(tall).toBeGreaterThanOrEqual(LABEL_ROOM_PX);
-    // Every line is still a real time, in order.
-    expect(g.rows.map((r) => r.fromMin)).toEqual([1065, 1070, 1080, 1120]);
+    // A label for every start, 17:50 included.
+    expect(g.ticks.map((t) => t.minute)).toEqual([1065, 1070, 1080]);
+    // The 5- and 10-minute slivers were 3 and 6 px: each now a label's 16 px, still fixed; every line still a real time.
+    expect(g.rows.map((r) => [r.fromMin, r.toMin, r.fixed ?? false, r.floorPx])).toEqual([
+      [1065, 1070, true, 16],
+      [1070, 1080, true, 16],
+      [1080, 1120, false, 24],
+      [1120, 1140, false, 12],
+    ]);
+    expect(LABEL_ROOM_PX).toBe(16);
+  });
+
+  it("an 18:50 class does not take the 19:00 label from the 19:00 classes (the review's case)", () => {
+    const g = byMat([s("mon", 1, "18:50", "19:40", "", "m1"), s("tue", 2, "19:00", "20:30", "", "m1"), s("wed", 3, "19:00", "20:30", "", "m2")], [1, 2, 3]);
+    expect(g.ticks.map((t) => t.minute)).toEqual([1130, 1140]);
+    expect(g.ticks.find((t) => t.minute === 1140)?.rowStart).toBe(session(g, "tue").rowStart);
+    expect(session(g, "wed").rowStart).toBe(session(g, "tue").rowStart);
   });
 
   it("a +N more button still says when its sessions really run", () => {
@@ -495,18 +507,20 @@ describe("every class on its own time's line (Noe, 25 Nov 2026: all the 19:00 cl
         }
         const g = buildTimetableGrid(sessions, { days: [6], layout, mats: MATS, maxLanes: 9 });
         const placed = sessions.map((x) => ({ ...x, at: session(g, x.key) }));
+        // A gutter label for every start time, each with at least a label's height before the next.
+        expect(g.ticks.map((t) => t.minute), `${run} ${layout} labels`).toEqual([...new Set(sessions.map((x) => x.start))].sort((a, b) => a - b));
+        for (let t = 0; t + 1 < g.ticks.length; t++) {
+          const span = g.rows.filter((r) => r.fromMin >= g.ticks[t].minute && r.toMin <= g.ticks[t + 1].minute);
+          const tall = span.reduce((h, r) => h + (r.kind === "used" ? r.floorPx : r.kind === "break" ? BREAK_ROW_PX : GAP_ROW_PX), 0);
+          expect(tall, `${run} ${layout} room after ${g.ticks[t].minute}`).toBeGreaterThanOrEqual(LABEL_ROOM_PX);
+        }
         for (const a of placed) {
           // A later start is never drawn higher.
           for (const b of placed) if (b.start > a.start) expect(b.at.rowStart, `${run} ${layout} ${a.key} ${b.key} order`).toBeGreaterThanOrEqual(a.at.rowStart);
-          // Drawn no later than it starts, no earlier than half an hour before; never cut short.
+          // By mat and by time alike: exactly its own lines.
           const fromMin = g.rows[a.at.rowStart - g.firstTimeLine].fromMin;
           const toMin = g.rows[a.at.rowEnd - 1 - g.firstTimeLine].toMin;
-          expect(fromMin).toBeLessThanOrEqual(a.start);
-          expect(a.start - fromMin).toBeLessThan(30);
-          expect(toMin).toBeGreaterThanOrEqual(a.end);
-          expect(toMin - a.end).toBeLessThan(30);
-          // Split by time: exactly its own lines.
-          if (layout === "time") expect([fromMin, toMin], `${run} time ${a.key} exact`).toEqual([a.start, a.end]);
+          expect([fromMin, toMin], `${run} ${layout} ${a.key} exact`).toEqual([a.start, a.end]);
           for (const b of placed) {
             if (a === b) continue;
             const drawnTogether = a.at.rowStart < b.at.rowEnd && b.at.rowStart < a.at.rowEnd;

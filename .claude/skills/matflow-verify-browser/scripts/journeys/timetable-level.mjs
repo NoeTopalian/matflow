@@ -59,7 +59,8 @@ const SAT = ["Juniors Squad, Saturday 11:00 to 12:00", "Beginners Course Gi, Sat
 const axisAt = (scope, hhmm) => scope.evaluate((el, t) => {
   const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const chips = [...el.querySelectorAll("[data-cell-key] button")].filter(vis).filter((b) => (b.getAttribute("aria-label") ?? "").includes(` ${t} to `));
-  const tops = chips.map((b) => Math.round(b.getBoundingClientRect().top * 10) / 10);
+  // The grid cell sits on the row line; the chip inside it is inset 1.5 px (.pg-cell).
+  const tops = chips.map((b) => Math.round((b.closest("[data-cell-key]") ?? b).getBoundingClientRect().top * 10) / 10);
   const ticks = [...el.querySelectorAll(".pg-tick")].filter(vis).map((x) => ({ text: x.textContent.trim(), top: x.getBoundingClientRect().top, bottom: x.getBoundingClientRect().bottom }));
   const label = ticks.find((x) => x.text === t);
   const sorted = [...ticks].sort((a, b) => a.top - b.top);
@@ -139,7 +140,9 @@ try {
     const ticks = (await grid.locator(".pg-tick").allTextContents()).map((t) => t.trim());
     expect(ticks).toContain("11:00");
     expect(ticks).toContain("11:20");
-    expect((await axisAt(grid, "11:20")).overlaps).toEqual([]);
+    const dayAxis = await axisAt(grid, "11:20");
+    expect(dayAxis.overlaps).toEqual([]);
+    expect(Math.abs(dayAxis.labelTop - dayAxis.chipTop)).toBeLessThanOrEqual(1);
     const inv = await gridInvariants(main, { sessions: 7, grid: "phone-day-grid" });
     expect(inv.problems).toEqual([]);
     await shot(main, "timetable-level-day");
@@ -162,6 +165,9 @@ try {
       const beginners = await chipBox(grid, "Beginners Course Gi, Saturday 11:20 to 12:10");
       expect(beginners.top).toBeGreaterThan(juniors.top + 5);
       expect(beginners.time).toContain("11:20");
+      const phoneAxis = await axisAt(grid, "11:20");
+      expect(phoneAxis.overlaps).toEqual([]);
+      expect(Math.abs(phoneAxis.labelTop - phoneAxis.chipTop)).toBeLessThanOrEqual(1);
       const sideways = await phoneNoSidewaysScroll(page);
       expect(sideways.ok).toBe(true);
       const inv = await gridInvariants(page, { sessions: 7, grid: "phone-day-grid" });
@@ -198,7 +204,9 @@ try {
       const ticks = (await grid.locator(".pg-tick").allTextContents()).map((x) => x.trim());
       expect(ticks).toContain("11:00");
       expect(ticks).toContain("11:20");
-      expect((await axisAt(grid, "11:20")).overlaps).toEqual([]);
+      const memberAxis = await axisAt(grid, "11:20");
+      expect(memberAxis.overlaps).toEqual([]);
+      expect(Math.abs(memberAxis.labelTop - memberAxis.chipTop)).toBeLessThanOrEqual(1);
       const wide = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
       expect(wide.scroll).toBeLessThanOrEqual(wide.width + 1);
       await shot(page, "timetable-level-member");

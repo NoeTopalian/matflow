@@ -108,7 +108,9 @@ export interface GridRow {
    * a longer row: it is exactly `floorPx` tall and takes no part in fitting
    * text. Left to size itself it soaks up the height two classes that overlap
    * by those few minutes each need, and one of them is drawn a third taller
-   * than a class of the same length beside it (Noe, 6 Nov 2026).
+   * than a class of the same length beside it (Noe, 6 Nov 2026). It can be
+   * made taller (never shorter) to give a gutter label its room: see the label
+   * loop in `buildTimetableGrid`.
    */
   fixed?: boolean;
 }
@@ -130,16 +132,16 @@ const DAY_END = 24 * 60;
 const TIME = /^\d{1,2}:\d{2}$/;
 const numeric = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-/** `startMin` and `endMin` are where the session is DRAWN; `realStartMin` and `realEndMin` are when it runs. */
-type Placed = GridSession & { startMin: number; endMin: number; realStartMin: number; realEndMin: number };
+/** `startMin` and `endMin`: when the session runs, on the day's own axis (and so where it is drawn). */
+type Placed = GridSession & { startMin: number; endMin: number };
 
 /** Minutes on the day's own axis: an overnight end stops at 24:00, and a time that cannot be read still gets a place. */
 function onAxis(session: GridSession): Placed {
-  if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10, realStartMin: 0, realEndMin: 10 };
+  if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10 };
   const span = spanMinutes(session.startTime, session.endTime);
   const startMin = Math.min(Math.max(span.startMin, 0), DAY_END - 1);
   const endMin = Math.max(Math.min(span.endMin, DAY_END), startMin + 1);
-  return { ...session, startMin, endMin, realStartMin: startMin, realEndMin: endMin };
+  return { ...session, startMin, endMin };
 }
 
 /** Row heights the component draws (components/schedule/PosterGrid.tsx): a "No classes" break row and an empty gap. */
@@ -151,7 +153,6 @@ export const LABEL_ROOM_PX = 16;
 const inOrder = (a: Placed, b: Placed) =>
   a.startMin - b.startMin ||
   b.endMin - b.startMin - (a.endMin - a.startMin) ||
-  a.realStartMin - b.realStartMin ||
   numeric.compare(a.tie, b.tie) ||
   (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
@@ -300,7 +301,6 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
     matDays.add(day);
     return real;
   });
-  const realOf = new Map(all.map((s) => [s.key, s] as const));
 
   // Rows: the distinct start and end minutes of everything on show.
   const lines = [...new Set(all.flatMap((s) => [s.startMin, s.endMin]))].sort((a, b) => a - b);
@@ -326,10 +326,9 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
     }
   }
 
-  // Gutter labels: every drawn start at least 15 minutes after the last labelled one; each runs to the next label.
-  const starts = [...new Set(all.map((s) => s.startMin))].sort((a, b) => a - b);
-  const labelled: number[] = [];
-  for (const m of starts) if (labelled.length === 0 || m - labelled[labelled.length - 1] >= 15) labelled.push(m);
+  // Gutter labels: one for every start time on show, each running to the next (Noe, 25 Nov 2026: an 18:50 class used
+  // to take the 19:00 label away from the 19:00 classes on the next line). The loop below gives each its room.
+  const labelled = [...new Set(all.map((s) => s.startMin))].sort((a, b) => a - b);
   const lastLine = FIRST_TIME_LINE + Math.max(0, lines.length - 1);
   const ticks = labelled.map((minute, i) => ({ minute, rowStart: lineOf(minute), rowEnd: i + 1 < labelled.length ? lineOf(labelled[i + 1]) : lastLine }));
   // Each label has room before the next one: its rows together are at least a label tall. 17:45 and 18:00 drawn over
@@ -377,9 +376,9 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
           span: f.span,
           rowStart: lineOf(f.startMin),
           rowEnd: lineOf(f.endMin),
-          // What the button says: when the folded sessions really run, not where they are drawn.
-          startMin: Math.min(...f.keys.map((key) => realOf.get(key)?.realStartMin ?? f.startMin)),
-          endMin: Math.max(...f.keys.map((key) => realOf.get(key)?.realEndMin ?? f.endMin)),
+          // What the button says: when the folded sessions run (the first starts on the button's own line).
+          startMin: f.startMin,
+          endMin: f.endMin,
           keys: f.keys,
           clusterKeys: f.clusterKeys,
           clusterRowStart: lineOf(f.clusterStartMin),
