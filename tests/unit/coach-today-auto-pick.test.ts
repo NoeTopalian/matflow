@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("next/server", () => ({
-  NextResponse: { json: (body: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, json: async () => body }) },
+  NextResponse: { json: (body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({ status: init?.status ?? 200, headers: init?.headers ?? {}, json: async () => body }) },
 }));
 
 const { requireApiStaffMock, tenantFindUniqueMock, instanceFindManyMock, classFindManyMock, instanceCreateManyMock } = vi.hoisted(() => ({
@@ -116,6 +116,17 @@ describe("GET /api/coach/today — which session the register opens on", () => {
     const rows = await at("12:00");
     expect(rows.find((r) => r.id === "six-mat2")).toMatchObject({ matName: "Mat 2", matOrder: 1 });
     expect(rows.find((r) => r.id === "am")).toMatchObject({ matName: null, matOrder: null });
+  });
+
+  it("the answer says which club date the list is for, and the server's clock, as headers (the body stays an array)", async () => {
+    requireApiStaffMock.mockResolvedValue({ ok: true, tenantId: "t1", userId: "u", role: "coach", session: { user: { id: "u", tenantId: "t1" } } });
+    instanceFindManyMock.mockResolvedValue(DAY);
+    // 00:30 on 25 November in Makassar is still 24 November in UTC.
+    vi.setSystemTime(new Date(Date.UTC(2026, 10, 24, 16, 30)));
+    const res = (await GET()) as unknown as { headers: Record<string, string>; json: () => Promise<unknown> };
+    expect(res.headers["X-Club-Date"]).toBe("2026-11-25");
+    expect(Number(res.headers["X-Server-Time"])).toBe(Date.UTC(2026, 10, 24, 16, 30));
+    expect(Array.isArray(await res.json())).toBe(true);
   });
 
   it("two rows for one class at one start: the list is read in id order, and the live one is kept, else the lower id", async () => {

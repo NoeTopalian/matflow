@@ -180,9 +180,10 @@ export default function RegisterPanel({
   }, []);
   const classWhen = `${instance.name} at ${instance.startTime}`;
 
-  /** A refused or failed mark: under the row or search, or, once this panel is gone, in a toast naming the class. */
-  function reportMarkError(memberId: string, name: string | undefined, message: string, from: "row" | "search") {
+  /** A refused or failed mark or un-mark: under the row or search, or, once this panel is gone, in a toast naming the class. */
+  function reportMarkError(memberId: string, name: string | undefined, message: string, from: "row" | "search", what: "mark" | "unmark" = "mark") {
     if (mountedRef.current) setMarkError({ memberId, message, from });
+    else if (what === "unmark") showToast(`${name ?? "That member"} is still marked in to ${classWhen}: ${message}`, "error");
     else showToast(`${name ?? "That member"} was not marked in to ${classWhen}: ${message}`, "error");
   }
 
@@ -412,12 +413,12 @@ export default function RegisterPanel({
       const res = await fetch(`/api/checkin?classInstanceId=${instance.id}&memberId=${memberId}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setMarkError({ memberId, message: describeApiError(body), from: "row" });
+        reportMarkError(memberId, name, describeApiError(body), "row", "unmark");
         return;
       }
       await loadRegister();
     } catch {
-      setMarkError({ memberId, message: "Couldn't reach MatFlow — check your signal and try again.", from: "row" });
+      reportMarkError(memberId, name, "Couldn't reach MatFlow — check your signal and try again.", "row", "unmark");
     } finally {
       setMarking(null);
     }

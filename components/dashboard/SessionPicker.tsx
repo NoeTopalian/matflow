@@ -114,11 +114,18 @@ export function SessionCancelControl({
   session,
   onChanged,
   onOpenChange,
+  beforeWrite,
 }: {
   session: TodaySession;
   onChanged: () => void | Promise<void>;
-  /** Told when the confirmation opens and closes (the scanner is paused while it is open). */
+  /**
+   * Told when the confirmation opens and closes (the scanner is paused while it
+   * is open). Called from the handlers themselves, in the same event as the
+   * dialog, so the pause takes effect in the same render.
+   */
   onOpenChange?: (open: boolean) => void;
+  /** Asked just before the cancel or restore is sent; false means "send nothing" (the club's day has moved on). */
+  beforeWrite?: () => boolean;
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -127,9 +134,10 @@ export function SessionCancelControl({
   const [restoring, setRestoring] = useState(false);
   const reasonId = useId();
   const errorId = useId();
-  useEffect(() => {
-    onOpenChange?.(open);
-  }, [open, onOpenChange]);
+  const close = () => {
+    setOpen(false);
+    onOpenChange?.(false);
+  };
   // Gone while open (another class was chosen): the confirmation went with it.
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
 
@@ -156,12 +164,16 @@ export function SessionCancelControl({
       setError("Give a reason — members see it beside the cancelled session.");
       return;
     }
+    if (beforeWrite && !beforeWrite()) {
+      close();
+      return;
+    }
     const failure = await patch(true, trimmed);
     if (failure) {
       setError(failure);
       return;
     }
-    setOpen(false);
+    close();
     setReason("");
     setError(null);
     toast(`${session.name} at ${session.startTime} cancelled`, "success");
@@ -169,6 +181,7 @@ export function SessionCancelControl({
   }
 
   async function restore() {
+    if (beforeWrite && !beforeWrite()) return;
     setRestoring(true);
     const failure = await patch(false);
     setRestoring(false);
@@ -198,6 +211,7 @@ export function SessionCancelControl({
           onClick={() => {
             setError(null);
             setOpen(true);
+            onOpenChange?.(true);
           }}
         >
           Cancel this session
@@ -206,7 +220,7 @@ export function SessionCancelControl({
       <ConfirmDialog
         open={open}
         onClose={() => {
-          setOpen(false);
+          close();
           setError(null);
         }}
         onConfirm={confirmCancel}

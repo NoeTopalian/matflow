@@ -15,6 +15,8 @@ export async function GET() {
   // that account but is not its coach: the register must not open on "their"
   // class on that account's behalf.
   const support = isSupportSession(gate.session);
+  // The one instant the day is worked out from: the list, and the date the response says it is for.
+  const listedAt = new Date();
 
   // Every staff role sees every session today. Noe, 17 Sep 2026: "coaches
   // should see all classes but theirs should be specifically highlighted."
@@ -34,7 +36,7 @@ export async function GET() {
     // offered for check-in whether or not the nightly cron ever ran (on
     // production it never has). Idempotent — see lib/today-sessions.ts.
     await ensureTodayInstances(tx, tenantId, tz);
-    const { start, end } = todayWindow(new Date(), tz);
+    const { start, end } = todayWindow(listedAt, tz);
     const rows = await tx.classInstance.findMany({
       where: {
         // Live classes only: a class an attendance-history import created to
@@ -151,6 +153,16 @@ export async function GET() {
       // T6d: the class has a roster, so the desk sees "Squad only".
       rosterOnly: (inst.class._count?.rosterMembers ?? 0) > 0,
     })),
-    { headers: { "Cache-Control": "private, no-store" } },
+    {
+      headers: {
+        "Cache-Control": "private, no-store",
+        // The club's date this list is for (YYYY-MM-DD in the club's zone) and the server's clock: Mark
+        // attendance compares the club's date now against the first, reckoned from the second, so a device
+        // whose clock is wrong neither marks into yesterday's classes nor locks itself out. Headers, so every
+        // reader that takes the body as an array keeps working.
+        "X-Club-Date": new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz }).format(listedAt),
+        "X-Server-Time": String(Date.now()),
+      },
+    },
   );
 }

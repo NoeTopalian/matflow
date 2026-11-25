@@ -85,21 +85,43 @@ export default function AttendanceHub({
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  const load = useCallback(async () => {
+  // The server's clock less the device's, measured on each read of the day: the club's "now" is the device's
+  // clock corrected by it, so a device whose clock is wrong reckons the club's date as the server does.
+  const clockOffsetRef = useRef(0);
+  const loadedDayRef = useRef<{ key: string; label: string } | null>(null);
+
+  /**
+   * Reads the day's list. `adopt` is true only for the first read and for the
+   * person's own Reload or Try again: any other re-read (after a cancel or a
+   * restore) that finds the club's date has moved on keeps the list and the
+   * class on screen and shows the dated notice instead.
+   */
+  const load = useCallback(async (adopt: boolean) => {
     setError(false);
     setListLoading(true);
-    const day = clubDay(timeZone);
     try {
       const res = await fetch("/api/coach/today");
       const data = await res.json().catch(() => null);
       // An error object rendered as an empty list is the defect that once
       // crashed this screen; a non-array is a failure, not "no classes".
       if (!res.ok || !Array.isArray(data)) throw new Error("bad");
+      // The date the list is for is the server's (X-Club-Date); without it, the club's date now, after the answer.
+      const serverTime = Number(res.headers?.get?.("X-Server-Time"));
+      clockOffsetRef.current = Number.isFinite(serverTime) && serverTime > 0 ? serverTime - Date.now() : 0;
+      const serverDay = res.headers?.get?.("X-Club-Date") ?? null;
+      const day = serverDay && /^\d{4}-\d{2}-\d{2}$/.test(serverDay) ? dayFromKey(serverDay) : clubDay(timeZone, Date.now() + clockOffsetRef.current);
+      const had = loadedDayRef.current;
+      if (had && day.key !== had.key && !adopt) {
+        setStaleNow(day.label);
+        setPlacement(null);
+        return;
+      }
       const list = data as TodaySession[];
       setSessions(list);
       // The class already on screen stays, whatever the list now says is "on
       // now": only the first load, or a session that no longer exists, chooses.
       setSelectedId((current) => (current && list.some((s) => s.id === current) ? current : pickDefault(list, preselectClassId)));
+      loadedDayRef.current = day;
       setLoadedDay(day);
       setStaleNow(null);
     } catch {
@@ -113,15 +135,16 @@ export default function AttendanceHub({
   }, [preselectClassId, timeZone]);
 
   /**
-   * Asked at the moment of every write (a mark, an un-mark, a card read): is
-   * the list still the club's today? Worked out from the club's zone and the
-   * clock now, so it holds on a desk tablet left awake across midnight with no
-   * focus or visibility event. When the day has moved on, nothing is written:
-   * the dated notice and Reload take the place of the controls.
+   * Asked at the moment of every write (a mark, an un-mark, a card read, a
+   * cancel or restore): is the list still the club's today? Worked out from
+   * the club's zone and the clock now (corrected to the server's), so it holds
+   * on a desk tablet left awake across midnight with no focus or visibility
+   * event. When the day has moved on, nothing is written: the dated notice and
+   * Reload take the place of the controls.
    */
   const stillToday = useCallback((): boolean => {
     if (!loadedDay) return true;
-    const now = clubDay(timeZone);
+    const now = clubDay(timeZone, Date.now() + clockOffsetRef.current);
     if (now.key === loadedDay.key) return true;
     setStaleNow(now.label);
     setPlacement(null);
@@ -129,8 +152,14 @@ export default function AttendanceHub({
   }, [loadedDay, timeZone]);
 
   useEffect(() => {
-    void load();
+    void load(true);
   }, [load]);
+
+  // The control in use has gone with the notice: focus goes to Reload, the one thing left to do.
+  const reloadRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (staleNow) reloadRef.current?.focus();
+  }, [staleNow]);
 
   // A tab left open overnight must not mark into yesterday's class. When the
   // page is looked at again, the club's date is worked out again; if the day
@@ -193,7 +222,7 @@ export default function AttendanceHub({
       <PageHeader title="Mark attendance" />
 
       {error ? (
-        <ErrorState message="Couldn't load today's classes — tap to retry" onRetry={() => void load()} />
+        <ErrorState message="Couldn't load today's classes — tap to retry" onRetry={() => void load(true)} />
       ) : sessions === null ? (
         <p className="text-sm text-tx-3" role="status">Loading today&rsquo;s classes…</p>
       ) : sessions.length === 0 ? (
@@ -256,7 +285,7 @@ export default function AttendanceHub({
               <p className="text-sm text-tx-1">
                 It is now {staleNow}. This register is for {loadedDay.label}. Reload to see today&rsquo;s classes.
               </p>
-              <Button className="mt-3" variant="secondary" onClick={() => void load()}>Reload</Button>
+              <Button ref={reloadRef} className="mt-3" variant="secondary" onClick={() => void load(true)}>Reload</Button>
             </div>
           ) : selected && (
             <>
@@ -355,9 +384,10 @@ export default function AttendanceHub({
                         key={selected.id}
                         session={selected}
                         onOpenChange={setCancelOpen}
+                        beforeWrite={stillToday}
                         onChanged={async () => {
                           const changedId = selected.id;
-                          await load();
+                          await load(false);
                           // Only the session the change was made to starts again; if the coach has
                           // moved to another class meanwhile, that one is left as it is.
                           if (selectedIdRef.current !== changedId) return;
@@ -411,10 +441,16 @@ export default function AttendanceHub({
 }
 
 /** The club's date now, as a key to compare and as the label the picker shows. */
-function clubDay(timeZone: string): { key: string; label: string } {
-  const now = new Date();
+function clubDay(timeZone: string, at: number = Date.now()): { key: string; label: string } {
+  const now = new Date(at);
   return {
     key: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone }).format(now),
     label: new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone }).format(now),
   };
+}
+
+/** A club date key (YYYY-MM-DD) as the label the picker and the notice show. */
+function dayFromKey(key: string): { key: string; label: string } {
+  const [y, m, d] = key.split("-").map(Number);
+  return { key, label: new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d, 12))) };
 }

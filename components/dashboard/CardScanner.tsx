@@ -44,7 +44,7 @@
 //    after every await, so a stale closure can never submit a card, count a
 //    failure, or stop the live camera.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { nextDetectorState, pickDetectorKind } from "@/lib/scan-detector";
 import { formatTimeRange } from "@/lib/class-time";
@@ -400,7 +400,8 @@ export default function CardScanner({
 
   /** Mirrors `paused` for the detect loop, which closes over its first render. */
   const pausedRef = useRef(paused);
-  useEffect(() => {
+  // A layout effect, so the pause is in place before the frame that shows the picker or the confirmation is painted.
+  useLayoutEffect(() => {
     // Nothing is recorded while paused (the loop returns before the hold
     // tracker sees a read), so a card still under the lens when the picker
     // closes is read then, as a new hold, into the class shown then.
@@ -685,6 +686,8 @@ export default function CardScanner({
       for (const code of codes) {
         const token = code.rawValue?.trim();
         if (!token || holdsRef.current.read(token, now) !== "submit") continue;
+        // The club's day has moved on: nothing is sent, so no "read" buzz either.
+        if (beforeWriteRef.current && !beforeWriteRef.current()) return;
         // The short buzz — "read" — on the submit branch only (note 3).
         navigator.vibrate?.(30);
         void submitToken(token);
