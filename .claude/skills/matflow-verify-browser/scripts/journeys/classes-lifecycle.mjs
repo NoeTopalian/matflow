@@ -47,7 +47,7 @@
 //  NO ROUTE: a guardian cannot book for a child (the booking route books only the session's own member). The child's
 //   booking is seeded with SQL and recorded as a NOTE.
 import { randomUUID, createHmac } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn, bcrypt, sleep, BASE } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, bcrypt, sleep, BASE, chooseRegisterClass } from "../lib.mjs";
 import { testEnv } from "../../../matflow-verify-local/scripts/env.mjs";
 
 const club = state.club;
@@ -299,8 +299,8 @@ try {
 
   // ── 3. Desk register (real UI): ineligible refused with the member's own sentence, eligible admitted ──
   await page.goto("/dashboard/checkin");
-  await page.getByRole("button", { name: new RegExp(`${esc(T_S2)} · ${esc(CLASS)}`) }).click();
-  const search = page.getByLabel("Search members");
+  await chooseRegisterClass(page, T_S2, CLASS);
+  const search = page.getByLabel("Find a member");
   await search.waitFor();
   const searchEnter = async (name) => {
     await search.fill("");

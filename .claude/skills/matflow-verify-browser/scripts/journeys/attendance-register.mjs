@@ -22,13 +22,22 @@ if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture
 const L = ledger(BEFORE ? "attendance-register-before" : "attendance-register");
 const t = club.tenantId;
 const errors = [];
+let stage = "start";
+let lastPage = null;
 
 // ── The club's day and clock ────────────────────────────────────────────────
-const tz = (await q(`select timezone from "Tenant" where id = $1`, [t]))[0]?.timezone || "Europe/London";
+// The day needs room either side of now, so this synthetic club is put on a zone where it is daytime at this moment
+// (and back on its own afterwards). The phones below are then set to a DIFFERENT zone, so nothing passes by reading
+// the phone's clock.
+const startTz = (await q(`select timezone from "Tenant" where id = $1`, [t]))[0]?.timezone ?? null;
+const hourIn = (zone) => Number(new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+const tz = ["Europe/London", "Asia/Makassar", "America/Los_Angeles", "America/New_York", "Asia/Dubai", "Pacific/Auckland", "Asia/Tokyo"].find((z) => hourIn(z) >= 6 && hourIn(z) <= 15);
+if (!tz) throw new Error("no candidate zone is in its daytime");
+const PHONE_TZ = tz === "Pacific/Auckland" ? "America/New_York" : "Pacific/Auckland";
+await q(`update "Tenant" set timezone = $2 where id = $1`, [t, tz]);
 const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((p) => [p.type, p.value]));
 const todayMarker = new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00.000Z`);
 const nowMin = Number(parts.hour) * 60 + Number(parts.minute);
-if (nowMin < 150 || nowMin > 20 * 60) throw new Error(`club time ${parts.hour}:${parts.minute} is too near midnight for this journey's day (needs 02:30 to 20:00)`);
 const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const dateLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: tz }).format(new Date());
 const startNow = Math.floor((nowMin - 30) / 5) * 5; // started about half an hour ago
@@ -109,14 +118,15 @@ const inViewport = (loc) => loc.evaluate((el) => { const r = el.getBoundingClien
 
 const browser = await chromium.launch();
 try {
-  const oc = await context(browser, "10.96.1.1", { ...VIEW["1280"], timezoneId: tz });
+  const oc = await context(browser, "10.96.1.1", { ...VIEW["1280"], timezoneId: PHONE_TZ });
   const op = await oc.newPage();
   await ownerSignIn(op, club);
   const owner = await oc.storageState();
   await oc.close();
   const open = async (tag, lane, extra = {}) => {
-    const ctx = await context(browser, `10.96.1.${lane}`, { ...VIEW[tag], storageState: owner, timezoneId: tz, ...extra });
+    const ctx = await context(browser, `10.96.1.${lane}`, { ...VIEW[tag], storageState: owner, timezoneId: PHONE_TZ, ...extra });
     const page = await ctx.newPage();
+    lastPage = page;
     page.on("pageerror", (e) => errors.push(`${tag}: ${String(e).slice(0, 200)}`));
     return { ctx, page, touch: !!VIEW[tag].hasTouch };
   };
@@ -149,7 +159,7 @@ try {
     {
       const coach = await seedStaff(club, "coach", { name: "Casey Coach" });
       await q(`update "Class" set "coachUserId" = $1 where id = $2`, [coach.id, cls["Reg No-Gi Advanced"]]);
-      const cc = await context(browser, "10.96.1.9", { ...VIEW["390"], timezoneId: "Asia/Makassar" });
+      const cc = await context(browser, "10.96.1.9", { ...VIEW["390"], timezoneId: PHONE_TZ });
       const cp = await cc.newPage();
       cp.on("pageerror", (e) => errors.push(`coach: ${String(e).slice(0, 200)}`));
       await staffSignIn(cp, club, coach);
@@ -159,7 +169,7 @@ try {
       L.check("A", "a coach opens on the class they teach when two are on now, tagged Yours (phone set to another time zone)", name === "Reg No-Gi Advanced" && /yours/i.test(cardText) && /on now/i.test(cardText), { name, cardText: cardText.replace(/\s+/g, " ") });
       await cp.getByRole("button", { name: "Change class" }).tap();
       const day = await picker(cp).innerText();
-      L.check("A", "the picker names the club's date, not the phone's", day.includes(dateLabel), { dateLabel, has: day.includes(dateLabel) });
+      L.check("A", "the picker names the club's date, not the phone's", day.includes(dateLabel), { dateLabel, has: day.includes(dateLabel), clubZone: tz, phoneZone: PHONE_TZ });
       await cp.keyboard.press("Escape");
       // C (coach): no cancel, no kiosk control.
       await cp.getByRole("button", { name: /Session details/ }).tap();
@@ -208,14 +218,18 @@ try {
       await last.scrollIntoViewIfNeeded();
       const lastBox = await inViewport(last);
       L.check("P@390", "sheet: Close stays in view, the long name wraps, and the last session scrolls fully into view", close.inside && longRow.scrollW <= longRow.clientW + 1 && longRow.h > 56 && lastBox.inside, { close, longRow, lastBox });
+      stage = "M: tap the last session";
       await last.tap();
       await picker(page).waitFor({ state: "detached" });
       const after = await selectedName(page);
+      stage = "M: wait for Find a member";
       // PRIMARY: straight away, mark the walk-in by name.
       const search = page.getByLabel("Find a member");
       await search.waitFor({ timeout: 30000 });
+      stage = "M: type the name";
       await search.fill("Member 2");
       await page.getByRole("button", { name: /Member 2/ }).first().waitFor({ timeout: 30000 });
+      stage = "M: Enter, then wait for the row to show checked in";
       await search.press("Enter");
       await page.getByRole("button", { name: "Mark Member 2 absent" }).waitFor({ timeout: 30000 });
       const stored = await attendance();
@@ -458,11 +472,14 @@ try {
     }
   }
 } catch (e) {
-  L.check("run", "ran to the end", false, String(e).split("\n")[0].slice(0, 300));
+  const seen = lastPage && !lastPage.isClosed() ? await lastPage.evaluate(() => document.querySelector("main")?.innerText.replace(/\s+/g, " ").slice(0, 600)).catch(() => null) : null;
+  if (lastPage && !lastPage.isClosed()) await shot(lastPage, "attendance-register-failure").catch(() => {});
+  L.check("run", "ran to the end", false, { stage, error: String(e).split("\n")[0].slice(0, 200), seen });
 } finally {
   await browser.close().catch(() => {});
   if (!BEFORE) L.check("all", "no uncaught page errors", errors.length === 0, errors);
   await cleanup();
+  await q(`update "Tenant" set timezone = $2 where id = $1`, [t, startTz]).catch(() => {});
   const left = Number((await q(`select count(*)::int as n from "Class" where "tenantId" = $1 and name = any($2)`, [t, NAMES]))[0].n);
   L.check("cleanup", "the classes, mats and attendance this journey made are removed", left === 0, { left });
   console.log(`\n${L.summary()}  ledger ${L.path}`);

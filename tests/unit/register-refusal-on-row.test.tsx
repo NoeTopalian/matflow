@@ -99,7 +99,7 @@ describe("register: a refused tick is shown on the row that was ticked (Round 11
   it("a booked member added from the search is refused under the search field, not on their row; editing the search clears it", async () => {
     replies = [{ status: 403, body: { error: REFUSAL } }];
     await renderPanel([{ id: "m20", name: "Member 20", accountType: "adult" }]);
-    const search = screen.getByLabelText("Search members");
+    const search = screen.getByLabelText("Find a member");
     fireEvent.change(search, { target: { value: "Member 20" } });
     await act(async () => { fireEvent.keyDown(search, { key: "Enter" }); });
     await settle();
@@ -119,7 +119,7 @@ describe("register: a refused tick is shown on the row that was ticked (Round 11
     tick.focus();
     fireEvent.click(tick);
     await act(async () => {});
-    const search = screen.getByLabelText("Search members");
+    const search = screen.getByLabelText("Find a member");
     search.focus();
     answer({ status: 403, body: { error: REFUSAL } });
     await settle();
@@ -129,7 +129,7 @@ describe("register: a refused tick is shown on the row that was ticked (Round 11
   it("someone added from the search is refused under the search field", async () => {
     replies = [{ status: 403, body: { error: "Walk In isn't included in Kids Monthly." } }];
     await renderPanel([{ id: "w1", name: "Walk In", accountType: "adult" }]);
-    const search = screen.getByLabelText("Search members");
+    const search = screen.getByLabelText("Find a member");
     fireEvent.change(search, { target: { value: "Walk" } });
     await act(async () => { fireEvent.keyDown(search, { key: "Enter" }); });
     await settle();

@@ -7,7 +7,7 @@
 //   node journeys/round11-register-refusal.mjs
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, context, ownerSignIn, BASE } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, BASE, chooseRegisterClass } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { devices } = require("@playwright/test");
@@ -62,7 +62,7 @@ async function refuseRow20(page) {
 async function openRegister(page) {
   await ownerSignIn(page, club);
   await page.goto("/dashboard/checkin");
-  await page.getByRole("button", { name: new RegExp(`${esc(TIME)} · ${esc(CLASS)}`) }).first().click({ timeout: 90000 });
+  await chooseRegisterClass(page, TIME, CLASS);
   await tick(page, m20).waitFor({ timeout: 60000 });
 }
 

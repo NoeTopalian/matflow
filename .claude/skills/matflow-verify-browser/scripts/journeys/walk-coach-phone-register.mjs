@@ -10,7 +10,7 @@
 // Needs `fixture.mjs create` and `server.mjs start` (or run-journeys.mjs).
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { chromium, state, q, ledger, shot, seedStaff, staffSignIn, BASE } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, seedStaff, staffSignIn, BASE, chooseRegisterClass } from "../lib.mjs";
 
 const require = createRequire(import.meta.url);
 const { devices } = require("@playwright/test");
@@ -72,7 +72,7 @@ try {
   await shot(page, "walk-coach-timetable");
 
   await page.goto("/dashboard/checkin");
-  await page.getByRole("button", { name: new RegExp(`${esc(TIME)} · ${esc(CLASS)}`) }).first().click({ timeout: 90000 });
+  await chooseRegisterClass(page, TIME, CLASS);
   await tick(page, members.Eligible).waitFor({ timeout: 60000 });
   const r = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
   L.check("mobile", "M2 the register at phone width has no horizontal page scroll", r.scroll <= r.width + 1, r);
@@ -124,7 +124,7 @@ try {
   page.off("request", onReq);
   L.check("retry", "R1 the retry sends one request and stores the attendance exactly once", sent.length === 1 && rr.ok() && (await stored(members.Retry)) === 1, { requests: sent.length, status: rr.status(), rows: await stored(members.Retry) });
   await page.reload();
-  await page.getByRole("button", { name: new RegExp(`${esc(TIME)} · ${esc(CLASS)}`) }).first().click({ timeout: 90000 });
+  await chooseRegisterClass(page, TIME, CLASS);
   // After reload the register shows the retried member as marked: its button now offers "Mark … absent", pressed.
   const marked = page.getByRole("button", { name: `Mark ${members.Retry.name} absent`, exact: true });
   const shownMarked = await marked.waitFor({ timeout: 60000 }).then(() => true, () => false);

@@ -533,8 +533,7 @@ export default function RegisterPanel({
               }}
               aria-describedby="register-search-hint"
               placeholder="Search members..."
-              aria-label="Search members"
-              autoComplete="off"
+                autoComplete="off"
               className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm transition-colors focus:outline-none"
               style={{ background: "var(--sf-1)", borderColor: "var(--bd-default)", color: "var(--tx-1)" }}
               onFocus={(e) => { e.currentTarget.style.borderColor = "var(--bd-active)"; }}
