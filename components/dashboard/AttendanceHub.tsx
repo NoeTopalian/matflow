@@ -89,6 +89,10 @@ export default function AttendanceHub({
   // clock corrected by it, so a device whose clock is wrong reckons the club's date as the server does.
   const clockOffsetRef = useRef(0);
   const loadedDayRef = useRef<{ key: string; label: string } | null>(null);
+  // The club's zone. The page passes the zone it was rendered with; every adopted read of the day replaces it
+  // with the server's (X-Club-Zone), so an owner changing the club's zone while this tab is open is followed
+  // after Reload or Try again rather than refusing every write for ever.
+  const zoneRef = useRef(timeZone);
 
   /**
    * Reads the day's list. `adopt` is true only for the first read and for the
@@ -109,13 +113,16 @@ export default function AttendanceHub({
       const serverTime = Number(res.headers?.get?.("X-Server-Time"));
       clockOffsetRef.current = Number.isFinite(serverTime) && serverTime > 0 ? serverTime - Date.now() : 0;
       const serverDay = res.headers?.get?.("X-Club-Date") ?? null;
-      const day = serverDay && /^\d{4}-\d{2}-\d{2}$/.test(serverDay) ? dayFromKey(serverDay) : clubDay(timeZone, Date.now() + clockOffsetRef.current);
+      const serverZone = res.headers?.get?.("X-Club-Zone") ?? null;
+      const zone = serverZone && isZone(serverZone) ? serverZone : zoneRef.current;
+      const day = serverDay && /^\d{4}-\d{2}-\d{2}$/.test(serverDay) ? dayFromKey(serverDay) : clubDay(zone, Date.now() + clockOffsetRef.current);
       const had = loadedDayRef.current;
       if (had && day.key !== had.key && !adopt) {
-        setStaleNow(day.label);
+        setStaleNow(clubDay(zone, Date.now() + clockOffsetRef.current).label);
         setPlacement(null);
         return;
       }
+      zoneRef.current = zone;
       const list = data as TodaySession[];
       setSessions(list);
       // The class already on screen stays, whatever the list now says is "on
@@ -132,7 +139,7 @@ export default function AttendanceHub({
     } finally {
       setListLoading(false);
     }
-  }, [preselectClassId, timeZone]);
+  }, [preselectClassId]);
 
   /**
    * Asked at the moment of every write (a mark, an un-mark, a card read, a
@@ -144,32 +151,37 @@ export default function AttendanceHub({
    */
   const stillToday = useCallback((): boolean => {
     if (!loadedDay) return true;
-    const now = clubDay(timeZone, Date.now() + clockOffsetRef.current);
+    const now = clubDay(zoneRef.current, Date.now() + clockOffsetRef.current);
     if (now.key === loadedDay.key) return true;
     setStaleNow(now.label);
     setPlacement(null);
     return false;
-  }, [loadedDay, timeZone]);
+  }, [loadedDay]);
 
   useEffect(() => {
     void load(true);
   }, [load]);
 
-  // The control in use has gone with the notice: focus goes to Reload, the one thing left to do.
+  // The control in use has gone with the notice: focus goes to Reload, the one thing left to do. When Reload
+  // has brought the register back, focus goes to Change class rather than falling to the page.
   const reloadRef = useRef<HTMLButtonElement | null>(null);
+  const wasStaleRef = useRef(false);
   useEffect(() => {
     if (staleNow) reloadRef.current?.focus();
+    else if (wasStaleRef.current) changeRef.current?.focus();
+    wasStaleRef.current = !!staleNow;
   }, [staleNow]);
+
+  /** The server refused a write because the register's day has passed (409 REGISTER_DAY_STALE). */
+  const onDayStale = useCallback((clubDate: string | null) => {
+    setStaleNow(clubDate && /^\d{4}-\d{2}-\d{2}$/.test(clubDate) ? dayFromKey(clubDate).label : clubDay(zoneRef.current, Date.now() + clockOffsetRef.current).label);
+    setPlacement(null);
+  }, []);
 
   // A tab left open overnight must not mark into yesterday's class. When the
   // page is looked at again, the club's date is worked out again; if the day
   // has moved on, the controls give way to a notice and a Reload. The class is
   // never switched by itself.
-  /** The server refused a write because the register's day has passed (409 REGISTER_DAY_STALE). */
-  const onDayStale = useCallback((clubDate: string | null) => {
-    setStaleNow(clubDate && /^\d{4}-\d{2}-\d{2}$/.test(clubDate) ? dayFromKey(clubDate).label : clubDay(timeZone, Date.now() + clockOffsetRef.current).label);
-    setPlacement(null);
-  }, [timeZone]);
 
   useEffect(() => {
     const check = () => {
@@ -459,6 +471,16 @@ function clubDay(timeZone: string, at: number = Date.now()): { key: string; labe
     key: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone }).format(now),
     label: new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone }).format(now),
   };
+}
+
+/** A zone name Intl accepts. */
+function isZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A club date key (YYYY-MM-DD) as the label the picker and the notice show. */

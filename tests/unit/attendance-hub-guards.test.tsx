@@ -58,8 +58,15 @@ type StubOpts = {
   serverAheadMs?: number;
   /** The server refuses every write: the register's day has passed by its clock (409 REGISTER_DAY_STALE). */
   serverSaysStale?: boolean;
+  /**
+   * The club's zone as the server holds it now (an owner may change it while the tab is open). The day's list
+   * is dated in it (X-Club-Zone, X-Club-Date), and a mark whose registerDay is not its date is refused 409.
+   */
+  club?: { zone: string };
+  /** Override the X-Club-Date header (a list built just before midnight and answered just after). */
+  clubDateHeader?: string;
 };
-const clubKey = (ms: number) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: ZONE }).format(new Date(ms));
+const clubKey = (ms: number, zone = ZONE) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: zone }).format(new Date(ms));
 function stub(opts: StubOpts = {}) {
   const calls: Call[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -74,7 +81,8 @@ function stub(opts: StubOpts = {}) {
     if (url === "/api/coach/today") {
       if (opts.holdToday?.current) await opts.holdToday.current.promise;
       const server = Date.now() + (opts.serverAheadMs ?? 0);
-      return json(200, DAY, { "X-Club-Date": clubKey(server), "X-Server-Time": String(server) });
+      const zone = opts.club?.zone ?? ZONE;
+      return json(200, DAY, { "X-Club-Date": opts.clubDateHeader ?? clubKey(server, zone), "X-Club-Zone": zone, "X-Server-Time": String(server) });
     }
     if (/^\/api\/coach\/instances\/[^/]+\/register$/.test(url)) {
       return json(200, {
@@ -84,7 +92,13 @@ function stub(opts: StubOpts = {}) {
       });
     }
     if (url.startsWith("/api/checkin/members")) return json(200, []);
-    if (url === "/api/checkin" && method === "POST") return json(201, { success: true });
+    if (url === "/api/checkin" && method === "POST") {
+      if (opts.club) {
+        const today = clubKey(Date.now(), opts.club.zone);
+        if (body?.registerDay !== today) return json(409, { error: "stale", code: "REGISTER_DAY_STALE", clubDate: today });
+      }
+      return json(201, { success: true });
+    }
     if (url.startsWith("/api/checkin?") && method === "DELETE") {
       if (opts.holdDelete) await opts.holdDelete.promise;
       return opts.deleteStatus ? json(opts.deleteStatus, { error: "The check-in could not be removed." }) : json(200, { ok: true });
@@ -105,8 +119,8 @@ const cardPosts = (calls: Call[]) => calls.filter((c) => c.url === "/api/checkin
 async function tick(ms = 250) {
   await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 }
-const hub = (role = "owner", initialMode: "tick" | "scan" = "scan") =>
-  render(<AttendanceHub initialMode={initialMode} preselectClassId={null} role={role} primaryColor="#3b82f6" timeZone={ZONE} />);
+const hub = (role = "owner", initialMode: "tick" | "scan" = "scan", timeZone = ZONE) =>
+  render(<AttendanceHub initialMode={initialMode} preselectClassId={null} role={role} primaryColor="#3b82f6" timeZone={timeZone} />);
 async function startCamera() {
   fireEvent.click(screen.getByRole("button", { name: "Start camera" }));
   await tick(0);
@@ -425,6 +439,51 @@ describe("A: the server refuses a write for a register day that has passed (its 
     expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
     expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
     expect(calls.filter((c) => c.url === "/api/coach/today").length).toBe(reads);
+  });
+});
+
+describe("the club's zone changes while the register is open (review of f0f7e10a)", () => {
+  it("writes are refused with the notice and the class stays; Reload follows the server's zone and date, and the next mark goes through", async () => {
+    // 18:00 UTC: Wednesday 25 November in London, already 02:00 on Thursday 26 November in Makassar.
+    vi.setSystemTime(new Date("2026-11-25T18:00:00Z"));
+    const club = { zone: "Europe/London" };
+    const calls = stub({ club });
+    hub("coach", "tick", "Europe/London");
+    await tick(50);
+    // The owner moves the club to Makassar while this tab is open.
+    club.zone = "Asia/Makassar";
+    fireEvent.click(screen.getByRole("button", { name: "Mark Ada Example attended" }));
+    await tick(50);
+    const posts = () => calls.filter((c) => c.url === "/api/checkin" && c.method === "POST").map((c) => (c.body as { registerDay?: string }).registerDay);
+    expect(posts()).toEqual(["2026-11-25"]);
+    expect(screen.getByTestId("stale-day").textContent).toContain("It is now Thursday 26 November. This register is for Wednesday 25 November.");
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+    // Reload: the server's zone and date are taken on, the notice goes, focus lands on Change class, and a mark is accepted.
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    await tick(50);
+    expect(screen.queryByTestId("stale-day")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Change class" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark Ada Example attended" }));
+    await tick(50);
+    expect(posts()).toEqual(["2026-11-25", "2026-11-26"]);
+    expect(screen.queryByTestId("stale-day")).toBeNull();
+    expect(within(openPicker()).getByText("Thursday 26 November")).toBeTruthy();
+  });
+
+  it("the list's date is the X-Club-Date header, even when X-Server-Time is already past midnight (a read spanning it)", async () => {
+    // Built at 23:59:59 in Makassar on the 25th, answered at 00:00:01 on the 26th.
+    vi.setSystemTime(new Date("2026-11-25T16:00:01Z"));
+    const calls = stub({ clubDateHeader: "2026-11-25" });
+    hub("coach", "tick");
+    await tick(50);
+    expect(within(openPicker()).getByText("Wednesday 25 November")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await tick(50);
+    // Dated the 25th by the header; the club's clock says the 26th: the first write is held back with the notice.
+    fireEvent.click(screen.getByRole("button", { name: "Mark Ada Example attended" }));
+    await tick(50);
+    expect(writes(calls)).toEqual([]);
+    expect(screen.getByTestId("stale-day").textContent).toContain(NOTICE);
   });
 });
 

@@ -125,6 +125,7 @@ describe("GET /api/coach/today — which session the register opens on", () => {
     vi.setSystemTime(new Date(Date.UTC(2026, 10, 24, 16, 30)));
     const res = (await GET()) as unknown as { headers: Record<string, string>; json: () => Promise<unknown> };
     expect(res.headers["X-Club-Date"]).toBe("2026-11-25");
+    expect(res.headers["X-Club-Zone"]).toBe("Asia/Makassar");
     expect(Number(res.headers["X-Server-Time"])).toBe(Date.UTC(2026, 10, 24, 16, 30));
     expect(Array.isArray(await res.json())).toBe(true);
   });

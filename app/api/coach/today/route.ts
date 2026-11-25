@@ -162,6 +162,8 @@ export async function GET() {
         // whose clock is wrong neither marks into yesterday's classes nor locks itself out. Headers, so every
         // reader that takes the body as an array keeps working.
         "X-Club-Date": clubDateKey(tz, listedAt),
+        // The club's zone now: a register open across an owner's change of zone follows it on Reload.
+        "X-Club-Zone": tz,
         "X-Server-Time": String(Date.now()),
       },
     },
