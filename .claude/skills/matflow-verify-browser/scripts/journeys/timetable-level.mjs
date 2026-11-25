@@ -1,9 +1,10 @@
-// Split by mat, classes on at once are drawn level; split by time, every class keeps its own line (synthetic data only).
+// Every class on its own time's line, by mat and by time (synthetic data only). Noe, 25 Nov 2026: "the 19:00 classes
+// which start at that time should all be under the same axis" (the 21 Nov levelling drew a 19:00 on an 18:40 line).
 //   node run-journeys.mjs timetable-level
 // Seeds the printed week of a two-mat club, split by mat. Saturday has Juniors Squad 11:00-12:00 on Mat 2 and
-// Beginners Course Gi 11:20-12:10 on Mat 1; Tuesday has 17:45 and 17:50; Monday has a 19:00 that follows an 18:40
-// on its own mat and must NOT be pulled up. Then: the week at 1440 px (level pairs, own times kept, no 11:20 line),
-// the Day view, a 390 px phone, the members' day at 390 px, and the same week split by time (nothing levelled).
+// Beginners Course Gi 11:20-12:10 on Mat 1; Tuesday has 17:45 and 17:50; the week has 19:00 classes on several days.
+// Then: the week at 1440 px (each class on its own line, every 19:00 on one line with its label, no labels drawn over
+// each other), the Day view, a 390 px phone, the members' day at 390 px, and the same week split by time.
 // The pinned band's seam has its own journey, timetable-seam. The clock is frozen at Thursday 5 November 2026 18:45
 // for staff; the members' day runs on the real clock.
 import { createRequire } from "node:module";
@@ -54,6 +55,19 @@ async function pairShot(page, grid, name, measure) {
 const setLayout = (page, layout) => page.evaluate(async (l) => (await fetch("/api/timetable/layout", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: l }) })).status, layout);
 const SAT = ["Juniors Squad, Saturday 11:00 to 12:00", "Beginners Course Gi, Saturday 11:20 to 12:10"];
 
+/** The time axis inside `scope`: every chip starting at `hhmm` on one line, level with its gutter label; no two labels overlap. */
+const axisAt = (scope, hhmm) => scope.evaluate((el, t) => {
+  const vis = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const chips = [...el.querySelectorAll("[data-cell-key] button")].filter(vis).filter((b) => (b.getAttribute("aria-label") ?? "").includes(` ${t} to `));
+  const tops = chips.map((b) => Math.round(b.getBoundingClientRect().top * 10) / 10);
+  const ticks = [...el.querySelectorAll(".pg-tick")].filter(vis).map((x) => ({ text: x.textContent.trim(), top: x.getBoundingClientRect().top, bottom: x.getBoundingClientRect().bottom }));
+  const label = ticks.find((x) => x.text === t);
+  const sorted = [...ticks].sort((a, b) => a.top - b.top);
+  const overlaps = [];
+  for (let i = 0; i + 1 < sorted.length; i++) if (sorted[i].bottom > sorted[i + 1].top + 0.5) overlaps.push(`${sorted[i].text}/${sorted[i + 1].text}`);
+  return { chips: chips.length, spread: tops.length ? Math.max(...tops) - Math.min(...tops) : 0, labelTop: label ? Math.round(label.top * 10) / 10 : null, chipTop: tops[0] ?? null, overlaps };
+}, hhmm);
+
 const browser = await launchWithScrollbars();
 try {
   const ctx = await context(browser, "10.95.7.1", { viewport: { width: 1440, height: 900 }, timezoneId: "Europe/London" });
@@ -66,30 +80,34 @@ try {
   const owner = await ctx.storageState();
   await ctx.clock.setFixedTime(new Date(FROZEN));
 
-  await section("week-level", "1440 px week: Saturday's 11:00 and 11:20 start and end on one line, Tuesday's 17:45 and 17:50 start on one line, each chip still shows its own time, no 11:20 in the gutter, and the grid's invariants hold", async () => {
+  await section("week-real-lines", "1440 px week: Saturday's 11:20 starts below the 11:00 under its own mat, Tuesday's 17:50 below the 17:45, every 19:00 class on the one 19:00 line level with its label, no two labels overlap, and the grid's invariants hold", async () => {
     await main.goto("/dashboard/timetable");
     await weekOnFrozenClock(main, "thu", "18:40");
     const sat = weekGrid(main).locator('[data-day="sat"]');
     const tue = weekGrid(main).locator('[data-day="tue"]');
     const juniors = await chipBox(sat, "Juniors Squad, Saturday 11:00 to 12:00");
     const beginners = await chipBox(sat, "Beginners Course Gi, Saturday 11:20 to 12:10");
-    expect(Math.abs(juniors.top - beginners.top)).toBeLessThanOrEqual(1);
-    expect(Math.abs(juniors.bottom - beginners.bottom)).toBeLessThanOrEqual(1);
+    expect(beginners.top).toBeGreaterThan(juniors.top + 5);
     expect(beginners.left).toBeLessThan(juniors.left);
     expect(beginners.time).toContain("11:20");
     expect(juniors.time).toContain("11:00");
     const kids = await chipBox(tue, "Kids Comp Team Gi, Tuesday 17:45 to 18:40");
     const tueBeginners = await chipBox(tue, "Beginners Course Gi, Tuesday 17:50 to 18:40");
-    expect(Math.abs(kids.top - tueBeginners.top)).toBeLessThanOrEqual(1);
+    expect(tueBeginners.top).toBeGreaterThan(kids.top + 1);
     expect(tueBeginners.time).toContain("17:50");
     const ticks = (await weekGrid(main).locator(".pg-tick").allTextContents()).map((t) => t.trim());
     expect(ticks).toContain("11:00");
-    expect(ticks).not.toContain("11:20");
+    expect(ticks).toContain("11:20");
+    const at1900 = await axisAt(weekGrid(main), "19:00");
+    expect(at1900.chips).toBeGreaterThan(1);
+    expect(at1900.spread).toBeLessThanOrEqual(1);
+    expect(Math.abs(at1900.labelTop - at1900.chipTop)).toBeLessThanOrEqual(1);
+    expect(at1900.overlaps).toEqual([]);
     const inv = await gridInvariants(main, { sessions: POSTER.rows.length });
     if (inv.problems.length) throw new Error(inv.problems.join("; "));
     await shot(main, "timetable-level-week");
     await pairShot(main, weekGrid(main), "pair-week-by-mat-1440", () => Promise.all(SAT.map((x) => chipBox(sat, x))));
-    return { juniors, beginners, kids, tueBeginners, chips: inv.chips };
+    return { juniors, beginners, kids, tueBeginners, at1900, chips: inv.chips };
   });
 
   await section("week-not-level", "1440 px week: Monday's 19:00 on Mat 2 follows the 18:40-19:00 on Mat 2, so it stays below the 18:40 on Mat 1 and is not drawn over the class before it", async () => {
@@ -102,7 +120,7 @@ try {
     return { early, free, late };
   });
 
-  await section("day-view", "1440 px Day view, Saturday: the 11:00 and 11:20 start and end on one line under their own mats, with one 11:00 label and no 11:20 label", async () => {
+  await section("day-view", "1440 px Day view, Saturday: the 11:00 and the 11:20 each start on their own line under their own mats, each with its label", async () => {
     await main.goto("/dashboard/timetable");
     await weekOnFrozenClock(main, "thu", "18:40");
     const dayButton = main.getByTestId("timetable-view-day");
@@ -116,12 +134,12 @@ try {
     await expect(grid).toHaveAttribute("data-day", "sat");
     const juniors = await chipBox(grid, "Juniors Squad, Saturday 11:00 to 12:00");
     const beginners = await chipBox(grid, "Beginners Course Gi, Saturday 11:20 to 12:10");
-    expect(Math.abs(juniors.top - beginners.top)).toBeLessThanOrEqual(1);
-    expect(Math.abs(juniors.bottom - beginners.bottom)).toBeLessThanOrEqual(1);
+    expect(beginners.top).toBeGreaterThan(juniors.top + 5);
     expect(beginners.time).toContain("11:20");
     const ticks = (await grid.locator(".pg-tick").allTextContents()).map((t) => t.trim());
     expect(ticks).toContain("11:00");
-    expect(ticks).not.toContain("11:20");
+    expect(ticks).toContain("11:20");
+    expect((await axisAt(grid, "11:20")).overlaps).toEqual([]);
     const inv = await gridInvariants(main, { sessions: 7, grid: "phone-day-grid" });
     expect(inv.problems).toEqual([]);
     await shot(main, "timetable-level-day");
@@ -129,7 +147,7 @@ try {
     return { juniors, beginners, ticks };
   });
 
-  await section("phone", "390 px phone, Saturday: the 11:00 and 11:20 start on one line, each showing its own time, and nothing scrolls sideways", async () => {
+  await section("phone", "390 px phone, Saturday: the 11:00 and the 11:20 each on their own line, each showing its own time, and nothing scrolls sideways", async () => {
     const pctx = await context(browser, "10.95.7.3", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: owner, timezoneId: "Europe/London" });
     try {
       await pctx.clock.setFixedTime(new Date(FROZEN));
@@ -142,7 +160,7 @@ try {
       await expect(grid).toHaveAttribute("data-day", "sat");
       const juniors = await chipBox(grid, "Juniors Squad, Saturday 11:00 to 12:00");
       const beginners = await chipBox(grid, "Beginners Course Gi, Saturday 11:20 to 12:10");
-      expect(Math.abs(juniors.top - beginners.top)).toBeLessThanOrEqual(1);
+      expect(beginners.top).toBeGreaterThan(juniors.top + 5);
       expect(beginners.time).toContain("11:20");
       const sideways = await phoneNoSidewaysScroll(page);
       expect(sideways.ok).toBe(true);
@@ -156,7 +174,7 @@ try {
     }
   });
 
-  await section("member", "390 px members' day, Saturday, split by mat: the 11:00 and 11:20 start and end on one line under their own mats, each block shows its own time, one 11:00 label and no 11:20 label, nothing scrolls sideways", async () => {
+  await section("member", "390 px members' day, Saturday, split by mat: the 11:00 and the 11:20 each on their own line under their own mats, each with its label, no labels overlapping, nothing scrolls sideways", async () => {
     const member = await memberLogin(club);
     const mctx = await context(browser, "10.95.7.5", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: "Europe/London" });
     try {
@@ -173,14 +191,14 @@ try {
       });
       const measure = () => Promise.all([block("Juniors Squad, 11:00 to 12:00"), block("Beginners Course Gi, 11:20 to 12:10")]);
       const [juniors, beginners] = await measure();
-      expect(Math.abs(juniors.top - beginners.top)).toBeLessThanOrEqual(1);
-      expect(Math.abs(juniors.bottom - beginners.bottom)).toBeLessThanOrEqual(1);
+      expect(beginners.top).toBeGreaterThan(juniors.top + 5);
       expect(beginners.left).toBeLessThan(juniors.left);
       expect(beginners.time).toContain("11:20");
       expect(juniors.time).toContain("11:00");
       const ticks = (await grid.locator(".pg-tick").allTextContents()).map((x) => x.trim());
       expect(ticks).toContain("11:00");
-      expect(ticks).not.toContain("11:20");
+      expect(ticks).toContain("11:20");
+      expect((await axisAt(grid, "11:20")).overlaps).toEqual([]);
       const wide = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
       expect(wide.scroll).toBeLessThanOrEqual(wide.width + 1);
       await shot(page, "timetable-level-member");
@@ -191,7 +209,7 @@ try {
     }
   });
 
-  await section("by-time-exact", "split by time, 1440 px week and 390 px phone: nothing is levelled. Saturday's 11:20 starts and ends below the 11:00, the gutter has both labels, and the grid's invariants hold", async () => {
+  await section("by-time-exact", "split by time, 1440 px week and 390 px phone: Saturday's 11:20 starts and ends below the 11:00, the gutter has both labels, and the grid's invariants hold", async () => {
     expect(await setLayout(main, "time")).toBe(200);
     try {
       await main.goto("/dashboard/timetable");
