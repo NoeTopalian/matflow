@@ -53,7 +53,7 @@ const axis = (page, testId) => page.evaluate((testId) => {
   const offsets = [];
   const problems = [];
   // The chip itself (not its cell) against the time label of the row it starts on: the label must read the chip's own
-  // start time (this journey runs By time, so nothing is levelled onto another class's line), and the chip's top must
+  // start time (every class is on its own time's line, by mat and by time), and the chip's top must
   // sit on the label's line (the cell's 1.5 px inset, within 1 px).
   for (const cell of grid.querySelectorAll("[data-cell-key]")) {
     const row = Number(cell.getAttribute("data-row-start"));

@@ -178,6 +178,8 @@ try {
     await expect(main.getByText(/already in this class/)).toHaveCount(0);
     await expect(main.getByRole("button", { name: "Create class", exact: true })).toBeEnabled();
     await main.keyboard.press("Escape");
+    // An unsaved form asks before Escape discards it (cc4fe34f).
+    await main.getByRole("button", { name: "Discard changes", exact: true }).click();
     await expect(main.getByRole("dialog")).toHaveCount(0);
     const rows = await q(`select count(*)::int n from "Class" where "tenantId" = $1 and name = 'Wrestling'`, [club.tenantId]);
     expect(rows[0].n).toBe(0);

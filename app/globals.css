@@ -783,6 +783,7 @@ option {
   z-index: 7;
   background: var(--pg-page-bg);
 }
+/* Its height (a 14 px line, 2 px above) is LABEL_ROOM_PX in lib/timetable-grid.ts: change both together. */
 .pg-tick {
   grid-column: 1;
   position: sticky;

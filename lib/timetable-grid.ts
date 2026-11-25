@@ -4,11 +4,11 @@
  *
  * Rows are the REAL times. Every distinct start and end minute of the sessions
  * on show is a row line; a session spans from its start line to its end line,
- * so two sessions that start together start on the same line on every day.
- * One exception, `levelDay`, on a day split by mat only: classes on at once
- * that start under half an hour apart are drawn level, from one line. Each
- * still says its own times. By time every class keeps its own lines, and side
- * by side the longer class takes the first lane, as it always has.
+ * so two sessions that start together start on the same line on every day,
+ * by mat and by time alike: every 19:00 class sits on the one 19:00 line. No
+ * exception (Noe, 25 Nov 2026: "the 19:00 classes should all be under the same
+ * axis"; the levelling of 21 Nov drew a 19:00 class on its neighbour's 18:40
+ * line). Side by side the longer class takes the first lane.
  * The component sizes each track to its content (`minmax(floorPx, auto)`), so
  * a session is never shorter than its text, and a stretch nobody teaches in
  * collapses to a thin gap or a "No classes" break row.
@@ -108,7 +108,9 @@ export interface GridRow {
    * a longer row: it is exactly `floorPx` tall and takes no part in fitting
    * text. Left to size itself it soaks up the height two classes that overlap
    * by those few minutes each need, and one of them is drawn a third taller
-   * than a class of the same length beside it (Noe, 6 Nov 2026).
+   * than a class of the same length beside it (Noe, 6 Nov 2026). It can be
+   * made taller (never shorter) to give a gutter label its room: see the label
+   * loop in `buildTimetableGrid`.
    */
   fixed?: boolean;
 }
@@ -130,99 +132,27 @@ const DAY_END = 24 * 60;
 const TIME = /^\d{1,2}:\d{2}$/;
 const numeric = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-/** `startMin` and `endMin` are where the session is DRAWN; `realStartMin` and `realEndMin` are when it runs. */
-type Placed = GridSession & { startMin: number; endMin: number; realStartMin: number; realEndMin: number };
+/** `startMin` and `endMin`: when the session runs, on the day's own axis (and so where it is drawn). */
+type Placed = GridSession & { startMin: number; endMin: number };
 
 /** Minutes on the day's own axis: an overnight end stops at 24:00, and a time that cannot be read still gets a place. */
 function onAxis(session: GridSession): Placed {
-  if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10, realStartMin: 0, realEndMin: 10 };
+  if (!TIME.test(session.startTime) || !TIME.test(session.endTime)) return { ...session, startMin: 0, endMin: 10 };
   const span = spanMinutes(session.startTime, session.endTime);
   const startMin = Math.min(Math.max(span.startMin, 0), DAY_END - 1);
   const endMin = Math.max(Math.min(span.endMin, DAY_END), startMin + 1);
-  return { ...session, startMin, endMin, realStartMin: startMin, realEndMin: endMin };
+  return { ...session, startMin, endMin };
 }
 
-/** Classes on at once that start (or end) less than this many minutes apart are drawn level. */
-export const LEVEL_WITHIN_MIN = 30;
-
-/**
- * Levelling (Noe, 21 Nov 2026): an 11:00 class on one mat and an 11:20 class
- * on the next are on at the same time, and drawn to the minute the second sat
- * a few pixels lower than the first, which read as a mistake. A class is drawn
- * from the start line of its partner: the class it shares the most time with,
- * among those on at once that start under `LEVEL_WITHIN_MIN` from it. If that
- * partner starts after it, it goes to an earlier partner's line only when the
- * later one can join that line too; otherwise it stays where it is (a short
- * class that happens to start first does not pull the 11:00 away from the
- * 11:20). It is never drawn above a class that starts before it. The classes
- * levelled together also end on one line when their ends are under
- * `LEVEL_WITHIN_MIN` apart.
- *
- * Never at the price of a false clash: a class is only stretched over time in
- * which every other class of the day that is on also really overlaps it. So
- * two classes drawn side by side are always two classes really on at once.
- *
- * Only a day split by mat is levelled (Noe, 21 Nov 2026): split by time, a
- * class starts and ends on its own lines.
- *
- * Takes one day's sessions in `inOrder`; returns them with the drawn times set.
- */
-function levelDay(sessions: Placed[]): Placed[] {
-  const out = sessions.map((s) => ({ ...s }));
-  const really = (a: Placed, b: Placed) => a.realStartMin < b.realEndMin && b.realStartMin < a.realEndMin;
-  // True when every other session drawn inside [from, to) really overlaps `s`.
-  const free = (i: number, from: number, to: number) =>
-    out.every((k, j) => j === i || !(k.startMin < to && k.endMin > from) || really(k, out[i]));
-  // The partner: the class it shares the most time with, among those starting under LEVEL_WITHIN_MIN from it either
-  // way (ties: the earliest).
-  const shared = (a: Placed, b: Placed) => Math.min(a.realEndMin, b.realEndMin) - Math.max(a.realStartMin, b.realStartMin);
-  const anchorOf = out.map((_, i) => i);
-  for (let j = 0; j < out.length; j++) {
-    let best = -1;
-    let bestEarlier = -1;
-    for (let k = 0; k < out.length; k++) {
-      if (k === j || !really(out[k], out[j]) || Math.abs(out[k].realStartMin - out[j].realStartMin) >= LEVEL_WITHIN_MIN) continue;
-      if (best === -1 || shared(out[k], out[j]) > shared(out[best], out[j])) best = k;
-      if (k < j && (bestEarlier === -1 || shared(out[k], out[j]) > shared(out[bestEarlier], out[j]))) bestEarlier = k;
-    }
-    if (best === -1) continue;
-    // Sessions are in start order: a partner at a lower index starts first (or together and sorts first).
-    let partner = best;
-    if (best > j) {
-      // Its partner starts after it. It still goes up to an earlier class's line when the later partner can come to
-      // that line as well (11:00, 11:20 and 11:25 all level); otherwise it stays, and the later one comes to it.
-      if (bestEarlier === -1) continue;
-      const line = out[anchorOf[bestEarlier]];
-      if (!really(line, out[best]) || out[best].realStartMin - line.realStartMin >= LEVEL_WITHIN_MIN) continue;
-      partner = bestEarlier;
-    }
-    // The partner may itself have been levelled: this class goes to the same line, if that line is in reach.
-    const a = anchorOf[partner];
-    const later = out[j].realStartMin - out[a].realStartMin;
-    if (later >= LEVEL_WITHIN_MIN || !really(out[a], out[j])) continue;
-    if (later > 0 && !free(j, out[a].realStartMin, out[j].realStartMin)) continue;
-    // Never above a class that starts before it: one that stayed on its own line in between keeps this one down too.
-    if (out.some((k, i) => i < j && k.realStartMin < out[j].realStartMin && k.startMin > out[a].realStartMin)) continue;
-    anchorOf[j] = a;
-    out[j].startMin = out[a].realStartMin;
-  }
-  for (let a = 0; a < out.length; a++) {
-    if (anchorOf[a] !== a) continue;
-    const members = out.map((_, i) => i).filter((i) => anchorOf[i] === a);
-    const end = Math.max(...members.map((i) => out[i].realEndMin));
-    for (const i of members) {
-      const short = end - out[i].realEndMin;
-      if (short > 0 && short < LEVEL_WITHIN_MIN && free(i, out[i].realEndMin, end)) out[i].endMin = end;
-    }
-  }
-  return out;
-}
+/** Row heights the component draws (components/schedule/PosterGrid.tsx): a "No classes" break row and an empty gap. */
+export const BREAK_ROW_PX = 26;
+export const GAP_ROW_PX = 10;
+/** A gutter label's height: `.pg-tick` in app/globals.css is a 14 px line with 2 px above it. */
+export const LABEL_ROOM_PX = 16;
 
 const inOrder = (a: Placed, b: Placed) =>
   a.startMin - b.startMin ||
   b.endMin - b.startMin - (a.endMin - a.startMin) ||
-  // Drawn level and as long as each other: the one that really starts first comes first, in its lane and in Tab order.
-  a.realStartMin - b.realStartMin ||
   numeric.compare(a.tie, b.tie) ||
   (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
@@ -362,18 +292,15 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
   const maxLanes = opts.maxLanes ?? 3;
   // Only the days on show shape the rows: a session on a day nobody asked for adds no line and no gutter label.
   const onShow = input.filter((s) => opts.days.includes(s.day)).map(onAxis);
-  // Only a day split by mat is levelled. By time, and on a by-mat day too busy for its screen (laid out by time),
-  // every class keeps its own start and end line.
+  // Every class on its own start and end line. A by-mat day too busy for its screen is laid out by time.
   const matDays = new Set<number>();
   const all = opts.days.flatMap((day) => {
     const real = onShow.filter((s) => s.day === day).sort(inOrder);
     if (opts.layout !== "mat" || real.length === 0) return real;
-    const level = levelDay(real).sort(inOrder);
-    if (opts.maxTracks !== undefined && dayByMat(day, level, opts.mats, maxLanes).day.tracks > opts.maxTracks) return real;
+    if (opts.maxTracks !== undefined && dayByMat(day, real, opts.mats, maxLanes).day.tracks > opts.maxTracks) return real;
     matDays.add(day);
-    return level;
+    return real;
   });
-  const realOf = new Map(all.map((s) => [s.key, s] as const));
 
   // Rows: the distinct start and end minutes of everything on show.
   const lines = [...new Set(all.flatMap((s) => [s.startMin, s.endMin]))].sort((a, b) => a - b);
@@ -399,12 +326,19 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
     }
   }
 
-  // Gutter labels: every drawn start at least 15 minutes after the last labelled one; each runs to the next label.
-  const starts = [...new Set(all.map((s) => s.startMin))].sort((a, b) => a - b);
-  const labelled: number[] = [];
-  for (const m of starts) if (labelled.length === 0 || m - labelled[labelled.length - 1] >= 15) labelled.push(m);
+  // Gutter labels: one for every start time on show, each running to the next (Noe, 25 Nov 2026: an 18:50 class used
+  // to take the 19:00 label away from the 19:00 classes on the next line). The loop below gives each its room.
+  const labelled = [...new Set(all.map((s) => s.startMin))].sort((a, b) => a - b);
   const lastLine = FIRST_TIME_LINE + Math.max(0, lines.length - 1);
   const ticks = labelled.map((minute, i) => ({ minute, rowStart: lineOf(minute), rowEnd: i + 1 < labelled.length ? lineOf(labelled[i + 1]) : lastLine }));
+  // Each label has room before the next one: its rows together are at least a label tall. 17:45 and 18:00 drawn over
+  // each other (Noe, 25 Nov 2026) were two labels on rows of 3 and 6 px. The first row of a label is where a session
+  // starts, so it is a used row; it grows, and the sessions on it with it. Every row line stays where its time is.
+  for (let i = 0; i + 1 < labelled.length; i++) {
+    const span = rows.filter((r) => r.fromMin >= labelled[i] && r.toMin <= labelled[i + 1]);
+    const tall = span.reduce((h, r) => h + (r.kind === "used" ? r.floorPx : r.kind === "break" ? BREAK_ROW_PX : GAP_ROW_PX), 0);
+    if (tall < LABEL_ROOM_PX && span[0]?.kind === "used") span[0].floorPx += LABEL_ROOM_PX - tall;
+  }
 
   const days: GridDay[] = [];
   const items: GridItem[] = [];
@@ -442,9 +376,9 @@ export function buildTimetableGrid(input: GridSession[], opts: GridOptions): Tim
           span: f.span,
           rowStart: lineOf(f.startMin),
           rowEnd: lineOf(f.endMin),
-          // What the button says: when the folded sessions really run, not where they are drawn.
-          startMin: Math.min(...f.keys.map((key) => realOf.get(key)?.realStartMin ?? f.startMin)),
-          endMin: Math.max(...f.keys.map((key) => realOf.get(key)?.realEndMin ?? f.endMin)),
+          // What the button says: when the folded sessions run (the first starts on the button's own line).
+          startMin: f.startMin,
+          endMin: f.endMin,
           keys: f.keys,
           clusterKeys: f.clusterKeys,
           clusterRowStart: lineOf(f.clusterStartMin),
