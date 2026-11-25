@@ -12,7 +12,8 @@
 //   Q  (owner, Scan QR) a card held while the picker or the cancel confirmation is open is never sent; after
 //      dismissal one hold records once into the class on screen. SIMULATED camera;
 //   N  the club's midnight passes under an open page with no focus event (Playwright's page clock): the next mark,
-//      card read or session cancel writes nothing and the dated Reload notice shows, the class unchanged;
+//      card read or session cancel writes nothing and the dated Reload notice shows, the class unchanged; and the
+//      SERVER refuses (409 REGISTER_DAY_STALE) every write carrying a register day that is not the club's today;
 //   X  390 wide: the bottom navigation's More menu and the class picker never stack, and focus comes back;
 //   D  dismissing the picker (Close, Escape, outside tap) changes nothing, returns focus, and the next tap works;
 //   C  cancel and kiosk for the owner; neither for a coach; the bottom navigation never covers the last control.
@@ -658,6 +659,62 @@ try {
           { pageClock: moved, patches, cancelled, shown, focus, selected: await selectedName(page) });
         await ctx.close();
       }
+      // (iv) the server's own refusal: every write route, sent from the page with yesterday's register day.
+      {
+        const [ty, tm, td] = [Number(parts.year), Number(parts.month), Number(parts.day)];
+        const keyOf = (d) => d.toISOString().slice(0, 10);
+        const yesterday = keyOf(new Date(Date.UTC(ty, tm - 1, td - 1)));
+        const { ctx, page } = await open("1280", 24);
+        await ready(page);
+        const before = await attendance();
+        const token1 = signCardToken({ tenantId: t, memberId: m1.id, cardVersion: m1.cardVersion });
+        const send = (method, url, body) => page.evaluate(async ({ method, url, body }) => {
+          const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+          const j = await r.json().catch(() => null);
+          return { status: r.status, code: j?.code ?? null, clubDate: j?.clubDate ?? null };
+        }, { method, url, body });
+        const fund = inst["Reg Fundamentals"];
+        const answers = {
+          mark: await send("POST", "/api/checkin", { classInstanceId: fund, memberId: m1.id, checkInMethod: "admin", registerDay: yesterday }),
+          unmark: await send("DELETE", `/api/checkin?classInstanceId=${inst["Reg No-Gi Advanced"]}&memberId=${m1.id}&registerDay=${yesterday}`),
+          card: await send("POST", "/api/checkin/card", { classInstanceId: inst["Reg Wrestling"], tokens: [token1], registerDay: yesterday }),
+          cancel: await send("PATCH", `/api/classes/${cls["Reg Fundamentals"]}/instances/${fund}`, { isCancelled: true, cancellationReason: "Journey: refused", registerDay: yesterday }),
+          restore: await send("PATCH", `/api/classes/${cls["Reg Fundamentals"]}/instances/${fund}`, { isCancelled: false, registerDay: yesterday }),
+          malformed: await send("POST", "/api/checkin", { classInstanceId: fund, memberId: m1.id, checkInMethod: "admin", registerDay: "2026-13-40" }),
+        };
+        await page.waitForTimeout(1000);
+        const after = await attendance();
+        const cancelled = Number((await q(`select count(*)::int as n from "ClassInstance" where "classId" = any($1) and "isCancelled"`, [Object.values(cls)]))[0].n);
+        const todayKey = `${parts.year}-${parts.month}-${parts.day}`;
+        const refused = ["mark", "unmark", "card", "cancel", "restore"].every((k) => answers[k].status === 409 && answers[k].code === "REGISTER_DAY_STALE" && answers[k].clubDate === todayKey);
+        L.check("N", "server: mark, un-mark, card, cancel and restore sent with yesterday's register day are each refused 409 REGISTER_DAY_STALE with the club's date; a malformed day is 400; no attendance row added or removed, no session cancelled",
+          refused && answers.malformed.status === 400 && JSON.stringify(after) === JSON.stringify(before) && cancelled === 0, { yesterday, todayKey, answers, rowsUnchanged: JSON.stringify(after) === JSON.stringify(before), cancelled });
+        await ctx.close();
+      }
+      // (v) a page that believes it is still yesterday (its list dated yesterday, its clock agreeing), so the
+      // client's own guard lets the mark go: the server's 409 brings up the dated notice and the class stays.
+      {
+        const [ty, tm, td] = [Number(parts.year), Number(parts.month), Number(parts.day)];
+        const yesterday = new Date(Date.UTC(ty, tm - 1, td - 1)).toISOString().slice(0, 10);
+        const { ctx, page } = await open("390", 25);
+        await page.route("**/api/coach/today", async (route) => {
+          const res = await route.fetch();
+          await route.fulfill({ response: res, headers: { ...res.headers(), "x-club-date": yesterday, "x-server-time": String(Date.now() - 86400000) } });
+        });
+        const writes = [];
+        page.on("response", async (r) => { if (r.request().method() === "POST" && new URL(r.url()).pathname === "/api/checkin") writes.push(r.status()); });
+        await ready(page);
+        const before = await attendance();
+        await page.getByRole("button", { name: "Mark Member 1 attended" }).tap();
+        const shown = await page.getByTestId("stale-day").innerText({ timeout: 30000 }).catch(() => null);
+        await page.waitForTimeout(1000);
+        const lab = (k) => { const [y, mo, d] = k.split("-").map(Number); return new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(y, mo - 1, d, 12))); };
+        const want = `It is now ${dateLabel}. This register is for ${lab(yesterday)}. Reload to see today\u2019s classes.`;
+        L.check("N", "server, through the screen: the page's own guard lets the mark go, the server answers 409, the dated notice shows, no row is written and the class is unchanged",
+          JSON.stringify(writes) === JSON.stringify([409]) && (shown ?? "").includes(want) && JSON.stringify(await attendance()) === JSON.stringify(before) && (await selectedName(page)) === "Reg Fundamentals",
+          { writes, shown, selected: await selectedName(page) });
+        await ctx.close();
+      }
       // (ii) a card held after midnight.
       {
         const token1 = signCardToken({ tenantId: t, memberId: m1.id, cardVersion: m1.cardVersion });
@@ -699,10 +756,12 @@ try {
       await page.waitForTimeout(600);
       // The sheet sits over the navigation, so a tap there is a tap on the sheet: on a session row it chooses that
       // row (the ordinary one switch), on the scrim it closes the sheet. Either way it never reaches More.
-      const afterTap = { selected: await selectedName(page), picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
+      // Headless Chromium has no on-screen keyboard; what would open one is a focused text field, so that is what is checked.
+      const textFocused = () => page.evaluate(() => { const a = document.activeElement; return !!a && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && !["button", "checkbox", "radio", "submit"].includes(a.type))); });
+      const afterTap = { textFocused: await textFocused(), selected: await selectedName(page), picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
       if (afterTap.picker) { await page.keyboard.press("Escape"); await picker(page).waitFor({ state: "detached" }); }
       L.check("X@390", "picker open: the sheet covers the More button; a tap there lands on the sheet (the row under it is chosen, or the scrim closes it) and never opens More; never two overlays",
-        !atMore.isMore && !atMore.insideNav && afterTap.moreExpanded !== "true" && dialogsWithPicker.length === 1 && (atMore.row === null || atMore.row.startsWith(afterTap.selected.slice(0, 30))) && afterTap.dialogs.length <= 1, { atMore, dialogsWithPicker, afterTap });
+        !atMore.isMore && !atMore.insideNav && afterTap.moreExpanded !== "true" && !afterTap.textFocused && dialogsWithPicker.length === 1 && (atMore.row === null || atMore.row.startsWith(afterTap.selected.slice(0, 30))) && afterTap.dialogs.length <= 1, { atMore, dialogsWithPicker, afterTap });
       // More open: what a tap on Change class does, and where focus goes.
       await more.tap();
       await page.waitForTimeout(500);
@@ -711,7 +770,7 @@ try {
       const atChange = await page.evaluate(({ x, y }) => { const el = document.elementFromPoint(x, y); return { isChange: el?.closest("button")?.textContent?.trim() === "Change class" }; }, { x: cb.x + cb.width / 2, y: cb.y + cb.height / 2 });
       await page.touchscreen.tap(cb.x + cb.width / 2, cb.y + cb.height / 2);
       await page.waitForTimeout(600);
-      const afterChangeTap = { picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
+      const afterChangeTap = { textFocused: await textFocused(), picker: await picker(page).count(), moreExpanded: await more.getAttribute("aria-expanded"), dialogs: await openDialogs(), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label") || null) };
       // Then Change class works as normal, and closes back onto itself.
       if (afterChangeTap.picker) { await page.keyboard.press("Escape"); await picker(page).waitFor({ state: "detached" }); }
       await page.getByRole("button", { name: "Change class" }).tap();
@@ -721,9 +780,10 @@ try {
       await page.keyboard.press("Escape");
       await picker(page).waitFor({ state: "detached" }).catch(() => {});
       const focusBack = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? null);
+      const textFocusedAtEnd = await textFocused();
       L.check("X@390", "More open: Change class is under its backdrop (a tap there closes More and opens nothing); never two overlays; afterwards Change class opens the picker alone and focus returns to it",
-        dialogsWithMore.length === 1 && !atChange.isChange && afterChangeTap.dialogs.length <= 1 && !(afterChangeTap.picker && afterChangeTap.moreExpanded === "true") && pickerAgain && dialogsAgain.length === 1 && focusBack === "Change class" && (await selectedName(page)) === afterTap.selected,
-        { dialogsWithMore, atChange, afterChangeTap, pickerAgain, dialogsAgain, focusBack });
+        dialogsWithMore.length === 1 && !atChange.isChange && afterChangeTap.dialogs.length <= 1 && !(afterChangeTap.picker && afterChangeTap.moreExpanded === "true") && pickerAgain && dialogsAgain.length === 1 && focusBack === "Change class" && !afterChangeTap.textFocused && !textFocusedAtEnd && (await selectedName(page)) === afterTap.selected,
+        { dialogsWithMore, atChange, afterChangeTap, pickerAgain, dialogsAgain, focusBack, textFocusedAtEnd });
       await ctx.close();
     }
 
