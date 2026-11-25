@@ -170,6 +170,26 @@ describe("device a day BEHIND the club (Honolulu)", () => {
   });
 });
 
+describe("before the club's day is known", () => {
+  it("names no day while the first read is out, then the club's (never the phone's Thursday first)", async () => {
+    at(BALI, "2026-11-25T20:30:00Z");
+    let release!: () => void;
+    stub(LONDON, new Promise<void>((r) => { release = r; }));
+    render(<MemberSchedulePage />);
+    await waitFor(() => expect(scheduleUrls.length).toBe(1));
+    expect(screen.queryAllByText((_, el) => el?.tagName === "P" && /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day/.test(el.textContent ?? ""))).toHaveLength(0);
+    release();
+    await opened("Wednesday");
+  });
+
+  it("a server that names no zone settles on the phone's day once the read is in", async () => {
+    at(BALI, "2026-11-25T20:30:00Z");
+    stub(null);
+    render(<MemberSchedulePage />);
+    await opened("Thursday");
+  });
+});
+
 describe("manual day selection", () => {
   it("a day picked while the schedule loads is kept when the club's today arrives", async () => {
     at(BALI, "2026-11-25T20:30:00Z");

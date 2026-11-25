@@ -742,6 +742,10 @@ export default function MemberSchedulePage() {
   const anchorRef      = useRef(anchor);
 
   const weekDays    = getWeekDays(anchor);
+  // Until the first read says which day is the club's today, no day is marked selected or today and the day line
+  // is blank: the phone's day is never shown and then swapped for the club's. A server that names no zone (demo,
+  // an older build) settles on the phone's day once the read is in.
+  const dayKnown = zone !== null || !scheduleLoading;
   // Audit iter-1-member-surface A5H-3: read tenant brand primaryColor from
   // localStorage (same pattern as app/member/shop/page.tsx:31-36). The
   // previous hardcoded `PRIMARY` ignored tenant branding entirely.
@@ -1209,8 +1213,8 @@ export default function MemberSchedulePage() {
         {/* Day pills */}
         <div ref={dayScrollRef} className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-hide">
           {weekDays.map((day, i) => {
-            const isToday = fmt(day) === fmt(today);
-            const isSel   = selectedDay === i;
+            const isToday = dayKnown && fmt(day) === fmt(today);
+            const isSel   = dayKnown && selectedDay === i;
             const count   = allClasses.filter((c) => c.dow === i + 1).length;
             return (
               <button
@@ -1247,7 +1251,7 @@ export default function MemberSchedulePage() {
 
         {/* Day label: the day, how many classes, and how many are on right now */}
         <p className="text-gray-400 text-xs font-medium mt-2 mb-1 px-1">
-          {DAY_FULL[selectedDay]}
+          {dayKnown ? DAY_FULL[selectedDay] : " "}
           {(() => {
             const dayCount = allClasses.filter((c) => c.dow === currDow).length;
             if (scheduleLoading || dayCount === 0) return null;
