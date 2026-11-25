@@ -347,6 +347,7 @@ export default function CardScanner({
   instance,
   paused = false,
   onUseName,
+  beforeWrite,
 }: {
   instance: ScannerInstance;
   /**
@@ -358,6 +359,8 @@ export default function CardScanner({
   paused?: boolean;
   /** Switch this screen to marking by name, keeping the class. */
   onUseName?: () => void;
+  /** Asked just before a card is sent; false means "send nothing" (the club's day has moved on). */
+  beforeWrite?: () => boolean;
 }) {
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
   const [rows, setRows] = useState<ScanRow[]>([]);
@@ -404,9 +407,15 @@ export default function CardScanner({
     pausedRef.current = paused;
   }, [paused]);
 
+  const beforeWriteRef = useRef(beforeWrite);
+  useEffect(() => {
+    beforeWriteRef.current = beforeWrite;
+  }, [beforeWrite]);
+
   const submitToken = useCallback(async (token: string) => {
     const classInstanceId = selectedRef.current;
     if (!classInstanceId || pausedRef.current) return;
+    if (beforeWriteRef.current && !beforeWriteRef.current()) return;
     // Captured now: a late response must re-arm the tracker this token was
     // read into, never a later session's fresh one.
     const holds = holdsRef.current;

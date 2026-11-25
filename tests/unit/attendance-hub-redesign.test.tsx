@@ -411,7 +411,8 @@ describe("review of 8e7630c0 (should-fix items and nits)", () => {
     // The tab is left open overnight and looked at again the next morning.
     vi.setSystemTime(new Date("2026-11-26T08:00:00Z"));
     await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 5)); });
-    expect(screen.getByTestId("stale-day").textContent).toContain("This list is from Wednesday 25 November. Reload to see today\u2019s classes.");
+    expect(screen.getByTestId("stale-day").textContent).toContain("It is now Thursday 26 November. This register is for Wednesday 25 November. Reload to see today\u2019s classes.");
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
     expect(screen.queryByRole("button", { name: "Change class" })).toBeNull();
     expect(screen.queryByRole("tab")).toBeNull();
     expect(screen.queryByLabelText("Find a member")).toBeNull();

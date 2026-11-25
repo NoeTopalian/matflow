@@ -5,7 +5,7 @@
 // register opens on (lib/register-default.ts). The picker shows the whole day
 // in time order and lets the coach choose any session of it.
 
-import { useId, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
@@ -113,9 +113,12 @@ export const CAN_CANCEL_SESSION_ROLES = ["owner", "manager"] as const;
 export function SessionCancelControl({
   session,
   onChanged,
+  onOpenChange,
 }: {
   session: TodaySession;
   onChanged: () => void | Promise<void>;
+  /** Told when the confirmation opens and closes (the scanner is paused while it is open). */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -124,6 +127,11 @@ export function SessionCancelControl({
   const [restoring, setRestoring] = useState(false);
   const reasonId = useId();
   const errorId = useId();
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
+  // Gone while open (another class was chosen): the confirmation went with it.
+  useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
 
   async function patch(isCancelled: boolean, cancellationReason?: string): Promise<string | null> {
     try {

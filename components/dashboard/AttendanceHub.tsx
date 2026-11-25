@@ -74,7 +74,11 @@ export default function AttendanceHub({
   const [kioskOpen, setKioskOpen] = useState(false);
   // The club's date the list was read for, and whether that is no longer today.
   const [loadedDay, setLoadedDay] = useState<{ key: string; label: string } | null>(null);
-  const [stale, setStale] = useState(false);
+  // Set once the club's date has moved on past the list's: the club's date now, for the notice.
+  const [staleNow, setStaleNow] = useState<string | null>(null);
+  // The cancel confirmation is open, or the day's list is being read: the scanner sends nothing meanwhile.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
   const changeRef = useRef<HTMLButtonElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -83,6 +87,7 @@ export default function AttendanceHub({
 
   const load = useCallback(async () => {
     setError(false);
+    setListLoading(true);
     const day = clubDay(timeZone);
     try {
       const res = await fetch("/api/coach/today");
@@ -96,14 +101,32 @@ export default function AttendanceHub({
       // now": only the first load, or a session that no longer exists, chooses.
       setSelectedId((current) => (current && list.some((s) => s.id === current) ? current : pickDefault(list, preselectClassId)));
       setLoadedDay(day);
-      setStale(false);
+      setStaleNow(null);
     } catch {
       setSessions(null);
       setError(true);
       // The picker goes with the list: a failed re-read must not leave it to reopen by itself, or the scanner paused.
       setPlacement(null);
+    } finally {
+      setListLoading(false);
     }
   }, [preselectClassId, timeZone]);
+
+  /**
+   * Asked at the moment of every write (a mark, an un-mark, a card read): is
+   * the list still the club's today? Worked out from the club's zone and the
+   * clock now, so it holds on a desk tablet left awake across midnight with no
+   * focus or visibility event. When the day has moved on, nothing is written:
+   * the dated notice and Reload take the place of the controls.
+   */
+  const stillToday = useCallback((): boolean => {
+    if (!loadedDay) return true;
+    const now = clubDay(timeZone);
+    if (now.key === loadedDay.key) return true;
+    setStaleNow(now.label);
+    setPlacement(null);
+    return false;
+  }, [loadedDay, timeZone]);
 
   useEffect(() => {
     void load();
@@ -114,13 +137,9 @@ export default function AttendanceHub({
   // has moved on, the controls give way to a notice and a Reload. The class is
   // never switched by itself.
   useEffect(() => {
-    if (!loadedDay) return;
     const check = () => {
       if (document.visibilityState === "hidden") return;
-      if (clubDay(timeZone).key !== loadedDay.key) {
-        setStale(true);
-        setPlacement(null);
-      }
+      stillToday();
     };
     window.addEventListener("focus", check);
     document.addEventListener("visibilitychange", check);
@@ -128,7 +147,7 @@ export default function AttendanceHub({
       window.removeEventListener("focus", check);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [loadedDay, timeZone]);
+  }, [stillToday]);
 
   const onCountChange = useCallback((c: { checkedIn: number; expected: number; capacity: number | null } | null) => setCounts(c), []);
 
@@ -177,11 +196,6 @@ export default function AttendanceHub({
         <ErrorState message="Couldn't load today's classes — tap to retry" onRetry={() => void load()} />
       ) : sessions === null ? (
         <p className="text-sm text-tx-3" role="status">Loading today&rsquo;s classes…</p>
-      ) : stale && loadedDay ? (
-        <div role="alert" className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-5" data-testid="stale-day">
-          <p className="text-sm text-tx-1">This list is from {loadedDay.label}. Reload to see today&rsquo;s classes.</p>
-          <Button className="mt-3" variant="secondary" onClick={() => void load()}>Reload</Button>
-        </div>
       ) : sessions.length === 0 ? (
         <div className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-5" data-testid="no-classes-today">
           <h2 className="text-sm font-semibold text-tx-1">No classes today</h2>
@@ -217,15 +231,17 @@ export default function AttendanceHub({
                 )}
               </div>
               <div className="flex shrink-0 flex-col items-start gap-1.5 sm:items-end">
-                <Button
-                  ref={changeRef}
-                  variant="secondary"
-                  aria-haspopup="dialog"
-                  aria-expanded={pickerOpen}
-                  onClick={openPicker}
-                >
-                  Change class
-                </Button>
+                {!staleNow && (
+                  <Button
+                    ref={changeRef}
+                    variant="secondary"
+                    aria-haspopup="dialog"
+                    aria-expanded={pickerOpen}
+                    onClick={openPicker}
+                  >
+                    Change class
+                  </Button>
+                )}
                 {onNow > 1 && (
                   <p className="text-[13px] text-tx-2" data-testid="classes-on-now">{onNow} classes on now</p>
                 )}
@@ -233,7 +249,16 @@ export default function AttendanceHub({
             </div>
           </section>
 
-          {selected && (
+          {staleNow && loadedDay ? (
+            // The day has moved on: the card above still names the class the list was for, and nothing
+            // below can write. Reload re-reads the day; the class is never switched by itself.
+            <div role="alert" className="rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-5" data-testid="stale-day">
+              <p className="text-sm text-tx-1">
+                It is now {staleNow}. This register is for {loadedDay.label}. Reload to see today&rsquo;s classes.
+              </p>
+              <Button className="mt-3" variant="secondary" onClick={() => void load()}>Reload</Button>
+            </div>
+          ) : selected && (
             <>
               {/* B. Two ways to mark, side by side. Which is active is said by
                   `aria-selected` and shown by the tick, not by colour alone;
@@ -270,6 +295,7 @@ export default function AttendanceHub({
                     primaryColor={primaryColor}
                     onCountChange={onCountChange}
                     detailsSlot={detailsSlot}
+                    beforeWrite={stillToday}
                   />
                   <p className="text-sm text-tx-3" aria-live="polite" data-testid="checked-in-count">
                     {counts
@@ -281,7 +307,10 @@ export default function AttendanceHub({
                 <CardScanner
                   key={`${selected.id}-${revision}`}
                   instance={selected}
-                  paused={pickerOpen}
+                  // Nothing is read while the picker or the cancel confirmation is open, or while the day's
+                  // list is being read again (after a cancel or restore): it resumes when the list is back.
+                  paused={pickerOpen || cancelOpen || listLoading}
+                  beforeWrite={stillToday}
                   onUseName={() => changeMode("tick")}
                 />
               )}
@@ -325,6 +354,7 @@ export default function AttendanceHub({
                       <SessionCancelControl
                         key={selected.id}
                         session={selected}
+                        onOpenChange={setCancelOpen}
                         onChanged={async () => {
                           const changedId = selected.id;
                           await load();

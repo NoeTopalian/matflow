@@ -131,8 +131,14 @@ export default function RegisterPanel({
   primaryColor,
   onCountChange,
   detailsSlot,
+  beforeWrite,
 }: {
   instance: TodaySession;
+  /**
+   * Asked just before every write; false means "do not write" (the club's day
+   * has moved on since the list was read, and the screen now says so).
+   */
+  beforeWrite?: () => boolean;
   primaryColor: string;
   /**
    * Where the session's "who it is for" lines are drawn when the screen has a
@@ -343,6 +349,7 @@ export default function RegisterPanel({
     // about: the server refuses a member they exclude (or whose allowance is
     // used up with no class pack to pay), and the refusal below shows its
     // sentence.
+    if (beforeWrite && !beforeWrite()) return false;
     focusBackRef.current = currentFocus();
     setMarking(memberId);
     setError(null);
@@ -396,6 +403,7 @@ export default function RegisterPanel({
       destructive: true,
     });
     if (!confirmed) return;
+    if (beforeWrite && !beforeWrite()) return;
     focusBackRef.current = currentFocus();
     setMarking(memberId);
     setError(null);
