@@ -266,6 +266,9 @@ export default function AttendanceHub({
                       {selected.name}
                     </h2>
                     <p className="mt-0.5 text-sm text-tx-2" data-testid="selected-class-when">
+                      {/* The club date the register is for (the picker's and the notice's label): on a stale
+                          screen it stays the register's own date, never today's. */}
+                      {loadedDay ? `${loadedDay.label} · ` : ""}
                       {formatTimeRange(selected.startTime, selected.endTime)}
                       {mat ? ` · ${mat}` : ""}
                     </p>

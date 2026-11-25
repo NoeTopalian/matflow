@@ -158,7 +158,7 @@ try {
       await ready(page);
       const a = { name: await selectedName(page), label: await page.getByTestId("selected-class-label").innerText(), when: await page.getByTestId("selected-class-when").innerText(), onNow: await page.getByTestId("classes-on-now").innerText().catch(() => null) };
       L.check("A", "opens on the class on now, first in the club's mat order, with its time and mat, and says two are on now",
-        a.name === "Reg Fundamentals" && /on now/i.test(a.label) && a.when === `${hm(startNow)}–${hm(startNow + 90)} · Reg Mat 1` && a.onNow === "2 classes on now", a);
+        a.name === "Reg Fundamentals" && /on now/i.test(a.label) && a.when === `${dateLabel} · ${hm(startNow)}–${hm(startNow + 90)} · Reg Mat 1` && a.onNow === "2 classes on now", a);
       const tabs = await page.getByRole("tab").evaluateAll((els) => els.map((e) => ({ text: e.innerText.trim(), selected: e.getAttribute("aria-selected"), disabled: e.disabled, y: Math.round(e.getBoundingClientRect().top), w: Math.round(e.getBoundingClientRect().width) })));
       L.check("A", "By name and Scan QR sit side by side at the same size, one selected, neither disabled", tabs.length === 2 && tabs[0].text === "By name" && tabs[1].text === "Scan QR" && tabs[0].y === tabs[1].y && Math.abs(tabs[0].w - tabs[1].w) <= 1 && tabs[0].selected === "true" && tabs[1].selected === "false" && !tabs.some((x) => x.disabled), tabs);
       await shot(page, "attendance-after-1280");
@@ -187,6 +187,31 @@ try {
       L.check("C", "a coach is offered neither Cancel this session nor Open kiosk", coachCancel === 0 && coachKiosk === 0, { coachCancel, coachKiosk });
       await cc.close();
       await q(`update "Class" set "coachUserId" = null where id = $1`, [cls["Reg No-Gi Advanced"]]);
+    }
+
+    // ── K: the card names the club date, the time and the chosen session's own mat (two at the same time) ──
+    for (const [tag, lane] of [["1280", 26], ["390", 27]]) {
+      const { ctx, page } = await open(tag, lane);
+      await ready(page);
+      const seen = [];
+      for (const [name, mat] of [["Reg Fundamentals", "Reg Mat 1"], ["Reg No-Gi Advanced", "Reg Mat 2"]]) {
+        await page.getByRole("button", { name: "Change class" }).click();
+        await picker(page).locator(`[data-session-id="${inst[name]}"]`).click();
+        await picker(page).waitFor({ state: "detached" });
+        await page.waitForTimeout(300);
+        const when = page.getByTestId("selected-class-when");
+        const fit = await when.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const cs = getComputedStyle(el);
+          return { scrollW: el.scrollWidth, clientW: el.clientWidth, right: Math.round(r.right), vw: innerWidth, ellipsis: cs.textOverflow === "ellipsis", nowrapClipped: cs.whiteSpace === "nowrap" && el.scrollWidth > el.clientWidth };
+        });
+        seen.push({ selected: await selectedName(page), when: await when.innerText(), want: `${dateLabel} · ${hm(startNow)}–${hm(startNow + 90)} · ${mat}`, ...fit });
+      }
+      const side = await noSidewaysScroll(page);
+      L.check(`K@${tag}`, "two classes at the same time on different mats, chosen in turn: the card reads the club date · the time · that session's own mat, in full, nothing overflowing",
+        seen.length === 2 && seen.every((x, i) => x.selected === ["Reg Fundamentals", "Reg No-Gi Advanced"][i] && x.when === x.want && x.scrollW <= x.clientW + 1 && x.right <= x.vw && !x.ellipsis && !x.nowrapClipped) && !side.mainScrolls && !side.documentScrolls,
+        { cards: seen.map(({ selected, when, scrollW, clientW, right, vw }) => ({ selected, when, scrollW, clientW, right, vw })), side: { main: side.mainScrolls, document: side.documentScrolls } });
+      await ctx.close();
     }
 
     // ── G: layout at every width ──

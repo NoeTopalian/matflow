@@ -107,7 +107,7 @@ describe("selected class", () => {
     hub();
     await settle();
     expect(within(card()).getByTestId("selected-class-name").textContent).toBe("Fundamentals");
-    expect(within(card()).getByTestId("selected-class-when").textContent).toBe("18:00–19:00 · Mat 1");
+    expect(within(card()).getByTestId("selected-class-when").textContent).toBe("Wednesday 25 November · 18:00–19:00 · Mat 1");
     expect(within(card()).getByTestId("selected-class-label").textContent).toBe("On now");
     expect(screen.getByTestId("classes-on-now").textContent).toBe("2 classes on now");
     // Both methods, side by side, one active and neither disabled.
@@ -121,7 +121,7 @@ describe("selected class", () => {
     stub({ day: [session("x", "Open Mat", "18:00", "19:00", { auto: "up_next" })] });
     hub();
     await settle();
-    expect(screen.getByTestId("selected-class-when").textContent).toBe("18:00–19:00");
+    expect(screen.getByTestId("selected-class-when").textContent).toBe("Wednesday 25 November · 18:00–19:00");
     expect(screen.getByTestId("selected-class-label").textContent).toBe("Up next");
     expect(screen.queryByTestId("classes-on-now")).toBeNull();
   });
@@ -157,6 +157,20 @@ describe("selected class", () => {
     expect(pickDefault(DAY, "class-late")).toBe("late");
     expect(pickDefault(DAY, "class-nope")).toBe("a");
     expect(pickDefault([session("off", "Off", "18:00", "19:00", { isCancelled: true, status: "ongoing" })], null)).toBeNull();
+  });
+});
+
+describe("the card names the club date", () => {
+  it("of two classes at the same time, each shows the date, the time and its own mat", async () => {
+    asPhone();
+    stub();
+    hub();
+    await settle();
+    expect(screen.getByTestId("selected-class-when").textContent).toBe("Wednesday 25 November · 18:00–19:00 · Mat 1");
+    fireEvent.click(within(openPicker()).getByRole("button", { name: /No-Gi Advanced/ }));
+    await settle();
+    expect(screen.getByTestId("selected-class-name").textContent).toBe("No-Gi Advanced");
+    expect(screen.getByTestId("selected-class-when").textContent).toBe("Wednesday 25 November · 18:00–19:00 · Mat 2");
   });
 });
 
@@ -414,6 +428,8 @@ describe("review of 8e7630c0 (should-fix items and nits)", () => {
     await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 5)); });
     expect(screen.getByTestId("stale-day").textContent).toContain("It is now Thursday 26 November. This register is for Wednesday 25 November. Reload to see today\u2019s classes.");
     expect(screen.getByTestId("selected-class-name").textContent).toBe("Fundamentals");
+    // The card keeps the register's own date, not today's.
+    expect(screen.getByTestId("selected-class-when").textContent).toBe("Wednesday 25 November · 18:00–19:00 · Mat 1");
     expect(screen.queryByRole("button", { name: "Change class" })).toBeNull();
     expect(screen.queryByRole("tab")).toBeNull();
     expect(screen.queryByLabelText("Find a member")).toBeNull();
