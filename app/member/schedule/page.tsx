@@ -589,7 +589,8 @@ function SessionBlock({
       data-session-state={state}
       data-block-size={size}
       data-booked={isSub || undefined}
-      aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${where ? `, ${where}` : ""}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}`}
+      // "booked" is said, not left to the fill: a custom class colour can be as pale as the shell (25 Nov 2026).
+      aria-label={`${cls.name}, ${cls.time} to ${cls.endTime}${where ? `, ${where}` : ""}${state === "upcoming" ? "" : `, ${label.toLowerCase()}`}${isSub ? ", booked" : ""}`}
       className={[
         "relative h-auto flex-col items-stretch justify-start gap-0.5 overflow-hidden whitespace-normal rounded-xl text-left font-normal transition-all active:scale-[0.98] hover:bg-transparent",
         // Keyboard focus outside the selection ring (which fills 2-4 px out), so the two never share a band.
@@ -667,7 +668,8 @@ function SessionBlock({
           {category && (
             <span className="text-[10px] leading-4" style={{ color: muted }} data-testid="schedule-cell-category">{category}</span>
           )}
-          {isSub && !live && <Bell className="w-2.5 h-2.5" style={{ color: muted }} aria-hidden="true" />}
+          {/* The booked mark in every state, live too: with a custom colour the fill alone may not tell booked from not. */}
+          {isSub && <Bell className="w-2.5 h-2.5" style={{ color: muted }} aria-hidden="true" data-testid="schedule-cell-booked-mark" />}
         </span>
       ) : null}
       {place ? (

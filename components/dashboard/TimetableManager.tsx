@@ -16,7 +16,10 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Sheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { hex, readableOn } from "@/lib/color";
-import { CLASS_COLOURS, DEFAULT_CLASS_COLOUR, classColourName, classDotStyle, classInk } from "@/lib/class-colours";
+import {
+  CLASS_COLOURS, DEFAULT_CLASS_COLOUR, canonicalClassColour, classColourName, classDotStyle, classInk, opaqueHexOf,
+  parseCustomClassColour, sameClassColour,
+} from "@/lib/class-colours";
 import { changedKeys, stashDraft, takeDraft } from "@/lib/draft-stash";
 import { describeApiError } from "@/lib/api-field-errors";
 import { parseIdParam } from "@/lib/id-param";
@@ -1074,6 +1077,30 @@ function ClassForm({
   const [color, setColor] = useState<string | null>(rv("color", initialColour));
   // A class saved with a colour the palette does not hold keeps it: offered first, as "Current colour".
   const [ownColour] = useState(() => (initial?.color && !classColourName(initial.color) ? initial.color : null));
+  // "+ Custom colour…" (25 Nov 2026): a native picker and a hex box, open in place under the swatches. Both edit
+  // `color`; the box's text is kept apart so a half-typed code never replaces the chosen colour, and is checked on
+  // leaving the box and on Save. A colour typed that is a swatch's, or the saved one, is held as that (no duplicate).
+  const customColour = color !== null && !classColourName(color) && !(ownColour && sameClassColour(color, ownColour)) ? color : null;
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customText, setCustomText] = useState("");
+  const [customError, setCustomError] = useState(false);
+  const customTextRef = useRef<HTMLInputElement>(null);
+  function chooseCustom(value: string) {
+    setColor(canonicalClassColour(value, initial?.color ?? null));
+    setCustomError(false);
+  }
+  function choosePreset(value: string) {
+    setColor(value);
+    // A preset clears any half-typed code and its error; an open box shows the preset's code instead.
+    setCustomText(value);
+    setCustomError(false);
+  }
+  function toggleCustom() {
+    // Opening shows the chosen colour's code (empty when none is chosen); closing drops a half-typed code unsaved.
+    setCustomText(customOpen ? "" : (opaqueHexOf(color) ?? ""));
+    setCustomError(false);
+    setCustomOpen((o) => !o);
+  }
   const freshSchedules = initial?.schedules?.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime })) ?? [];
   // Matched by day and times, a change is safe to re-apply only while the days it changed are still there unchanged:
   // otherwise it could bring back a day the other person removed or duplicate one they moved.
@@ -1192,13 +1219,16 @@ function ClassForm({
   const draftOf = (v: ClassDraftValues) => JSON.stringify([
     v.name, v.coachName, v.coachUserId, v.locationChoice, v.locationChoice === "new" ? v.newLocation : "", v.locationId,
     v.duration, v.maxCapacity, v.isKids, v.category, v.description, v.requiredRankId, v.maxRankId, v.useRoster,
-    [...v.rosterMemberIds].sort(), [...v.allowedTierIds].sort(), v.color, v.schedules,
+    // In any letter case one colour: re-picking the saved colour as a swatch is not a change.
+    [...v.rosterMemberIds].sort(), [...v.allowedTierIds].sort(), v.color?.toLowerCase() ?? null, v.schedules,
   ]);
   const draft = draftOf(draftValues);
   // Round 11 (1.1 with 6.1): a form reopened with a restored draft already holds unsaved work, so its baseline is the
   // class as it was opened before the reload; measured against the restored form it would look untouched.
   const [initialDraft] = useState(() => (restore ? draftOf(openedValues) : draft));
-  const dirty = draft !== initialDraft;
+  // A half-typed custom colour code is work too: a stray tap asks before losing it.
+  const customHalfTyped = customOpen && customText.trim() !== "" && parseCustomClassColour(customText) === null;
+  const dirty = draft !== initialDraft || customHalfTyped;
   // Layout effect, not useEffect: an update set here commits before the browser handles the next event, so a dismissal
   // queued behind the first edit already sees confirmDiscard (from useEffect it landed one task late and lost the edit).
   useLayoutEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -1206,6 +1236,13 @@ function ClassForm({
 
   function submit() {
     if (!canSubmit) return;
+    // A custom colour code that is not one: nothing is sent, the reason is said beside the box, and the rest of the
+    // form stays as it is.
+    if (customHalfTyped) {
+      setCustomError(true);
+      customTextRef.current?.focus();
+      return;
+    }
     const payload: Record<string, unknown> = {
       name: name.trim(),
       // When a User is selected, that's authoritative; coachName is the legacy
@@ -1239,7 +1276,7 @@ function ClassForm({
       ...(!initial?.id || !sameTierSet(allowedTierIds, initialTierIds) ? { allowedTierIds } : {}),
       // Sent on create, and on edit only when changed, so an unrelated edit never rewrites a class's colour.
       // Case-insensitive, as the swatches are: re-picking the stored colour in other letter case is not a change.
-      ...(!initial?.id || color?.toLowerCase() !== initialColour?.toLowerCase() ? { color } : {}),
+      ...(!initial?.id || !sameClassColour(color, initialColour) ? { color } : {}),
       schedules,
       // P6: the slot ids this form loaded with. The server refuses the save
       // (409) if the class's days changed since, instead of taking this list
@@ -1749,14 +1786,19 @@ function ClassForm({
       <div>
         <p id="class-colour-label" className="text-xs font-medium block mb-1.5" style={{ color: "var(--tx-3)" }}>Colour</p>
         <div role="group" aria-labelledby="class-colour-label" className="flex gap-4 flex-wrap" data-testid="class-colour-swatches">
-          {[...(ownColour ? [{ value: ownColour, name: "Current colour" }] : []), ...CLASS_COLOURS].map((c) => {
-            const selected = color !== null && color.toLowerCase() === c.value.toLowerCase();
+          {[
+            ...(ownColour ? [{ value: ownColour, name: "Current colour" }] : []),
+            ...CLASS_COLOURS,
+            // A custom colour chosen here (neither a swatch nor the saved colour): last, so the swatches never move.
+            ...(customColour ? [{ value: customColour, name: "Custom colour" }] : []),
+          ].map((c) => {
+            const selected = sameClassColour(color, c.value);
             return (
               <Button
                 key={c.value}
                 type="button"
                 variant="ghost"
-                onClick={() => setColor(c.value)}
+                onClick={() => choosePreset(c.value)}
                 aria-label={`Class colour: ${c.name}`}
                 aria-pressed={selected}
                 title={c.name}
@@ -1779,8 +1821,103 @@ function ClassForm({
           })}
         </div>
         <p className="text-[11px] mt-1" style={{ color: "var(--tx-3)" }} aria-live="polite" data-testid="class-colour-name">
-          {color === null ? "The club's colour (none chosen)" : (classColourName(color) ?? "Current colour")}
+          {color === null
+            ? "The club's colour (none chosen)"
+            : (classColourName(color) ?? `${ownColour && sameClassColour(color, ownColour) ? "Current colour" : "Custom colour"} ${color}`)}
         </p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="compact"
+          onClick={toggleCustom}
+          aria-expanded={customOpen}
+          aria-controls="class-colour-custom"
+          data-testid="class-colour-custom-toggle"
+          className="mt-1.5 -ml-2"
+        >
+          <Plus aria-hidden="true" className="size-3.5" />
+          Custom colour…
+        </Button>
+        {customOpen && (
+          // In place, inside the class sheet: no second overlay over it (UI-RULES §4a.3).
+          <div id="class-colour-custom" className="mt-2 space-y-3 rounded-[var(--r-md)] border border-bd-default p-3" data-testid="class-colour-custom">
+            <div className="flex items-end gap-3">
+              <div className="shrink-0">
+                <label htmlFor="class-colour-picker" className="text-[11px] block mb-1" style={{ color: "var(--tx-3)" }}>Pick</label>
+                {/* The platform's own colour picker: always six digits, so it never makes a code the box would refuse. */}
+                <input
+                  id="class-colour-picker"
+                  type="color"
+                  aria-label="Custom colour: pick a shade"
+                  data-testid="class-colour-picker"
+                  value={opaqueHexOf(color) ?? opaqueHexOf(primaryColor) ?? DEFAULT_CLASS_COLOUR}
+                  onChange={(e) => {
+                    const picked = parseCustomClassColour(e.target.value);
+                    if (!picked) return;
+                    setCustomText(picked);
+                    chooseCustom(picked);
+                  }}
+                  className="ui-fixed-size block h-9 w-12 cursor-pointer rounded-[var(--r-md)] border border-bd-default bg-sf-1 p-1"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <label htmlFor="class-colour-hex" className="text-[11px] block mb-1" style={{ color: "var(--tx-3)" }}>Hex code</label>
+                <Input
+                  id="class-colour-hex"
+                  ref={customTextRef}
+                  aria-label="Custom colour: hex code"
+                  data-testid="class-colour-hex"
+                  value={customText}
+                  placeholder="1A2B3C"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  maxLength={20}
+                  aria-invalid={customError || undefined}
+                  aria-describedby={customError ? "class-colour-hex-error" : "class-colour-hex-hint"}
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    setCustomText(text);
+                    const parsed = parseCustomClassColour(text);
+                    // A complete code is chosen at once; until then the chosen colour stays, and an error shown earlier
+                    // goes only when the code is right or the box is empty.
+                    if (parsed) chooseCustom(parsed);
+                    else if (text.trim() === "") setCustomError(false);
+                  }}
+                  // Said once the person has finished typing (left the box), never on every keystroke.
+                  onBlur={() => { if (customHalfTyped) setCustomError(true); }}
+                />
+              </div>
+            </div>
+            {customError ? (
+              <p id="class-colour-hex-error" role="alert" className="text-xs" style={{ color: "var(--hue-danger-ink)" }} data-testid="class-colour-hex-error">
+                That isn&apos;t a colour code. Enter six characters from 0–9 and A–F, like 1A2B3C (the # is optional).
+              </p>
+            ) : (
+              <p id="class-colour-hex-hint" className="text-[11px]" style={{ color: "var(--tx-3)" }}>
+                Six characters, like 1A2B3C. Only this class changes.
+              </p>
+            )}
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] shrink-0" style={{ color: "var(--tx-3)" }}>Preview</span>
+              {/* The timetable's own chip, so the preview is the colour as the week will paint it. Decorative: the
+                  colour's name is said above. */}
+              <div aria-hidden="true" className="w-36 min-w-0" data-testid="class-colour-preview">
+                <WeekChip
+                  name={name.trim() || "Class name"}
+                  dayName=""
+                  startTime={schedules[0]?.startTime || "18:00"}
+                  endTime={schedules[0]?.endTime || "19:00"}
+                  color={color ?? primaryColor}
+                  place={null}
+                  showPlace={false}
+                  canManage={false}
+                  onEdit={() => {}}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Schedules */}

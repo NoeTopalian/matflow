@@ -6,7 +6,8 @@ import { snapshotDiff } from "@/lib/audit-snapshot";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { scheduleSchema, allowedTierIdsSchema, matNameSchema } from "@/lib/schemas/class";
+import { scheduleSchema, allowedTierIdsSchema, matNameSchema, classColourSchema } from "@/lib/schemas/class";
+import { sameClassColour } from "@/lib/class-colours";
 import { classCategoryIdSchema, classCategorySchema } from "@/lib/class-category";
 import { CATEGORY_ERRORS, CATEGORY_REF_SELECT, ClassCategoryRefusal, categoryFields, categoryIdToWrite, classCategoryDbError } from "@/lib/class-category-store";
 import { rulesAfterEdit, type ClassAccessRules, type RestrictionPreview } from "@/lib/booking-eligibility";
@@ -81,7 +82,8 @@ const updateSchema = z.object({
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
-  color: z.string().max(20).optional().nullable(),
+  // A hex code or null (lib/schemas/class.ts classColourSchema). The same colour in other letter case is not written.
+  color: classColourSchema.optional().nullable(),
   // T6b lifecycle: `false` PAUSES the class (hidden from the timetable,
   // booking, member app and kiosk; no new sessions; history and bookings
   // kept). `true` RESUMES a paused class or RESTORES an archived one: it also
@@ -626,9 +628,9 @@ export async function PATCH(req: Request, { params }: Params) {
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
       const owned = await tx.$queryRaw<{
-        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null;
+        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null; color?: string | null;
       }[]>`
-        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId", "color" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
       // The category, judged under the Class lock against the class's category
@@ -838,7 +840,8 @@ export async function PATCH(req: Request, { params }: Params) {
         // mode clears the rank columns outright.
         requiredRankId: wantsRoster ? null : parsed.data.requiredRankId,
         maxRankId: wantsRoster ? null : parsed.data.maxRankId,
-        color: parsed.data.color,
+        // The stored colour in other letter case is the same colour: not written, so no Activity row says it changed.
+        color: parsed.data.color != null && sameClassColour(parsed.data.color, owned[0].color) ? undefined : parsed.data.color,
         isActive: parsed.data.isActive,
         // T6b: resume / restore clears the archive marker too, so a restored
         // class is never "active but hidden everywhere". Pausing leaves an

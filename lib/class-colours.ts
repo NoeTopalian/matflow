@@ -124,3 +124,44 @@ export function classColourName(value: string | null | undefined): string | null
   const v = value.toLowerCase();
   return CLASS_COLOURS.find((c) => c.value === v)?.name ?? null;
 }
+
+/**
+ * Two class colours are the same when they differ only in letter case ("#3B82F6" is Blue): re-picking a stored
+ * colour in other case is not a change, so it neither dirties the form nor writes the column nor makes an Activity
+ * row. `null` (no colour chosen: the class shows the club's) equals only `null`.
+ */
+export function sameClassColour(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a == null || b == null) return a == null && b == null;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * What a person typed as a custom colour: exactly six RGB hex digits, with or without a leading "#" (spaces around
+ * it ignored), as the stored form "#rrggbb" in lower case; anything else is null. Three digits, a name or an alpha
+ * channel are refused here: a class colour is painted opaque, and the native colour picker gives six digits.
+ */
+export function parseCustomClassColour(input: string): string | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(input.trim());
+  return m ? `#${m[1].toLowerCase()}` : null;
+}
+
+/**
+ * The value a chosen custom colour is held as: the class's saved colour exactly as stored when it is that one (so no
+ * change is sent), a palette colour's own value when it is one (so its swatch is chosen and no duplicate custom
+ * swatch appears), else the colour as given.
+ */
+/**
+ * A stored colour as the native colour picker's value, "#rrggbb" in lower case: "#abc" widened, an alpha channel
+ * dropped (it is painted opaque). Null for null or anything that is not a hex code.
+ */
+export function opaqueHexOf(value: string | null | undefined): string | null {
+  if (!value) return null;
+  let v = value.trim().replace(/^#/, "");
+  if (/^[0-9a-f]{3}$/i.test(v)) v = v.split("").map((c) => c + c).join("");
+  return /^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(v) ? `#${v.slice(0, 6).toLowerCase()}` : null;
+}
+
+export function canonicalClassColour(value: string, saved: string | null): string {
+  if (saved && sameClassColour(value, saved)) return saved;
+  return CLASS_COLOURS.find((c) => sameClassColour(c.value, value))?.value ?? value;
+}
