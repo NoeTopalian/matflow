@@ -11,8 +11,8 @@
 //   W  a mark made by name and answered after the coach switched class is announced with the first class's name;
 //   Q  (owner, Scan QR) a card held while the picker or the cancel confirmation is open is never sent; after
 //      dismissal one hold records once into the class on screen. SIMULATED camera;
-//   N  the club's midnight passes under an open page with no focus event (Playwright's page clock): the next mark
-//      or card read writes nothing and the dated Reload notice shows, the class unchanged;
+//   N  the club's midnight passes under an open page with no focus event (Playwright's page clock): the next mark,
+//      card read or session cancel writes nothing and the dated Reload notice shows, the class unchanged;
 //   X  390 wide: the bottom navigation's More menu and the class picker never stack, and focus comes back;
 //   D  dismissing the picker (Close, Escape, outside tap) changes nothing, returns focus, and the next tap works;
 //   C  cancel and kiosk for the owner; neither for a coach; the bottom navigation never covers the last control.
@@ -634,6 +634,28 @@ try {
         L.check("N", "by name: after the club's midnight (page clock moved, no focus event) a mark writes nothing, the dated notice shows, the class is unchanged",
           moved === midnight.toISOString() && writes.length === 0 && JSON.stringify(await attendance()) === JSON.stringify(before) && (shown ?? "").includes(notice) && (await selectedName(page)) === "Reg Fundamentals" && (await page.getByRole("button", { name: "Reload" }).count()) === 1,
           { pageClock: moved, writes: writes.length, shown, selected: await selectedName(page) });
+        await ctx.close();
+      }
+      // (iii) the owner cancels the session: the confirmation is filled in before midnight and confirmed after it.
+      {
+        const { ctx, page } = await open("1280", 23);
+        const patches = [];
+        page.on("request", (r) => { if (r.method() === "PATCH") patches.push(new URL(r.url()).pathname); });
+        await ready(page);
+        await page.getByRole("button", { name: /Session details/ }).click();
+        await page.getByRole("button", { name: "Cancel this session" }).click();
+        const confirm = page.getByRole("dialog", { name: /^Cancel / });
+        await confirm.getByLabel(/Reason/).fill("Journey: never sent");
+        await page.clock.setFixedTime(midnight);
+        const moved = await page.evaluate(() => new Date().toISOString());
+        await confirm.getByRole("button", { name: "Cancel this session" }).click();
+        const shown = await page.getByTestId("stale-day").innerText({ timeout: 15000 }).catch(() => null);
+        await page.waitForTimeout(1500);
+        const cancelled = Number((await q(`select count(*)::int as n from "ClassInstance" where "classId" = any($1) and "isCancelled"`, [Object.values(cls)]))[0].n);
+        const focus = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? null);
+        L.check("N", "cancel: confirmed after the club's midnight, no PATCH is sent and nothing is cancelled; the dated notice shows, focus is on Reload, the class is unchanged",
+          moved === midnight.toISOString() && patches.length === 0 && cancelled === 0 && (shown ?? "").includes(notice) && focus === "Reload" && (await selectedName(page)) === "Reg Fundamentals" && (await confirm.count()) === 0,
+          { pageClock: moved, patches, cancelled, shown, focus, selected: await selectedName(page) });
         await ctx.close();
       }
       // (ii) a card held after midnight.
