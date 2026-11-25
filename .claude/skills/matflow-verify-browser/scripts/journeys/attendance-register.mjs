@@ -15,6 +15,8 @@
 //      card read or session cancel writes nothing and the dated Reload notice shows, the class unchanged; and the
 //      SERVER refuses (409 REGISTER_DAY_STALE) every write carrying a register day that is not the club's today;
 //   X  390 wide: the bottom navigation's More menu and the class picker never stack, and focus comes back;
+//   Z  the owner changes the club's time zone while the register is open: writes are refused with the dated notice
+//      and the old class kept; Reload takes on the new zone and date, and a mark then goes into that date's session;
 //   D  dismissing the picker (Close, Escape, outside tap) changes nothing, returns focus, and the next tap works;
 //   C  cancel and kiosk for the owner; neither for a coach; the bottom navigation never covers the last control.
 //   node journeys/attendance-register.mjs            (the redesign)
@@ -850,6 +852,48 @@ try {
       await kiosk.getByText("Kiosk Check-In").waitFor({ timeout: 30000 });
       const kioskText = (await kiosk.innerText()).replace(/\s+/g, " ");
       L.check("C", "owner: Open kiosk shows the existing kiosk control; the section is the last thing on the page", /Self-service kiosk/.test(kioskText) && /Let members check themselves in/.test(kioskText) && (await page.evaluate(() => { const k = document.querySelector('[data-testid="kiosk-section"]'); const d = document.querySelector('[data-testid="session-details"]'); return !!(d.compareDocumentPosition(k) & Node.DOCUMENT_POSITION_FOLLOWING); })), { kioskText: kioskText.slice(0, 160) });
+      await ctx.close();
+    }
+
+    // ── Z: the owner changes the club's time zone while the register is open; Reload recovers (LAST: it moves the
+    //    club's zone, which the finally block puts back) ──
+    {
+      stage = "Z";
+      const keyIn = (zone) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: zone }).format(new Date());
+      const todayKey = `${parts.year}-${parts.month}-${parts.day}`;
+      // A zone whose date differs from the club's right now (UTC+14 and UTC-11 are 25 hours apart, so one always does).
+      const newZone = ["Pacific/Kiritimati", "Pacific/Auckland", "Asia/Tokyo", "America/Los_Angeles", "Pacific/Honolulu", "Pacific/Pago_Pago"].find((z) => keyIn(z) !== todayKey);
+      const newKey = keyIn(newZone);
+      const lab = (k) => { const [yy, mo, dd] = k.split("-").map(Number); return new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(yy, mo - 1, dd, 12))); };
+      // A session of Fundamentals (Member 1 is booked into the class) on the club's new date, all day long.
+      const newInst = randomUUID();
+      await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, '00:00', '23:59')`, [newInst, cls["Reg Fundamentals"], new Date(`${newKey}T00:00:00.000Z`)]);
+      const { ctx, page } = await open("1280", 28);
+      const marks = [];
+      page.on("response", (r) => { if (r.request().method() === "POST" && new URL(r.url()).pathname === "/api/checkin") marks.push(r.status()); });
+      await ready(page);
+      const before = { selected: await selectedName(page), when: await page.getByTestId("selected-class-when").innerText() };
+      const rowsBefore = await attendance();
+      // The owner changes the zone through the product's own settings route.
+      const saved = await page.evaluate(async (zone) => (await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ timezone: zone }) })).status, newZone);
+      await page.getByRole("button", { name: "Mark Member 1 attended" }).click();
+      const shown = await page.getByTestId("stale-day").innerText({ timeout: 30000 }).catch(() => null);
+      await page.waitForTimeout(1000);
+      const refused = { marks: [...marks], shown, selected: await selectedName(page), when: await page.getByTestId("selected-class-when").innerText(), rowsUnchanged: JSON.stringify(await attendance()) === JSON.stringify(rowsBefore) };
+      L.check("Z", "the club's zone is changed while the register is open: a mark is refused (409) and writes no row; the dated notice shows; the old class and its date stay on screen",
+        saved === 200 && JSON.stringify(refused.marks) === JSON.stringify([409]) && refused.rowsUnchanged && (shown ?? "").includes(`This register is for ${dateLabel}`) && refused.selected === before.selected && refused.when === before.when,
+        { from: tz, to: newZone, oldDate: todayKey, newDate: newKey, saved, before, ...refused });
+      await page.getByRole("button", { name: "Reload" }).click();
+      await page.getByTestId("stale-day").waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
+      await page.getByRole("button", { name: "Mark Member 1 attended" }).waitFor({ timeout: 30000 }).catch(() => {});
+      const after = { notice: await page.getByTestId("stale-day").count(), selected: await selectedName(page).catch(() => null), when: await page.getByTestId("selected-class-when").innerText().catch(() => null), focus: await page.evaluate(() => document.activeElement?.textContent?.trim() ?? null) };
+      await page.getByRole("button", { name: "Mark Member 1 attended" }).click();
+      await page.getByRole("button", { name: "Mark Member 1 absent" }).waitFor({ timeout: 30000 }).catch(() => {});
+      const inNew = Number((await q(`select count(*)::int as n from "AttendanceRecord" where "classInstanceId" = $1 and "memberId" = $2`, [newInst, m1.id]))[0].n);
+      const inOld = Number((await q(`select count(*)::int as n from "AttendanceRecord" where "classInstanceId" = $1 and "memberId" = $2`, [inst["Reg Fundamentals"], m1.id]))[0].n);
+      L.check("Z", "Reload: the notice goes, the register for the club's new date shows (the card names that date), and a mark now succeeds into the session of that date, none into the old one",
+        after.notice === 0 && after.selected === "Reg Fundamentals" && (after.when ?? "").startsWith(`${lab(newKey)} · `) && after.focus === "Change class" && JSON.stringify(marks) === JSON.stringify([409, 201]) && inNew === 1 && inOld === 0,
+        { ...after, marks, inNew, inOld });
       await ctx.close();
     }
   }
