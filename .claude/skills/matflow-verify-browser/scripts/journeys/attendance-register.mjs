@@ -421,7 +421,12 @@ try {
         navigator.mediaDevices.getUserMedia = async () => canvas.captureStream(15);
       }, token);
       const posts = [];
-      page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/checkin/card") posts.push(JSON.parse(r.postData() ?? "{}").classInstanceId); });
+      // The scanner's requests only: the journey's own warm-up request below (token "warm-up") is not a scan.
+      page.on("request", (r) => {
+        if (r.method() !== "POST" || new URL(r.url()).pathname !== "/api/checkin/card") return;
+        const sent = JSON.parse(r.postData() ?? "{}");
+        if (!(sent.tokens ?? []).includes("warm-up")) posts.push(sent.classInstanceId);
+      });
       const before = await attendance();
       stage = "S";
       await ready(page);
@@ -471,8 +476,10 @@ try {
       await page.waitForTimeout(2500);
       const stored = await attendance();
       const scanText = (await page.getByText(/Last: Member 1/).innerText()).slice(0, 80);
-      L.check("S", "a scan after the switch goes into the new class: one request per hold, every one to the new class, one attendance record, none anywhere else",
-        posts.length === holds && posts.every((p) => p === inst["Reg No-Gi Advanced"]) && stored.filter((s) => s.endsWith("Member 1")).join() === "Reg No-Gi Advanced:Member 1" && JSON.stringify(stored.filter((s) => !s.endsWith("Member 1"))) === JSON.stringify(before), { holds, posts: posts.length, allToNewClass: posts.every((p) => p === inst["Reg No-Gi Advanced"]), stored, scanText });
+      // A hold while the last request for the same card is still unanswered sends nothing new, so a slow link can
+      // give fewer requests than holds; never more, and never one to another class.
+      L.check("S", "a scan after the switch goes into the new class: at most one request per hold, every one to the new class, one attendance record, none anywhere else",
+        posts.length >= 1 && posts.length <= holds && posts.every((p) => p === inst["Reg No-Gi Advanced"]) && stored.filter((s) => s.endsWith("Member 1")).join() === "Reg No-Gi Advanced:Member 1" && JSON.stringify(stored.filter((s) => !s.endsWith("Member 1"))) === JSON.stringify(before), { holds, posts: posts.length, allToNewClass: posts.every((p) => p === inst["Reg No-Gi Advanced"]), stored, scanText });
       await ctx.close();
     }
 
