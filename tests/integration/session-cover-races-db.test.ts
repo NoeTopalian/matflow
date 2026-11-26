@@ -226,8 +226,8 @@ describe.skipIf(!HAS_DB)("session cover — forced interleavings on a real datab
       ids.editN = await weekly("Edit N");
       ids.n = (await tx.classInstance.create({ data: { classId: ids.editN, date: NEXT_THU, startTime: "07:00", endTime: "08:00" } })).id;
       ids.nTo = (await tx.classInstance.create({ data: { classId: ids.editN, date: NEXT_THU, startTime: "07:30", endTime: "08:30" } })).id;
-    });
-  }, 180_000);
+    }, { timeout: 150_000 }); // ~100 inserts: past the default 15 s budget at the test branch's latency from Bali
+  }, 240_000);
 
   afterAll(async () => {
     if (!state.tenantId) return;

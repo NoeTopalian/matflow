@@ -156,8 +156,8 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
       ids.otherS = (await tx.classInstance.create({ data: { classId: otherClass, date: thu(4), startTime: "19:00", endTime: "20:00" } })).id;
       await user("otherOwner", "Other Owner", "owner", ids.otherTenant);
       await tx.sessionCover.create({ data: { tenantId: ids.otherTenant, classInstanceId: ids.otherS, status: "covered", coverUserId: ids.stranger, requestedById: ids.otherOwner } });
-    });
-  }, 180_000);
+    }, { timeout: 150_000 }); // ~100 inserts: past the default 15 s budget at the test branch's latency from Bali
+  }, 240_000);
 
   afterAll(async () => {
     if (!state.tenantId) return;
