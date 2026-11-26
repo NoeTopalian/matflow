@@ -215,7 +215,11 @@ try {
     // The timetable's chips for today: a cover note only where cover was asked for or accepted. On a desktop the Day
     // view draws the whole day; a chip the grid folds into "+N more" is recorded as folded, and the week's cover read
     // the chips are drawn from is checked as well.
+    // The chips' cover lines come from the week's cover read, which can take several seconds from here: wait for it.
+    const coverRead = page.waitForResponse((r) => r.url().includes("/api/coach/cover?from="), { timeout: 120000 }).catch(() => null);
     await page.goto("/dashboard/timetable");
+    const coverResponse = await coverRead;
+    L.note(`T@${tag}`, "the timetable's week cover read answered", coverResponse ? coverResponse.status() : "no response within 120 s");
     if (tag === "1280") await page.getByRole("button", { name: "Day", exact: true }).click().catch(() => {});
     const chipOf = (name) => page.locator('[data-chip-part="name"]', { hasText: name }).first().locator("xpath=ancestor::button[1]");
     await page.locator('[data-chip-part="name"]', { hasText: DASH[1].name }).first().waitFor({ timeout: 90000 });
