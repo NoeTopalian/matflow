@@ -58,6 +58,7 @@ export function WeekChip({
   duplicate = false,
   kids = false,
   category = null,
+  cover = null,
   canManage,
   onEdit,
   size = "week",
@@ -81,6 +82,8 @@ export function WeekChip({
   duplicate?: boolean;
   kids?: boolean;
   category?: string | null;
+  /** Session cover on this dated session ("Cover needed", "Covered by …"); null when its coach is the regular one. */
+  cover?: string | null;
   canManage: boolean;
   onEdit: () => void;
 }) {
@@ -88,7 +91,7 @@ export function WeekChip({
   const dim = state === "ended" || state === "cancelled";
   const label =
     `${canManage ? "Edit " : ""}${name}, ${dayName} ${startTime} to ${endTime}${place ? `, ${place}` : noPlaceLabel ? `, ${noPlaceLabel}` : ""}` +
-    `${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}`;
+    `${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}${cover ? `, ${cover}` : ""}`;
   const phone = size === "phone";
   return (
     <Button
@@ -124,6 +127,11 @@ export function WeekChip({
       {showPlace && place ? (
         <span className="line-clamp-2 text-[11px] leading-[14px] text-tx-2 [overflow-wrap:anywhere]" data-chip-part="place">
           {place}
+        </span>
+      ) : null}
+      {cover ? (
+        <span className="text-[11px] font-medium leading-[14px] text-tx-1 [overflow-wrap:anywhere]" data-chip-part="cover">
+          {cover}
         </span>
       ) : null}
       {showState || duplicate || kids || category ? (

@@ -134,6 +134,9 @@ interface ScheduleChange {
   instancesRemoved: string[];
   instancesKept: string[];
   instancesCreated: number;
+  /** Session cover carried to the one new session (a covered one awaits reconfirmation), and cover requests closed. */
+  coverMoved?: number;
+  coverClosed?: Array<{ date: string; startTime: string; closedReason: string }>;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -182,6 +185,17 @@ function describeSave(change: ScheduleChange | null | undefined): string {
     message +=
       ` ${plural(change.instancesKept.length, "session", "sessions")} kept at the old time` +
       ` — members have already checked in or joined the waitlist. Cancel them from the register if they are not running.`;
+  }
+  // Session cover (26 Nov 2026): said, never silent. A request MatFlow could not match to one new session is closed,
+  // and staff are told to ask again on the session they meant.
+  if (change.coverMoved) {
+    message += ` ${plural(change.coverMoved, "cover request moved", "cover requests moved")} to the new time; a covering coach has to reconfirm.`;
+  }
+  if (change.coverClosed && change.coverClosed.length > 0) {
+    const when = change.coverClosed
+      .map((c) => `${new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(c.date))} ${c.startTime}`)
+      .join(", ");
+    message += ` ${plural(change.coverClosed.length, "cover request", "cover requests")} closed (${when}): request cover again on the session you meant, under Class cover.`;
   }
   return message;
 }
@@ -293,6 +307,11 @@ function clubToday(timeZone: string | undefined): ClubToday {
 function getWeekDates(offset: number, today: ClubToday): Date[] {
   const mondayDate = today.day - ((today.dow + 6) % 7) + offset * 7;
   return Array.from({ length: 7 }, (_, i) => new Date(today.year, today.month - 1, mondayDate + i));
+}
+
+/** A calendar date of the week (a device-local midnight of the club's date) as YYYY-MM-DD. */
+function calendarKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function fmtWeekLabel(dates: Date[]): string {
@@ -2307,6 +2326,29 @@ export default function TimetableManager({
     return () => { alive = false; };
   }, []);
 
+  // Session cover on the week on screen: "Cover needed" or "Covered by …" on a dated session, keyed
+  // `classId|YYYY-MM-DD|startTime` (GET /api/coach/cover, the one resolver of who teaches a session). The chips carry no
+  // coach otherwise, so a failed read leaves them exactly as they were before this read existed.
+  const coverWeekFrom = calendarKey(getWeekDates(weekOffset, clubToday(timeZone))[0]);
+  const [coverNotes, setCoverNotes] = useState<ReadonlyMap<string, string>>(() => new Map());
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/coach/cover?from=${coverWeekFrom}&days=7`);
+        if (!r.ok) return;
+        const d = (await r.json()) as { sessions?: { classId: string; dayKey: string; startTime: string; state: string; coachLabel: string | null }[] };
+        if (!Array.isArray(d.sessions)) return;
+        const notes = new Map<string, string>();
+        for (const s of d.sessions) if (s.state !== "regular" && s.coachLabel) notes.set(`${s.classId}|${s.dayKey}|${s.startTime}`, s.coachLabel);
+        if (alive) setCoverNotes(notes);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [coverWeekFrom]);
+  const coverOf = (cls: ClassRow, slot: ClassRow["schedules"][number], date: Date | undefined) =>
+    date ? (coverNotes.get(`${cls.id}|${calendarKey(date)}|${slot.startTime}`) ?? null) : null;
+
   const visibleClasses = (
     myClassesOnly && showMyToggle
       ? classes.filter((c) => c.coachUserId === currentUserId)
@@ -3063,6 +3105,7 @@ export default function TimetableManager({
                                   duplicate={duplicates.has(slot.id)}
                                   kids={cls.isKids}
                                   category={categoryTag(cls)}
+                                  cover={coverOf(cls, slot, agendaDate)}
                                   canManage={canManage}
                                   onEdit={() => openEdit(cls)}
                                 />
@@ -3222,6 +3265,7 @@ export default function TimetableManager({
                               duplicate={duplicates.has(slot.id)}
                               kids={cls.isKids}
                               category={categoryTag(cls)}
+                              cover={coverOf(cls, slot, dateOf(slot.dayOfWeek))}
                               canManage={canManage}
                               onEdit={() => openEdit(cls)}
                             />

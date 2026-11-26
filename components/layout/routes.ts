@@ -16,6 +16,7 @@ import {
   Settings,
   History,
   UserCog,
+  Repeat,
 } from "lucide-react";
 
 export type StaffRole = "owner" | "manager" | "coach" | "admin";
@@ -52,6 +53,9 @@ export const STAFF_NAV: StaffNavItem[] = [
   { href: "/dashboard/checkin", label: "Mark Attendance", mobileLabel: "Register", icon: ClipboardCheck, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
   { href: "/dashboard/members", label: "Members", icon: Users, roles: ["owner", "manager", "coach", "admin"], section: "main", mobilePrimary: true },
   { href: "/dashboard/attendance", label: "Attendance", icon: ClipboardList, roles: ["owner", "manager", "coach", "admin"], section: "main" },
+  // Session cover (26 Nov 2026): ask for cover on one dated session, take a class that needs a coach, and see who
+  // covers what. Every staff role: any of them may be asked to cover. Matches the page gate (requireStaff).
+  { href: "/dashboard/cover", label: "Class cover", icon: Repeat, roles: ["owner", "manager", "coach", "admin"], section: "main" },
   { href: "/dashboard/ranks", label: "Ranks", icon: Award, roles: ["owner", "manager", "coach"], section: "admin" },
   { href: "/dashboard/promotions", label: "Promotions", icon: TrendingUp, roles: ["owner", "manager"], section: "admin" },
   { href: "/dashboard/notifications", label: "Notifications", icon: Bell, roles: ["owner", "manager"], section: "admin" },
