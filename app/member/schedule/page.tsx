@@ -455,7 +455,11 @@ function DayPane({
             {FELL_BACK}
           </p>
         ) : null}
-        {!loading && dayClasses.length === 0 ? (
+        {loading ? (
+          // Audit F3: while the schedule loads the day says so. It used to draw nothing, which on slow gym Wi-Fi
+          // read as a day with no classes. In the page's own quiet ink (--member-text at 72%), a token, not a grey.
+          <p role="status" className="py-16 text-center text-sm" style={{ color: QUIET_INK }} data-testid="schedule-loading">Loading classes…</p>
+        ) : dayClasses.length === 0 ? (
           <p className="py-16 text-center text-gray-700 text-sm">No classes today</p>
         ) : dayClasses.length > 0 ? (
           <PosterDay
