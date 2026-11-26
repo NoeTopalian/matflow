@@ -54,11 +54,14 @@ try {
       const apple = links.filter((l) => l.rel === "apple-touch-icon");
       const man = links.filter((l) => l.rel === "manifest");
       L.check(id, `the page answers 200 at ${new URL(page.url()).pathname} and carries tab icons, one touch icon and one manifest link`, nav.status() === 200 && icons.length >= 1 && apple.length === 1 && man.length === 1, { final: new URL(page.url()).pathname, links });
-      // Tab icons: only the plain MF tile (favicon.ico and /icon.png); nothing under /icons/.
+      // Tab icons: favicon.ico and /icon.png only, nothing under /icons/. That they are the MF STUDIO tile is checked from their pixels below.
       const got = [];
       for (const l of [...icons, ...apple]) got.push({ rel: l.rel, declared: l.sizes, ...(await follow(ctx.request, l.href)) });
       const tabOk = got.filter((g) => g.rel !== "apple-touch-icon").every((g) => ["/favicon.ico", "/icon.png"].includes(g.path.split("?")[0]));
-      L.check(id, "tab icons are the plain MF tile only (favicon.ico and /icon.png), none of the STUDIO tiles", tabOk, got.map((g) => `${g.rel} ${g.path}`));
+      L.check(id, "tab icons are favicon.ico and /icon.png only, none of the installed-app files under /icons/", tabOk, got.map((g) => `${g.rel} ${g.path}`));
+      // /icon.png has no content hash in its address, so it must carry a version or a returning browser keeps the old tile.
+      const tabPaths = got.filter((g) => g.rel !== "apple-touch-icon").map((g) => g.path);
+      L.check(id, "every tab icon address carries a version or content hash (favicon.ico?favicon.<hash>.ico, /icon.png?v=3)", tabPaths.length >= 2 && tabPaths.every((p) => /^\/favicon\.ico\?favicon\.[^.]+\.ico$/.test(p) || p === "/icon.png?v=3"), tabPaths);
       const good = got.every((g) => g.status === 200 && !g.html && /^image\//.test(g.type) && g.sameAsRepo === true && (g.png ? g.png.w === g.png.h : !!g.ico));
       L.check(id, "every icon link answers 200 with an image type, is not an HTML page, is square, and is byte-identical to the repository file", good, got.map((g) => ({ rel: g.rel, path: g.path, status: g.status, type: g.type, bytes: g.bytes, html: g.html, png: g.png, ico: g.ico, file: g.repoFile, same: g.sameAsRepo })));
       const a = got.find((g) => g.rel === "apple-touch-icon");
@@ -93,7 +96,7 @@ try {
 }
 
 // Artwork: the maskable tile is full bleed (opaque corners) with the mark inside the 80% safe circle; the regular tile
-// has clear corners; the tab tile is the plain MF (differs from the STUDIO tile). Measured from the served files' pixels.
+// has clear corners; the tab tile is the MF STUDIO tile at every size (26 Nov 2026), not the plain MF. Measured from the served files' pixels.
 {
   const b2 = await chromium.launch();
   try {
@@ -111,7 +114,8 @@ try {
         const d = g.getImageData(0, 0, c.width, c.height).data;
         const at = (x, y) => { const i = (y * c.width + x) * 4; return [d[i], d[i + 1], d[i + 2], d[i + 3]]; };
         // Non-background pixels outside the safe circle (radius 40% of the width): anything not the tile's black.
-        let outside = 0, inside = 0;
+        let outside = 0, inside = 0, sum = 0;
+        for (let i = 0; i < d.length; i += 1) sum += d[i];
         const r = c.width * 0.4, cx = c.width / 2, cy = c.height / 2;
         for (let y = 0; y < c.height; y += 2) for (let x = 0; x < c.width; x += 2) {
           const [R, G, B, A] = at(x, y);
@@ -119,14 +123,15 @@ try {
           if (!ink) continue;
           if (Math.hypot(x - cx, y - cy) > r) outside += 1; else inside += 1;
         }
-        return { w: c.width, h: c.height, corner: at(1, 1), centreEdge: at(Math.floor(c.width / 2), 2), inkOutsideSafeCircle: outside, inkInside: inside };
+        return { w: c.width, h: c.height, corner: at(1, 1), centreEdge: at(Math.floor(c.width / 2), 2), inkOutsideSafeCircle: outside, inkInside: inside, sum };
       };
-      return { maskable512: await read("/icons/icon-maskable-512.png"), regular512: await read("/icons/icon-512.png?v=2"), tab: await read("/icon.png"), apple: await read("/apple-touch-icon.png?v=2") };
+      return { maskable512: await read("/icons/icon-maskable-512.png"), regular512: await read("/icons/icon-512.png?v=2"), tab: await read("/icon.png?v=3"), apple: await read("/apple-touch-icon.png?v=2") };
     });
     L.check("art", "maskable 512: opaque black to the corners, artwork present, and none of it outside the 80% safe circle", px.maskable512.corner[3] === 255 && px.maskable512.inkInside > 500 && px.maskable512.inkOutsideSafeCircle === 0, px.maskable512);
     L.check("art", "regular 512: rounded tile with clear corners and artwork present", px.regular512.corner[3] === 0 && px.regular512.inkInside > 500, px.regular512);
     L.check("art", "touch icon: opaque corners (iOS rounds it itself) and artwork present", px.apple.corner[3] === 255 && px.apple.inkInside > 50, px.apple);
     L.check("art", "tab tile: artwork present", px.tab.inkInside > 500, px.tab);
+    L.check("art", "tab tile /icon.png is the MF STUDIO tile: the same picture, pixel for pixel, as the installed-app 512 tile", px.tab.w === px.regular512.w && px.tab.sum === px.regular512.sum && px.tab.inkInside === px.regular512.inkInside, { tab: px.tab, studio512: px.regular512 });
   } finally {
     await b2.close().catch(() => {});
   }
@@ -147,18 +152,21 @@ try {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
   let note = null;
+  let pageImages = [];
   let b3;
   try {
     b3 = await chromium.launch({ channel: "chromium", headless: true }).catch(async (e) => { note = `new headless not available (${String(e).slice(0, 80)}); used a visible window`; return chromium.launch({ headless: false }); });
     const page = await b3.newPage();
     await page.goto(`http://127.0.0.1:${port}/login`, { waitUntil: "load" }).catch((e) => { note = `${note ?? ""} goto: ${String(e).slice(0, 120)}`; });
     await page.waitForTimeout(4000);
+    // Pictures the page itself shows (the sign-in screen's MatFlow mark is /icons/icon-512.png): not tab-icon requests.
+    pageImages = await page.evaluate(() => [...document.images].map((i) => { const u = new URL(i.currentSrc || i.src); return u.pathname + u.search; })).catch(() => []);
   } finally {
     await b3?.close().catch(() => {});
     server.close();
   }
-  const iconHits = hits.filter((u) => /favicon\.ico|\/icon\.png|\/icons\/|apple-touch-icon/.test(u));
+  const iconHits = hits.filter((u) => /favicon\.ico|\/icon\.png|\/icons\/|apple-touch-icon/.test(u) && !pageImages.includes(u));
   if (iconHits.length === 0) L.note("selected", "the browser asked for no icon through the logging pass-through; which candidate a browser picks was not observed", { hits: hits.slice(0, 12), note });
-  else L.check("selected", "the browser's own tab-icon request is for the plain MF tile (favicon.ico or /icon.png), never a STUDIO tile", iconHits.every((u) => /^\/(favicon\.ico|icon\.png)/.test(u)), { iconHits, note });
+  else L.check("selected", "the browser's own tab-icon request is for favicon.ico or /icon.png, never an installed-app file under /icons/", iconHits.every((u) => /^\/(favicon\.ico|icon\.png)/.test(u)), { iconHits, pageImages, note });
 }
 console.log(`\n${L.summary()}  ledger ${L.path}`);
