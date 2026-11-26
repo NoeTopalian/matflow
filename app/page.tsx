@@ -1,49 +1,44 @@
 // Public marketing landing page at matflow.studio.
-// Server component that composes client-island sections.
+// Server component; the only client islands are the top bar and the member door.
 // Proxy.ts must treat `/` as public — see lib/proxy logic.
 
 import type { Metadata } from "next";
-import { DM_Serif_Display, Syne, Figtree } from "next/font/google";
+import { Inter, Protest_Strike } from "next/font/google";
 import { LandingNav } from "@/components/landing/LandingNav";
 import { Hero } from "@/components/landing/Hero";
-import { SocialProofStrip } from "@/components/landing/SocialProofStrip";
-import { HowItWorks } from "@/components/landing/HowItWorks";
 import { FeaturesGrid } from "@/components/landing/FeaturesGrid";
+import { EverythingIncluded } from "@/components/landing/EverythingIncluded";
+import { HowItWorks } from "@/components/landing/HowItWorks";
 import { PricingSection } from "@/components/landing/PricingSection";
-import { ApplySection } from "@/components/landing/ApplySection";
 import { FinalCTA } from "@/components/landing/FinalCTA";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 
-const displayFont = DM_Serif_Display({
+// The two faces the brand guide names beside the logo (brand/MATFLOW-STUDIO-LOGO-GUIDE.md).
+const displayFont = Protest_Strike({
   subsets: ["latin"],
   weight: "400",
-  style: ["normal", "italic"],
   variable: "--font-display",
   display: "swap",
 });
 
-const labelFont = Syne({
-  subsets: ["latin"],
-  variable: "--font-label",
-  display: "swap",
-});
-
-const bodyFont = Figtree({
+const bodyFont = Inter({
   subsets: ["latin"],
   variable: "--font-body",
   display: "swap",
 });
 
+const TITLE = "MatFlow.Studio: Gym management software for martial arts academies";
+const DESCRIPTION =
+  "Timetable, check-in, belts and members in one place. Built for martial arts academies in the UK.";
+
 export const metadata: Metadata = {
-  title: "MatFlow — Gym software built for BJJ academies",
-  description:
-    "Belt and stripe tracking, kiosk check-in, attendance-driven promotions, branded member portal. Built specifically for UK Brazilian Jiu-Jitsu academies.",
+  title: TITLE,
+  description: DESCRIPTION,
   openGraph: {
-    title: "MatFlow — Gym software built for BJJ academies",
-    description:
-      "Belt and stripe tracking, kiosk check-in, attendance-driven promotions, branded member portal. Built specifically for UK Brazilian Jiu-Jitsu academies.",
+    title: TITLE,
+    description: DESCRIPTION,
     url: "https://matflow.studio",
-    siteName: "MatFlow",
+    siteName: "MatFlow.Studio",
     locale: "en_GB",
     type: "website",
   },
@@ -52,24 +47,19 @@ export const metadata: Metadata = {
   },
 };
 
+// Colours and type for this page are defined once, under #landing-root in app/globals.css.
 export default function LandingPage() {
   return (
     <main
       id="landing-root"
-      className={`${displayFont.variable} ${labelFont.variable} ${bodyFont.variable} min-h-screen antialiased`}
-      style={{
-        background: "#0a0908",
-        color: "#ede8df",
-        fontFamily: "var(--font-body), system-ui, sans-serif",
-      } as React.CSSProperties}
+      className={`${displayFont.variable} ${bodyFont.variable} min-h-screen antialiased`}
     >
       <LandingNav />
       <Hero />
-      <SocialProofStrip />
-      <HowItWorks />
       <FeaturesGrid />
+      <EverythingIncluded />
+      <HowItWorks />
       <PricingSection />
-      <ApplySection />
       <FinalCTA />
       <LandingFooter />
     </main>

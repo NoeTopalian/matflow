@@ -187,6 +187,14 @@ const nextConfig: NextConfig = {
         destination: "/login",
         permanent: true,
       },
+      {
+        // The sub-processor list was its own page until 24 Nov 2026 and now
+        // lives in the privacy policy. Terms that customers have already
+        // accepted link to the old address, so it keeps working.
+        source: "/legal/subprocessors",
+        destination: "/legal/privacy#sub-processors",
+        permanent: true,
+      },
     ];
   },
 };

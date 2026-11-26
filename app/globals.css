@@ -639,27 +639,132 @@ option {
   /* ── Landing page (public marketing) ─────────────────────────────────────
      The landing sections are server components (speed pass B1) — hover and
      entrance motion live here as CSS instead of framer-motion + JS handlers.
-     The global prefers-reduced-motion block above neutralises the animations. */
+     Reduced motion is honoured at the end of this block. */
+  /* Palette and type for the landing page, defined once (UI-RULES §2: a public
+     surface owns its palette). The four colours are the brand kit's
+     (brand/MATFLOW-STUDIO-LOGO-GUIDE.md): white ground, black ink, the kit's
+     off-white for cards, blue for buttons. Red belongs to the logo and is not
+     used by the page. (White since 24 Nov 2026; it was black before.) */
+  #landing-root {
+    --land-bg: #ffffff;
+    --land-raise: #f6f4ee;
+    --land-ink: #111111;
+    --land-muted: rgba(17, 17, 17, 0.74);
+    --land-faint: rgba(17, 17, 17, 0.64);
+    --land-line: rgba(17, 17, 17, 0.14);
+    --land-edge: rgba(17, 17, 17, 0.4);
+    --land-blue: #3f68d8;
+    --land-blue-press: #3558c2;
+    background: var(--land-bg);
+    color: var(--land-ink);
+    font-family: var(--font-body), system-ui, sans-serif;
+  }
+  /* The app shell behind the page is a pale grey; without this the rubber-band
+     overscroll above and below the landing page shows a strip of it. */
+  body:has(#landing-root) { background: #ffffff; }
+  #landing-root :focus-visible {
+    outline: 2px solid var(--land-ink);
+    outline-offset: 3px;
+    border-radius: 0.75rem;
+  }
+  .land-display {
+    font-family: var(--font-display), Impact, "Arial Black", sans-serif;
+    font-weight: 400;
+    text-wrap: balance;
+  }
+  .land-muted { color: var(--land-muted); }
+  .land-faint { color: var(--land-faint); }
+  .land-rule { border-top: 1px solid var(--land-line); }
+  .land-card {
+    background: var(--land-raise);
+    border: 1px solid var(--land-line);
+    border-radius: 1rem;
+  }
+  /* Frame for a product picture; the picture is of the light staff screen. */
+  .land-shot {
+    border: 1px solid var(--land-line);
+    border-radius: 1rem;
+    background: #f5f6f8;
+  }
+  /* A plain list with a small square marker in the ink colour. */
+  .land-list > li { position: relative; padding-left: 1rem; }
+  .land-list > li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.6em;
+    width: 0.3rem;
+    height: 0.3rem;
+    background: var(--land-faint);
+  }
+  .land-step { border-top: 2px solid var(--land-ink); }
+  /* The brand blue is 5:1 on white. */
+  .land-step-number { color: var(--land-blue); }
+  .land-input {
+    background: var(--land-bg);
+    color: var(--land-ink);
+    border: 1px solid var(--land-edge);
+  }
+  .land-input:hover { border-color: var(--land-ink); }
+  .land-nav {
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    transition: background 0.3s ease, border-color 0.3s ease;
+  }
+  .land-nav-solid {
+    background: rgba(255, 255, 255, 0.94);
+    border-bottom-color: var(--land-line);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  /* The window the corner logo is seen through: see LandingNav. */
+  .land-corner-logo { width: 142px; height: 60px; }
+  .land-corner-logo > img { margin-left: -55px; margin-top: -28px; }
+  .land-menu-toggle { border: 1px solid var(--land-edge); }
+  .land-menu-bar {
+    display: block;
+    width: 1rem;
+    height: 1px;
+    background: var(--land-ink);
+    transition: transform 0.2s ease;
+  }
+  /* White on the brand blue is 5:1. */
   .land-btn-primary {
-    background: #3d8bff;
-    color: #0a0908;
+    background: var(--land-blue);
+    color: #ffffff;
     transition: background 0.2s ease;
   }
-  .land-btn-primary:hover { background: #5da0ff; }
+  .land-btn-primary:hover { background: var(--land-blue-press); }
   .land-btn-ghost {
-    color: rgba(237, 232, 223, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: color 0.2s ease, border-color 0.2s ease;
+    color: var(--land-ink);
+    border: 1px solid var(--land-edge);
+    transition: border-color 0.2s ease;
   }
-  .land-btn-ghost:hover {
-    color: #ede8df;
-    border-color: rgba(255, 255, 255, 0.2);
-  }
+  .land-btn-ghost:hover { border-color: var(--land-ink); }
   .land-link {
-    color: rgba(237, 232, 223, 0.55);
+    color: var(--land-muted);
     transition: color 0.2s ease;
   }
-  .land-link:hover { color: #ede8df; }
+  .land-link:hover { color: var(--land-ink); }
+
+  /* The opening logo is written out left to right, then its .Studio strip.
+     Two copies of the one file sit on top of each other: one cut to
+     everything above the strip, one cut to the strip. The cut follows the
+     logo's 5 degree tilt (a line from 77.5% down the left edge to 56.1% down
+     the right). Each copy is uncovered by a wipe; the numbers are where the
+     drawing starts and ends inside the file's empty margins. */
+  .land-logo-word { clip-path: polygon(0 0, 100% 0, 100% 56.1%, 0 77.5%); }
+  .land-logo-strip { clip-path: polygon(0 77.5%, 100% 56.1%, 100% 100%, 0 100%); }
+  @keyframes land-write-word {
+    from { clip-path: inset(0 79% 0 0); }
+    to   { clip-path: inset(0 0 0 0); }
+  }
+  @keyframes land-write-strip {
+    from { clip-path: inset(0 51% 0 0); }
+    to   { clip-path: inset(0 0 0 0); }
+  }
+  .land-write-word { animation: land-write-word 1.1s cubic-bezier(0.5, 0, 0.3, 1) 0.15s both; }
+  .land-write-strip { animation: land-write-strip 0.55s cubic-bezier(0.5, 0, 0.3, 1) 1.2s both; }
 
   @keyframes land-rise {
     from { opacity: 0; transform: translateY(20px); }
@@ -676,6 +781,12 @@ option {
      app-wide (breaking scrollIntoView-then-measure logic and Next's router
      scroll restoration). */
   html:has(#landing-root) { scroll-behavior: smooth; }
+  /* The global reduced-motion block names other classes, so the entrance
+     rise and the smooth anchor scroll are switched off here. */
+  @media (prefers-reduced-motion: reduce) {
+    .land-rise, .land-write-word, .land-write-strip { animation: none; }
+    html:has(#landing-root) { scroll-behavior: auto; }
+  }
   section[id] { scroll-margin-top: 5rem; }
 }
 /* ── Member top bar: fill the overscroll strip ──────────────────────────────

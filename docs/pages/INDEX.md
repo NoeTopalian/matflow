@@ -23,7 +23,6 @@ All 29 user-facing pages documented. One row per page: route, doc link, purpose,
 | `/legal/terms` | [terms.md](legal/terms.md) | Platform Terms of Service | ✅ |
 | `/legal/privacy` | [privacy.md](legal/privacy.md) | Privacy Policy (UK GDPR) | ✅ |
 | `/legal/aup` | [aup.md](legal/aup.md) | Acceptable Use Policy | ✅ |
-| `/legal/subprocessors` | [subprocessors.md](legal/subprocessors.md) | Third-party sub-processor list | ✅ |
 
 ---
 

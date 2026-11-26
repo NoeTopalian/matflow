@@ -1,241 +1,90 @@
-// Server component — entrance motion is CSS (`land-rise` in globals.css),
-// hover states are CSS classes. No JS shipped for this section (speed pass B1).
+// Server component. The opening has two doors side by side: the owner's on the
+// left (apply), the member's on the right (club code). Entrance motion is CSS
+// (`land-rise` in globals.css).
 
+import Image from "next/image";
 import Link from "next/link";
-
-const BELT_COLORS: Record<string, string> = {
-  white: "#d4d4d4",
-  blue: "#3b82f6",
-  purple: "#8b5cf6",
-  brown: "#92400e",
-  black: "#1c1c1e",
-};
-
-// Product-shot mock — stylised, clearly a demo gym ("Apex Academy").
-const MOCK_MEMBERS = [
-  { name: "Alex Reed", belt: "blue" as const, stripes: 3, classes: 89, required: 90, eligible: true },
-  { name: "Jordan Mills", belt: "purple" as const, stripes: 1, classes: 52, required: 120, eligible: false },
-  { name: "Casey Park", belt: "white" as const, stripes: 0, classes: 18, required: 50, eligible: false },
-  { name: "Sam Torres", belt: "brown" as const, stripes: 4, classes: 158, required: 150, eligible: true },
-];
-
-export function BeltTrackerMockup() {
-  return (
-    <div
-      className="rounded-2xl overflow-hidden w-full"
-      style={{
-        background: "#111009",
-        border: "1px solid rgba(255,255,255,0.08)",
-        boxShadow: "0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(61,139,255,0.08)",
-        maxWidth: 380,
-      }}
-    >
-      {/* Window chrome */}
-      <div
-        className="flex items-center gap-2 px-4 py-3"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
-      >
-        <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#ef4444" }} />
-        <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#f59e0b" }} />
-        <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#22c55e" }} />
-        <span
-          className="ml-auto text-[10px] font-semibold tracking-widest"
-          style={{ color: "rgba(237,232,223,0.25)", fontFamily: "var(--font-label)" }}
-        >
-          MATFLOW
-        </span>
-      </div>
-
-      {/* Header */}
-      <div className="px-5 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-        <p
-          className="text-[10px] font-semibold uppercase tracking-widest mb-1"
-          style={{ color: "#3d8bff", fontFamily: "var(--font-label)" }}
-        >
-          Belt Tracker
-        </p>
-        <p className="text-xs" style={{ color: "rgba(237,232,223,0.38)" }}>
-          Apex Academy · 47 active members
-        </p>
-      </div>
-
-      {/* Member rows */}
-      <div>
-        {MOCK_MEMBERS.map((m, i) => {
-          const pct = Math.min((m.classes / m.required) * 100, 100);
-          return (
-            <div
-              key={m.name}
-              className="px-5 py-3.5"
-              style={{
-                borderBottom: i < MOCK_MEMBERS.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
-              }}
-            >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div>
-                  <p className="text-xs font-semibold mb-1.5" style={{ color: "#ede8df" }}>
-                    {m.name}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-1.5 rounded-sm"
-                      style={{ width: 22, background: BELT_COLORS[m.belt] }}
-                    />
-                    <div className="flex gap-1">
-                      {[0, 1, 2, 3].map((si) => (
-                        <div
-                          key={si}
-                          className="w-1.5 h-1.5 rounded-full"
-                          style={{
-                            background: si < m.stripes ? "#e8b86d" : "rgba(255,255,255,0.12)",
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                {m.eligible && (
-                  <span
-                    className="text-[9px] font-semibold tracking-wider px-2 py-1 rounded-full whitespace-nowrap"
-                    style={{
-                      background: "rgba(61,139,255,0.15)",
-                      color: "#e8b86d",
-                      fontFamily: "var(--font-label)",
-                    }}
-                  >
-                    ELIGIBLE
-                  </span>
-                )}
-              </div>
-              <div className="h-0.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${pct}%`,
-                    background: m.eligible ? "#3d8bff" : "rgba(61,139,255,0.35)",
-                  }}
-                />
-              </div>
-              <p className="text-[9px] mt-1" style={{ color: "rgba(237,232,223,0.25)" }}>
-                {m.classes}/{m.required} sessions attended
-              </p>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Footer */}
-      <div
-        className="px-5 py-3.5 flex items-center justify-between"
-        style={{ background: "rgba(61,139,255,0.06)", borderTop: "1px solid rgba(61,139,255,0.1)" }}
-      >
-        <p className="text-xs font-semibold" style={{ color: "#e8b86d" }}>
-          2 eligible for promotion
-        </p>
-        <span className="text-xs" style={{ color: "#3d8bff" }}>
-          View queue →
-        </span>
-      </div>
-    </div>
-  );
-}
+import mainLogo from "@/brand/matflowstudio-logo-on-light.svg";
+import { MemberDoor } from "@/components/landing/MemberDoor";
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden" style={{ minHeight: "calc(100svh - 4rem)" }}>
-      {/* Background radial glow */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 60% at 20% -10%, rgba(61,139,255,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 80% 110%, rgba(61,139,255,0.04) 0%, transparent 55%)",
-        }}
-      />
-      {/* Dot grid */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          opacity: 0.035,
-          backgroundImage: "radial-gradient(rgba(237,232,223,1) 1px, transparent 1px)",
-          backgroundSize: "24px 24px",
-        }}
-      />
-
-      <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-16 pb-20 lg:pt-24 lg:pb-28">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
-          {/* Left: copy */}
-          <div className="lg:col-span-7">
-            <div className="mb-6 land-rise">
-              <span
-                className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase px-3 py-1.5 rounded-full"
-                style={{
-                  color: "#3d8bff",
-                  background: "rgba(61,139,255,0.1)",
-                  border: "1px solid rgba(61,139,255,0.2)",
-                  fontFamily: "var(--font-label)",
-                }}
-              >
-                <span className="relative flex h-1.5 w-1.5">
-                  <span
-                    className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
-                    style={{ background: "#3d8bff" }}
-                  />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: "#3d8bff" }} />
-                </span>
-                BJJ-native gym software
-              </span>
+    <section className="relative overflow-hidden">
+      <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-14 pb-20 lg:pt-20 lg:pb-28">
+        {/* The logo, large and centred above both doors, written out on arrival:
+            the lettering and belt first, then the .Studio strip (the two
+            copies and their cuts are explained in globals.css). The file is
+            640 x 260 with the drawing in the middle 56% of its width, so the
+            stage is wider than the page column (a centred flex child overflows
+            equally on both sides) and its empty top and bottom margins are
+            pulled in; the section clips the overhang. */}
+        <div id="landing-hero-logo" className="flex justify-center mb-10 lg:mb-14">
+          <div
+            className="relative shrink-0"
+            style={{
+              width: "min(65rem, 165%)",
+              aspectRatio: "640 / 260",
+              marginTop: "calc(min(65rem, 165%) * -0.085)",
+              marginBottom: "calc(min(65rem, 165%) * -0.03)",
+            }}
+          >
+            <div className="absolute inset-0 land-write-word">
+              <Image
+                src={mainLogo}
+                alt="MatFlow.Studio"
+                width={1040}
+                height={423}
+                unoptimized
+                preload
+                className="land-logo-word block w-full h-full max-w-none"
+              />
             </div>
+            <div className="absolute inset-0 land-write-strip" aria-hidden>
+              <Image
+                src={mainLogo}
+                alt=""
+                width={1040}
+                height={423}
+                unoptimized
+                className="land-logo-strip block w-full h-full max-w-none"
+              />
+            </div>
+          </div>
+        </div>
 
-            <h1 className="mb-6 leading-[1.04] land-rise land-rise-2">
-              <span
-                className="block text-5xl sm:text-6xl lg:text-[5.5rem]"
-                style={{ fontFamily: "var(--font-display)", color: "#ede8df" }}
-              >
-                The gym software
-              </span>
-              <span
-                className="block text-5xl sm:text-6xl lg:text-[5.5rem] italic"
-                style={{ fontFamily: "var(--font-display)", color: "#3d8bff" }}
-              >
-                built for the mat.
-              </span>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-14 lg:gap-12 items-center">
+          <div className="lg:col-span-7">
+            <h1 className="land-display text-5xl sm:text-6xl lg:text-7xl leading-[1.02] mb-6 land-rise land-rise-2">
+              Run your academy from the mat.
             </h1>
 
-            <p
-              className="text-lg leading-relaxed mb-10 max-w-xl land-rise land-rise-3"
-              style={{ color: "rgba(237,232,223,0.58)" }}
-            >
-              Belt and stripe tracking, attendance-driven promotions, kiosk check-in, and a branded
-              member portal — built for the way BJJ academies actually run. And you don&apos;t set it
-              up alone: we import your members, wire your payments and brand your app with you.
+            <p className="land-muted text-lg sm:text-xl leading-relaxed mb-9 max-w-xl land-rise land-rise-3">
+              Timetable, check-in, belts and members in one place. Built for martial arts academies
+              in the UK.
             </p>
 
-            <div className="flex flex-wrap gap-3 items-center mb-6 land-rise land-rise-4">
+            <div className="flex flex-wrap gap-3 items-center mb-5 land-rise land-rise-4">
               <Link
                 href="/apply"
-                className="land-btn-primary inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold"
+                className="land-btn-primary inline-flex items-center px-7 min-h-12 rounded-xl text-base font-semibold"
               >
-                Apply for an account
-                <span aria-hidden>→</span>
+                Apply for your club
               </Link>
               <Link
-                href="/#how-it-works"
-                className="land-btn-ghost inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold"
+                href="/#features"
+                className="land-btn-ghost inline-flex items-center px-7 min-h-12 rounded-xl text-base font-semibold"
               >
-                See how it works
+                See what you get
               </Link>
             </div>
 
-            <p className="text-sm land-rise land-rise-5" style={{ color: "rgba(237,232,223,0.3)" }}>
-              30-day free trial · No credit card needed · UK BJJ academies only
+            <p className="land-faint text-sm land-rise land-rise-5">
+              30-day free trial. No card needed to apply.
             </p>
           </div>
 
-          {/* Right: UI mockup */}
-          <div className="lg:col-span-5 flex justify-center lg:justify-end land-rise land-rise-3">
-            <BeltTrackerMockup />
+          <div className="lg:col-span-5 land-rise land-rise-3">
+            <MemberDoor />
           </div>
         </div>
       </div>

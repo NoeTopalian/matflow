@@ -1,0 +1,135 @@
+// @vitest-environment jsdom
+//
+// The MatFlow.Studio logo on the landing page and the icon set behind the
+// browser tab and the installed app. jsdom lays nothing out: this pins which
+// brand file each place uses, what it is called for a screen reader, and that
+// every icon the manifest names is a real PNG of the size it claims. How it
+// looks is the browser run's job.
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import React from "react";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import manifest from "@/app/manifest";
+import { LandingNav } from "@/components/landing/LandingNav";
+import { LandingFooter } from "@/components/landing/LandingFooter";
+import { Hero } from "@/components/landing/Hero";
+
+// The opening holds the member door, which asks for the router.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
+const ROOT = resolve(__dirname, "../..");
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** Width and height from a PNG's IHDR chunk. */
+function pngSize(rel: string) {
+  const buf = readFileSync(resolve(ROOT, rel));
+  expect(buf.subarray(0, 8).equals(PNG_SIGNATURE), `${rel} is a PNG`).toBe(true);
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+const publicFile = (src: string) => `public${src.split("?")[0]}`;
+const srcOf = (img: HTMLElement) => decodeURIComponent(img.getAttribute("src") ?? "");
+
+afterEach(cleanup);
+
+describe("landing page logo", () => {
+  it("the top bar links home with the primary logo, named MatFlow.Studio", async () => {
+    render(<LandingNav />);
+    // Shown one frame after arrival, once the bar has looked for the large logo.
+    const home = await screen.findByRole("link", { name: "MatFlow.Studio home" });
+    expect(home.getAttribute("href")).toBe("/");
+    const logo = within(home).getByRole("img", { name: "MatFlow.Studio" });
+    // The same file as the large logo, on the white page: the light version, strip and all.
+    expect(srcOf(logo)).toContain("matflowstudio-logo-on-light");
+    // Seen through a window that cuts the file's empty margin off.
+    expect(home.className).toContain("land-corner-logo");
+    expect(home.className).toContain("overflow-hidden");
+  });
+
+  it("the opening carries the full logo at 320 px or wider, written out in two parts", () => {
+    const { container } = render(<Hero />);
+    const logo = screen.getByRole("img", { name: "MatFlow.Studio" });
+    expect(srcOf(logo)).toContain("matflowstudio-logo-on-light");
+    expect(Number(logo.getAttribute("width"))).toBeGreaterThanOrEqual(320);
+    // Lettering and belt first, then the .Studio strip: two copies of the one file, the second hidden from readers.
+    const stage = container.querySelector("#landing-hero-logo") as HTMLElement;
+    const copies = Array.from(stage.querySelectorAll("img"));
+    expect(copies.map((img) => img.className.match(/land-logo-(word|strip)/)?.[1])).toEqual(["word", "strip"]);
+    expect(copies.map((img) => img.parentElement?.className.match(/land-write-(word|strip)/)?.[1])).toEqual(["word", "strip"]);
+    expect(copies[1].getAttribute("alt")).toBe("");
+    expect(copies[1].parentElement?.getAttribute("aria-hidden")).toBe("true");
+    expect(srcOf(copies[1])).toBe(srcOf(copies[0]));
+  });
+
+  it("the footer names the product in full beside the MF icon", () => {
+    const { container } = render(<LandingFooter />);
+    expect(screen.getByText("© 2026 MatFlow.Studio")).toBeTruthy();
+    const icon = container.querySelector("img");
+    // The test bundler inlines a file this small, so match its file name or
+    // the title the kit gave the drawing.
+    expect(srcOf(icon as HTMLElement)).toMatch(/app-icon-mf-plain|MatFlow\.Studio small icon/);
+    // Decorative: the name is in the text next to it.
+    expect(icon?.getAttribute("alt")).toBe("");
+  });
+
+  it("no brand file contains live text, a script or an embedded image", () => {
+    for (const name of [
+      "matflowstudio-logo-on-light.svg",
+      "matflowstudio-logo-on-dark.svg",
+      "app-icon-mf-plain.svg",
+      "app-icon-mf-studio.svg",
+      "app-icon-mf-studio-square.svg",
+    ]) {
+      const svg = readFileSync(resolve(ROOT, "brand", name), "utf8");
+      expect(svg, name).not.toMatch(/<(text|script|image|foreignObject)\b/i);
+    }
+  });
+});
+
+describe("icon set", () => {
+  it("every manifest icon is a PNG of the size it claims, served from /icons/", () => {
+    const icons = manifest().icons ?? [];
+    expect(icons.map((i) => `${i.sizes} ${i.purpose}`).sort()).toEqual(
+      ["192x192 any", "192x192 maskable", "512x512 any", "512x512 maskable"].sort(),
+    );
+    for (const icon of icons) {
+      // proxy.ts lets /icons/ through without a session; anything else would
+      // be answered with a redirect to the login page.
+      expect(icon.src.startsWith("/icons/"), icon.src).toBe(true);
+      const size = Number(icon.sizes?.split("x")[0]);
+      expect(pngSize(publicFile(icon.src)), icon.src).toEqual({ width: size, height: size });
+    }
+  });
+
+  it("maskable icons are their own full-bleed files, not the rounded tile", () => {
+    const icons = manifest().icons ?? [];
+    const any = icons.filter((i) => i.purpose === "any").map((i) => i.src.split("?")[0]);
+    const maskable = icons.filter((i) => i.purpose === "maskable").map((i) => i.src.split("?")[0]);
+    for (const src of maskable) expect(any).not.toContain(src);
+  });
+
+  it("the touch icon is 180 px and the tab icon files exist", () => {
+    // Read as text: app/layout.tsx loads next/font, which only the Next
+    // compiler can run.
+    const layout = readFileSync(resolve(ROOT, "app/layout.tsx"), "utf8");
+    const icons = layout.match(/\n  icons: \{([\s\S]*?)\n  \},/)?.[1] ?? "";
+    expect(icons).not.toBe("");
+    const apple = icons.match(/apple: "([^"]+)"/)?.[1] ?? "";
+    expect(apple.startsWith("/apple-touch-icon.png")).toBe(true);
+    expect(pngSize(publicFile(apple))).toEqual({ width: 180, height: 180 });
+    expect(pngSize("app/icon.png").width).toBe(pngSize("app/icon.png").height);
+    expect(existsSync(resolve(ROOT, "app/favicon.ico"))).toBe(true);
+    // The only tab icon the layout lists is the plain MF tile. Next adds
+    // app/icon.png by itself only when a layout sets no icons at all, and the
+    // STUDIO-patch tiles under /icons/ are unreadable at 16 px.
+    const listed = [...icons.matchAll(/url: "([^"]+)"/g)].map((m) => m[1]);
+    expect(listed).toEqual(["/icon.png"]);
+    expect(icons).not.toContain("/icons/");
+  });
+
+  it("the installed app is still called MatFlow under its icon", () => {
+    expect(manifest().short_name).toBe("MatFlow");
+  });
+});
