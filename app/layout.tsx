@@ -30,12 +30,13 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "MatFlow",
   },
+  // The browser tab icon is the plain MF tile: app/favicon.ico (linked by
+  // Next on its own) and app/icon.png, which has to be listed here because
+  // Next only adds it by itself when a layout sets no icons at all. The
+  // installed-app icons are in app/manifest.ts, which also explains "?v=2".
   icons: {
-    icon: [
-      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-    ],
-    apple: "/apple-touch-icon.png",
+    icon: [{ url: "/icon.png", type: "image/png", sizes: "512x512" }],
+    apple: "/apple-touch-icon.png?v=2",
   },
 };
 
