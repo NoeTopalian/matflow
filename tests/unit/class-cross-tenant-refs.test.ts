@@ -19,7 +19,10 @@ const db = vi.hoisted(() => ({
   // count: a rank gate clears the roster, so the PATCH asks whether one existed (T6d).
   classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
-  classInstance: { createMany: vi.fn() },
+  // findMany: session cover (round 3) — a new regular coach is checked against the class's upcoming sessions (none here).
+  classInstance: { createMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+  // Session cover (round 3): naming a regular coach takes that coach's cover advisory lock.
+  $executeRaw: vi.fn(async () => 1),
   // findMany: D2 resolves rank orders (lib/booking-eligibility-db readRankOrders), tenant-scoped.
   rankSystem: { findFirst: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
   attendanceRecord: { groupBy: vi.fn().mockResolvedValue([]) },
