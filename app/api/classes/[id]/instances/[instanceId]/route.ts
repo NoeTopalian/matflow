@@ -23,6 +23,7 @@ import { withTenantContext } from "@/lib/prisma-tenant";
 import { logAudit } from "@/lib/audit-log";
 import { apiError } from "@/lib/api-error";
 import { isRegisterDay, registerDayRefusal, type RegisterDayRefusal } from "@/lib/register-day";
+import { closeCoverOnCancel } from "@/lib/session-cover";
 
 type Params = { params: Promise<{ id: string; instanceId: string }> };
 
@@ -76,7 +77,7 @@ export async function PATCH(req: Request, { params }: Params) {
       // relation IS the boundary.
       const owned = await tx.classInstance.findFirst({
         where: { id: instanceId, classId: id, class: { tenantId } },
-        select: { id: true, isCancelled: true, date: true, startTime: true },
+        select: { id: true, isCancelled: true, date: true, startTime: true, endTime: true },
       });
       if (!owned) return null;
 
@@ -105,6 +106,11 @@ export async function PATCH(req: Request, { params }: Params) {
             : null,
         },
       });
+      // Session cover: cancelling closes the session's cover request in this same transaction (its Activity row
+      // too). Restoring leaves it closed — nobody is silently recommitted to teach; the owner may ask again.
+      if (parsed.data.isCancelled) {
+        await closeCoverOnCancel(tx, tenantId, userId, { id: instanceId, classId: id, date: owned.date, startTime: owned.startTime, endTime: owned.endTime });
+      }
       return { instance: owned, changed: true };
     });
 

@@ -28,6 +28,7 @@ import { matForLocation } from "@/lib/mats-store";
 import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
+import { flagCoversForRetime, moveCoversBeforeDelete, slotMovesOf, type CoverMoveReport } from "@/lib/session-cover";
 
 /** A tier vanished between the pre-flight and the write: roll the edit back. */
 class TierRefError extends Error {}
@@ -189,6 +190,12 @@ type ScheduleChange = {
   instancesKept: string[];
   /** Sessions minted for the new slots, so check-in works from now, not from the next cron run. */
   instancesCreated: number;
+  /**
+   * Session cover on the removed sessions (lib/session-cover.ts): how many moved to their one replacement (a covered
+   * one now awaits its coach's reconfirmation), and which were closed because no replacement was unambiguous.
+   */
+  coverMoved?: number;
+  coverClosed?: Array<{ date: string; startTime: string; closedReason: string }>;
 };
 
 /** A slot's identity for diffing. Day + both times — a 30-minute change is a different slot. */
@@ -247,6 +254,8 @@ async function reconcileSchedules(
   // are minted: a paused class gets none until it comes back, and Resume /
   // Restore mint the rolling window then (mintUpcomingSessions).
   mint: boolean = true,
+  // Who made the edit: the Activity rows for any session cover it moves or closes.
+  actorId: string | null = null,
 ): Promise<ScheduleChange> {
   // RULES §4: ClassSchedule and ClassInstance carry no tenantId, so every
   // read and every write below scopes through the class relation. The caller
@@ -362,16 +371,12 @@ async function reconcileSchedules(
     .filter((i) => i._count.attendances === 0 && i._count.waitlists === 0)
     .map((i) => i.id);
 
-  if (instancesRemoved.length > 0) {
-    await tx.classInstance.deleteMany({
-      where: { id: { in: instancesRemoved }, class: { tenantId } },
-    });
-  }
-
   // Regenerate immediately rather than waiting for the nightly cron: a class
   // whose time just changed would otherwise have no check-in until tomorrow.
   // Idempotent against @@unique([classId, date, startTime]) (task 3b), so this
-  // and the cron cannot fight.
+  // and the cron cannot fight. Minted BEFORE the orphans are deleted (a new
+  // row is on a valid slot, an orphan is not, so the two never collide on the
+  // unique key): a session cover on an orphan moves to its replacement first.
   const rows = mint
     ? buildInstanceRows([{ id: classId, schedules: active }], {
         from,
@@ -382,6 +387,21 @@ async function reconcileSchedules(
     rows.length > 0
       ? await tx.classInstance.createMany({ data: rows, skipDuplicates: true })
       : { count: 0 };
+
+  let coverReport: CoverMoveReport = { moved: 0, closed: [] };
+  if (instancesRemoved.length > 0) {
+    // Session cover: a cover on a session about to go moves to the class's
+    // session on the same club date (flagged for reconfirmation when it was
+    // covered) or is closed, each with its Activity row — never dropped, and
+    // the RESTRICT key never blocks this edit (lib/session-cover.ts).
+    // Only a one-to-one slot change on a weekday carries cover (Noe, 26 Nov 2026: same date is not same session).
+    const removedSlots = existing.filter((x) => removedIds.includes(x.id));
+    const addedSlots = [...existing.filter((x) => toReactivate.includes(x.id)), ...toCreate];
+    coverReport = await moveCoversBeforeDelete(tx, tenantId, actorId, classId, instancesRemoved, slotMovesOf(removedSlots, addedSlots));
+    await tx.classInstance.deleteMany({
+      where: { id: { in: instancesRemoved }, class: { tenantId } },
+    });
+  }
 
   // A new END time on an unchanged start: sessions are unique on (class, date,
   // start), so createMany above skips them and they kept the old end — the
@@ -398,6 +418,8 @@ async function reconcileSchedules(
   }
   for (const [endTime, ids] of retimeByEnd) {
     await tx.classInstance.updateMany({ where: { id: { in: ids }, class: { tenantId } }, data: { endTime } });
+    // A covered session whose end time just changed: its coach agreed to the old time.
+    await flagCoversForRetime(tx, tenantId, actorId, classId, ids, endTime);
   }
 
   return {
@@ -406,6 +428,8 @@ async function reconcileSchedules(
     instancesRemoved,
     instancesKept,
     instancesCreated: created.count,
+    coverMoved: coverReport.moved,
+    coverClosed: coverReport.closed,
   };
 }
 
@@ -818,6 +842,7 @@ export async function PATCH(req: Request, { params }: Params) {
                 ?.timezone,
             ),
             liveAfterEdit,
+            session.user.id,
           )
         : null;
 

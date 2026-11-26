@@ -257,6 +257,36 @@ acts on is worse than an error they can see.
 - **Outside MatFlow's control:** Neon's point-in-time backups, Resend's dashboard and Vercel's
   runtime logs have their own provider windows. They are not the records; the tables are.
 
+### 5e. Session cover (Noe, 26 Nov 2026)
+
+- **Cover is stored against the dated session** (`SessionCover`, one row per session), never on the
+  weekly class: the class keeps its regular coach and next week is untouched.
+- **Who may act.** The owner or a manager requests cover, assigns, replaces, withdraws or returns a
+  session to its regular coach. A coach may request cover for a session of a class whose linked coach
+  (`Class.coachUserId`) is their own account; a typed coach name is display text and never counts.
+  Any eligible member of staff may take an open request. The covering coach (or the owner or a
+  manager) may give it up before the session starts, which reopens the request.
+- **Eligible to cover** is the rule the class form already applies to a class's coach and nothing
+  more: a member of the club's staff (owner, manager, coach or admin) who is not deactivated. MatFlow
+  has no belt, rank, category, location or qualification rule for coaches.
+- **Who is actually teaching** a session is its accepted cover coach, otherwise its linked regular coach,
+  even while a request is only open (Noe, 26 Nov 2026: an open request does not release the regular
+  coach). The server enforces that the first valid claim wins and that nobody teaches two sessions whose
+  times overlap, for a claim and a direct assignment alike and under simultaneous requests too; sessions
+  that only meet end to start are allowed (`lib/session-cover.ts`). Giving up, withdrawing or returning a
+  cover that would put the regular coach back on a session while they teach another at that time is
+  refused, naming that session.
+- **Cancelling closes the request; restoring the session does not recommit anyone.** A weekly-slot edit
+  carries a cover only to its unambiguous replacement: the edit turned exactly one slot of that weekday
+  into exactly one new slot, so a class that runs twice that day never has its morning cover land on the
+  evening session. A moved cover awaits the covering coach's reconfirmation ("Awaiting reconfirmation").
+  Anything else is closed, with the reason in Activity and in the save message, telling staff to request
+  cover on the intended session. Past sessions are never open requests.
+- **Members** see the confirmed covering coach, or "Coach to be confirmed" while cover is open: never
+  the away regular coach as confirmed, never the request. Staff see "Cover needed". Booking,
+  attendance (still open to every staff role) and class times do not change.
+- Every cover action is in Activity. No email, push or SMS is sent.
+
 ## 6. Verification
 
 - **Claims are measured, not asserted.** Contrast ratios come from computed styles in a

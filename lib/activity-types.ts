@@ -140,6 +140,8 @@ export const ACTIVITY_TYPES: ActivityType[] = [
 
   // ── Classes ────────────────────────────────────────────────────────────────
   type({ key: "session_cancelled", label: "Session cancelled", group: "Classes", icon: "CalendarX", actions: ["class.instance_cancelled", "class.instance_restored"], roles: BOTH, defaultOn: true }),
+  // Session cover (26 Nov 2026): who asked for cover on a dated session, who took it or was given it, and how it ended.
+  type({ key: "session_cover", label: "Class cover", group: "Classes", icon: "Repeat", actions: labelled("class.cover_"), roles: BOTH, defaultOn: true }),
   type({
     key: "class_changed",
     label: "Classes",
@@ -233,7 +235,7 @@ export function defaultTypeKeys(role: ActivityRole): string[] {
 export type ActivityView = { key: string; label: string; typeKeys: (role: ActivityRole) => string[] };
 
 const inGroup = (group: ActivityGroup) => (role: ActivityRole) => ACTIVITY_TYPES.filter((t) => t.group === group && t.roles.includes(role)).map((t) => t.key);
-const STAFF_CHANGES = ["member_updated", "member_removed", "hold", "rank", "membership_changed", "cancellation", "class_changed", "session_cancelled", "rank_setup", "plan_setup", "staff", "settings", "undo"];
+const STAFF_CHANGES = ["member_updated", "member_removed", "hold", "rank", "membership_changed", "cancellation", "class_changed", "session_cancelled", "session_cover", "rank_setup", "plan_setup", "staff", "settings", "undo"];
 
 export const DEFAULT_VIEW = "club";
 
