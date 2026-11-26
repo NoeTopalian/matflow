@@ -14,9 +14,10 @@ about cover rows:
 |---|---|
 | Weekly-slot edit (Timetable, change a class's time) | `PATCH /api/classes/[id]` answers 500 "Failed to update class"; nothing of the edit is saved |
 | Attendance-import rollback | The rollback fails on `SessionCover_classInstanceId_fkey`; nothing is rolled back |
-| Club purge (closed club, 30-day window passed) | The purge stops on the same key; the club stays, its claim stands, the next run retries and fails again |
+| Club purge (closed club, 30-day window passed) | The purge stops on the same key; the club stays, its claim stands, the next run retries and fails again. If the club's only cover rows are detached ones (`classInstanceId` null: a closed or withdrawn row whose session a weekly-slot edit removed), its sessions go and the purge stops later, at its staff step, on `SessionCover_requestedById_fkey` (every row names who asked; the previous build deletes the club's users before the club itself, so it never reaches `SessionCover_tenantId_fkey`) |
 
 A cover row on a session that already ended blocks the import rollback and the purge just as much as an upcoming one.
+A detached row blocks only the purge (it references the club and its staff, not a session).
 
 ## Procedure (in this order)
 
@@ -25,10 +26,13 @@ A cover row on a session that already ended blocks the import rollback and the p
    ```
    node scripts/session-cover-rollback.mjs --expect-host <endpoint> --export <new file.json>            (read only: count and export)
    node scripts/session-cover-rollback.mjs --expect-host <endpoint> --export <another new file.json> --delete
+   node scripts/session-cover-rollback.mjs --expect-host ep-bold-wave --export <another new file.json> --delete --confirm-production-delete   (production only; Noe)
    ```
 
    `--expect-host` is the Neon endpoint (`ep-hidden-salad` for the test branch; production `ep-bold-wave` is Noe's to
-   run), or `127.0.0.1` for a local rehearsal database. The export file must not exist yet. The export and the delete
+   run), or `127.0.0.1` for a local rehearsal database. Against production, `--delete` is refused before anything
+   connects unless `--confirm-production-delete` is added as well (the read-only export needs no extra flag); the test
+   branch and a local database need no extra flag. The export file must not exist yet. The export and the delete
    run in one transaction that first takes `LOCK TABLE "SessionCover" IN SHARE ROW EXCLUSIVE MODE`, so no cover can be
    requested, claimed or assigned between them; the delete must remove exactly the rows exported or it is rolled back.
    It prints the endpoint host and counts, never the URL. Keep the export file with the incident notes: it is the only

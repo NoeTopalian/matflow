@@ -35,10 +35,13 @@ vi.mock("@/lib/api-authz", () => {
   return { requireApiStaff: vi.fn(next), requireApiOwnerOrManager: vi.fn(next) };
 });
 
-import { applyCoverAction, closeCoverOnCancel, moveCoversBeforeDelete, slotMovesOf, type CoverInput } from "@/lib/session-cover";
+import {
+  applyCoverAction, closeCoverOnCancel, closeCoversForClass, lockCoachCover, moveCoversBeforeDelete, regularCoachCoverClash, reopenCoversOfDeactivatedCoach, slotMovesOf, type CoverInput,
+} from "@/lib/session-cover";
 import { POST as coverRoute } from "@/app/api/coach/instances/[id]/cover/route";
 import { PATCH as sessionRoute } from "@/app/api/classes/[id]/instances/[instanceId]/route";
-import { PATCH as classRoute } from "@/app/api/classes/[id]/route";
+import { PATCH as classRoute, DELETE as classDeleteRoute } from "@/app/api/classes/[id]/route";
+import { DELETE as staffDeleteRoute } from "@/app/api/staff/[id]/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = Date.now();
@@ -75,6 +78,24 @@ async function slotEdit(classId: string, name: string, schedules: Array<{ dayOfW
   return { status: res.status, body: await res.json() };
 }
 
+async function patchClass(classId: string, body: Record<string, unknown>) {
+  const res = (await classRoute(
+    new Request(`http://test/api/classes/${classId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    { params: Promise.resolve({ id: classId }) },
+  )) as unknown as { status: number; json: () => Promise<Body & { reason?: string; conflict?: { instanceId: string; className: string; label: string } }> };
+  return { status: res.status, body: await res.json() };
+}
+
+async function archiveClass(classId: string) {
+  const res = (await classDeleteRoute(new Request(`http://test/api/classes/${classId}`, { method: "DELETE" }), { params: Promise.resolve({ id: classId }) })) as unknown as { status: number; json: () => Promise<Body> };
+  return { status: res.status, body: await res.json() };
+}
+
+async function deactivateStaff(userId: string) {
+  const res = (await staffDeleteRoute(new Request(`http://test/api/staff/${userId}`, { method: "DELETE" }), { params: Promise.resolve({ id: userId }) })) as unknown as { status: number; json: () => Promise<Body> };
+  return { status: res.status, body: await res.json() };
+}
+
 /** Runs `work` in a tenant transaction and holds it open (locks and uncommitted writes included) until released. */
 function park<T>(work: (tx: Parameters<Parameters<typeof withTenantContext>[1]>[0]) => Promise<T>) {
   let release!: () => void;
@@ -102,7 +123,7 @@ async function blockedQuery(timeoutMs = 7_000): Promise<string | null> {
       SELECT a.query AS q, l.locktype AS t FROM pg_stat_activity a JOIN pg_locks l ON l.pid = a.pid AND NOT l.granted
        WHERE a.wait_event_type = 'Lock' AND a.datname = current_database() AND a.pid <> pg_backend_pid() AND a.query NOT LIKE '%pg_stat_activity%'
        LIMIT 1`;
-    if (rows[0]) return `${rows[0].t}: ${rows[0].q.replace(/\s+/g, " ").slice(0, 200)}`;
+    if (rows[0]) return `${rows[0].t}: ${rows[0].q.replace(/\s+/g, " ").slice(0, 400)}`;
     await new Promise((r) => setTimeout(r, 40));
   }
   return null;
@@ -160,8 +181,53 @@ describe.skipIf(!HAS_DB)("session cover — forced interleavings on a real datab
       ids.editH = await weekly("Edit H");
       ids.h = (await tx.classInstance.create({ data: { classId: ids.editH, date: NEXT_THU, startTime: "07:00", endTime: "08:00" } })).id;
       ids.hNew = (await tx.classInstance.create({ data: { classId: ids.editH, date: NEXT_THU, startTime: "07:30", endTime: "08:30" } })).id;
+
+      // Round 3 (review of 7d7b17df). Coaches of their own, so no earlier case's cover makes them busy.
+      for (const [k, n] of [["gus", "Gus Assign"], ["cara", "Cara Claim"], ["dan", "Dan Claim"], ["eve", "Eve Leaving"], ["fay", "Fay Leaving"], ["rex", "Rex Reconfirm"]] as const) await user(k, n, "coach");
+      // Archive and pause against Request and Assign: one class per case, each with two upcoming sessions (the case
+      // acts on the SECOND, which has no cover row before the race: the session the round-2 archive never locked).
+      const twoSessions = async (key: string, name: string, n: number) => {
+        ids[key] = (await tx.class.create({ data: { tenantId: state.tenantId, name, location: "Mat 3", coachUserId: ids.alex, duration: 90 } })).id;
+        ids[`${key}1`] = (await tx.classInstance.create({ data: { classId: ids[key], date: thu(n), startTime: "19:00", endTime: "20:30" } })).id;
+        ids[`${key}2`] = (await tx.classInstance.create({ data: { classId: ids[key], date: thu(n + 1), startTime: "19:00", endTime: "20:30" } })).id;
+      };
+      await twoSessions("arcReqP", "Arc Req parked", 10);
+      await twoSessions("arcReqA", "Arc Req archive parked", 12);
+      await twoSessions("arcAsgP", "Arc Asg parked", 14);
+      await twoSessions("arcAsgA", "Arc Asg archive parked", 16);
+      await twoSessions("pauReqP", "Pau Req parked", 18);
+      await twoSessions("pauReqA", "Pau Req pause parked", 20);
+      await twoSessions("pauAsgP", "Pau Asg parked", 22);
+      await twoSessions("pauAsgA", "Pau Asg pause parked", 24);
+      // Coach change against a claim: the class whose regular coach changes, and an overlapping session elsewhere
+      // with an open request that the new coach claims.
+      const pair = async (key: string, n: number) => {
+        ids[key] = (await tx.class.create({ data: { tenantId: state.tenantId, name: `Coach change ${key}`, location: "Mat 4", coachUserId: ids.alex, duration: 90 } })).id;
+        ids[`${key}S`] = (await tx.classInstance.create({ data: { classId: ids[key], date: thu(n), startTime: "19:00", endTime: "20:30" } })).id;
+        ids[`${key}X`] = (await tx.classInstance.create({ data: { classId: await uncoached(`Elsewhere ${key}`, "Mat 8"), date: thu(n), startTime: "19:30", endTime: "21:00" } })).id;
+      };
+      await pair("ccA", 26);
+      await pair("ccB", 27);
+      // Deactivation against a claim.
+      ids.de1 = (await tx.classInstance.create({ data: { classId: await uncoached("Deact one", "Mat 9"), date: thu(28), startTime: "19:00", endTime: "20:30" } })).id;
+      ids.de2 = (await tx.classInstance.create({ data: { classId: await uncoached("Deact two", "Mat 9"), date: thu(29), startTime: "19:00", endTime: "20:30" } })).id;
+      // Reconfirm against a weekly-slot edit: Thursday 07:00 classes whose next session Rex covers, awaiting reconfirmation.
+      ids.editR = await weekly("Edit R");
+      ids.r = (await tx.classInstance.create({ data: { classId: ids.editR, date: NEXT_THU, startTime: "07:00", endTime: "08:00" } })).id;
+      ids.editR2 = await weekly("Edit R2");
+      ids.r2 = (await tx.classInstance.create({ data: { classId: ids.editR2, date: NEXT_THU, startTime: "09:00", endTime: "10:00" } })).id;
+      await tx.classSchedule.updateMany({ where: { classId: ids.editR2 }, data: { startTime: "09:00", endTime: "10:00" } });
+      ids.r2New = (await tx.classInstance.create({ data: { classId: ids.editR2, date: NEXT_THU, startTime: "09:30", endTime: "10:30" } })).id;
+      for (const s of [ids.r, ids.r2]) {
+        await tx.sessionCover.create({ data: { tenantId: state.tenantId, classInstanceId: s, status: "covered", coverUserId: ids.rex, requestedById: ids.owner, needsReconfirm: true } });
+      }
+      // Nit 1: a weekly-slot edit carrying a cover to a replacement session that already exists, while that session
+      // is being asked for cover.
+      ids.editN = await weekly("Edit N");
+      ids.n = (await tx.classInstance.create({ data: { classId: ids.editN, date: NEXT_THU, startTime: "07:00", endTime: "08:00" } })).id;
+      ids.nTo = (await tx.classInstance.create({ data: { classId: ids.editN, date: NEXT_THU, startTime: "07:30", endTime: "08:30" } })).id;
     });
-  }, 120_000);
+  }, 180_000);
 
   afterAll(async () => {
     if (!state.tenantId) return;
@@ -252,7 +318,8 @@ describe.skipIf(!HAS_DB)("session cover — forced interleavings on a real datab
     expect(row).toMatchObject({ status: "covered", needsReconfirm: true });
     expect(row?.classInstance).toMatchObject({ startTime: "07:30", date: NEXT_THU });
     expect(await audits("class.cover_reconfirm_flagged", row!.classInstanceId!)).toBe(1);
-    expect(r.blockedOn).toMatch(/FOR UPDATE OF ci/);
+    // Round 3: the edit now waits on its class-wide session lock (FOR NO KEY UPDATE, id order) before the delete lock.
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR (NO KEY )?UPDATE OF ci/);
   }, 180_000);
 
   it("H. a weekly-slot edit parked, then a claim on the old session: refused as gone; the request moved and is still open", async () => {
@@ -293,4 +360,187 @@ describe.skipIf(!HAS_DB)("session cover — forced interleavings on a real datab
     expect(await withRlsBypass((tx) => tx.sessionCover.count({ where: { tenantId: state.tenantId, coverUserId: ids.pat, status: "covered", classInstanceId: { in: [ids.overA, ids.overB] } } }))).toBe(1);
     expect(r.blockedOn).toMatch(/^advisory: /);
   }, 120_000);
+
+  // ── Round 3 (review of 7d7b17df) ────────────────────────────────────────────────────────────────────────────────
+  const activeRows = (classId: string) => withRlsBypass((tx) => tx.sessionCover.count({ where: { tenantId: state.tenantId, status: { in: ["open", "covered"] }, classInstance: { classId } } }));
+  /** The archive route's own transaction, parked: the class archived and its upcoming covers closed, uncommitted. */
+  const parkedArchive = (classId: string) => async (tx: Parameters<Parameters<typeof withTenantContext>[1]>[0]) => {
+    await tx.class.updateMany({ where: { id: classId, tenantId: state.tenantId, deletedAt: null }, data: { isActive: false, deletedAt: new Date() } });
+    return closeCoversForClass(tx, state.tenantId, ids.owner, classId, "class_archived", "Europe/London");
+  };
+  /** The class PATCH's pause, parked: Class row locked, paused, its upcoming covers closed, uncommitted. */
+  const parkedPause = (classId: string) => async (tx: Parameters<Parameters<typeof withTenantContext>[1]>[0]) => {
+    await tx.$queryRaw`SELECT "id" FROM "Class" WHERE "id" = ${classId} AND "tenantId" = ${state.tenantId} FOR UPDATE`;
+    await tx.class.updateMany({ where: { id: classId, tenantId: state.tenantId }, data: { isActive: false } });
+    return closeCoversForClass(tx, state.tenantId, ids.owner, classId, "class_paused", "Europe/London");
+  };
+  /** After the race: bring the class back and prove no cover came back with it. */
+  const restoredWithNoCover = async (classId: string) => {
+    expect((await patchClass(classId, { isActive: true })).status).toBe(200);
+    expect(await activeRows(classId)).toBe(0);
+  };
+
+  it("K1. a Request parked on a session with no cover, then an archive: the archive waits, then closes it; restoring brings none back", async () => {
+    const r = await interleave(act(owner(), ids.arcReqP2, { action: "request" }), () => archiveClass(ids.arcReqP));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b.status).toBe(200);
+    expect(await coverRow(ids.arcReqP2)).toMatchObject({ status: "closed", closedReason: "class_archived" });
+    expect(await audits("class.cover_closed", ids.arcReqP2)).toBe(1);
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.arcReqP);
+  }, 180_000);
+
+  it("K2. an archive parked, then a Request on a session with no cover: the request waits, then is refused; no row", async () => {
+    const r = await interleave(parkedArchive(ids.arcReqA), () => cover(ids.arcReqA2, owner(), { action: "request" }));
+    expect(r.a).toBe(0);
+    expect(r.b).toMatchObject({ status: 409, body: { code: "CLASS_NOT_LIVE" } });
+    expect(await coverRow(ids.arcReqA2)).toBeNull();
+    expect(r.blockedOn).toMatch(/FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.arcReqA);
+  }, 180_000);
+
+  it("K3. an Assign parked on a session with no cover, then an archive: the archive waits, then closes it; restoring brings none back", async () => {
+    const r = await interleave(act(owner(), ids.arcAsgP2, { action: "assign", coachUserId: ids.gus }), () => archiveClass(ids.arcAsgP));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b.status).toBe(200);
+    expect(await coverRow(ids.arcAsgP2)).toMatchObject({ status: "closed", closedReason: "class_archived", coverUserId: null });
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.arcAsgP);
+  }, 180_000);
+
+  it("K4. an archive parked, then an Assign on a session with no cover: the assignment waits, then is refused; no row", async () => {
+    const r = await interleave(parkedArchive(ids.arcAsgA), () => cover(ids.arcAsgA2, owner(), { action: "assign", coachUserId: ids.gus }));
+    expect(r.b).toMatchObject({ status: 409, body: { code: "CLASS_NOT_LIVE" } });
+    expect(await coverRow(ids.arcAsgA2)).toBeNull();
+    expect(r.blockedOn).toMatch(/FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.arcAsgA);
+  }, 180_000);
+
+  it("K5. a Request parked, then a pause: the pause waits, then closes it; resuming brings none back", async () => {
+    const r = await interleave(act(owner(), ids.pauReqP2, { action: "request" }), () => patchClass(ids.pauReqP, { isActive: false }));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b.status).toBe(200);
+    expect(await coverRow(ids.pauReqP2)).toMatchObject({ status: "closed", closedReason: "class_paused" });
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.pauReqP);
+  }, 180_000);
+
+  it("K6. a pause parked, then a Request: the request waits, then is refused; no row", async () => {
+    const r = await interleave(parkedPause(ids.pauReqA), () => cover(ids.pauReqA2, owner(), { action: "request" }));
+    expect(r.b).toMatchObject({ status: 409, body: { code: "CLASS_NOT_LIVE" } });
+    expect(await coverRow(ids.pauReqA2)).toBeNull();
+    expect(r.blockedOn).toMatch(/FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.pauReqA);
+  }, 180_000);
+
+  it("K7. an Assign parked, then a pause: the pause waits, then closes it; resuming brings none back", async () => {
+    const r = await interleave(act(owner(), ids.pauAsgP2, { action: "assign", coachUserId: ids.gus }), () => patchClass(ids.pauAsgP, { isActive: false }));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b.status).toBe(200);
+    expect(await coverRow(ids.pauAsgP2)).toMatchObject({ status: "closed", closedReason: "class_paused", coverUserId: null });
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.pauAsgP);
+  }, 180_000);
+
+  it("K8. a pause parked, then an Assign: the assignment waits, then is refused; no row", async () => {
+    const r = await interleave(parkedPause(ids.pauAsgA), () => cover(ids.pauAsgA2, owner(), { action: "assign", coachUserId: ids.gus }));
+    expect(r.b).toMatchObject({ status: 409, body: { code: "CLASS_NOT_LIVE" } });
+    expect(await coverRow(ids.pauAsgA2)).toBeNull();
+    expect(r.blockedOn).toMatch(/FOR NO KEY UPDATE OF ci/);
+    await restoredWithNoCover(ids.pauAsgA);
+  }, 180_000);
+
+  it("L1. a claim parked, then making that coach the regular coach of an overlapping class: the change waits, then is refused by name", async () => {
+    expect((await cover(ids.ccAX, owner(), { action: "request" })).status).toBe(200);
+    const r = await interleave(act(coach("cara"), ids.ccAX, { action: "claim" }), () => patchClass(ids.ccA, { coachUserId: ids.cara }));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b).toMatchObject({ status: 409, body: { reason: "coach_cover_clash", conflict: { instanceId: ids.ccAX, className: "Elsewhere ccA" } } });
+    expect(r.b.body.error).toMatch(/^Cara Claim is covering Elsewhere ccA on \w+day \d+ \w+, 19:30–21:00, Mat 8, which overlaps this class on \w+day \d+ \w+, 19:00–20:30, Mat 4\./);
+    expect((await withRlsBypass((tx) => tx.class.findFirst({ where: { id: ids.ccA }, select: { coachUserId: true } })))?.coachUserId).toBe(ids.alex);
+    expect(r.blockedOn).toMatch(/^advisory: /);
+  }, 180_000);
+
+  it("L2. a change of regular coach parked, then that coach claims an overlapping session: the claim waits, then is refused by name", async () => {
+    expect((await cover(ids.ccBX, owner(), { action: "request" })).status).toBe(200);
+    const r = await interleave(
+      async (tx) => {
+        // The class PATCH's order: the new coach's COVR key, the Class row, the write, then the check under the class-wide lock.
+        await lockCoachCover(tx, state.tenantId, ids.dan);
+        await tx.$queryRaw`SELECT "id" FROM "Class" WHERE "id" = ${ids.ccB} AND "tenantId" = ${state.tenantId} FOR UPDATE`;
+        await tx.class.updateMany({ where: { id: ids.ccB, tenantId: state.tenantId }, data: { coachUserId: ids.dan } });
+        return regularCoachCoverClash(tx, state.tenantId, ids.ccB, ids.dan, "Europe/London");
+      },
+      () => cover(ids.ccBX, coach("dan"), { action: "claim" }),
+    );
+    expect(r.a).toBeNull();
+    expect(r.b).toMatchObject({ status: 409, body: { code: "OVERLAP" } });
+    expect(r.b.body.error).toContain("already teaching Coach change ccB");
+    expect(await coverRow(ids.ccBX)).toMatchObject({ status: "open", coverUserId: null });
+    expect(r.blockedOn).toMatch(/^advisory: /);
+  }, 180_000);
+
+  it("L3. a claim parked, then deactivating that coach: the deactivation waits, then reopens the cover", async () => {
+    expect((await cover(ids.de1, owner(), { action: "request" })).status).toBe(200);
+    const r = await interleave(act(coach("eve"), ids.de1, { action: "claim" }), () => deactivateStaff(ids.eve));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b.status).toBe(200);
+    expect(await coverRow(ids.de1)).toMatchObject({ status: "open", coverUserId: null });
+    expect(await audits("class.cover_given_up", ids.de1)).toBe(1);
+    expect(r.blockedOn).toMatch(/^advisory: /);
+  }, 180_000);
+
+  it("L4. a deactivation parked, then that coach claims: the claim waits, then is refused; nothing claimed", async () => {
+    expect((await cover(ids.de2, owner(), { action: "request" })).status).toBe(200);
+    const r = await interleave(
+      async (tx) => {
+        await lockCoachCover(tx, state.tenantId, ids.fay);
+        await tx.user.updateMany({ where: { id: ids.fay, tenantId: state.tenantId }, data: { deactivatedAt: new Date() } });
+        return reopenCoversOfDeactivatedCoach(tx, state.tenantId, ids.owner, ids.fay, "Europe/London");
+      },
+      () => cover(ids.de2, coach("fay"), { action: "claim" }),
+    );
+    expect(r.b).toMatchObject({ status: 403, body: { code: "NOT_ELIGIBLE" } });
+    expect(await coverRow(ids.de2)).toMatchObject({ status: "open", coverUserId: null });
+    expect(r.blockedOn).toMatch(/^advisory: /);
+  }, 180_000);
+
+  it("L5. a reconfirm parked, then a weekly-slot edit moving that session: the edit waits, then carries the cover on and flags it again", async () => {
+    const r = await interleave(act(coach("rex"), ids.r, { action: "reconfirm" }), () => slotEdit(ids.editR, "Edit R", [{ dayOfWeek: 4, startTime: "07:30", endTime: "08:30" }]));
+    expect(r.a).toMatchObject({ ok: true, cover: { needsReconfirm: false } });
+    expect(r.b.status).toBe(200);
+    expect(r.b.body.scheduleChange?.coverMoved).toBe(1);
+    const row = await withRlsBypass((tx) => tx.sessionCover.findFirst({ where: { tenantId: state.tenantId, coverUserId: ids.rex, classInstance: { classId: ids.editR } }, include: { classInstance: true } }));
+    expect(row).toMatchObject({ status: "covered", needsReconfirm: true });
+    expect(row?.classInstance).toMatchObject({ startTime: "07:30" });
+    expect(await audits("class.cover_reconfirmed", ids.r)).toBe(1);
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR NO KEY UPDATE OF ci/);
+  }, 180_000);
+
+  it("L6. a weekly-slot edit parked, then a reconfirm of the session it moves: refused as gone; the cover still awaits reconfirmation", async () => {
+    const moves = slotMovesOf([{ dayOfWeek: 4, startTime: "09:00" }], [{ dayOfWeek: 4, startTime: "09:30" }]);
+    const r = await interleave(
+      async (tx) => {
+        const report = await moveCoversBeforeDelete(tx, state.tenantId, ids.owner, ids.editR2, [ids.r2], moves, "Europe/London");
+        await tx.classInstance.deleteMany({ where: { id: ids.r2 } });
+        return report;
+      },
+      () => cover(ids.r2, coach("rex"), { action: "reconfirm" }),
+    );
+    expect(r.a).toMatchObject({ moved: 1 });
+    expect(r.b).toMatchObject({ status: 409, body: { code: "SESSION_GONE" } });
+    expect(await coverRow(ids.r2New)).toMatchObject({ status: "covered", coverUserId: ids.rex, needsReconfirm: true });
+    expect(r.blockedOn).toMatch(/FOR (NO KEY )?UPDATE OF ci/);
+  }, 180_000);
+
+  it("M. a Request parked on the session a slot edit carries a cover to: the edit waits, then answers (no 500); one row per session", async () => {
+    expect((await cover(ids.n, owner(), { action: "request" })).status).toBe(200);
+    const r = await interleave(act(owner(), ids.nTo, { action: "request" }), () => slotEdit(ids.editN, "Edit N", [{ dayOfWeek: 4, startTime: "07:30", endTime: "08:30" }]));
+    expect(r.a).toMatchObject({ ok: true });
+    expect(r.b.status).toBe(200);
+    // The replacement already has its own request, so the old one is not carried onto it: it is closed with its reason.
+    expect(await coverRow(ids.nTo)).toMatchObject({ status: "open" });
+    const old = await withRlsBypass((tx) => tx.sessionCover.findMany({ where: { tenantId: state.tenantId, classInstanceId: null, status: "closed", closedReason: "replacement_ambiguous" } }));
+    expect(old.length).toBe(1);
+    expect(r.blockedOn).toMatch(/ORDER BY ci\.id FOR NO KEY UPDATE OF ci/);
+  }, 180_000);
 });

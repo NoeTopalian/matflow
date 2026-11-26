@@ -11,7 +11,8 @@
 //
 // DATABASE_URL names the database. --expect-host is always required: a Neon endpoint the host must be
 // (scripts/readiness/db-target.mjs), or 127.0.0.1 / localhost for a local rehearsal database, which the URL's host
-// must then be exactly. Production (ep-bold-wave) is Noe's to run. The export file must not exist yet:
+// must then be exactly. Production (ep-bold-wave) is Noe's to run: --delete against it is refused unless
+// --confirm-production-delete is given as well (the export alone is read only). The export file must not exist yet:
 // a previous export is never overwritten. The export and the delete run in ONE transaction that first locks the
 // table, so no cover row can be added between them. Prints the endpoint host (never the URL) and counts only.
 // Exit 0 done, 2 refused or failed.
@@ -28,14 +29,22 @@ export function parseArgs(argv) {
   const exportFile = at("--export");
   if (!expectHost) throw new TargetRefused("REFUSED: --expect-host <host> is required");
   if (!exportFile) throw new TargetRefused("REFUSED: --export <file.json> is required (the rows are always kept before anything is removed)");
-  return { expectHost, exportFile, remove: argv.includes("--delete") };
+  return { expectHost, exportFile, remove: argv.includes("--delete"), productionDelete: argv.includes(PRODUCTION_DELETE_FLAG) };
 }
+
+/** The extra flag without which --delete never runs against production (review of 7d7b17df, nit 5). */
+export const PRODUCTION_DELETE_FLAG = "--confirm-production-delete";
 
 const LOOPBACK = ["127.0.0.1", "localhost"];
 
-/** A Neon endpoint goes through the shared allowlist; a local rehearsal database must be exactly the loopback host named. */
-export function resolveTarget(url, expectHost) {
-  if (!LOOPBACK.includes(expectHost)) return resolveDbTarget(url, { expectHost, allowProduction: true });
+/**
+ * A Neon endpoint goes through the shared allowlist; a local rehearsal database must be exactly the loopback host named.
+ * Production is admitted read-only (the export alone, as any read-only production baseline); with `remove` it is
+ * admitted only when `productionDelete` (PRODUCTION_DELETE_FLAG) was given too, so a --delete aimed at production by
+ * mistake is refused before anything connects.
+ */
+export function resolveTarget(url, expectHost, { remove = false, productionDelete = false } = {}) {
+  if (!LOOPBACK.includes(expectHost)) return resolveDbTarget(url, { expectHost, allowProduction: !remove || productionDelete });
   for (const k of ["PGOPTIONS", "PGHOST", "PGHOSTADDR"]) {
     if (process.env[k]) throw new TargetRefused(`REFUSED: ${k} is set in the environment`);
   }
@@ -52,7 +61,7 @@ async function main() {
   const url = process.env.DATABASE_URL ?? "";
   if (!url) throw new TargetRefused("DATABASE_URL is not set");
   const args = parseArgs(process.argv.slice(2));
-  const endpoint = resolveTarget(url, args.expectHost);
+  const endpoint = resolveTarget(url, args.expectHost, { remove: args.remove, productionDelete: args.productionDelete });
   if (fs.existsSync(args.exportFile)) throw new TargetRefused(`REFUSED: ${args.exportFile} already exists; choose a new file`);
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: url });

@@ -28,7 +28,7 @@ import { matForLocation } from "@/lib/mats-store";
 import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
-import { closeCoversForClass, countActiveCovers, flagCoversForRetime, moveCoversBeforeDelete, slotMovesOf, type CoverMoveReport } from "@/lib/session-cover";
+import { closeCoversForClass, countActiveCovers, flagCoversForRetime, lockClassSessions, lockCoachCover, moveCoversBeforeDelete, regularCoachCoverClash, slotMovesOf, type CoverConflict, type CoverMoveReport } from "@/lib/session-cover";
 
 /** A tier vanished between the pre-flight and the write: roll the edit back. */
 class TierRefError extends Error {}
@@ -42,6 +42,13 @@ class MatLimitError extends Error {}
  */
 class StaleClassFieldsError extends Error {
   constructor(readonly conflicts: SettingsConflict[]) { super("stale_class"); }
+}
+/**
+ * Session cover (PR #134, round 3): the new regular coach has accepted to cover a session that overlaps one of this
+ * class's upcoming sessions. Rolls the whole edit back; the message names both sessions.
+ */
+class CoachCoverClashError extends Error {
+  constructor(message: string, readonly instanceId: string, readonly conflict: CoverConflict) { super(message); }
 }
 /** The class fields an edit can carry an `expected` value for (the editor sends these whenever they change). */
 const CLASS_PRECONDITION_FIELDS = ["name", "description", "coachName", "coachUserId", "duration", "maxCapacity", "requiredRankId", "maxRankId", "isKids", "locationId"] as const;
@@ -348,6 +355,12 @@ async function reconcileSchedules(
   // Yesterday's own marker is a full 24 h back and stays outside.
   const sweepFrom = new Date(from.getTime() - 12 * 60 * 60 * 1000);
 
+  // Session cover: every session of the class, FOR NO KEY UPDATE in id order, before any is read, deleted or
+  // re-timed. Then a cover change on any of them (a replacement this edit carries a cover to included) has either
+  // committed or waits for this edit, and the sessions this edit deletes and re-times are all locked in one id-ordered
+  // statement, as every other writer of several sessions locks them (docs/design/LOCK-ORDER-2026-10-24.md §8).
+  await lockClassSessions(tx, tenantId, classId);
+
   const upcoming = await tx.classInstance.findMany({
     where: { classId, date: { gte: sweepFrom }, class: { tenantId } },
     select: {
@@ -420,8 +433,8 @@ async function reconcileSchedules(
   }
   for (const [endTime, ids] of retimeByEnd) {
     await tx.classInstance.updateMany({ where: { id: { in: ids }, class: { tenantId } }, data: { endTime } });
-    // A covered session whose end time just changed: its coach agreed to the old time.
-    await flagCoversForRetime(tx, tenantId, actorId, classId, ids, endTime);
+    // A covered session whose end time just changed: its coach agreed to the old time (one already under way keeps its coach).
+    await flagCoversForRetime(tx, tenantId, actorId, classId, ids, endTime, timeZone);
   }
 
   return {
@@ -638,6 +651,12 @@ export async function PATCH(req: Request, { params }: Params) {
       // below, so a rename of that mat and this save are serial and cannot
       // deadlock. An edit that names no mat takes no mats lock at all.
       if (parsed.data.matId || locationName !== null) await lockClubMats(tx, tenantId);
+      // Session cover: naming a regular coach takes THAT coach's cover advisory lock (COVR), still at level 1 and
+      // before the Class row, as every cover path takes it before any row (docs/design/LOCK-ORDER-2026-10-24.md §8).
+      // Their claims and assignments are then serial with this save, which checks below that they are not covering a
+      // session that overlaps this class's. One COVR key at most; no cover path takes the MATS lock, so MATS → COVR
+      // here meets no opposite order.
+      if (parsed.data.coachUserId) await lockCoachCover(tx, tenantId, parsed.data.coachUserId);
       // OWNERSHIP FIRST — before any destructive statement.
       //
       // This check used to sit AFTER the deletes below, as the `updateMany`
@@ -656,9 +675,9 @@ export async function PATCH(req: Request, { params }: Params) {
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
       const owned = await tx.$queryRaw<{
-        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null; color?: string | null;
+        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null; color?: string | null; coachUserId?: string | null;
       }[]>`
-        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId", "color" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId", "color", "coachUserId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
       // The category, judged under the Class lock against the class's category
@@ -892,6 +911,14 @@ export async function PATCH(req: Request, { params }: Params) {
         data: classFields,
       });
       if (r.count === 0) return null;
+      // Session cover: a NEW regular coach must not be put on an upcoming session of this class that overlaps a session
+      // they have accepted to cover. Checked after the write (in this transaction, so a refusal rolls all of it back)
+      // so the sessions are this edit's and the place named is the class's new one. Their COVR lock is held (above).
+      if (parsed.data.coachUserId && parsed.data.coachUserId !== (owned[0].coachUserId ?? null) && liveAfterEdit) {
+        const club = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } });
+        const clash = await regularCoachCoverClash(tx, tenantId, id, parsed.data.coachUserId, usableTimezone(club?.timezone));
+        if (clash) throw new CoachCoverClashError(clash.message, clash.instanceId, clash.conflict);
+      }
       // Session cover: pausing the class ends the active cover on its upcoming sessions, with an Activity row each,
       // in this transaction, so resuming it never brings a previous cover back (lib/session-cover.ts).
       if (before && classLifecycle(before) === "active" && liveAfterEdit === false) {
@@ -1041,6 +1068,9 @@ export async function PATCH(req: Request, { params }: Params) {
     }
     if (e instanceof StaleScheduleError) {
       return NextResponse.json({ error: STALE_SCHEDULES_REFUSAL, reason: "stale_schedules" }, { status: 409 });
+    }
+    if (e instanceof CoachCoverClashError) {
+      return NextResponse.json({ error: e.message, reason: "coach_cover_clash", instanceId: e.instanceId, conflict: e.conflict }, { status: 409 });
     }
     if (e instanceof StaleClassFieldsError) {
       return NextResponse.json(

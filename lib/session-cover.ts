@@ -232,6 +232,28 @@ export async function lockSessionsForCover(tx: Tx, tenantId: string, instanceIds
        FOR NO KEY UPDATE OF ci`;
 }
 
+/** How far back the class-wide session lock reaches: every "upcoming" read in this file starts later than this. */
+const CLASS_LOCK_FROM_MS = 3 * 86_400_000;
+
+/**
+ * EVERY session of one class from three days ago on, FOR NO KEY UPDATE, in id order: the class-wide lock that an
+ * archive, a pause, an undo of a resume or restore, a weekly-slot edit and a change of regular coach take (after the
+ * Class row) before they read any cover. A Request or Assign on any session of the class either committed before this
+ * (and is seen) or waits for it and then reads the class as it now is. A check-in (KEY SHARE from its attendance
+ * insert) does not wait for it. One statement in id order, like every other multi-session lock here
+ * (docs/design/LOCK-ORDER-2026-10-24.md §8). The class id and tenant id are bind parameters.
+ */
+export async function lockClassSessions(tx: Tx, tenantId: string, classId: string, now: Date = new Date()): Promise<void> {
+  const from = new Date(now.getTime() - CLASS_LOCK_FROM_MS);
+  await tx.$queryRaw`
+    SELECT ci.id FROM "ClassInstance" ci
+     WHERE ci."classId" = ${classId}
+       AND ci.date >= ${from}
+       AND EXISTS (SELECT 1 FROM "Class" c WHERE c.id = ci."classId" AND c."tenantId" = ${tenantId})
+     ORDER BY ci.id
+       FOR NO KEY UPDATE OF ci`;
+}
+
 /** Session rows a weekly-slot edit is about to delete, FOR UPDATE, in id order, before their cover rows are moved. */
 export async function lockSessionsForDelete(tx: Tx, tenantId: string, instanceIds: string[]): Promise<void> {
   if (instanceIds.length === 0) return;
@@ -302,6 +324,13 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
 
   const session = await tx.classInstance.findFirst({ where: { id: instanceId, class: { tenantId } }, select: SESSION_SELECT });
   if (!session) return refuse(409, "SESSION_GONE", "This session is no longer on the timetable. Reload to see the current sessions.");
+  // Give up, withdraw and return hold the advisory lock of the regular coach read BEFORE the session lock. A change of
+  // regular coach that committed in between (it locks every session of the class, so it is now fully done) would
+  // leave the regular-coach check below running for someone whose lock this transaction does not hold: refuse.
+  const putsRegularBack = input.action === "give_up" || input.action === "withdraw" || input.action === "return";
+  if (putsRegularBack && session.class.coachUserId !== pre.class.coachUserId) {
+    return refuse(409, "CHANGED", "This class's regular coach has just changed. Reload to see it.");
+  }
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   const tz = usableTimezone(tenant?.timezone);
   const label = describeSession(session);
@@ -350,13 +379,15 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
       ? refuse(409, "REGULAR_COACH", `${coach.id === userId ? "You're" : `${coach.name} is`} this class's regular coach. Withdraw the request or return the session to its regular coach instead.`)
       : null;
   /**
-   * Taking a covered session off its covering coach (give up, withdraw, return) makes the class's linked regular
-   * coach its teacher again — an open request does not release them. If that coach is meanwhile teaching an
-   * overlapping session (their own, or one they now cover), it is refused by name rather than leaving one person on
-   * two sessions at once. The regular coach's advisory lock was taken at level 1.
+   * Taking a session off its cover (give up, withdraw, return) makes the class's linked regular coach its teacher
+   * again, and nothing else says so. If that coach is meanwhile teaching an overlapping session (their own, or one
+   * they now cover), it is refused by name rather than leaving one person on two sessions at once. Checked whatever
+   * the row's status: an OPEN row can be one a deactivation reopened (reopenCoversOfDeactivatedCoach) after the regular
+   * coach, free while someone else covered, claimed an overlapping session; withdrawing or returning it would then
+   * double-book them silently (review of 7d7b17df, blocker 1). The regular coach's advisory lock was taken at level 1.
    */
   const regularBusy = async (what: string): Promise<CoverOutcome | null> => {
-    if (row?.status !== "covered" || !regularId || regularId === row.coverUserId) return null;
+    if (!regularId || regularId === row?.coverUserId) return null;
     const clash = await findCoverOverlap(tx, tenantId, tz, regularId, session);
     if (!clash) return null;
     const regularName = session.class.coachUser?.name ?? "The regular coach";
@@ -697,7 +728,16 @@ export async function moveCoversBeforeDelete(
  * flagged for reconfirmation: its coach agreed to the old time, not this one, and reconfirming re-runs the overlap
  * check at the new time.
  */
-export async function flagCoversForRetime(tx: Tx, tenantId: string, actorId: string | null, classId: string, sessionIds: string[], endTime: string): Promise<void> {
+export async function flagCoversForRetime(
+  tx: Tx,
+  tenantId: string,
+  actorId: string | null,
+  classId: string,
+  sessionIds: string[],
+  endTime: string,
+  tz: string = "Europe/London",
+  now: Date = new Date(),
+): Promise<void> {
   if (sessionIds.length === 0) return;
   const rows = await tx.sessionCover.findMany({
     where: { tenantId, classInstanceId: { in: sessionIds }, status: "covered", needsReconfirm: false },
@@ -705,6 +745,9 @@ export async function flagCoversForRetime(tx: Tx, tenantId: string, actorId: str
   });
   for (const r of rows) {
     if (!r.classInstance) continue;
+    // A session already under way keeps its confirmed coach: it can no longer be reconfirmed (cover actions refuse a
+    // started session), and members would see "Coach to be confirmed" in the middle of the class (review nit 3).
+    if (sessionHasStarted(r.classInstance, tz, now)) continue;
     const n = await tx.sessionCover.updateMany({
       where: { id: r.id, tenantId, classInstanceId: r.classInstance.id, status: "covered", needsReconfirm: false },
       data: { needsReconfirm: true },
@@ -718,17 +761,24 @@ export async function flagCoversForRetime(tx: Tx, tenantId: string, actorId: str
   }
 }
 
+/** The first day an "upcoming" read below looks at: from a day and a half before today's UTC day marker. */
+const upcomingSince = (now: Date) => new Date(dayMarkerUtc(now).getTime() - 36 * 3_600_000);
+const UPCOMING_COVER_SELECT = { id: true, status: true, coverUserId: true, classInstance: { select: { id: true, classId: true, date: true, startTime: true, endTime: true, isCancelled: true } } } as const;
+
+/** Active cover rows on the upcoming, not cancelled sessions matching `where` (plain read; the caller holds the locks). */
+async function upcomingActiveCovers(tx: Tx, tenantId: string, where: Prisma.SessionCoverWhereInput, now: Date) {
+  const scope: Prisma.SessionCoverWhereInput = { AND: [{ tenantId, status: { in: ACTIVE }, classInstance: { is: { isCancelled: false, date: { gte: upcomingSince(now) } } } }, where] };
+  return tx.sessionCover.findMany({ where: scope, select: UPCOMING_COVER_SELECT });
+}
+
 /** Active cover rows on the upcoming, not yet started, not cancelled sessions matching `where`, after locking them. */
 async function lockedUpcomingCovers(tx: Tx, tenantId: string, where: Prisma.SessionCoverWhereInput, tz: string, now: Date) {
-  const since = new Date(dayMarkerUtc(now).getTime() - 36 * 3_600_000);
-  const select = { id: true, status: true, coverUserId: true, classInstance: { select: { id: true, classId: true, date: true, startTime: true, endTime: true, isCancelled: true } } } as const;
-  const scope: Prisma.SessionCoverWhereInput = { AND: [{ tenantId, status: { in: ACTIVE }, classInstance: { is: { isCancelled: false, date: { gte: since } } } }, where] };
-  const first = await tx.sessionCover.findMany({ where: scope, select });
+  const first = await upcomingActiveCovers(tx, tenantId, where, now);
   const ids = first.flatMap((r) => (r.classInstance ? [r.classInstance.id] : []));
   if (ids.length === 0) return [];
   await lockSessionsForCover(tx, tenantId, ids);
   // Re-read under the locks: a claim or assignment that was mid-way has now committed (or not).
-  const rows = await tx.sessionCover.findMany({ where: { AND: [scope, { classInstanceId: { in: ids } }] }, select });
+  const rows = await upcomingActiveCovers(tx, tenantId, { AND: [where, { classInstanceId: { in: ids } }] }, now);
   return rows.filter((r) => r.classInstance && !sessionHasStarted(r.classInstance, tz, now));
 }
 
@@ -736,9 +786,15 @@ async function lockedUpcomingCovers(tx: Tx, tenantId: string, where: Prisma.Sess
  * Archiving or pausing a class ends the active cover on its upcoming sessions (reason class_archived or class_paused,
  * an Activity row each), in the same transaction, so restoring or resuming the class never brings a previous cover
  * back and no one keeps a hidden booking on a session that is off the timetable. Past sessions keep theirs.
+ *
+ * EVERY session of the class is locked first (lockClassSessions), not only those already seen with a cover: a Request
+ * or Assign on any of them either committed before (and is closed here) or waits, then reads the class as archived or
+ * paused and is refused (review of 7d7b17df, should-fix 1).
  */
 export async function closeCoversForClass(tx: Tx, tenantId: string, actorId: string | null, classId: string, reason: "class_archived" | "class_paused", tz: string, now: Date = new Date()): Promise<number> {
-  const rows = await lockedUpcomingCovers(tx, tenantId, { classInstance: { is: { classId } } }, tz, now);
+  await lockClassSessions(tx, tenantId, classId, now);
+  const rows = (await upcomingActiveCovers(tx, tenantId, { classInstance: { is: { classId } } }, now))
+    .filter((r) => r.classInstance && !sessionHasStarted(r.classInstance, tz, now));
   let closed = 0;
   for (const r of rows) {
     const s = r.classInstance!;
@@ -770,6 +826,60 @@ export async function reopenCoversOfDeactivatedCoach(tx: Tx, tenantId: string, a
     });
   }
   return reopened;
+}
+
+export type RegularCoachClash = { message: string; instanceId: string; session: string; conflict: CoverConflict };
+
+/**
+ * Making `coachUserId` the regular coach of this class (class PATCH): the first upcoming session of the class they
+ * would then teach while they have accepted to cover an overlapping session of another class, or null. A session of
+ * this class that someone else has accepted to cover is not one they would teach, and back-to-back is not an overlap.
+ * Only accepted cover counts: two classes with the same regular coach at the same time are not refused, because the
+ * class form has never refused that.
+ *
+ * The caller holds `coachUserId`'s cover advisory lock (taken before the Class row), so a claim or an assignment of
+ * that coach is either committed (and seen) or waits for this transaction; every session of the class is locked here
+ * (lockClassSessions), so a give up, withdraw or return on one of them is either committed or waits too, and then
+ * finds the regular coach changed (applyCoverAction refuses it as CHANGED).
+ */
+export async function regularCoachCoverClash(tx: Tx, tenantId: string, classId: string, coachUserId: string, tz: string, now: Date = new Date()): Promise<RegularCoachClash | null> {
+  await lockClassSessions(tx, tenantId, classId, now);
+  const ours = (await tx.classInstance.findMany({
+    where: { classId, class: { tenantId }, isCancelled: false, date: { gte: upcomingSince(now) } },
+    select: { ...SESSION_SELECT, cover: { select: { status: true, coverUserId: true } } },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
+  })).filter((s) => !(s.cover?.status === "covered" && s.cover.coverUserId !== coachUserId) && !sessionHasStarted(s, tz, now));
+  if (ours.length === 0) return null;
+  const DAY = 86_400_000;
+  const first = dayMarkerUtc(ours[0].date).getTime();
+  const last = dayMarkerUtc(ours[ours.length - 1].date).getTime();
+  const covering = await tx.classInstance.findMany({
+    where: {
+      classId: { not: classId },
+      isCancelled: false,
+      date: { gte: new Date(first - DAY - DAY / 2), lt: new Date(last + DAY + DAY / 2) },
+      class: { tenantId, isActive: true, deletedAt: null },
+      cover: { is: { tenantId, status: "covered", coverUserId: coachUserId } },
+    },
+    select: SESSION_SELECT,
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
+  });
+  for (const s of ours) {
+    const mine = boundsOf(s, tz);
+    for (const c of covering) {
+      const theirs = boundsOf(c, tz);
+      if (!(theirs.start < mine.end && mine.start < theirs.end)) continue;
+      const coach = await tx.user.findFirst({ where: { id: coachUserId, tenantId }, select: { name: true } });
+      const conflict = { instanceId: c.id, className: c.class.name, label: describeSession(c) };
+      return {
+        message: `${coach?.name ?? "This coach"} is covering ${c.class.name} on ${conflict.label}, which overlaps this class on ${describeSession(s)}. Choose another regular coach, or give up or replace that cover first.`,
+        instanceId: s.id,
+        session: describeSession(s),
+        conflict,
+      };
+    }
+  }
+  return null;
 }
 
 /** Active cover rows on these sessions (the weekly-slot edit's kept orphans). */

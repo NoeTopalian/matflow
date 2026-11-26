@@ -11,7 +11,7 @@ vi.mock("@/lib/audit-log", () => ({
   }),
 }));
 
-import { applyCoverAction, closeCoverOnCancel, findCoverOverlap, moveCoversBeforeDelete, slotMovesOf, type CoverSession } from "@/lib/session-cover";
+import { applyCoverAction, closeCoverOnCancel, findCoverOverlap, flagCoversForRetime, moveCoversBeforeDelete, slotMovesOf, type CoverSession } from "@/lib/session-cover";
 import { resolveSessionTeacher, staffCoachLabel, memberCoachLabel } from "@/lib/session-coach";
 
 const T = "tenant-1";
@@ -455,5 +455,51 @@ describe("a deactivated regular coach (round 2)", () => {
   });
   it("a typed name on the class still shows", () => {
     expect(staffCoachLabel(resolveSessionTeacher({ ...cls, coachName: "Head coach" }, null))).toBe("Head coach");
+  });
+});
+
+describe("review of 7d7b17df (round 3)", () => {
+  // Alex (the regular coach) now covers an overlapping session elsewhere.
+  const elsewhere = { ...session({ id: "s-other", classOver: { id: "c-o", name: "Open Mat", coachUserId: null, coachUser: null, location: "Mat 3", mat: { name: "Mat 3" } } }), cover: { status: "covered", coverUserId: "u-alex" } };
+
+  it("withdraw and return of an OPEN request (as a deactivation leaves it) are refused when the regular coach is busy", async () => {
+    for (const action of ["withdraw", "return"] as const) {
+      const f = fakeTx({ row: openRow(), candidates: [elsewhere] });
+      const out = await applyCoverAction(f.tx, as("u-owner"), "s-thu", { action }, NOW);
+      expect(out, action).toMatchObject({ ok: false, code: "REGULAR_COACH_BUSY", conflict: { instanceId: "s-other" } });
+      expect(f.state.row).toMatchObject({ status: "open", coverUserId: null });
+      expect(audits).toEqual([]);
+    }
+  });
+
+  it("withdraw and return of an open request still work when the regular coach is free", async () => {
+    const w = fakeTx({ row: openRow() });
+    expect(await applyCoverAction(w.tx, as("u-owner"), "s-thu", { action: "withdraw" }, NOW)).toMatchObject({ ok: true, cover: null });
+    const r = fakeTx({ row: openRow() });
+    expect(await applyCoverAction(r.tx, as("u-owner"), "s-thu", { action: "return" }, NOW)).toMatchObject({ ok: true, cover: null });
+  });
+
+  it("give up, withdraw and return refuse when the regular coach changed between the plain read and the session lock", async () => {
+    for (const [action, who] of [["withdraw", "u-owner"], ["return", "u-owner"], ["give_up", "u-sam"]] as const) {
+      const f = fakeTx({ row: coveredRow("u-sam") });
+      // The plain read named Alex (whose lock was taken); by the time the session was locked, Kim was the regular coach.
+      f.raw.classInstance.findFirst.mockResolvedValueOnce(session());
+      f.raw.classInstance.findFirst.mockResolvedValueOnce(session({ classOver: { coachUserId: "u-kim", coachUser: { id: "u-kim", name: "Kim Coach", deactivatedAt: null } } }));
+      const out = await applyCoverAction(f.tx, as(who), "s-thu", { action }, NOW);
+      expect(out, action).toMatchObject({ ok: false, status: 409, code: "CHANGED" });
+      expect(f.state.row).toMatchObject({ status: "covered", coverUserId: "u-sam" });
+    }
+  });
+
+  it("an end-time edit flags a future covered session but not one already under way", async () => {
+    const during = new Date("2031-12-04T19:30:00Z"); // 19:30 in London on that Thursday: the 19:00 session has started
+    const started = fakeTx({ row: coveredRow("u-sam") });
+    await flagCoversForRetime(started.tx, T, "u-owner", "c-adults", ["s-thu"], "21:00", "Europe/London", during);
+    expect(started.state.row).toMatchObject({ status: "covered", needsReconfirm: false });
+    expect(audits).toEqual([]);
+    const future = fakeTx({ row: coveredRow("u-sam") });
+    await flagCoversForRetime(future.tx, T, "u-owner", "c-adults", ["s-thu"], "21:00", "Europe/London", NOW);
+    expect(future.state.row).toMatchObject({ status: "covered", needsReconfirm: true });
+    expect(audits.map((a) => a.action)).toEqual(["class.cover_reconfirm_flagged"]);
   });
 });
