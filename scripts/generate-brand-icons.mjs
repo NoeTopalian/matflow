@@ -9,7 +9,8 @@
  *   node scripts/generate-brand-icons.mjs
  *
  * Which drawing goes where follows the guide: the MF tile with the STUDIO
- * patch at 64 px and above, the plain MF tile below that and in browser tabs.
+ * patch wherever it is shown at 72 px or more (STUDIO is unreadable below
+ * that), the plain MF tile in browser tabs.
  */
 import sharp from "sharp";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";

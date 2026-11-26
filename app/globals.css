@@ -676,7 +676,13 @@ option {
      app-wide (breaking scrollIntoView-then-measure logic and Next's router
      scroll restoration). */
   html:has(#landing-root) { scroll-behavior: smooth; }
-  section[id] { scroll-margin-top: 5rem; }
+  /* The landing header's height, in one place: the bar (LandingNav,
+     h-[var(--land-bar-h)]) plus its 1 px bottom border. The hero's
+     first-screen height and the anchor offset subtract it, so a section
+     lands exactly under the header rather than 1 px behind it, and the hero
+     ends at the bottom of the first screen. */
+  :root { --land-bar-h: 5rem; --land-nav-h: calc(var(--land-bar-h) + 1px); }
+  section[id] { scroll-margin-top: var(--land-nav-h); }
 }
 /* ── Member top bar: fill the overscroll strip ──────────────────────────────
    A `position: sticky` header stays put while the page scrolls, but it still
