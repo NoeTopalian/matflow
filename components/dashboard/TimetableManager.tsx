@@ -137,6 +137,7 @@ interface ScheduleChange {
   /** Session cover carried to the one new session (a covered one awaits reconfirmation), and cover requests closed. */
   coverMoved?: number;
   coverClosed?: Array<{ date: string; startTime: string; closedReason: string }>;
+  coverKept?: number;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -196,6 +197,9 @@ function describeSave(change: ScheduleChange | null | undefined): string {
       .map((c) => `${new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(c.date))} ${c.startTime}`)
       .join(", ");
     message += ` ${plural(change.coverClosed.length, "cover request", "cover requests")} closed (${when}): request cover again on the session you meant, under Class cover.`;
+  }
+  if (change.coverKept) {
+    message += ` ${plural(change.coverKept, "session kept at the old time still has", "sessions kept at the old time still have")} cover arranged under Class cover.`;
   }
   return message;
 }

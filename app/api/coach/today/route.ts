@@ -62,7 +62,7 @@ export async function GET() {
           select: {
             id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true,
             // The linked staff coach, for who teaches the session (lib/session-coach.ts).
-            coachUser: { select: { id: true, name: true } },
+            coachUser: { select: { id: true, name: true, deactivatedAt: true } },
             // The mat it is on, and that mat's place in the club's order: the
             // class picker lists same-time sessions in the timetable's mat order.
             mat: { select: { name: true, sortOrder: true } },

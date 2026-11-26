@@ -22,7 +22,6 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
-import { resolveCoachName } from "@/lib/class-coach";
 import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
 import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
 import { isAdultAccount } from "@/lib/account-type";
@@ -86,7 +85,7 @@ export async function GET(req: Request) {
             name: true,
             color: true,
             coachName: true,
-            coachUser: { select: { id: true, name: true } },
+            coachUser: { select: { id: true, name: true, deactivatedAt: true } },
             location: true,
             // The mat the class runs on (null = none); the member's day draws a column per mat.
             matId: true,
@@ -284,7 +283,7 @@ export async function GET(req: Request) {
           startTime: sched.startTime,
           endTime: sched.endTime,
           // The requested day's own session only (its weekday): another day's row of the same class keeps its coach.
-          coach: (sched.dayOfWeek === coverDay && coverCoach.has(`${cls.id}-${sched.startTime}`) ? coverCoach.get(`${cls.id}-${sched.startTime}`) : resolveCoachName(cls)) ?? "TBC",
+          coach: (sched.dayOfWeek === coverDay && coverCoach.has(`${cls.id}-${sched.startTime}`) ? coverCoach.get(`${cls.id}-${sched.startTime}`) : memberCoachLabel(resolveSessionTeacher(cls, null))) ?? "TBC",
           location: cls.location ?? "",
           matId: cls.matId ?? null,
           capacity: cls.maxCapacity,

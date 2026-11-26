@@ -176,3 +176,35 @@ the Member lock).
    category is a separate transaction from changing the category. Tests:
    `tests/integration/class-categories-bridge-db.test.ts` ("archive against
    assignment, on two connections").
+
+## 8. Session cover (26 Nov 2026, round 2 of PR #134)
+
+`lib/session-cover.ts`. One order in every path: **cover advisory lock (COVR, level 1) → the session's
+`ClassInstance` row → its `SessionCover` row → audit**.
+
+- **COVR** is `pg_advisory_xact_lock(COVR, hashtext(tenantId:userId))`, one key per coach per club, and a
+  transaction takes **at most one**, before any row lock: the coach a claim, assign, replace or reconfirm puts on a
+  session, or the regular coach a give up, withdraw or return puts back on it (read with a plain query first). It
+  serialises that coach's overlap check, so two of their claims, or a claim and an assignment of them, cannot both
+  pass.
+- **The session row** is then locked `FOR NO KEY UPDATE` (`lockSessionForCover`). Two cover changes of one session
+  are serial; a cancel or restore (an `UPDATE` of the row) waits for a cover change and a cover change waits for a
+  cancel, and reads the session again after the lock, so a claim or assignment never lands on a cancelled session
+  and a cancel never misses a cover committed under it. A check-in's attendance insert takes only `KEY SHARE` on the
+  session and does not wait.
+- **Cancel / restore** (`app/api/classes/[id]/instances/[instanceId]/route.ts`): the session `UPDATE`, then
+  `closeCoverOnCancel` (re-takes the same row lock, a no-op, then closes the cover row with a count-checked audit).
+- **Weekly-slot edit** (class PATCH): Class `FOR UPDATE` (level 2) → the sessions it will delete `FOR UPDATE` in id
+  order (`lockSessionsForDelete`) → their cover rows (moved or closed, every update pinned and count-checked) →
+  the session `DELETE`. A re-timed session's `UPDATE` holds its row while its cover is flagged.
+- **Archive, pause, undo of a resume or restore** (class DELETE, class PATCH, `lib/undo-registry.ts`): the Class row →
+  the class's upcoming sessions with an active cover, `FOR NO KEY UPDATE` in id order (`lockSessionsForCover`) →
+  their cover rows closed (`closeCoversForClass`).
+- **Staff deactivation** (`app/api/staff/[id]/route.ts` DELETE): that person's COVR key first → the User row →
+  their covered upcoming sessions `FOR NO KEY UPDATE` in id order → the cover rows reopened
+  (`reopenCoversOfDeactivatedCoach`).
+- No cover path takes a Class or Member lock after a session row, and no cover path holds a session row while asking
+  for a COVR key. A class PATCH that changes `coachUserId` takes no COVR key: the regular-coach form has never had an
+  overlap rule (unchanged by cover).
+- Tests that force each interleaving (a parked transaction, the other side seen waiting in `pg_stat_activity`):
+  `tests/integration/session-cover-races-db.test.ts`.

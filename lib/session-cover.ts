@@ -70,7 +70,7 @@ const SESSION_SELECT = {
       isActive: true,
       deletedAt: true,
       sourceImportJobId: true,
-      coachUser: { select: { id: true, name: true } },
+      coachUser: { select: { id: true, name: true, deactivatedAt: true } },
       mat: { select: { name: true } },
     },
   },
@@ -202,6 +202,47 @@ function sessionMeta(s: Pick<CoverSession, "date" | "startTime" | "endTime" | "c
   return { classId: s.class.id, date: s.date.toISOString(), startTime: s.startTime, endTime: s.endTime };
 }
 
+// ── Session row locks (docs/design/LOCK-ORDER-2026-10-24.md: advisory, then ClassInstance, then SessionCover) ──────
+
+/**
+ * Locks ONE session row of this club for a cover change: FOR NO KEY UPDATE, which every other cover change of the
+ * same session, a cancel or restore (an UPDATE of the row), a weekly-slot edit (FOR UPDATE before it deletes) and
+ * an archive, pause or deactivation (FOR NO KEY UPDATE) wait for, and a check-in (KEY SHARE, from its attendance
+ * insert) does not. So a cover change and a cancel never interleave, and two cover changes of one session are
+ * serial. Returns false when the session is not (or no longer) this club's. The tenant id and session id are bind
+ * parameters (tests/unit/sec-c-static-guards.test.ts).
+ */
+export async function lockSessionForCover(tx: Tx, tenantId: string, instanceId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT ci.id FROM "ClassInstance" ci
+     WHERE ci.id = ${instanceId}
+       AND EXISTS (SELECT 1 FROM "Class" c WHERE c.id = ci."classId" AND c."tenantId" = ${tenantId})
+       FOR NO KEY UPDATE OF ci`;
+  return rows.length === 1;
+}
+
+/** Several session rows of this club, FOR NO KEY UPDATE, in id order (archive, pause, deactivation). */
+export async function lockSessionsForCover(tx: Tx, tenantId: string, instanceIds: string[]): Promise<void> {
+  if (instanceIds.length === 0) return;
+  await tx.$queryRaw`
+    SELECT ci.id FROM "ClassInstance" ci
+     WHERE ci.id = ANY(${instanceIds}::text[])
+       AND EXISTS (SELECT 1 FROM "Class" c WHERE c.id = ci."classId" AND c."tenantId" = ${tenantId})
+     ORDER BY ci.id
+       FOR NO KEY UPDATE OF ci`;
+}
+
+/** Session rows a weekly-slot edit is about to delete, FOR UPDATE, in id order, before their cover rows are moved. */
+export async function lockSessionsForDelete(tx: Tx, tenantId: string, instanceIds: string[]): Promise<void> {
+  if (instanceIds.length === 0) return;
+  await tx.$queryRaw`
+    SELECT ci.id FROM "ClassInstance" ci
+     WHERE ci.id = ANY(${instanceIds}::text[])
+       AND EXISTS (SELECT 1 FROM "Class" c WHERE c.id = ci."classId" AND c."tenantId" = ${tenantId})
+     ORDER BY ci.id
+       FOR UPDATE OF ci`;
+}
+
 export type CoverActor = { tenantId: string; userId: string; role: string };
 export type CoverInput =
   | { action: "request" | "claim" | "give_up" | "withdraw" | "return" | "reconfirm" }
@@ -226,23 +267,41 @@ async function eligibleStaff(tx: Tx, tenantId: string, userId: string): Promise<
 }
 
 /**
- * One cover action on one dated session, inside the caller's tenant transaction. Proves the session is this
- * club's before anything else is read or written; every write is a conditional update on the state that was read,
- * so a concurrent change answers "changed" instead of being overwritten; every change writes its Activity row in
- * the same transaction (logAuditStrict).
+ * One cover action on one dated session, inside the caller's tenant transaction.
+ *
+ * Lock order (docs/design/LOCK-ORDER-2026-10-24.md): at most ONE cover advisory lock — the coach this action puts on
+ * the session (claim, assign, replace, reconfirm) or the regular coach it puts back (give up, withdraw, return) —
+ * then this session's row (lockSessionForCover), then its cover row. Everything the action decides on is read after
+ * the session lock, so a cancel, a weekly-slot edit, an archive or another cover change of the same session has
+ * either fully happened or not started. Every write is still a conditional update pinned to this session and to the
+ * state that was read, and an Activity row is written only when its update changed exactly one row.
  */
 export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: string, input: CoverInput, now: Date = new Date()): Promise<CoverOutcome> {
   const { tenantId, userId, role } = actor;
   const om = isOwnerOrManager(role);
 
-  // Level 1 first: the advisory lock of the coach this action would put on the session.
-  const lockFor =
-    input.action === "claim" || input.action === "reconfirm" ? userId : input.action === "assign" || input.action === "replace" ? input.coachUserId : null;
-  if (lockFor) await lockCoachCover(tx, tenantId, lockFor);
+  // Ownership before disclosure: a session of another club is a bare 404. A plain read (no lock): it names the
+  // regular coach whose advisory lock give up, withdraw and return take.
+  const pre = await tx.classInstance.findFirst({ where: { id: instanceId, class: { tenantId } }, select: { class: { select: { coachUserId: true } } } });
+  if (!pre) return refuse(404, "NOT_FOUND", "Not found");
 
-  // Ownership before disclosure: a session of another club is a bare 404.
+  // Level 1: one advisory lock.
+  const lockFor =
+    input.action === "claim" || input.action === "reconfirm"
+      ? userId
+      : input.action === "assign" || input.action === "replace"
+        ? input.coachUserId
+        : input.action === "give_up" || input.action === "withdraw" || input.action === "return"
+          ? pre.class.coachUserId
+          : null;
+  if (lockFor) await lockCoachCover(tx, tenantId, lockFor);
+  // Level 2: this session's row.
+  if (!(await lockSessionForCover(tx, tenantId, instanceId))) {
+    return refuse(409, "SESSION_GONE", "This session is no longer on the timetable. Reload to see the current sessions.");
+  }
+
   const session = await tx.classInstance.findFirst({ where: { id: instanceId, class: { tenantId } }, select: SESSION_SELECT });
-  if (!session) return refuse(404, "NOT_FOUND", "Not found");
+  if (!session) return refuse(409, "SESSION_GONE", "This session is no longer on the timetable. Reload to see the current sessions.");
   const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   const tz = usableTimezone(tenant?.timezone);
   const label = describeSession(session);
@@ -253,19 +312,26 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
   if (session.isCancelled) return refuse(409, "SESSION_CANCELLED", "This session is cancelled, so its cover cannot change.");
   if (sessionHasStarted(session, tz, now)) return refuse(409, "SESSION_STARTED", "This session has already started, so its cover can no longer change.");
 
-  const row = await tx.sessionCover.findFirst({
-    where: { tenantId, classInstanceId: instanceId },
-    select: { id: true, status: true, coverUserId: true, needsReconfirm: true, coverUser: { select: { name: true } } },
-  });
-  const coveredBy = () => `Already covered by ${row?.coverUser?.name ?? "another coach"}.`;
+  const readRow = () =>
+    tx.sessionCover.findFirst({
+      where: { tenantId, classInstanceId: instanceId },
+      select: { id: true, status: true, coverUserId: true, needsReconfirm: true, coverUser: { select: { name: true } } },
+    });
+  const row = await readRow();
+  const regularId = session.class.coachUserId;
+  const coveredBy = (name: string | null | undefined) => `Already covered by ${name ?? "another coach"}.`;
   const changedNow = () => refuse(409, "CHANGED", "This session's cover has just changed. Reload to see it.");
+  /** The accurate answer when an insert or update found the row in another state than the one read. */
+  const stateNow = async (): Promise<CoverOutcome> => {
+    const now2 = await readRow();
+    if (now2?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy(now2.coverUser?.name));
+    if (now2?.status === "open") return refuse(409, "ALREADY_REQUESTED", "Cover has already been requested for this session.");
+    return changedNow();
+  };
   const audit = (action: string, extra: Record<string, unknown> = {}) =>
     logAuditStrict(tx, { tenantId, userId, action, entityType: "ClassInstance", entityId: instanceId, metadata: { ...sessionMeta(session), ...extra } });
   const done = async (changed: boolean): Promise<CoverOutcome> => {
-    const after = await tx.sessionCover.findFirst({
-      where: { tenantId, classInstanceId: instanceId },
-      select: { status: true, coverUserId: true, needsReconfirm: true, coverUser: { select: { name: true } } },
-    });
+    const after = await readRow();
     const cover = after && ACTIVE.includes(after.status)
       ? { status: after.status, coverUserId: after.coverUserId, coverUserName: after.coverUser?.name ?? null, needsReconfirm: after.needsReconfirm }
       : null;
@@ -278,43 +344,49 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
     const who = coach.id === userId ? "You're" : `${coach.name} is`;
     return refuse(409, "OVERLAP", `${who} already teaching ${clash.className} on ${clash.label}.`, clash);
   };
-
+  /** The class's own regular coach is not its cover: withdraw the request or return the session to them instead. */
+  const isRegular = (coach: { id: string; name: string }): CoverOutcome | null =>
+    regularId && coach.id === regularId
+      ? refuse(409, "REGULAR_COACH", `${coach.id === userId ? "You're" : `${coach.name} is`} this class's regular coach. Withdraw the request or return the session to its regular coach instead.`)
+      : null;
   /**
    * Taking a covered session off its covering coach (give up, withdraw, return) makes the class's linked regular
    * coach its teacher again — an open request does not release them. If that coach is meanwhile teaching an
    * overlapping session (their own, or one they now cover), it is refused by name rather than leaving one person on
-   * two sessions at once. Under the regular coach's advisory lock, so it cannot interleave with their own claim.
+   * two sessions at once. The regular coach's advisory lock was taken at level 1.
    */
   const regularBusy = async (what: string): Promise<CoverOutcome | null> => {
-    const regularId = session.class.coachUserId;
     if (row?.status !== "covered" || !regularId || regularId === row.coverUserId) return null;
-    await lockCoachCover(tx, tenantId, regularId);
     const clash = await findCoverOverlap(tx, tenantId, tz, regularId, session);
     if (!clash) return null;
     const regularName = session.class.coachUser?.name ?? "The regular coach";
     return refuse(409, "REGULAR_COACH_BUSY", `${what} would put ${regularName} back on this class while they teach ${clash.className} on ${clash.label}. Choose another coach with Replace, or change that session first.`, clash);
   };
+  /** Insert this session's cover row unless one appeared meanwhile (ON CONFLICT DO NOTHING: no aborted transaction). */
+  const insert = async (data: { status: string; coverUserId?: string }): Promise<boolean> => {
+    const n = await tx.sessionCover.createMany({
+      data: [{ tenantId, classInstanceId: instanceId, requestedById: userId, ...data }],
+      skipDuplicates: true,
+    });
+    return n.count === 1;
+  };
+  const pinned = (extra: Prisma.SessionCoverWhereInput) => ({ id: row!.id, tenantId, classInstanceId: instanceId, ...extra });
 
   switch (input.action) {
     case "request": {
-      if (!om && !(session.class.coachUserId && session.class.coachUserId === userId)) {
+      if (!om && !(regularId && regularId === userId)) {
         return refuse(403, "FORBIDDEN", "Only the owner, a manager or this class's own coach can ask for cover.");
       }
       if (row?.status === "open") return refuse(409, "ALREADY_REQUESTED", "Cover has already been requested for this session.");
-      if (row?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy());
+      if (row?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy(row.coverUser?.name));
       if (row) {
         const n = await tx.sessionCover.updateMany({
-          where: { id: row.id, tenantId, status: row.status },
+          where: pinned({ status: row.status }),
           data: { status: "open", coverUserId: null, requestedById: userId, needsReconfirm: false, closedReason: null },
         });
-        if (n.count !== 1) return changedNow();
-      } else {
-        try {
-          await tx.sessionCover.create({ data: { tenantId, classInstanceId: instanceId, status: "open", requestedById: userId } });
-        } catch (e) {
-          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return refuse(409, "ALREADY_REQUESTED", "Cover has already been requested for this session.");
-          throw e;
-        }
+        if (n.count !== 1) return stateNow();
+      } else if (!(await insert({ status: "open" }))) {
+        return stateNow();
       }
       await audit("class.cover_requested");
       return done(true);
@@ -323,18 +395,19 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
     case "claim": {
       const me = await eligibleStaff(tx, tenantId, userId);
       if (!me) return refuse(403, "NOT_ELIGIBLE", "Only a member of this club's staff can cover a class.");
-      if (row?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy());
+      if (row?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy(row.coverUser?.name));
       if (row?.status !== "open") return refuse(409, "NOT_OPEN", "This class no longer needs cover.");
+      const own = isRegular(me);
+      if (own) return own;
       const clash = await overlap(me);
       if (clash) return clash;
       const n = await tx.sessionCover.updateMany({
-        where: { id: row.id, tenantId, status: "open" },
+        where: pinned({ status: "open" }),
         data: { status: "covered", coverUserId: userId, needsReconfirm: false },
       });
       if (n.count !== 1) {
-        // Someone else's claim committed first: say who has it.
-        const now2 = await tx.sessionCover.findFirst({ where: { id: row.id, tenantId }, select: { status: true, coverUser: { select: { name: true } } } });
-        if (now2?.status === "covered") return refuse(409, "ALREADY_COVERED", `Already covered by ${now2.coverUser?.name ?? "another coach"}.`);
+        const now2 = await readRow();
+        if (now2?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy(now2.coverUser?.name));
         return refuse(409, "NOT_OPEN", "This class no longer needs cover.");
       }
       await audit("class.cover_claimed", { coverUserId: userId });
@@ -347,25 +420,27 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
       const coach = await eligibleStaff(tx, tenantId, input.coachUserId);
       if (!coach) return refuse(400, "NOT_ELIGIBLE", "Choose a member of staff from the list.");
       if (input.action === "assign") {
-        if (row?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy());
+        if (row?.status === "covered") return refuse(409, "ALREADY_COVERED", coveredBy(row.coverUser?.name));
       } else {
         if (row?.status !== "covered") return refuse(409, "NOT_COVERED", "This session is not covered at the moment.");
         if (row.coverUserId === coach.id) return done(false);
       }
+      const own = isRegular(coach);
+      if (own) return own;
       const clash = await overlap(coach);
       if (clash) return clash;
       if (input.action === "replace" && row) {
         const n = await tx.sessionCover.updateMany({
-          where: { id: row.id, tenantId, status: "covered", coverUserId: row.coverUserId },
+          where: pinned({ status: "covered", coverUserId: row.coverUserId }),
           data: { coverUserId: coach.id, needsReconfirm: false },
         });
-        if (n.count !== 1) return changedNow();
+        if (n.count !== 1) return stateNow();
         await audit("class.cover_replaced", { coverUserId: coach.id, previousCoverUserId: row.coverUserId });
         return done(true);
       }
       if (row) {
         const n = await tx.sessionCover.updateMany({
-          where: { id: row.id, tenantId, status: row.status },
+          where: pinned({ status: row.status }),
           data: {
             status: "covered",
             coverUserId: coach.id,
@@ -375,14 +450,9 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
             ...(row.status === "open" ? {} : { requestedById: userId }),
           },
         });
-        if (n.count !== 1) return changedNow();
-      } else {
-        try {
-          await tx.sessionCover.create({ data: { tenantId, classInstanceId: instanceId, status: "covered", coverUserId: coach.id, requestedById: userId } });
-        } catch (e) {
-          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return changedNow();
-          throw e;
-        }
+        if (n.count !== 1) return stateNow();
+      } else if (!(await insert({ status: "covered", coverUserId: coach.id }))) {
+        return stateNow();
       }
       await audit("class.cover_assigned", { coverUserId: coach.id });
       return done(true);
@@ -394,10 +464,10 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
       const busy = await regularBusy("Giving up this cover");
       if (busy) return busy;
       const n = await tx.sessionCover.updateMany({
-        where: { id: row.id, tenantId, status: "covered", coverUserId: row.coverUserId },
+        where: pinned({ status: "covered", coverUserId: row.coverUserId }),
         data: { status: "open", coverUserId: null, needsReconfirm: false },
       });
-      if (n.count !== 1) return changedNow();
+      if (n.count !== 1) return stateNow();
       await audit("class.cover_given_up", { previousCoverUserId: row.coverUserId });
       return done(true);
     }
@@ -407,18 +477,18 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
       if (!om) return refuse(403, "FORBIDDEN", "Only the owner or a manager can change this.");
       if (!row || !ACTIVE.includes(row.status)) return refuse(409, "NOT_ACTIVE", "This session has no cover request.");
       const returning = input.action === "return";
-      if (returning && !session.class.coachUserId && !session.class.coachName?.trim()) {
+      if (returning && !regularId && !session.class.coachName?.trim()) {
         return refuse(409, "NO_REGULAR_COACH", "This class has no regular coach. Withdraw the request instead.");
       }
       const busy = await regularBusy(returning ? "Returning this session to its regular coach" : "Withdrawing this cover");
       if (busy) return busy;
       const n = await tx.sessionCover.updateMany({
-        where: { id: row.id, tenantId, status: row.status, coverUserId: row.coverUserId },
+        where: pinned({ status: row.status, coverUserId: row.coverUserId }),
         data: returning
           ? { status: "closed", closedReason: "returned_to_regular", coverUserId: null, needsReconfirm: false }
           : { status: "withdrawn", closedReason: null, coverUserId: null, needsReconfirm: false },
       });
-      if (n.count !== 1) return changedNow();
+      if (n.count !== 1) return stateNow();
       await audit(returning ? "class.cover_returned_to_regular" : "class.cover_withdrawn", row.coverUserId ? { previousCoverUserId: row.coverUserId } : {});
       return done(true);
     }
@@ -426,52 +496,60 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
     case "reconfirm": {
       if (row?.status !== "covered" || !row.needsReconfirm) return refuse(409, "NOTHING_TO_RECONFIRM", "There is nothing to reconfirm for this session.");
       if (row.coverUserId !== userId) return refuse(403, "FORBIDDEN", "Only the coach covering this class can reconfirm it.");
+      // A fresh overlap check at the NEW time: accepting one time is not accepting another.
       const clash = await overlap({ id: userId, name: row.coverUser?.name ?? "" });
       if (clash) return clash;
       const n = await tx.sessionCover.updateMany({
-        where: { id: row.id, tenantId, status: "covered", coverUserId: userId, needsReconfirm: true },
+        where: pinned({ status: "covered", coverUserId: userId, needsReconfirm: true }),
         data: { needsReconfirm: false },
       });
-      if (n.count !== 1) return changedNow();
+      if (n.count !== 1) return stateNow();
       await audit("class.cover_reconfirmed", { coverUserId: userId });
       return done(true);
     }
   }
 }
 
-// ── What the writers that cancel, re-time or remove sessions do to their cover ────────────────────────────────────
+// ── What the writers that cancel, re-time, remove, archive or pause sessions, or deactivate a coach, do ──────────
+
+type SessionRef = Pick<CoverSession, "date" | "startTime" | "endTime"> & { id: string; classId: string };
+const refMeta = (s: SessionRef) => ({ classId: s.classId, date: s.date.toISOString(), startTime: s.startTime, endTime: s.endTime });
 
 /**
- * Cancelling a session closes its cover (reason session_cancelled) in the cancel's own transaction. Restoring the
- * session does NOT reopen it: no coach is silently recommitted; the owner may ask for cover again.
+ * Cancelling a session closes its cover (reason session_cancelled) in the cancel's own transaction, under the
+ * session's row lock (the cancel's UPDATE already holds it; taking it again here is a no-op), so a claim or an
+ * assignment either finished before the cancel (and is closed now) or waits and then sees the session cancelled.
+ * The Activity row is written only when a row was actually closed. Restoring the session does NOT reopen it: no
+ * coach is silently recommitted; the owner may ask for cover again.
  */
-export async function closeCoverOnCancel(tx: Tx, tenantId: string, actorId: string, session: Pick<CoverSession, "date" | "startTime" | "endTime"> & { id: string; classId: string }): Promise<void> {
+export async function closeCoverOnCancel(tx: Tx, tenantId: string, actorId: string, session: SessionRef): Promise<boolean> {
+  await lockSessionForCover(tx, tenantId, session.id);
   const row = await tx.sessionCover.findFirst({
     where: { tenantId, classInstanceId: session.id, status: { in: ACTIVE } },
     select: { id: true, status: true, coverUserId: true },
   });
-  if (!row) return;
-  await tx.sessionCover.updateMany({
-    where: { id: row.id, tenantId, status: row.status },
+  if (!row) return false;
+  const n = await tx.sessionCover.updateMany({
+    where: { id: row.id, tenantId, classInstanceId: session.id, status: { in: ACTIVE } },
     data: { status: "closed", closedReason: "session_cancelled", coverUserId: null, needsReconfirm: false },
   });
+  if (n.count !== 1) return false;
   await logAuditStrict(tx, {
     tenantId,
     userId: actorId,
     action: "class.cover_closed",
     entityType: "ClassInstance",
     entityId: session.id,
-    metadata: {
-      classId: session.classId, date: session.date.toISOString(), startTime: session.startTime, endTime: session.endTime,
-      closedReason: "session_cancelled", ...(row.coverUserId ? { previousCoverUserId: row.coverUserId } : {}),
-    },
+    metadata: { ...refMeta(session), closedReason: "session_cancelled", ...(row.coverUserId ? { previousCoverUserId: row.coverUserId } : {}) },
   });
+  return true;
 }
 
 /**
  * How a weekly-slot edit changed one weekday of a class: the one old start time that became one new start time
  * (`moves`), or a weekday whose slots changed in a way that does not pair one old slot with one new one
- * (`ambiguousDays`) — Noe's correction of 26 Nov 2026: same date is not same session.
+ * (`ambiguousDays`) — Noe's correction of 26 Nov 2026: same date is not same session. A slot whose START is in both
+ * lists only changed its end: its sessions are kept and re-timed (flagCoversForRetime), so it is neither.
  */
 export type SlotMoves = { moves: Map<number, { from: string; to: string }>; ambiguousDays: Set<number> };
 
@@ -479,9 +557,14 @@ export type SlotMoves = { moves: Map<number, { from: string; to: string }>; ambi
 export function slotMovesOf(removed: Array<{ dayOfWeek: number; startTime: string }>, added: Array<{ dayOfWeek: number; startTime: string }>): SlotMoves {
   const moves = new Map<number, { from: string; to: string }>();
   const ambiguousDays = new Set<number>();
+  const key = (x: { dayOfWeek: number; startTime: string }) => `${x.dayOfWeek}|${x.startTime}`;
+  const removedStarts = new Set(removed.map(key));
+  const addedStarts = new Set(added.map(key));
+  const realRemoved = removed.filter((x) => !addedStarts.has(key(x)));
+  const realAdded = added.filter((x) => !removedStarts.has(key(x)));
   for (let d = 0; d < 7; d++) {
-    const r = removed.filter((x) => x.dayOfWeek === d);
-    const a = added.filter((x) => x.dayOfWeek === d);
+    const r = realRemoved.filter((x) => x.dayOfWeek === d);
+    const a = realAdded.filter((x) => x.dayOfWeek === d);
     if (r.length === 1 && a.length === 1) moves.set(d, { from: r[0].startTime, to: a[0].startTime });
     else if (r.length > 0 && a.length > 0) ambiguousDays.add(d);
   }
@@ -490,17 +573,44 @@ export function slotMovesOf(removed: Array<{ dayOfWeek: number; startTime: strin
 
 export type CoverMoveReport = { moved: number; closed: Array<{ date: string; startTime: string; closedReason: string }> };
 
+/** Close one active cover row with a reason and its Activity row; false when it was no longer active. */
+async function closeActive(
+  tx: Tx,
+  tenantId: string,
+  actorId: string | null,
+  r: { id: string; status: string; coverUserId: string | null },
+  from: SessionRef,
+  closedReason: string,
+  detach: boolean,
+): Promise<boolean> {
+  const n = await tx.sessionCover.updateMany({
+    where: { id: r.id, tenantId, classInstanceId: from.id, status: r.status },
+    data: { status: "closed", closedReason, coverUserId: null, needsReconfirm: false, ...(detach ? { classInstanceId: null } : {}) },
+  });
+  if (n.count !== 1) return false;
+  await logAuditStrict(tx, {
+    tenantId, userId: actorId, action: "class.cover_closed", entityType: "ClassInstance", entityId: from.id,
+    metadata: { ...refMeta(from), closedReason, ...(r.coverUserId ? { previousCoverUserId: r.coverUserId } : {}) },
+  });
+  return true;
+}
+
 /**
  * The weekly-slot edit (the only way a session's time changes) is about to delete these upcoming sessions and has
- * already minted their replacements. For each cover row on them:
+ * already minted their replacements. It first locks the doomed sessions FOR UPDATE (id order), so no cover change
+ * of theirs is half-way through, and none can start, until it commits. For each cover row on them:
  *  - an ACTIVE row moves only to its UNAMBIGUOUS replacement: the edit turned exactly one slot of that weekday into
  *    exactly one new slot, the row's session was on the old slot, and the class has the new slot's session on the
- *    same club date. A class that runs twice that day never has its morning cover land on the evening session. A
- *    moved covered row is flagged "Awaiting reconfirmation" with an Activity row;
+ *    same club date, not cancelled and not yet started. A class that runs twice that day never has its morning cover
+ *    land on the evening session. A replacement holding only an ended cover row (withdrawn or closed) takes the move:
+ *    the ended row lets go of it first. A moved covered row is flagged "Awaiting reconfirmation" (its coach accepted
+ *    the old time, not this one) and a moved open request is said too, each with its Activity row;
  *  - any other active row is closed with an Activity row saying why: replacement_ambiguous (the day's slots changed
- *    with no one-to-one match — staff are told to request cover on the intended session) or session_removed;
- *  - an ended row (withdrawn or closed) lets go of the session it was on.
- * So the session delete that follows never meets a cover row, and no cover row is dropped silently.
+ *    with no one-to-one match — staff are told to request cover on the intended session), replacement_started (the
+ *    new time that day has already begun) or session_removed;
+ *  - an ended row lets go of the session it was on.
+ * Every update is pinned to the doomed session and its state, and is checked: under the lock a row cannot change, so
+ * a mismatch is an error that rolls the edit back rather than a foreign-key failure at the delete.
  */
 export async function moveCoversBeforeDelete(
   tx: Tx,
@@ -509,9 +619,12 @@ export async function moveCoversBeforeDelete(
   classId: string,
   doomedIds: string[],
   slotMoves: SlotMoves = { moves: new Map(), ambiguousDays: new Set() },
+  tz: string = "Europe/London",
+  now: Date = new Date(),
 ): Promise<CoverMoveReport> {
   const report: CoverMoveReport = { moved: 0, closed: [] };
   if (doomedIds.length === 0) return report;
+  await lockSessionsForDelete(tx, tenantId, doomedIds);
   const rows = await tx.sessionCover.findMany({
     where: { tenantId, classInstanceId: { in: doomedIds } },
     select: { id: true, status: true, coverUserId: true, classInstance: { select: { id: true, date: true, startTime: true, endTime: true } } },
@@ -530,60 +643,59 @@ export async function moveCoversBeforeDelete(
           id: { notIn: doomedIds },
           OR: dates.map((d) => ({ date: { gte: new Date(d - half), lt: new Date(d + half) } })),
         },
-        select: { id: true, date: true, startTime: true, endTime: true, cover: { select: { id: true } } },
+        select: { id: true, date: true, startTime: true, endTime: true, cover: { select: { id: true, status: true } } },
         orderBy: [{ date: "asc" }, { startTime: "asc" }],
       })
     : [];
   const taken = new Set<string>();
+  const mustChange = (n: { count: number }) => {
+    if (n.count !== 1) throw new Error("session cover row changed under the session lock during a weekly-slot edit");
+  };
 
   for (const r of rows) {
-    const from = r.classInstance;
-    if (!from || !doomed.has(from.id)) continue;
-    const meta = { classId, date: from.date.toISOString(), startTime: from.startTime, endTime: from.endTime };
+    const fromRow = r.classInstance;
+    if (!fromRow || !doomed.has(fromRow.id)) continue;
+    const from: SessionRef = { ...fromRow, classId };
     if (!ACTIVE.includes(r.status)) {
-      await tx.sessionCover.updateMany({ where: { id: r.id, tenantId, status: r.status }, data: { classInstanceId: null } });
+      mustChange(await tx.sessionCover.updateMany({ where: { id: r.id, tenantId, classInstanceId: from.id, status: r.status }, data: { classInstanceId: null } }));
       continue;
     }
     const marker = dayMarkerUtc(from.date);
     const weekday = marker.getUTCDay();
     const move = slotMoves.moves.get(weekday);
-    const to =
-      move && move.from === from.startTime
-        ? staying.find((s) => dayMarkerUtc(s.date).getTime() === marker.getTime() && s.startTime === move.to && !s.cover && !taken.has(s.id))
-        : undefined;
-    if (to) {
+    const paired = !!move && move.from === from.startTime;
+    const to = paired
+      ? staying.find((s) => dayMarkerUtc(s.date).getTime() === marker.getTime() && s.startTime === move!.to && !taken.has(s.id) && (!s.cover || !ACTIVE.includes(s.cover.status)))
+      : undefined;
+    if (to && !sessionHasStarted(to, tz, now)) {
       taken.add(to.id);
-      const covered = r.status === "covered";
-      await tx.sessionCover.updateMany({
-        where: { id: r.id, tenantId, status: r.status },
-        data: { classInstanceId: to.id, ...(covered ? { needsReconfirm: true } : {}) },
-      });
-      report.moved += 1;
-      if (covered) {
-        await logAuditStrict(tx, {
-          tenantId, userId: actorId, action: "class.cover_reconfirm_flagged", entityType: "ClassInstance", entityId: to.id,
-          metadata: { classId, date: to.date.toISOString(), startTime: to.startTime, endTime: to.endTime, previousStartTime: from.startTime, previousEndTime: from.endTime, coverUserId: r.coverUserId },
-        });
+      if (to.cover) {
+        // The replacement holds only an ended row: it lets go, so the move is not mistaken for an ambiguous one.
+        mustChange(await tx.sessionCover.updateMany({ where: { id: to.cover.id, tenantId, classInstanceId: to.id, status: to.cover.status }, data: { classInstanceId: null } }));
       }
+      const covered = r.status === "covered";
+      mustChange(await tx.sessionCover.updateMany({
+        where: { id: r.id, tenantId, classInstanceId: from.id, status: r.status },
+        data: { classInstanceId: to.id, ...(covered ? { needsReconfirm: true } : {}) },
+      }));
+      report.moved += 1;
+      await logAuditStrict(tx, {
+        tenantId, userId: actorId, action: covered ? "class.cover_reconfirm_flagged" : "class.cover_moved", entityType: "ClassInstance", entityId: to.id,
+        metadata: { classId, date: to.date.toISOString(), startTime: to.startTime, endTime: to.endTime, previousStartTime: from.startTime, previousEndTime: from.endTime, ...(covered ? { coverUserId: r.coverUserId } : {}) },
+      });
       continue;
     }
-    const closedReason = slotMoves.ambiguousDays.has(weekday) || (move && move.from === from.startTime) ? "replacement_ambiguous" : "session_removed";
-    await tx.sessionCover.updateMany({
-      where: { id: r.id, tenantId, status: r.status },
-      data: { status: "closed", closedReason, classInstanceId: null, coverUserId: null, needsReconfirm: false },
-    });
+    const closedReason = to ? "replacement_started" : slotMoves.ambiguousDays.has(weekday) || paired ? "replacement_ambiguous" : "session_removed";
+    if (!(await closeActive(tx, tenantId, actorId, r, from, closedReason, true))) mustChange({ count: 0 });
     report.closed.push({ date: from.date.toISOString(), startTime: from.startTime, closedReason });
-    await logAuditStrict(tx, {
-      tenantId, userId: actorId, action: "class.cover_closed", entityType: "ClassInstance", entityId: from.id,
-      metadata: { ...meta, closedReason, ...(r.coverUserId ? { previousCoverUserId: r.coverUserId } : {}) },
-    });
   }
   return report;
 }
 
 /**
- * The weekly-slot edit gave these kept sessions a new end time. A covered one is flagged for reconfirmation: its
- * coach agreed to the old time.
+ * The weekly-slot edit gave these kept sessions a new end time (their UPDATE holds their row locks). A covered one is
+ * flagged for reconfirmation: its coach agreed to the old time, not this one, and reconfirming re-runs the overlap
+ * check at the new time.
  */
 export async function flagCoversForRetime(tx: Tx, tenantId: string, actorId: string | null, classId: string, sessionIds: string[], endTime: string): Promise<void> {
   if (sessionIds.length === 0) return;
@@ -593,11 +705,75 @@ export async function flagCoversForRetime(tx: Tx, tenantId: string, actorId: str
   });
   for (const r of rows) {
     if (!r.classInstance) continue;
-    const n = await tx.sessionCover.updateMany({ where: { id: r.id, tenantId, status: "covered", needsReconfirm: false }, data: { needsReconfirm: true } });
+    const n = await tx.sessionCover.updateMany({
+      where: { id: r.id, tenantId, classInstanceId: r.classInstance.id, status: "covered", needsReconfirm: false },
+      data: { needsReconfirm: true },
+    });
     if (n.count !== 1) continue;
     await logAuditStrict(tx, {
       tenantId, userId: actorId, action: "class.cover_reconfirm_flagged", entityType: "ClassInstance", entityId: r.classInstance.id,
-      metadata: { classId, date: r.classInstance.date.toISOString(), startTime: r.classInstance.startTime, endTime, previousEndTime: r.classInstance.endTime, coverUserId: r.coverUserId },
+      // `previousEndTime` is what the session had: the row's `endTime` has already been rewritten by the caller.
+      metadata: { classId, date: r.classInstance.date.toISOString(), startTime: r.classInstance.startTime, endTime, previousEndTime: r.classInstance.endTime === endTime ? null : r.classInstance.endTime, coverUserId: r.coverUserId },
     });
   }
+}
+
+/** Active cover rows on the upcoming, not yet started, not cancelled sessions matching `where`, after locking them. */
+async function lockedUpcomingCovers(tx: Tx, tenantId: string, where: Prisma.SessionCoverWhereInput, tz: string, now: Date) {
+  const since = new Date(dayMarkerUtc(now).getTime() - 36 * 3_600_000);
+  const select = { id: true, status: true, coverUserId: true, classInstance: { select: { id: true, classId: true, date: true, startTime: true, endTime: true, isCancelled: true } } } as const;
+  const scope: Prisma.SessionCoverWhereInput = { AND: [{ tenantId, status: { in: ACTIVE }, classInstance: { is: { isCancelled: false, date: { gte: since } } } }, where] };
+  const first = await tx.sessionCover.findMany({ where: scope, select });
+  const ids = first.flatMap((r) => (r.classInstance ? [r.classInstance.id] : []));
+  if (ids.length === 0) return [];
+  await lockSessionsForCover(tx, tenantId, ids);
+  // Re-read under the locks: a claim or assignment that was mid-way has now committed (or not).
+  const rows = await tx.sessionCover.findMany({ where: { AND: [scope, { classInstanceId: { in: ids } }] }, select });
+  return rows.filter((r) => r.classInstance && !sessionHasStarted(r.classInstance, tz, now));
+}
+
+/**
+ * Archiving or pausing a class ends the active cover on its upcoming sessions (reason class_archived or class_paused,
+ * an Activity row each), in the same transaction, so restoring or resuming the class never brings a previous cover
+ * back and no one keeps a hidden booking on a session that is off the timetable. Past sessions keep theirs.
+ */
+export async function closeCoversForClass(tx: Tx, tenantId: string, actorId: string | null, classId: string, reason: "class_archived" | "class_paused", tz: string, now: Date = new Date()): Promise<number> {
+  const rows = await lockedUpcomingCovers(tx, tenantId, { classInstance: { is: { classId } } }, tz, now);
+  let closed = 0;
+  for (const r of rows) {
+    const s = r.classInstance!;
+    if (await closeActive(tx, tenantId, actorId, r, { id: s.id, classId: s.classId, date: s.date, startTime: s.startTime, endTime: s.endTime }, reason, false)) closed += 1;
+  }
+  return closed;
+}
+
+/**
+ * Deactivating a member of staff reopens the upcoming sessions they had accepted to cover (status open, so staff see
+ * "Cover needed" again and members "Coach to be confirmed"), in the deactivation's transaction, with an Activity row
+ * each. The caller takes this coach's cover advisory lock first, so a claim or assignment of theirs cannot slip in.
+ * Reactivating them does not put them back.
+ */
+export async function reopenCoversOfDeactivatedCoach(tx: Tx, tenantId: string, actorId: string, coachUserId: string, tz: string, now: Date = new Date()): Promise<number> {
+  const rows = await lockedUpcomingCovers(tx, tenantId, { status: "covered", coverUserId: coachUserId }, tz, now);
+  let reopened = 0;
+  for (const r of rows) {
+    const s = r.classInstance!;
+    const n = await tx.sessionCover.updateMany({
+      where: { id: r.id, tenantId, classInstanceId: s.id, status: "covered", coverUserId: coachUserId },
+      data: { status: "open", coverUserId: null, needsReconfirm: false },
+    });
+    if (n.count !== 1) continue;
+    reopened += 1;
+    await logAuditStrict(tx, {
+      tenantId, userId: actorId, action: "class.cover_given_up", entityType: "ClassInstance", entityId: s.id,
+      metadata: { classId: s.classId, date: s.date.toISOString(), startTime: s.startTime, endTime: s.endTime, previousCoverUserId: coachUserId, reason: "coach_deactivated" },
+    });
+  }
+  return reopened;
+}
+
+/** Active cover rows on these sessions (the weekly-slot edit's kept orphans). */
+export async function countActiveCovers(tx: Tx, tenantId: string, instanceIds: string[]): Promise<number> {
+  if (instanceIds.length === 0) return 0;
+  return tx.sessionCover.count({ where: { tenantId, classInstanceId: { in: instanceIds }, status: { in: ACTIVE } } });
 }

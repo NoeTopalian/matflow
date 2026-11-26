@@ -36,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           select: {
             id: true, name: true, location: true, coachName: true, coachUserId: true, maxCapacity: true, color: true, isKids: true,
             // The linked staff coach, for who teaches the session (lib/session-coach.ts).
-            coachUser: { select: { id: true, name: true } },
+            coachUser: { select: { id: true, name: true, deactivatedAt: true } },
             // T6a: the memberships that include the class, for the desk ask.
             allowedTiers: { select: { tier: { select: { id: true, name: true } } } },
             _count: { select: { rosterMembers: { where: { member: { archivedAt: null } } } } },

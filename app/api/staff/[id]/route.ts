@@ -1,4 +1,6 @@
 import { auth } from "@/auth";
+import { lockCoachCover, reopenCoversOfDeactivatedCoach } from "@/lib/session-cover";
+import { usableTimezone } from "@/lib/class-time";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -244,11 +246,18 @@ export async function DELETE(req: Request, { params }: Params) {
   // Settings → Staff's "Deactivated accounts", where the owner can reactivate.
   try {
     const result = await withTenantContext(session.user.tenantId, async (tx) => {
+      // Session cover: this person's cover advisory lock first (level 1), so no claim or assignment of theirs is
+      // half-way through while their upcoming covers are reopened below.
+      await lockCoachCover(tx, session.user.tenantId, id);
       const out = await tx.user.updateMany({
         where: { id, tenantId: session.user.tenantId, role: { not: "owner" }, deactivatedAt: null },
         data: { deactivatedAt: new Date(), sessionVersion: { increment: 1 } },
       });
       if (out.count > 0) {
+        // A deactivated coach is never shown as confirmed: the upcoming sessions they had accepted to cover need
+        // cover again ("Cover needed" to staff, "Coach to be confirmed" to members), each with an Activity row.
+        const club = await tx.tenant.findFirst({ where: { id: session.user.tenantId }, select: { timezone: true } });
+        await reopenCoversOfDeactivatedCoach(tx, session.user.tenantId, session.user.id, id, usableTimezone(club?.timezone));
         const row = await tx.user.findFirst({ where: { id, tenantId: session.user.tenantId }, select: { name: true, role: true } });
         await logAudit({
           tx,

@@ -281,7 +281,7 @@ export async function computeMemberStats(
             id: true,
             name: true,
             coachName: true,
-            coachUser: { select: { id: true, name: true } },
+            coachUser: { select: { id: true, name: true, deactivatedAt: true } },
             location: true,
             isKids: true,
             requiredRank: { select: { discipline: true, order: true } },

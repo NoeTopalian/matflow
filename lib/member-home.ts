@@ -16,7 +16,6 @@
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
-import { resolveCoachName } from "@/lib/class-coach";
 import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
 import { loadCovers, memberCoverLabels, sessionHasStarted } from "@/lib/session-cover";
 import { usableTimezone } from "@/lib/class-time";
@@ -310,7 +309,7 @@ export async function buildMemberSchedule(
       name: true,
       color: true,
       coachName: true,
-      coachUser: { select: { id: true, name: true } },
+      coachUser: { select: { id: true, name: true, deactivatedAt: true } },
       location: true,
       // The mat the class runs on: the same field /api/member/schedule returns.
       matId: true,
@@ -431,7 +430,7 @@ export async function buildMemberSchedule(
       startTime: sched.startTime,
       endTime: sched.endTime,
       // The day's own session only (its weekday): another day's row of the same class keeps its coach.
-      coach: (sched.dayOfWeek === coverDay && coverCoach.has(`${cls.id}-${sched.startTime}`) ? coverCoach.get(`${cls.id}-${sched.startTime}`) : resolveCoachName(cls)) ?? "TBC",
+      coach: (sched.dayOfWeek === coverDay && coverCoach.has(`${cls.id}-${sched.startTime}`) ? coverCoach.get(`${cls.id}-${sched.startTime}`) : memberCoachLabel(resolveSessionTeacher(cls, null))) ?? "TBC",
       location: cls.location ?? "",
       matId: cls.matId ?? null,
       capacity: cls.maxCapacity,
@@ -573,7 +572,7 @@ export async function buildMemberChildren(
         select: {
           name: true,
           coachName: true,
-          coachUser: { select: { id: true, name: true } },
+          coachUser: { select: { id: true, name: true, deactivatedAt: true } },
           location: true,
           tenantId: true,
         },

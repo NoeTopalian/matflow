@@ -95,6 +95,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   "class.cover_returned_to_regular": "Returned a session to its regular coach",
   "class.cover_closed": "Closed a cover request",
   "class.cover_reconfirm_flagged": "A covered session's time changed",
+  "class.cover_moved": "Moved a cover request to a session's new time",
   "class.cover_reconfirmed": "Reconfirmed covering a session",
   "class.roster.add": "Added a member to a class roster",
   "class.roster.remove": "Removed a member from a class roster",

@@ -34,7 +34,7 @@ const COVER_ACTIONS = Object.keys(AUDIT_LABELS).filter((a) => a.startsWith("clas
 describe("session cover in Activity", () => {
   it("every cover action has a label and belongs to the Class cover type, which owners and managers see", () => {
     expect(COVER_ACTIONS.sort()).toEqual([
-      "class.cover_assigned", "class.cover_claimed", "class.cover_closed", "class.cover_given_up", "class.cover_reconfirm_flagged",
+      "class.cover_assigned", "class.cover_claimed", "class.cover_closed", "class.cover_given_up", "class.cover_moved", "class.cover_reconfirm_flagged",
       "class.cover_reconfirmed", "class.cover_replaced", "class.cover_requested", "class.cover_returned_to_regular", "class.cover_withdrawn",
     ]);
     const type = ACTIVITY_TYPES.find((t) => t.key === "session_cover")!;
@@ -70,5 +70,25 @@ describe("session cover in Activity", () => {
     expect(plain(row({ action: "class.cover_reconfirm_flagged", ...by(OWNER), metadata: { ...meta, coverUserId: SAM.id, previousStartTime: "18:30" } }))).toBe(
       "Adults Gi · Thu 3 Dec, 19:00 changed time after Sam Cover took the cover; they need to reconfirm",
     );
+  });
+
+  it("round 2: archive, pause, a started replacement, a moved open request and a deactivated coach each say what happened", () => {
+    const closed = (closedReason: string) => plain(row({ action: "class.cover_closed", ...by(OWNER), metadata: { ...meta, closedReason } }));
+    expect(closed("class_archived")).toBe("The cover request for Adults Gi · Thu 3 Dec, 19:00 closed: the class was archived");
+    expect(closed("class_paused")).toBe("The cover request for Adults Gi · Thu 3 Dec, 19:00 closed: the class was paused");
+    expect(closed("replacement_started")).toBe("The cover request for Adults Gi · Thu 3 Dec, 19:00 closed: the class's new time that day had already started; request cover on the intended session");
+    expect(plain(row({ action: "class.cover_moved", ...by(OWNER), metadata: { ...meta, previousStartTime: "18:30" } }))).toBe("The cover request moved with the class's new time to Adults Gi · Thu 3 Dec, 19:00 (it was at 18:30)");
+    expect(plain(row({ action: "class.cover_given_up", ...by(OWNER), metadata: { ...meta, previousCoverUserId: SAM.id, reason: "coach_deactivated" } }))).toBe("Olive Owner deactivated Sam Cover, so Adults Gi · Thu 3 Dec, 19:00 needs cover again");
+  });
+
+  it("a cover row on a session that has since been deleted still names it from its own metadata", () => {
+    expect(plain(row({ action: "class.cover_claimed", entityId: "s_deleted", ...by(SAM), metadata: { ...meta, coverUserId: SAM.id } }))).toBe("Sam Cover is covering Adults Gi · Thu 3 Dec, 19:00");
+  });
+
+  it("cover_closed, cover_reconfirm_flagged and cover_moved are staff actions: a row with no staff member is a removed account, not automatic", () => {
+    for (const action of ["class.cover_closed", "class.cover_reconfirm_flagged", "class.cover_moved"]) {
+      const e = toFeedEntry(row({ action, metadata: { ...meta, closedReason: "session_cancelled", previousStartTime: "18:30", coverUserId: SAM.id } }), ctx);
+      expect(e.source?.label, action).not.toBe("Automatic");
+    }
   });
 });

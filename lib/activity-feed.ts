@@ -1111,6 +1111,7 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const where = r.session(row.entityId);
       if (!who || !where) return null;
       const before = idOf(m.previousCoverUserId) && m.previousCoverUserId !== row.userId ? r.staff(m.previousCoverUserId) : null;
+      if (before && m.reason === "coach_deactivated") return sentence(who, " deactivated ", before, ", so ", where, " needs cover again");
       return before
         ? sentence(who, " took ", before, " off ", where, ", which needs cover again")
         : sentence(who, " gave up covering ", where, ", which needs cover again");
@@ -1130,6 +1131,9 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
         m.closedReason === "session_cancelled" ? "the session was cancelled"
         : m.closedReason === "session_removed" ? "the class's weekly time changed and the session was removed"
         : m.closedReason === "replacement_ambiguous" ? "the class's weekly times changed and its new session is not clear; request cover on the intended session"
+        : m.closedReason === "replacement_started" ? "the class's new time that day had already started; request cover on the intended session"
+        : m.closedReason === "class_archived" ? "the class was archived"
+        : m.closedReason === "class_paused" ? "the class was paused"
         : null;
       return why ? sentence("The cover request for ", where, ` closed: ${why}`) : null;
     }
@@ -1137,6 +1141,11 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       const where = r.session(row.entityId);
       const coach = r.staff(m.coverUserId);
       return where && coach ? sentence(where, " changed time after ", coach, " took the cover; they need to reconfirm") : null;
+    }
+    case "class.cover_moved": {
+      const where = r.session(row.entityId);
+      const was = str(m.previousStartTime);
+      return where && was ? sentence("The cover request moved with the class's new time to ", where, ` (it was at ${was})`) : null;
     }
     case "class.cover_reconfirmed": {
       const where = r.session(row.entityId);
@@ -1465,7 +1474,7 @@ const STAFF_ONLY_ACTIONS = new Set([
   "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
   "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",
   "class.cover_requested", "class.cover_claimed", "class.cover_assigned", "class.cover_replaced", "class.cover_given_up", "class.cover_withdrawn",
-  "class.cover_returned_to_regular", "class.cover_reconfirmed",
+  "class.cover_returned_to_regular", "class.cover_reconfirmed", "class.cover_closed", "class.cover_reconfirm_flagged", "class.cover_moved",
   "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
   "class_category.create", "class_category.rename", "class_category.archive", "class_category.restore", "class_category.reorder",
   "waiver.sign.supervised", "task.member_note.create", "task.staff_task.create",

@@ -12,19 +12,23 @@ vi.mock("@/lib/audit-log", () => ({
 }));
 
 import { applyCoverAction, closeCoverOnCancel, findCoverOverlap, moveCoversBeforeDelete, slotMovesOf, type CoverSession } from "@/lib/session-cover";
+import { resolveSessionTeacher, staffCoachLabel, memberCoachLabel } from "@/lib/session-coach";
 
 const T = "tenant-1";
 const NOW = new Date("2031-11-20T12:00:00Z");
 const THU = new Date("2031-12-04T00:00:00Z"); // a club date marker
 const NEXT_THU = new Date("2031-12-11T00:00:00Z");
 
-type Row = { id: string; status: string; coverUserId: string | null; needsReconfirm: boolean; classInstanceId: string | null };
-const USERS: Record<string, { id: string; name: string; role: string; deactivated?: boolean }> = {
-  "u-owner": { id: "u-owner", name: "Olive Owner", role: "owner" },
-  "u-alex": { id: "u-alex", name: "Alex Regular", role: "coach" },
-  "u-sam": { id: "u-sam", name: "Sam Cover", role: "coach" },
-  "u-kim": { id: "u-kim", name: "Kim Coach", role: "coach" },
-  "u-gone": { id: "u-gone", name: "Gone Coach", role: "coach", deactivated: true },
+type Row = { id: string; status: string; coverUserId: string | null; needsReconfirm: boolean; classInstanceId: string | null; closedReason?: string | null };
+// Every user carries its club and its deactivation, and the fake applies the query's own filters, so a refusal
+// for "another club" or "deactivated" only passes if the real query asks for those things.
+const USERS: Record<string, { id: string; name: string; role: string; tenantId: string; deactivatedAt: Date | null }> = {
+  "u-owner": { id: "u-owner", name: "Olive Owner", role: "owner", tenantId: "tenant-1", deactivatedAt: null },
+  "u-alex": { id: "u-alex", name: "Alex Regular", role: "coach", tenantId: "tenant-1", deactivatedAt: null },
+  "u-sam": { id: "u-sam", name: "Sam Cover", role: "coach", tenantId: "tenant-1", deactivatedAt: null },
+  "u-kim": { id: "u-kim", name: "Kim Coach", role: "coach", tenantId: "tenant-1", deactivatedAt: null },
+  "u-gone": { id: "u-gone", name: "Gone Coach", role: "coach", tenantId: "tenant-1", deactivatedAt: new Date("2031-01-01T00:00:00Z") },
+  "u-other": { id: "u-other", name: "Other Club Coach", role: "coach", tenantId: "tenant-2", deactivatedAt: null },
 };
 
 function session(over: Partial<CoverSession> & { classOver?: Partial<CoverSession["class"]> } = {}): CoverSession {
@@ -45,7 +49,7 @@ function session(over: Partial<CoverSession> & { classOver?: Partial<CoverSessio
       isActive: true,
       deletedAt: null,
       sourceImportJobId: null,
-      coachUser: { id: "u-alex", name: "Alex Regular" },
+      coachUser: { id: "u-alex", name: "Alex Regular", deactivatedAt: null },
       mat: { name: "Mat 2" },
       ...classOver,
     },
@@ -53,14 +57,18 @@ function session(over: Partial<CoverSession> & { classOver?: Partial<CoverSessio
   } as CoverSession;
 }
 
-/** A transaction stand-in holding one session and its (optional) cover row. */
-function fakeTx(opts: { s?: CoverSession | null; row?: Row | null; candidates?: unknown[]; loseClaimTo?: string } = {}) {
-  const state = { row: opts.row ?? null, s: opts.s === undefined ? session() : opts.s };
+/** A transaction stand-in holding one session (of `sessionTenant`) and its (optional) cover row. */
+function fakeTx(opts: { s?: CoverSession | null; row?: Row | null; candidates?: unknown[]; loseClaimTo?: string; insertLosesTo?: Row; sessionTenant?: string } = {}) {
+  const state = { row: opts.row ?? null, s: opts.s === undefined ? session() : opts.s, sessionTenant: opts.sessionTenant ?? T };
   const name = (id: string | null) => (id ? USERS[id]?.name ?? null : null);
   const view = () => (state.row ? { ...state.row, coverUser: state.row.coverUserId ? { name: name(state.row.coverUserId) } : null } : null);
+  const sessionVisible = (id: unknown, tenant: unknown) => !!state.s && id === state.s.id && tenant === state.sessionTenant;
   const matches = (where: Record<string, unknown>) => {
     const r = state.row;
     if (!r) return false;
+    if ("id" in where && where.id !== r.id) return false;
+    if ("tenantId" in where && where.tenantId !== T) return false;
+    if ("classInstanceId" in where && where.classInstanceId !== r.classInstanceId) return false;
     const st = where.status as string | { in: string[] } | undefined;
     if (typeof st === "string" && r.status !== st) return false;
     if (st && typeof st === "object" && !st.in.includes(r.status)) return false;
@@ -70,23 +78,35 @@ function fakeTx(opts: { s?: CoverSession | null; row?: Row | null; candidates?: 
   };
   const tx = {
     $executeRaw: vi.fn(async () => 1),
+    // The session row lock: the session id and tenant id are its first two bind values.
+    $queryRaw: vi.fn(async (_strings: TemplateStringsArray, ...vals: unknown[]) => (Array.isArray(vals[0]) ? [] : sessionVisible(vals[0], vals[1]) ? [{ id: vals[0] }] : [])),
     tenant: { findUnique: vi.fn(async () => ({ timezone: "Europe/London" })) },
     classInstance: {
-      findFirst: vi.fn(async () => state.s),
+      findFirst: vi.fn(async ({ where }: { where: { id: string; class: { tenantId: string } } }) => (sessionVisible(where.id, where.class?.tenantId) ? state.s : null)),
       findMany: vi.fn(async () => opts.candidates ?? []),
     },
     user: {
-      findFirst: vi.fn(async ({ where }: { where: { id: string; role: { in: string[] } } }) => {
+      findFirst: vi.fn(async ({ where }: { where: { id: string; tenantId?: string; deactivatedAt?: null; role?: { in: string[] } } }) => {
         const u = USERS[where.id];
-        return u && !u.deactivated && where.role.in.includes(u.role) ? { id: u.id, name: u.name } : null;
+        if (!u) return null;
+        if ("tenantId" in where && u.tenantId !== where.tenantId) return null;
+        if ("deactivatedAt" in where && where.deactivatedAt === null && u.deactivatedAt !== null) return null;
+        if (where.role && !where.role.in.includes(u.role)) return null;
+        return { id: u.id, name: u.name };
       }),
     },
     sessionCover: {
-      findFirst: vi.fn(async () => view()),
+      findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => (matches(where) ? view() : null)),
       findMany: vi.fn(async () => (state.row ? [{ ...state.row, classInstance: state.s ? { id: state.s.id, date: state.s.date, startTime: state.s.startTime, endTime: state.s.endTime } : null }] : [])),
-      create: vi.fn(async ({ data }: { data: Partial<Row> }) => {
-        state.row = { id: "cov-1", status: "open", coverUserId: null, needsReconfirm: false, classInstanceId: "s-thu", ...data } as Row;
-        return state.row;
+      createMany: vi.fn(async ({ data }: { data: Array<Partial<Row>> }) => {
+        if (opts.insertLosesTo) {
+          // Another request or assignment inserted this session's row first (ON CONFLICT DO NOTHING).
+          state.row = opts.insertLosesTo;
+          return { count: 0 };
+        }
+        if (state.row) return { count: 0 };
+        state.row = { id: "cov-1", status: "open", coverUserId: null, needsReconfirm: false, classInstanceId: "s-thu", ...data[0] } as Row;
+        return { count: 1 };
       }),
       updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Partial<Row> }) => {
         if (opts.loseClaimTo && data.status === "covered" && state.row?.status === "open") {
@@ -124,7 +144,7 @@ describe("request cover", () => {
     const f = fakeTx();
     const out = await applyCoverAction(f.tx, as("u-kim"), "s-thu", { action: "request" }, NOW);
     expect(out).toMatchObject({ ok: false, status: 403 });
-    expect(f.raw.sessionCover.create).not.toHaveBeenCalled();
+    expect(f.raw.sessionCover.createMany).not.toHaveBeenCalled();
   });
 
   it("a typed coach name equal to the coach's name does not make it their session", async () => {
@@ -168,7 +188,7 @@ describe("claim — I'll cover this class", () => {
   });
 
   it("refuses a coach who is already teaching at that time, naming the session", async () => {
-    const clash = { ...session({ id: "s-kids", classOver: { id: "c-kids", name: "Kids BJJ", coachUserId: "u-sam", coachUser: { id: "u-sam", name: "Sam Cover" }, mat: { name: "Mat 1" }, location: "Mat 1" } }), cover: null };
+    const clash = { ...session({ id: "s-kids", classOver: { id: "c-kids", name: "Kids BJJ", coachUserId: "u-sam", coachUser: { id: "u-sam", name: "Sam Cover", deactivatedAt: null }, mat: { name: "Mat 1" }, location: "Mat 1" } }), cover: null };
     const f = fakeTx({ row: openRow(), candidates: [clash] });
     const out = await applyCoverAction(f.tx, as("u-sam"), "s-thu", { action: "claim" }, NOW);
     expect(out.ok).toBe(false);
@@ -338,5 +358,102 @@ describe("cancel, re-time and remove", () => {
     await moveCoversBeforeDelete(f.tx, T, "u-owner", "c-adults", ["s-thu"]);
     expect(f.state.row).toMatchObject({ status: "closed", closedReason: "session_removed", classInstanceId: null });
     expect(audits[0]).toMatchObject({ action: "class.cover_closed", entityId: "s-thu", metadata: { closedReason: "session_removed", classId: "c-adults" } });
+  });
+});
+
+describe("review of 5f92f724: eligibility, races and edits (round 2)", () => {
+  it("a user of another club, or a deactivated one, is refused by the query's own filters", async () => {
+    expect(await applyCoverAction(fakeTx().tx, as("u-owner"), "s-thu", { action: "assign", coachUserId: "u-other" }, NOW)).toMatchObject({ ok: false, status: 400, code: "NOT_ELIGIBLE" });
+    expect(await applyCoverAction(fakeTx().tx, as("u-owner"), "s-thu", { action: "assign", coachUserId: "u-gone" }, NOW)).toMatchObject({ ok: false, status: 400, code: "NOT_ELIGIBLE" });
+    expect(await applyCoverAction(fakeTx({ row: openRow() }).tx, { tenantId: T, userId: "u-gone", role: "coach" }, "s-thu", { action: "claim" }, NOW)).toMatchObject({ ok: false, code: "NOT_ELIGIBLE" });
+  });
+
+  it("another club's session is a bare 404, decided by the query's tenant filter", async () => {
+    expect(await applyCoverAction(fakeTx({ sessionTenant: "tenant-2" }).tx, as("u-owner"), "s-thu", { action: "request" }, NOW)).toMatchObject({ ok: false, status: 404, error: "Not found" });
+  });
+
+  it("takes the coach's advisory lock and then the session row lock before reading the cover row", async () => {
+    const f = fakeTx({ row: openRow() });
+    await applyCoverAction(f.tx, as("u-sam"), "s-thu", { action: "claim" }, NOW);
+    const order = [f.raw.$executeRaw.mock.invocationCallOrder[0], f.raw.$queryRaw.mock.invocationCallOrder[0], f.raw.sessionCover.findFirst.mock.invocationCallOrder[0]];
+    expect(order.every((n) => typeof n === "number")).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("a Request or Assign that finds the row inserted meanwhile says so accurately, never a save error", async () => {
+    const theirs: Row = { id: "cov-9", status: "open", coverUserId: null, needsReconfirm: false, classInstanceId: "s-thu" };
+    expect(await applyCoverAction(fakeTx({ insertLosesTo: theirs }).tx, as("u-owner"), "s-thu", { action: "request" }, NOW)).toMatchObject({ ok: false, status: 409, code: "ALREADY_REQUESTED" });
+    const covered: Row = { ...theirs, status: "covered", coverUserId: "u-kim" };
+    expect(await applyCoverAction(fakeTx({ insertLosesTo: covered }).tx, as("u-owner"), "s-thu", { action: "assign", coachUserId: "u-sam" }, NOW)).toMatchObject({ ok: false, status: 409, code: "ALREADY_COVERED", error: "Already covered by Kim Coach." });
+    expect(audits).toEqual([]);
+  });
+
+  it("every conditional update is pinned to the session", async () => {
+    const f = fakeTx({ row: openRow() });
+    await applyCoverAction(f.tx, as("u-sam"), "s-thu", { action: "claim" }, NOW);
+    expect(f.raw.sessionCover.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ classInstanceId: "s-thu", status: "open" }) }));
+  });
+
+  it("the class's own regular coach cannot claim or be assigned its cover", async () => {
+    expect(await applyCoverAction(fakeTx({ row: openRow() }).tx, as("u-alex"), "s-thu", { action: "claim" }, NOW)).toMatchObject({ ok: false, code: "REGULAR_COACH", error: expect.stringMatching(/^You're this class's regular coach/) });
+    expect(await applyCoverAction(fakeTx({ row: openRow() }).tx, as("u-owner"), "s-thu", { action: "assign", coachUserId: "u-alex" }, NOW)).toMatchObject({ ok: false, code: "REGULAR_COACH" });
+  });
+
+  it("cancelling writes its Activity row only when it really closed a row", async () => {
+    const f = fakeTx({ row: coveredRow("u-sam") });
+    f.raw.sessionCover.updateMany.mockResolvedValueOnce({ count: 0 });
+    expect(await closeCoverOnCancel(f.tx, T, "u-owner", { id: "s-thu", classId: "c-adults", date: THU, startTime: "19:00", endTime: "20:30" })).toBe(false);
+    expect(audits).toEqual([]);
+    expect(f.raw.$queryRaw).toHaveBeenCalled();
+  });
+
+  it("an end-time-only change is not a move, so the other slot's move stays clear", () => {
+    const wd = THU.getUTCDay();
+    const m = slotMovesOf([{ dayOfWeek: wd, startTime: "07:00" }, { dayOfWeek: wd, startTime: "19:00" }], [{ dayOfWeek: wd, startTime: "07:30" }, { dayOfWeek: wd, startTime: "19:00" }]);
+    expect(m.moves.get(wd)).toEqual({ from: "07:00", to: "07:30" });
+    expect(m.ambiguousDays.has(wd)).toBe(false);
+  });
+
+  it("a replacement holding only an ended row still takes a clear move; a moved open request writes its own Activity row", async () => {
+    const wd = THU.getUTCDay();
+    const f = fakeTx({ row: openRow() });
+    f.raw.classInstance.findMany.mockResolvedValueOnce([{ id: "s-new", date: THU, startTime: "19:30", endTime: "21:00", cover: { id: "cov-old", status: "withdrawn" } }]);
+    const calls: Array<{ where: Record<string, unknown>; data: Partial<Row> }> = [];
+    f.raw.sessionCover.updateMany.mockImplementation(async ({ where, data }: { where: Record<string, unknown>; data: Partial<Row> }) => {
+      calls.push({ where, data });
+      if (where.id === "cov-old") return { count: 1 };
+      if (where.id === "cov-1" && where.classInstanceId === "s-thu") {
+        f.state.row = { ...f.state.row!, ...data };
+        return { count: 1 };
+      }
+      return { count: 0 };
+    });
+    const report = await moveCoversBeforeDelete(f.tx, T, "u-owner", "c-adults", ["s-thu"], slotMovesOf([{ dayOfWeek: wd, startTime: "19:00" }], [{ dayOfWeek: wd, startTime: "19:30" }]));
+    expect(report).toEqual({ moved: 1, closed: [] });
+    expect(calls[0]).toMatchObject({ where: { id: "cov-old", classInstanceId: "s-new" }, data: { classInstanceId: null } });
+    expect(f.state.row).toMatchObject({ classInstanceId: "s-new", status: "open" });
+    expect(audits[0]).toMatchObject({ action: "class.cover_moved", entityId: "s-new", metadata: { previousStartTime: "19:00", startTime: "19:30" } });
+  });
+
+  it("a cover is never carried to a replacement that has already started: it is closed as replacement_started", async () => {
+    const wd = THU.getUTCDay();
+    const f = fakeTx({ row: coveredRow("u-sam") });
+    f.raw.classInstance.findMany.mockResolvedValueOnce([{ id: "s-early", date: THU, startTime: "07:00", endTime: "08:00", cover: null }]);
+    const report = await moveCoversBeforeDelete(f.tx, T, "u-owner", "c-adults", ["s-thu"], slotMovesOf([{ dayOfWeek: wd, startTime: "19:00" }], [{ dayOfWeek: wd, startTime: "07:00" }]), "Europe/London", new Date("2031-12-04T12:00:00Z"));
+    expect(report.closed).toEqual([{ date: THU.toISOString(), startTime: "19:00", closedReason: "replacement_started" }]);
+    expect(f.state.row).toMatchObject({ status: "closed", classInstanceId: null });
+  });
+});
+
+describe("a deactivated regular coach (round 2)", () => {
+  const cls = { coachName: null, coachUserId: "u-alex", coachUser: { id: "u-alex", name: "Alex Regular", deactivatedAt: new Date("2031-01-01T00:00:00Z") } };
+  it("is not shown as anyone's coach: no name to staff or members, and never Cover needed", () => {
+    const t = resolveSessionTeacher(cls, null);
+    expect(t).toMatchObject({ state: "regular", teacherUserId: null, teacherName: null, regularName: null });
+    expect(staffCoachLabel(t)).toBeNull();
+    expect(memberCoachLabel(t)).toBeNull();
+  });
+  it("a typed name on the class still shows", () => {
+    expect(staffCoachLabel(resolveSessionTeacher({ ...cls, coachName: "Head coach" }, null))).toBe("Head coach");
   });
 });

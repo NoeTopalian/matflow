@@ -40,12 +40,16 @@ export const COACH_TO_BE_CONFIRMED = "Coach to be confirmed";
 export const RECONFIRM_NEEDED = "Awaiting reconfirmation";
 
 export function resolveSessionTeacher(
-  cls: CoachInput & { coachUserId?: string | null },
+  cls: CoachInput & { coachUserId?: string | null; coachUser?: { id: string; name: string; deactivatedAt?: Date | string | null } | null },
   cover: CoverSnapshot | undefined,
   opts: { started?: boolean } = {},
 ): SessionTeacher {
-  const regularName = resolveCoachName(cls);
-  const regularId = cls.coachUser?.id ?? cls.coachUserId ?? null;
+  // A linked regular coach whose account is deactivated teaches nothing: the class falls back to its typed name, if
+  // any, and otherwise has no coach ("No coach assigned" — never "Cover needed", which only a request makes).
+  const deactivated = !!cls.coachUser?.deactivatedAt;
+  const regular = deactivated ? { coachName: cls.coachName, coachUser: null } : cls;
+  const regularName = resolveCoachName(regular);
+  const regularId = deactivated ? null : (cls.coachUser?.id ?? cls.coachUserId ?? null);
   if (cover?.status === "covered" && cover.coverUserId) {
     return { state: "covered", teacherUserId: cover.coverUserId, teacherName: cover.coverUserName, regularName, needsReconfirm: cover.needsReconfirm };
   }

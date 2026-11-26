@@ -158,7 +158,7 @@ export async function GET(req: Request) {
             select: {
               name: true,
               coachName: true,
-              coachUser: { select: { id: true, name: true } },
+              coachUser: { select: { id: true, name: true, deactivatedAt: true } },
               location: true,
               tenantId: true,
             },

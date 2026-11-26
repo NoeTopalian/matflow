@@ -90,7 +90,7 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
     },
     include: {
       // The linked staff coach, for the coach's name (lib/class-coach.ts resolveCoachName).
-      class: { include: { coachUser: { select: { id: true, name: true } } } },
+      class: { include: { coachUser: { select: { id: true, name: true, deactivatedAt: true } } } },
       _count: { select: { attendances: true } },
     },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],

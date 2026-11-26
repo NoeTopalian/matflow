@@ -28,7 +28,7 @@ import { matForLocation } from "@/lib/mats-store";
 import { refuseSupportSessionUnlessEdit } from "@/lib/support-session";
 import { classLifecycle, IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { mintUpcomingSessions, legacyArchivedAt } from "@/lib/class-lifecycle";
-import { flagCoversForRetime, moveCoversBeforeDelete, slotMovesOf, type CoverMoveReport } from "@/lib/session-cover";
+import { closeCoversForClass, countActiveCovers, flagCoversForRetime, moveCoversBeforeDelete, slotMovesOf, type CoverMoveReport } from "@/lib/session-cover";
 
 /** A tier vanished between the pre-flight and the write: roll the edit back. */
 class TierRefError extends Error {}
@@ -196,6 +196,8 @@ type ScheduleChange = {
    */
   coverMoved?: number;
   coverClosed?: Array<{ date: string; startTime: string; closedReason: string }>;
+  /** Sessions kept at their old time (members already on them) that still have an active cover request or cover. */
+  coverKept?: number;
 };
 
 /** A slot's identity for diffing. Day + both times — a 30-minute change is a different slot. */
@@ -397,7 +399,7 @@ async function reconcileSchedules(
     // Only a one-to-one slot change on a weekday carries cover (Noe, 26 Nov 2026: same date is not same session).
     const removedSlots = existing.filter((x) => removedIds.includes(x.id));
     const addedSlots = [...existing.filter((x) => toReactivate.includes(x.id)), ...toCreate];
-    coverReport = await moveCoversBeforeDelete(tx, tenantId, actorId, classId, instancesRemoved, slotMovesOf(removedSlots, addedSlots));
+    coverReport = await moveCoversBeforeDelete(tx, tenantId, actorId, classId, instancesRemoved, slotMovesOf(removedSlots, addedSlots), timeZone);
     await tx.classInstance.deleteMany({
       where: { id: { in: instancesRemoved }, class: { tenantId } },
     });
@@ -430,6 +432,8 @@ async function reconcileSchedules(
     instancesCreated: created.count,
     coverMoved: coverReport.moved,
     coverClosed: coverReport.closed,
+    // A kept orphan still runs at its old time, so its cover stands; the save message says how many have one.
+    coverKept: await countActiveCovers(tx, tenantId, instancesKept),
   };
 }
 
@@ -888,6 +892,12 @@ export async function PATCH(req: Request, { params }: Params) {
         data: classFields,
       });
       if (r.count === 0) return null;
+      // Session cover: pausing the class ends the active cover on its upcoming sessions, with an Activity row each,
+      // in this transaction, so resuming it never brings a previous cover back (lib/session-cover.ts).
+      if (before && classLifecycle(before) === "active" && liveAfterEdit === false) {
+        const club = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } });
+        await closeCoversForClass(tx, tenantId, session.user.id, id, "class_paused", usableTimezone(club?.timezone));
+      }
       // T6b: a class coming back (Resume / Restore) had no sessions generated
       // while it was off the timetable; mint the rolling window now.
       const cameBack = parsed.data.isActive === true && !!before && classLifecycle(before) !== "active";
@@ -1137,12 +1147,19 @@ export async function DELETE(req: Request, { params }: Params) {
     // Guarded on the state just read, so `before` on the audit row is exactly
     // what this write replaced: a pause or resume committing in between makes
     // this match nothing rather than record the wrong prior state.
-    const result = await withTenantContext(tenantId, (tx) =>
-      tx.class.updateMany({
+    const result = await withTenantContext(tenantId, async (tx) => {
+      const r = await tx.class.updateMany({
         where: { id, tenantId, deletedAt: null, isActive: owned.isActive },
         data: { isActive: false, deletedAt: archivedAt },
-      }),
-    );
+      });
+      // Session cover: archiving ends the active cover on the class's upcoming sessions (reason and Activity row,
+      // this transaction), so restoring the class never brings a previous cover back.
+      if (r.count === 1) {
+        const club = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } });
+        await closeCoversForClass(tx, tenantId, session.user.id, id, "class_archived", usableTimezone(club?.timezone));
+      }
+      return r;
+    });
 
     if (result.count === 0) {
       return NextResponse.json(
