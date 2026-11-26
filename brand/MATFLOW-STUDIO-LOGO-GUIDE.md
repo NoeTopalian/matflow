@@ -33,7 +33,7 @@ Do not use "MF Studio" as a written name.
 | `matflow-short-small-on-dark.svg`, `matflow-short-small-on-light.svg` | Short logo with a plain bar (no stripes), for small sizes |
 | `app-icon-mf-studio.svg` | App icon: MF with the STUDIO patch, rounded corners |
 | `app-icon-mf-studio-square.svg` | Same icon with square corners, for app stores that round it themselves |
-| `app-icon-mf-plain.svg`, `favicon.svg` | Plain MF for small sizes. MatFlow's own browser tab uses the STUDIO tile |
+| `app-icon-mf-plain.svg`, `favicon.svg` | Plain MF for small sizes and browser tabs |
 | `png/` | PNG exports of the above, including `app-icon-1024.png`, `apple-touch-icon-180.png`, `favicon-32.png` |
 | `preview.png` | Brand sheet showing everything together |
 
@@ -48,7 +48,7 @@ All SVGs have transparent backgrounds except the app icons, which include their 
 | 90 to 139 px | Short logo, small version (plain bar) |
 | Below 90 px, or square spaces | MF icon |
 
-App icon: use the STUDIO patch version wherever it is shown at 72 px or more, and the plain MF tile only in places too small for that. STUDIO is about 7.7% of the tile's height, so below 72 px it can't be read. The one exception is MatFlow's own browser tab, which uses the STUDIO tile at 16, 32, 48 and 512 px so the tab matches the app icon, accepting that the word can't be read there. MatFlow's own mark in the product (`components/brand/StudioMark.tsx`) is the STUDIO tile at 72 px, and 96 px on the sign-in screen.
+App icon: use the STUDIO patch version wherever it is shown at 72 px or more, and the plain MF tile only in browser tabs and other places too small for that. STUDIO is about 7.7% of the tile's height, so below 72 px it can't be read. MatFlow's own mark in the product (`components/brand/StudioMark.tsx`) is the STUDIO tile at 72 px, and 96 px on the sign-in screen.
 
 ## Colours
 

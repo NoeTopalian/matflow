@@ -73,18 +73,19 @@ describe("icon set", () => {
     // The only tab icon the layout lists is app/icon.png. Next adds it by
     // itself only when a layout sets no icons at all. Its address has no
     // content hash, so it carries a version: without one a browser that kept
-    // the earlier plain MF tile would never ask for the new file.
+    // an earlier tab tile would never ask for the new file.
     const listed = [...icons.matchAll(/url: "([^"]+)"/g)].map((m) => m[1]);
-    expect(listed).toEqual(["/icon.png?v=3"]);
+    expect(listed).toEqual(["/icon.png?v=4"]);
     expect(icons).not.toContain("/icons/");
   });
 
-  it("the tab icons are the approved MF STUDIO tile at 16, 32, 48 and 512 px, not the plain MF", async () => {
-    // Noe, 26 Nov 2026: the browser tab shows the MF tile with the boxed
-    // STUDIO at every size. Each committed tab icon is compared, pixel by
-    // pixel, with brand/app-icon-mf-studio.svg drawn at that size the way
+  it("the tab icons are the plain MF tile at 16, 32, 48 and 512 px, not the MF STUDIO tile", async () => {
+    // Noe, 26 Nov 2026 (evening): the browser tab shows the plain MF; the MF
+    // STUDIO tile is for the installed app and the phone home screen. Each
+    // committed tab icon is compared, pixel by pixel, with
+    // brand/app-icon-mf-plain.svg drawn at that size the way
     // scripts/generate-brand-icons.mjs draws it, and must be nearer to it than
-    // to the plain MF tile. Pixels, not bytes: PNG compression may differ
+    // to the STUDIO tile. Pixels, not bytes: PNG compression may differ
     // between machines, the picture may not.
     const draw = (name: string, size: number) =>
       sharp(readFileSync(resolve(ROOT, "brand", name)), { density: Math.ceil((72 * size) / 200) * 2 })
@@ -111,10 +112,35 @@ describe("icon set", () => {
     for (const { size, data } of tabIcons) {
       const got = await pixels(data);
       expect([got.info.width, got.info.height], `${size} px`).toEqual([size, size]);
-      const toStudio = distance(got.data, await draw("app-icon-mf-studio.svg", size));
       const toPlain = distance(got.data, await draw("app-icon-mf-plain.svg", size));
-      expect(toStudio, `${size} px is the STUDIO tile`).toBeLessThan(0.5);
-      expect(toPlain, `${size} px is not the plain MF tile`).toBeGreaterThan(toStudio + 1);
+      const toStudio = distance(got.data, await draw("app-icon-mf-studio.svg", size));
+      expect(toPlain, `${size} px is the plain MF tile`).toBeLessThan(0.5);
+      expect(toStudio, `${size} px is not the STUDIO tile`).toBeGreaterThan(toPlain + 1);
+    }
+  });
+
+  it("the installed app and the phone home screen use the MF STUDIO tile", async () => {
+    // The manifest's regular icons and the iOS touch icon, compared pixel by
+    // pixel with the STUDIO drawings they are generated from (rounded for the
+    // manifest, square for iOS, which rounds the corners itself).
+    const draw = (name: string, size: number) =>
+      sharp(readFileSync(resolve(ROOT, "brand", name)), { density: Math.ceil((72 * size) / 200) * 2 })
+        .resize(size, size).ensureAlpha().raw().toBuffer();
+    const distance = (a: Buffer, b: Buffer) => {
+      expect(a.length).toBe(b.length);
+      let sum = 0;
+      for (let i = 0; i < a.length; i += 1) sum += Math.abs(a[i] - b[i]);
+      return sum / a.length;
+    };
+    const cases: [string, string, number][] = [
+      ["public/icons/icon-192.png", "app-icon-mf-studio.svg", 192],
+      ["public/icons/icon-512.png", "app-icon-mf-studio.svg", 512],
+      ["public/apple-touch-icon.png", "app-icon-mf-studio-square.svg", 180],
+    ];
+    for (const [file, drawing, size] of cases) {
+      const got = await sharp(readFileSync(resolve(ROOT, file))).ensureAlpha().raw().toBuffer();
+      expect(distance(got, await draw(drawing, size)), `${file} is the STUDIO tile`).toBeLessThan(0.5);
+      expect(distance(got, await draw("app-icon-mf-plain.svg", size)), `${file} is not the plain MF`).toBeGreaterThan(1);
     }
   });
 

@@ -30,15 +30,17 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "MatFlow",
   },
-  // The browser tab icon is the MF STUDIO tile: app/favicon.ico (linked by
+  // The browser tab icon is the plain MF tile: app/favicon.ico (linked by
   // Next on its own, with the file's hash in its address) and app/icon.png,
   // which has to be listed here because Next only adds it by itself when a
-  // layout sets no icons at all. /icon.png has no hash, so "?v=3" is what
-  // makes a browser that kept the old plain MF tile ask again; raise it when
-  // the artwork changes. The installed-app icons are in app/manifest.ts,
-  // which also explains "?v=2".
+  // layout sets no icons at all. /icon.png has no hash, so "?v=4" is what
+  // makes a browser that kept an earlier tab tile ask again; raise it (here,
+  // in tests/unit/brand-default-icons.test.ts and in the brand-default-icons
+  // journey) when the artwork changes. The installed app and the iOS home
+  // screen use the MF STUDIO tile: app/manifest.ts, which also explains
+  // "?v=2", and the touch icon below.
   icons: {
-    icon: [{ url: "/icon.png?v=3", type: "image/png", sizes: "512x512" }],
+    icon: [{ url: "/icon.png?v=4", type: "image/png", sizes: "512x512" }],
     apple: "/apple-touch-icon.png?v=2",
   },
 };
