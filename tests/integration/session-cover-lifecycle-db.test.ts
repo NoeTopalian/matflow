@@ -171,7 +171,7 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
   it("members see the confirmed coach or 'Coach to be confirmed', never a request or who asked; a coachless class is not 'cover needed'", async () => {
     state.who = { id: `member-user-${STAMP}`, role: "member", tenantId: state.tenantId, memberId: ids.parent, name: "Parent Synthetic" };
     const sched = await call(memberSchedule(new Request(`http://test/api/member/schedule?date=${todayKey}`)));
-    const home = await call(memberHome(new Request("http://test/api/member/home")));
+    const home = await call(memberHome());
     const kids = await call(memberChildren(new Request("http://test/api/member/me/children?include=timetable")));
     expect([sched.status, home.status, kids.status]).toEqual([200, 200, 200]);
     const byName = (list: Json[], name: string) => list.find((c) => c.name === name) as Json | undefined;
