@@ -9,7 +9,10 @@ SET LOCAL statement_timeout = '15s';
 -- Session cover (Noe, 26 Nov 2026): who teaches ONE dated session when its regular coach is away or it has none.
 --
 -- Expand-only. No data is written and no existing table changes: every session keeps exactly the coach its class
--- has, and the previous build neither reads nor writes this table, so promoting back is schema-safe.
+-- has. Promoting back to the previous build is safe only while this table is EMPTY: the previous build deletes
+-- sessions (weekly-slot edit, import rollback) and clubs (purge) without touching SessionCover, so once a cover row
+-- exists those deletes fail on its RESTRICT keys. Before going back, export and remove the cover rows first
+-- (docs/runbooks/SESSION-COVER-ROLLBACK.md, scripts/session-cover-rollback.mjs).
 
 CREATE TABLE "SessionCover" (
     "id" TEXT NOT NULL,
