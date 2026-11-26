@@ -114,7 +114,7 @@ async function requestVia(page, instanceId) {
 }
 /** A cover action from a session's row or card, confirmed, and the note it leaves beside the session. */
 async function actOn(page, scope, instanceId, label, confirmLabel = label) {
-  const where = page.locator(`${scope} [data-session-id="${instanceId}"]`).first();
+  const where = scope.includes("cover-week") ? await sessionRow(page, instanceId) : page.locator(`${scope} [data-session-id="${instanceId}"]`).first();
   await where.getByRole("button", { name: label }).click();
   await page.getByRole("dialog").getByRole("button", { name: confirmLabel }).click();
   await page.getByRole("dialog").waitFor({ state: "detached", timeout: 60000 });
@@ -194,6 +194,8 @@ try {
   // ── 2. A member while cover is open (phone) ──────────────────────────────────────────────────────────────────────
   stage = "member-open";
   const member = await memberLogin(club, "Member 1");
+  // The member's first-run questions would cover the home page; this member has answered them.
+  await q(`update "Member" set "onboardingCompleted" = true where id = $1 and "tenantId" = $2`, [member.id, t]);
   const mc = await context(browser, "10.98.7.2", VIEW["390"]);
   const mp = await mc.newPage();
   lastPage = mp;
@@ -205,7 +207,10 @@ try {
   await mp.goto("/member/home");
   await mp.getByText("Next class").first().waitFor({ timeout: 90000 });
   await mp.getByText(CLASSES[0]).first().waitFor({ timeout: 60000 });
-  const homeOpen = await mp.locator("main").innerText();
+  const meOpen = (await (await mp.request.get("/api/member/me")).json()).nextClass;
+  L.check("M", "member's next class (member API) is Adults Gi with Coach to be confirmed", meOpen?.name === CLASSES[0] && meOpen?.coach === "Coach to be confirmed", meOpen);
+  const nextCard = mp.getByText("Next class").first().locator("xpath=ancestor::*[.//p[contains(., 'Cover Adults Gi')]][1]");
+  const homeOpen = await nextCard.innerText().catch(async () => mp.locator("main").innerText());
   L.check("M@390", "member home: the next class reads Coach to be confirmed, not the away regular coach", homeOpen.includes("Coach to be confirmed") && !homeOpen.includes("Alex Regular"), homeOpen.replace(/\s+/g, " ").slice(0, 400));
   await shot(mp, "session-cover-member-open-390");
 
@@ -392,6 +397,8 @@ try {
   const schedNext = await (await mp.request.get(`/api/member/schedule?date=${thu2}`)).json();
   const entryNext = schedNext.find((e) => e.classId === ids.adults && e.dayOfWeek === 4);
   L.check("M", "member schedule for next Thursday: the regular coach", entryNext?.coach === "Alex Regular", entryNext?.coach);
+  const meCovered = (await (await mp.request.get("/api/member/me")).json()).nextClass;
+  L.check("M", "member's next class (member API) names the covering coach", !!winner && meCovered?.name === CLASSES[0] && meCovered?.coach === winner.who.name, meCovered);
   for (const [tag, page] of [["390", mp]]) {
     await page.goto("/member/home");
     await page.getByText(CLASSES[0]).first().waitFor({ timeout: 60000 });
