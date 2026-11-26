@@ -199,8 +199,9 @@ try {
       const out = {};
       for (const n of names) {
         const hit = [...root.querySelectorAll("p, span")].find((el) => el.children.length === 0 && el.textContent.includes(n) && el.offsetParent && !el.closest('a[href^="/dashboard/checkin"]'));
+        // Up to the pill itself: the first ancestor that also holds the session's time.
         let pill = hit ? hit.parentElement : null;
-        while (pill && pill.innerText.split("\n").filter(Boolean).length < 2) pill = pill.parentElement;
+        while (pill && !pill.innerText.includes("22:00")) pill = pill.parentElement;
         out[n] = pill ? pill.innerText.replace(/\s+/g, " ").trim() : null;
       }
       return out;
@@ -213,11 +214,16 @@ try {
     await shot(page, `session-cover-dashboard-${tag}`);
     // The timetable's chips for today: a cover note only where cover was asked for or accepted.
     await page.goto("/dashboard/timetable");
-    const chip = (name) => page.getByRole("button", { name: new RegExp(name) }).first();
+    // A timetable chip (WeekChip carries data-chip-size), not the class card listed under the timetable.
+    const chip = (name) => page.locator("button[data-chip-size]").filter({ hasText: name }).first();
     await chip(DASH[0].name).waitFor({ timeout: 90000 });
+    // The cover notes arrive with the week's cover read, after the chips are drawn.
+    await chip("Dash Covered").locator('[data-chip-part="cover"]').waitFor({ timeout: 60000 }).catch(() => {});
+    await chip("Dash Requested").locator('[data-chip-part="cover"]').waitFor({ timeout: 60000 }).catch(() => {});
     const chips = {};
     for (const d of DASH) chips[d.key] = (await chip(d.name).locator('[data-chip-part="cover"]').allInnerTexts()).join(" | ");
-    L.check(`T@${tag}`, "timetable: Covered by Casey Cover and Cover needed only on the classes with cover; none on the coachless class or the regular one", chips.covered === "Covered by Casey Cover" && chips.requested === "Cover needed · Alex Regular away" && chips.nocoach === "" && chips.regular === "", chips);
+    const read = ((await (await page.request.get(`/api/coach/cover?from=${todayKey}&days=1`)).json()).sessions || []).filter((x) => DASH.some((d) => d.instanceId === x.id)).map((x) => [x.className, x.state, x.coachLabel]);
+    L.check(`T@${tag}`, "timetable: Covered by Casey Cover and Cover needed only on the classes with cover; none on the coachless class or the regular one", chips.covered === "Covered by Casey Cover" && chips.requested === "Cover needed · Alex Regular away" && chips.nocoach === "" && chips.regular === "", { chips, read });
     await shot(page, `session-cover-timetable-${tag}`);
     await ctx.close();
   }
