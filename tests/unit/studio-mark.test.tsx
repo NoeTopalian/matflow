@@ -34,9 +34,9 @@ describe("every former placement of the old mark", () => {
   it.each(PLACEMENTS)("%s uses StudioMark, no smaller than the readable minimum, and no letter-M tile", (file) => {
     const src = read(file);
     expect(src).toMatch(/import \{ StudioMark \} from "@\/components\/brand\/StudioMark";/);
-    const uses = [...src.matchAll(/<StudioMark(?<attrs>[^>]*)\/>/g)];
+    const uses = [...src.matchAll(/<StudioMark([^>]*)\/>/g)];
     expect(uses.length).toBe(1);
-    const size = uses[0].groups!.attrs.match(/size=\{(\d+)\}/);
+    const size = uses[0][1].match(/size=\{(\d+)\}/);
     expect(size ? Number(size[1]) : STUDIO_MARK_MIN_PX).toBeGreaterThanOrEqual(STUDIO_MARK_MIN_PX);
     // The old mark: a JSX text node that is just "M".
     expect(src).not.toMatch(/>\s*M\s*</);
