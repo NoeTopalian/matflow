@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 const NAV_LINKS = [
@@ -18,12 +19,7 @@ export function LandingFooter() {
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10 flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-2.5">
-          <div
-            className="w-6 h-6 rounded-md flex items-center justify-center font-bold text-[10px] shrink-0"
-            style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-label)" }}
-          >
-            M
-          </div>
+          <Image src="/icons/icon-192.png" alt="" width={32} height={32} unoptimized className="shrink-0" />
           <span className="text-sm" style={{ color: "rgba(237,232,223,0.35)" }}>
             © 2026 MatFlow
           </span>
