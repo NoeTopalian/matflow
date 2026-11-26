@@ -7,6 +7,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { StudioMark } from "@/components/brand/StudioMark";
 
 const SECTION_LINKS = [
   { href: "/#how-it-works", label: "How it works" },
@@ -34,16 +35,12 @@ export function LandingNav() {
         WebkitBackdropFilter: scrolled || open ? "blur(20px)" : "none",
       }}
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 h-20 flex items-center justify-between gap-3 sm:gap-4">
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0"
-            style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-label)" }}
-          >
-            M
-          </div>
+          <StudioMark />
+          {/* Below 360 px the word would push Sign in and the menu off the bar; it stays as the link's name. */}
           <span
-            className="font-semibold text-base tracking-tight"
+            className="font-semibold text-base tracking-tight max-[359px]:sr-only"
             style={{ color: "#ede8df", fontFamily: "var(--font-label)" }}
           >
             MatFlow
