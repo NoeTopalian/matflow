@@ -22,6 +22,7 @@ import {
   type SessionState,
 } from "@/lib/schedule-state";
 import { buildTimetableGrid, type GridLayout } from "@/lib/timetable-grid";
+import { clubNow } from "@/lib/class-time";
 import { PosterDay } from "@/components/schedule/PosterGrid";
 import { MorePanel, useMoreToggle } from "@/components/schedule/MorePanel";
 
@@ -116,7 +117,19 @@ function getWeekDays(anchor: Date): Date[] {
   });
 }
 
-function fmt(d: Date) { return d.toISOString().split("T")[0]; }
+// The calendar date a Date carries, read in the device's zone: the week's dates are local-noon carriers of
+// the club's dates (clubNow), never instants. toISOString read them in UTC, a day out east of UTC+12.
+function fmt(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+
+/** A zone name Intl accepts. */
+function isZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** "Mia", "Mia or Sam", "Mia, Sam or Leo". */
 function listNames(all: string[]) {
@@ -344,6 +357,8 @@ function DayPane({
   loading,
   allClasses,
   club,
+  isToday,
+  nowMinutes,
 }: {
   dow: number;
   primaryColor: string;
@@ -354,13 +369,13 @@ function DayPane({
   loading: boolean;
   allClasses: ScheduleClass[];
   club: ClubTimetable;
+  /** This pane's date is the club's today (not merely the same weekday in another week). */
+  isToday: boolean;
+  /** Minutes since the club's midnight now. */
+  nowMinutes: number;
 }) {
-  // "Now" is the member's own device clock — their phone, in the club. Nothing
-  // carries Tenant.timezone to this screen yet (lib/schedule-state.ts).
-  const today = new Date();
-  const todayDow = today.getDay() === 0 ? 7 : today.getDay();
-  const showNow = dow === todayDow;
-  const nowMinutes = today.getHours() * 60 + today.getMinutes();
+  // "Now" is the club's clock (clubNow): live and next mean the same at home and abroad.
+  const showNow = isToday;
   const dayClasses = allClasses.filter((c) => c.dow === dow);
   // The API keys today's instance by class + start time, so a class that meets
   // on several days carries today's flag on every day's entry; it only means
@@ -691,9 +706,15 @@ function SessionBlock({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MemberSchedulePage() {
-  const today = new Date();
-  const [anchor, setAnchor] = useState(today);
-  const [selectedDay, setSelectedDay] = useState(today.getDay() === 0 ? 6 : today.getDay() - 1);
+  // The club's zone, from the first schedule read (X-Club-Zone); null until then.
+  const [zone, setZone] = useState<string | null>(null);
+  const now = clubNow(zone);
+  const today = now.date;
+  const [anchor, setAnchor] = useState(() => clubNow(null).date);
+  const [selectedDay, setSelectedDay] = useState(() => clubNow(null).dow - 1);
+  // Once the member has picked a day or week, the club's today never moves them off it (Today clears it: pressed
+  // before the first read lands, the club's today still arrives).
+  const dayChosenRef = useRef(false);
   const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
   // A guardian's children (Round 11, 5.1): the class sheet says the booking is the
   // guardian's own. A failed read only leaves that line off; booking is unaffected.
@@ -722,6 +743,10 @@ export default function MemberSchedulePage() {
   const anchorRef      = useRef(anchor);
 
   const weekDays    = getWeekDays(anchor);
+  // Until the first read says which day is the club's today, no day is marked selected or today and the day line
+  // is blank: the phone's day is never shown and then swapped for the club's. A server that names no zone (demo,
+  // an older build) settles on the phone's day once the read is in; a failed first read names no day.
+  const dayKnown = zone !== null || (!scheduleLoading && !loadError);
   // Audit iter-1-member-surface A5H-3: read tenant brand primaryColor from
   // localStorage (same pattern as app/member/shop/page.tsx:31-36). The
   // previous hardcoded `PRIMARY` ignored tenant branding entirely.
@@ -755,6 +780,9 @@ export default function MemberSchedulePage() {
     return () => { cancelled = true; };
   }, []);
 
+  // The date of the selected day's pane (0), or the one before or after it (-1, +1): across a week edge too.
+  const paneDate = (offset: number) => { const d = new Date(weekDays[selectedDay]); d.setDate(d.getDate() + offset); return d; };
+
   // Prev/curr/next DOW (1-indexed: 1=Mon…7=Sun)
   const currDow = selectedDay + 1;
   const prevDow = selectedDay === 0 ? 7 : selectedDay;
@@ -766,6 +794,7 @@ export default function MemberSchedulePage() {
     selectedDayRef.current = selectedDay;
     anchorRef.current = anchor;
     navigateRef.current = (dir) => {
+      dayChosenRef.current = true;
       const day = selectedDayRef.current;
       const anc = anchorRef.current;
       if (dir === "next") {
@@ -891,13 +920,18 @@ export default function MemberSchedulePage() {
     setLoadError(null);
     setScheduleLoading(true);
 
-    // `date` is the member's calendar day on their own device: without it the
-    // API maps no instances at all, so the day view never knew that today's
-    // session was cancelled (or which instance a booking should target).
-    const now = new Date();
-    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const classes = fetch(`/api/member/schedule?date=${localDate}`)
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    // `date=today` is the club's date in the club's zone, resolved on the server: without a date the API maps
+    // no instances at all, so the day view never knew that today's session was cancelled (or which instance a
+    // booking should target). It used to be the device's date, a day out for a member abroad. The reply names
+    // the club's zone, so "today", live and next are read on the club's clock.
+    let clubZone: string | null = null;
+    const classes = fetch("/api/member/schedule?date=today")
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const z = r.headers?.get?.("X-Club-Zone") ?? null;
+        if (z && isZone(z)) clubZone = z;
+        return r.json();
+      })
       // This hand-written shape is WHY the classId bug survived review: it
       // omitted classId, so dropping it in the mapping below was invisible to
       // the type checker. Keep it in step with app/api/member/schedule/route.ts.
@@ -986,6 +1020,15 @@ export default function MemberSchedulePage() {
       .then(([mapped, , layout]) => {
         setAllClasses(mapped);
         setClub(layout);
+        if (clubZone) {
+          setZone(clubZone);
+          // Open on the club's today unless the member has already chosen a day.
+          if (!dayChosenRef.current) {
+            const clubToday = clubNow(clubZone);
+            setAnchor(clubToday.date);
+            setSelectedDay(clubToday.dow - 1);
+          }
+        }
       })
       .catch(() => setLoadError("Couldn't load your timetable — tap to retry"))
       .finally(() => setScheduleLoading(false));
@@ -1131,14 +1174,14 @@ export default function MemberSchedulePage() {
           <div className="flex items-center gap-1">
             <button
               aria-label="Previous week"
-              onClick={() => { const d = new Date(anchor); d.setDate(d.getDate() - 7); setAnchor(d); }}
+              onClick={() => { dayChosenRef.current = true; const d = new Date(anchor); d.setDate(d.getDate() - 7); setAnchor(d); }}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-all"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               aria-label="Next week"
-              onClick={() => { const d = new Date(anchor); d.setDate(d.getDate() + 7); setAnchor(d); }}
+              onClick={() => { dayChosenRef.current = true; const d = new Date(anchor); d.setDate(d.getDate() + 7); setAnchor(d); }}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-all"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1150,7 +1193,7 @@ export default function MemberSchedulePage() {
             <h1 className="text-white text-sm font-medium ml-1">{weekLabel}</h1>
           </div>
           <button
-            onClick={() => { setAnchor(today); setSelectedDay(today.getDay() === 0 ? 6 : today.getDay() - 1); }}
+            onClick={() => { dayChosenRef.current = false; setAnchor(today); setSelectedDay(now.dow - 1); }}
             className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white transition-all"
           >
             Today
@@ -1171,13 +1214,13 @@ export default function MemberSchedulePage() {
         {/* Day pills */}
         <div ref={dayScrollRef} className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-hide">
           {weekDays.map((day, i) => {
-            const isToday = fmt(day) === fmt(today);
-            const isSel   = selectedDay === i;
+            const isToday = dayKnown && fmt(day) === fmt(today);
+            const isSel   = dayKnown && selectedDay === i;
             const count   = allClasses.filter((c) => c.dow === i + 1).length;
             return (
               <button
                 key={i}
-                onClick={() => setSelectedDay(i)}
+                onClick={() => { dayChosenRef.current = true; setSelectedDay(i); }}
                 className="flex flex-col items-center gap-0.5 py-2 px-2.5 rounded-2xl shrink-0 transition-all min-w-[46px]"
                 style={{
                   background: isSel ? primaryColor : isToday ? hex(primaryColor, 0.1) : "var(--member-surface)",
@@ -1209,12 +1252,12 @@ export default function MemberSchedulePage() {
 
         {/* Day label: the day, how many classes, and how many are on right now */}
         <p className="text-gray-400 text-xs font-medium mt-2 mb-1 px-1">
-          {DAY_FULL[selectedDay]}
+          {dayKnown ? DAY_FULL[selectedDay] : " "}
           {(() => {
             const dayCount = allClasses.filter((c) => c.dow === currDow).length;
             if (scheduleLoading || dayCount === 0) return null;
             const isToday = fmt(weekDays[selectedDay]) === fmt(today);
-            const nowMin = today.getHours() * 60 + today.getMinutes();
+            const nowMin = now.minutes;
             const live = isToday
               ? sessionStates(
                   allClasses.filter((c) => c.dow === currDow).map((c) => ({ ...spanMinutes(c.time, c.endTime), cancelled: c.cancelled === true })),
@@ -1249,6 +1292,8 @@ export default function MemberSchedulePage() {
           <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }} inert data-testid="schedule-pane-prev">
             <DayPane
               dow={prevDow}
+              isToday={fmt(paneDate(-1)) === fmt(today)}
+              nowMinutes={now.minutes}
               primaryColor={primaryColor}
               subscribed={subscribed}
               selected={selected}
@@ -1263,6 +1308,8 @@ export default function MemberSchedulePage() {
           <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }} data-testid="schedule-pane">
             <DayPane
               dow={currDow}
+              isToday={fmt(paneDate(0)) === fmt(today)}
+              nowMinutes={now.minutes}
               primaryColor={primaryColor}
               subscribed={subscribed}
               selected={selected}
@@ -1278,6 +1325,8 @@ export default function MemberSchedulePage() {
           <div className="overflow-hidden h-full shrink-0" style={{ width: "33.333%" }} inert data-testid="schedule-pane-next">
             <DayPane
               dow={nextDow}
+              isToday={fmt(paneDate(1)) === fmt(today)}
+              nowMinutes={now.minutes}
               primaryColor={primaryColor}
               subscribed={subscribed}
               selected={selected}

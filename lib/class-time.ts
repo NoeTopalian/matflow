@@ -279,6 +279,26 @@ export function clubWallClock(
 }
 
 /**
+ * The club's day and time now, for a screen that draws a week: its date as a
+ * local-noon Date carrying the club's calendar date (so the week maths, which
+ * uses getDay/setDate, stays on that date in any device zone), its weekday
+ * (1 = Mon … 7 = Sun) and minutes since its midnight. A member's phone may be
+ * in another zone from the club (a member abroad): "today", live and next are
+ * the club's, as at the door. With no zone yet, the device's own clock.
+ */
+export function clubNow(zone: string | null, at: Date = new Date()): { date: Date; dow: number; minutes: number } {
+  if (!zone) {
+    return {
+      date: new Date(at.getFullYear(), at.getMonth(), at.getDate(), 12),
+      dow: at.getDay() === 0 ? 7 : at.getDay(),
+      minutes: at.getHours() * 60 + at.getMinutes(),
+    };
+  }
+  const c = clubWallClock(at, zone);
+  return { date: new Date(c.year, c.month - 1, c.day, 12), dow: c.dow === 0 ? 7 : c.dow, minutes: c.minutes };
+}
+
+/**
  * `Tenant.timezone` as something `Intl` will accept. The column defaults to
  * Europe/London and onboarding writes the owner's browser zone, so a bad value
  * is rare — but `Intl.DateTimeFormat` throws a RangeError on one, and a coach

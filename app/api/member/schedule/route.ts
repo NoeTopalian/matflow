@@ -28,6 +28,7 @@ import { classTierCovers } from "@/lib/class-tier-gate";
 import type { ScheduleEligibility } from "@/lib/member-home";
 import { liveClassWhere } from "@/lib/class-live";
 import { accessRefusals, accessRefusalSentence, highestRankOrder } from "@/lib/booking-eligibility";
+import { clubWallClock, usableTimezone } from "@/lib/class-time";
 
 const DEMO_CLASSES = [
   { id: "m1",  name: "Fundamentals BJJ", startTime: "09:30", endTime: "10:30", coach: "Coach Mike",  location: "Mat 1",    capacity: 20, dayOfWeek: 1, color: "#3b82f6" },
@@ -47,7 +48,9 @@ const DEMO_CLASSES = [
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const dateParam = searchParams.get("date"); // YYYY-MM-DD, optional
+  // YYYY-MM-DD, or "today" for the club's date in its own zone (the member's day view sends that, so a phone
+  // in another time zone gets the club's today). Optional: without it no session is mapped.
+  const dateParam = searchParams.get("date");
 
   const session = await auth();
   if (!session?.user) {
@@ -65,7 +68,7 @@ export async function GET(req: Request) {
   await ensureClassHorizon(session.user.tenantId);
 
   try {
-    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds } = await withTenantContext(
+    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds, clubZone } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -108,9 +111,17 @@ export async function GET(req: Request) {
         // class. It still carries NO classInstanceId: nothing may book or
         // check in against a cancelled instance (lf-1 J49, ld-1 J33).
         const cancelledSlots = new Set<string>();
-        if (dateParam) {
-          const startOfDay = new Date(`${dateParam}T00:00:00.000Z`);
-          const endOfDay   = new Date(`${dateParam}T23:59:59.999Z`);
+        // The club's zone: the day view reads "today", live and next on the club's clock (X-Club-Zone below).
+        const tenantRow = await tx.tenant.findUnique({ where: { id: session.user.tenantId }, select: { timezone: true } });
+        const zone = usableTimezone(tenantRow?.timezone);
+        let day = dateParam;
+        if (day === "today") {
+          const c = clubWallClock(new Date(), zone);
+          day = `${c.year}-${String(c.month).padStart(2, "0")}-${String(c.day).padStart(2, "0")}`;
+        }
+        if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) {
+          const startOfDay = new Date(`${day}T00:00:00.000Z`);
+          const endOfDay   = new Date(`${day}T23:59:59.999Z`);
           const instances  = await tx.classInstance.findMany({
             where: {
               class: { tenantId: session.user.tenantId },
@@ -174,6 +185,7 @@ export async function GET(req: Request) {
           viewerTierId: me?.membershipTierId ?? null,
           viewerTierName: me?.membershipTier?.name ?? null,
           bookedClassIds: new Set(booked.map((b) => b.classId)),
+          clubZone: zone,
         };
       },
     );
@@ -272,7 +284,7 @@ export async function GET(req: Request) {
         }));
       });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: { "X-Club-Zone": clubZone } });
   } catch {
     if (session.user.tenantId === "demo-tenant") return NextResponse.json(DEMO_CLASSES);
     return NextResponse.json([]);
