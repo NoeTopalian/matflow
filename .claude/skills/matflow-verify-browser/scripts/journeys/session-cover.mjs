@@ -122,6 +122,12 @@ async function actOn(page, scope, instanceId, label, confirmLabel = label) {
   await note.waitFor({ timeout: 60000 });
   return (await note.innerText()).trim();
 }
+/** The session row's state, after waiting (up to a minute) for the board's re-read to show `expected`. */
+async function stateAfter(page, instanceId, expected) {
+  const r = await sessionRow(page, instanceId);
+  await r.getByTestId("cover-state").filter({ hasText: expected }).waitFor({ timeout: 60000 }).catch(() => {});
+  return (await (await sessionRow(page, instanceId)).getByTestId("cover-state").innerText()).trim();
+}
 /** PATCH the class's weekly slots from the owner's own page (the timetable form's route), as the owner. */
 const editSlots = (page, classId, name, schedules) => page.evaluate(async ({ classId, name, schedules }) => {
   const r = await fetch(`/api/classes/${classId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, schedules }) });
@@ -456,7 +462,7 @@ try {
   }
   await step("after give up");
   await openBoard(op);
-  let st = (await (await sessionRow(op, ids.thu1)).getByTestId("cover-state").innerText()).trim();
+  let st = await stateAfter(op, ids.thu1, "Cover needed");
   L.check("G", "covered by name -> given up -> the owner sees Cover needed again", st === "Cover needed · Alex Regular away" && (await coverRow(ids.thu1))?.status === "open", st);
   // Assigned directly by the owner.
   const row1 = await sessionRow(op, ids.thu1);
@@ -466,12 +472,12 @@ try {
   await ad.getByRole("button", { name: "Assign" }).click();
   await ad.waitFor({ state: "detached", timeout: 60000 });
   await step("after assign");
-  st = (await (await sessionRow(op, ids.thu1)).getByTestId("cover-state").innerText()).trim();
+  st = await stateAfter(op, ids.thu1, `Covered by ${loser.who.name}`);
   L.check("G", "cover needed -> assigned directly: Covered by the coach the owner chose", st === `Covered by ${loser.who.name}` && (await coverRow(ids.thu1))?.coverUserId === loser.who.id, st);
   // Returned to the regular coach (Alex is free now).
   const retNote = await actOn(op, '[data-testid="cover-week"]', ids.thu1, "Return to regular coach");
   await step("after return");
-  st = (await (await sessionRow(op, ids.thu1)).getByTestId("cover-state").innerText()).trim();
+  st = await stateAfter(op, ids.thu1, "Alex Regular");
   L.check("G", "assigned -> returned to the regular coach: the session reads Alex Regular again", st === "Alex Regular" && (await coverRow(ids.thu1))?.closedReason === "returned_to_regular", { st, retNote });
   await shot(op, "session-cover-returned-1280");
   // Asked for again, then the session is cancelled (closes the request) and restored (reinstates no one).
