@@ -5,7 +5,9 @@
 // refused and told which session. Two other coaches confirm "I'll cover this class" at the same moment: exactly one
 // wins and the other reads "Already covered by [name]." Nobody is double-booked, next Thursday is untouched, and the
 // owner, the covering coach and a member see the right thing at 1280 and 390. Activity records who requested and who
-// accepted. Synthetic club only.
+// accepted. Round 2 (review of 5f92f724): a claimed session cancelled and restored recommits nobody; deactivating the
+// covering coach makes the session read Cover needed to staff and Coach to be confirmed to a member; archiving and
+// restoring the class ends the cover for good. Synthetic club only.
 //   node journeys/session-cover.mjs
 import { randomUUID, randomBytes } from "node:crypto";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, staffSignIn, memberLogin, memberSignIn, bcrypt, chooseRegisterClass } from "../lib.mjs";
@@ -646,6 +648,81 @@ try {
   L.check("N", "next Thursday untouched after every transition", untouched.every(([, ok]) => ok), untouched);
   const trail = await q(`select action from "AuditLog" where "tenantId" = $1 and "entityId" = $2 and action like 'class.cover_%' order by "createdAt"`, [t, ids.thu1]);
   L.check("V", "Activity holds every transition of the session in order", JSON.stringify(trail.map((r) => r.action)) === JSON.stringify(["class.cover_requested", "class.cover_claimed", "class.cover_given_up", "class.cover_assigned", "class.cover_returned_to_regular", "class.cover_requested", "class.cover_closed"]), trail.map((r) => r.action));
+
+  // ── 9. Round 2: cancel after a claim, deactivation of the covering coach, archive and restore ────────────────────
+  const memberCoach = async () => ((await (await mp.request.get(`/api/member/schedule?date=${thu1}`)).json()) || []).find((e) => e.classId === ids.adults && e.dayOfWeek === 4) ?? null;
+  const assignVia = async (who) => {
+    await openBoard(op);
+    const row = await sessionRow(op, ids.thu1);
+    await row.getByRole("button", { name: "Assign" }).click();
+    const d = op.getByRole("dialog");
+    await d.getByLabel("Coach").selectOption(who.id);
+    await d.getByRole("button", { name: "Assign" }).click();
+    await d.waitFor({ state: "detached", timeout: 60000 });
+    return stateAfter(op, ids.thu1, `Covered by ${who.name}`);
+  };
+  const ownerFetch = (url, method, body) => op.evaluate(async ({ url, method, body }) => (await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).status, { url, method, body });
+  const mineCount = async (page) => { await openBoard(page); return page.locator(`[data-testid="cover-mine"] [data-session-id="${ids.thu1}"]`).count(); };
+
+  // 9a. A coach claims, then the session is cancelled and restored: the cancel closes the cover; nobody is recommitted.
+  stage = "cancel-after-claim";
+  await openBoard(op);
+  await requestVia(op, ids.thu1);
+  await openBoard(loser.page);
+  const claimNote = await actOn(loser.page, '[data-testid="cover-open"]', ids.thu1, "I'll cover this class");
+  L.check("Z2", "a coach claims the asked-for session", (await coverRow(ids.thu1))?.coverUserId === loser.who.id, { claimNote, row: await coverRow(ids.thu1) });
+  L.check("Z2", "cancel after the claim answered 200", (await setCancelled(true)) === 200);
+  await openBoard(op);
+  st = (await (await sessionRow(op, ids.thu1)).getByTestId("cover-state").innerText()).trim();
+  L.check("Z2", "cancelling closes the claimed cover: Cancelled, no covering coach", st === "Cancelled" && (await coverRow(ids.thu1))?.closedReason === "session_cancelled" && (await coverRow(ids.thu1))?.coverUserId === null, { st, row: await coverRow(ids.thu1) });
+  L.check("Z2@" + (loser.page === cp ? "1280" : "390"), "the coach who claimed no longer has it under their covers", (await mineCount(loser.page)) === 0);
+  L.check("Z2", "restore answered 200", (await setCancelled(false)) === 200);
+  await openBoard(op);
+  st = await stateAfter(op, ids.thu1, "Alex Regular");
+  const mAfterRestore = await memberCoach();
+  L.check("Z2", "restored: staff read Alex Regular, the cover stays closed, the coach is not recommitted", st === "Alex Regular" && (await coverRow(ids.thu1))?.status === "closed" && (await mineCount(loser.page)) === 0, { st, row: await coverRow(ids.thu1) });
+  L.check("Z2@390", "restored: the member reads Alex Regular, not the coach who had claimed", mAfterRestore?.coach === "Alex Regular" && !JSON.stringify(mAfterRestore).includes(loser.who.name), mAfterRestore);
+  await shot(op, "session-cover-cancel-after-claim-restored-1280");
+
+  // 9b. The owner assigns a coach, then deactivates that coach: the session needs cover again, for staff and members.
+  stage = "deactivated-coach";
+  if (winner) {
+    st = await assignVia(winner.who);
+    const mAssigned = await memberCoach();
+    L.check("D", "assigned: staff read Covered by the coach, the member reads that coach", st === `Covered by ${winner.who.name}` && mAssigned?.coach === winner.who.name, { st, member: mAssigned });
+    L.check("D", "deactivating the covering coach answered 200", (await ownerFetch(`/api/staff/${winner.who.id}`, "DELETE")) === 200);
+    await openBoard(op);
+    st = await stateAfter(op, ids.thu1, "Cover needed");
+    L.check("D@1280", "staff: the session reads Cover needed again, never Covered by the deactivated coach", st === "Cover needed · Alex Regular away" && (await coverRow(ids.thu1))?.status === "open" && (await coverRow(ids.thu1))?.coverUserId === null, { st, row: await coverRow(ids.thu1) });
+    const mDeact = await memberCoach();
+    L.check("D", "member schedule: Coach to be confirmed, the deactivated coach's name nowhere", mDeact?.coach === "Coach to be confirmed" && !JSON.stringify(mDeact).includes(winner.who.name), mDeact);
+    await mp.goto("/member/home");
+    await mp.getByText("Next class").first().waitFor({ timeout: 90000 });
+    const homeDeact = await mp.locator("main").innerText();
+    L.check("D@390", "member home: Coach to be confirmed, the deactivated coach's name nowhere", homeDeact.includes("Coach to be confirmed") && !homeDeact.includes(winner.who.name), homeDeact.replace(/\s+/g, " ").slice(0, 400));
+    await shot(mp, "session-cover-member-deactivated-390");
+    await shot(op, "session-cover-deactivated-1280");
+    const why = await q(`select metadata->>'reason' as reason from "AuditLog" where "tenantId" = $1 and "entityId" = $2 and action = 'class.cover_given_up' order by "createdAt" desc limit 1`, [t, ids.thu1]);
+    L.check("D", "Activity records that the deactivation reopened the cover", why[0]?.reason === "coach_deactivated", why);
+  } else {
+    L.check("D", "a race winner to deactivate", false);
+  }
+
+  // 9c. A covered session, then the class is archived and restored: the cover ends with the archive and stays ended.
+  stage = "archive-restore";
+  st = await assignVia(loser.who);
+  L.check("A2", "assigned before the archive", st === `Covered by ${loser.who.name}`, st);
+  L.check("A2", "archive answered 200", (await ownerFetch(`/api/classes/${ids.adults}`, "DELETE")) === 200);
+  L.check("A2", "archiving closed the cover with its reason", (await coverRow(ids.thu1))?.closedReason === "class_archived" && (await coverRow(ids.thu1))?.coverUserId === null, await coverRow(ids.thu1));
+  L.check("A2", "restore answered 200", (await ownerFetch(`/api/classes/${ids.adults}`, "PATCH", { isActive: true })) === 200);
+  await openBoard(op);
+  st = await stateAfter(op, ids.thu1, "Alex Regular");
+  const mArchived = await memberCoach();
+  L.check("A2@1280", "restored class: staff read Alex Regular, the cover stays closed, the coach is not recommitted", st === "Alex Regular" && (await coverRow(ids.thu1))?.status === "closed" && (await mineCount(loser.page)) === 0, { st, row: await coverRow(ids.thu1) });
+  L.check("A2@390", "restored class: the member reads Alex Regular", mArchived?.coach === "Alex Regular", mArchived);
+  await shot(op, "session-cover-archive-restored-1280");
+  const trail2 = await q(`select action, metadata->>'closedReason' as reason from "AuditLog" where "tenantId" = $1 and "entityId" = $2 and action like 'class.cover_%' order by "createdAt"`, [t, ids.thu1]);
+  L.check("V", "Activity holds the round-2 transitions in order", JSON.stringify(trail2.slice(7).map((r) => r.reason ? `${r.action}:${r.reason}` : r.action)) === JSON.stringify(["class.cover_requested", "class.cover_claimed", "class.cover_closed:session_cancelled", "class.cover_assigned", "class.cover_given_up", "class.cover_assigned", "class.cover_closed:class_archived"]), trail2.slice(7));
 } catch (e) {
   if (lastPage && !lastPage.isClosed()) await shot(lastPage, "session-cover-failure").catch(() => {});
   L.check("run", "ran to the end", false, { stage, error: String(e).split("\n")[0].slice(0, 300) });

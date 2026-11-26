@@ -7,8 +7,9 @@
 //  3. A deactivated user, or a user of another club, cannot be assigned.
 //  4. Archiving or pausing a class closes the active covers on its upcoming sessions (reason and Activity, same
 //     transaction); restoring or resuming it brings no cover back.
-//  5. A weekly-slot edit that removes a session closes its cover as session_removed; an end-time-only change keeps
-//     the session and flags its cover to reconfirm.
+//  5. A weekly-slot edit that removes a session closes its cover as session_removed (a session it keeps keeps its
+//     cover and is counted); a moved session needs reconfirming, which re-runs the overlap check at the new time; an
+//     end-time-only change keeps the session and flags its cover to reconfirm.
 // Synthetic data; skips without DATABASE_URL.
 import { describe, it, beforeAll, afterAll, expect, vi } from "vitest";
 import { withRlsBypass } from "@/lib/prisma-tenant";
@@ -116,6 +117,13 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
       };
       await weekly("rem", "Life Removed");
       await weekly("ret", "Life Retime");
+      await weekly("mov", "Life Moved");
+      // The Thursday after next of Life Removed already has a visit, so a slot edit keeps it (an orphan).
+      ids.remKept = (await tx.classInstance.create({ data: { classId: ids.rem, date: new Date(NEXT_THU.getTime() + 7 * 86_400_000), startTime: "07:00", endTime: "08:00" } })).id;
+      await tx.attendanceRecord.create({ data: { tenantId: state.tenantId, memberId: ids.parent, classInstanceId: ids.remKept, checkInMethod: "admin" } });
+      // Rio's own class straight after Life Moved (back to back at 08:00).
+      const own = (await tx.class.create({ data: { tenantId: state.tenantId, name: "Rio Own", location: "Mat 8", coachUserId: ids.rio, duration: 60 } })).id;
+      await tx.classInstance.create({ data: { classId: own, date: NEXT_THU, startTime: "08:00", endTime: "09:00" } });
     });
   }, 180_000);
 
@@ -216,13 +224,34 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
     expect(await labels(ids.pau2)).toEqual({ staff: "Alex Regular", member: "Alex Regular" });
   }, 180_000);
 
-  it("a weekly-slot edit that removes a session closes its cover as session_removed", async () => {
+  it("a weekly-slot edit that removes a session closes its cover as session_removed; a session it keeps keeps its cover and is counted", async () => {
     expect((await cover(ids.remS, owner(), { action: "assign", coachUserId: ids.rio })).status).toBe(200);
+    expect((await cover(ids.remKept, owner(), { action: "assign", coachUserId: ids.sam })).status).toBe(200);
     const coverId = (await coverRow(ids.remS))!.id;
     const r = await patchClass(ids.rem, { name: "Life Removed", schedules: [{ dayOfWeek: 2, startTime: "07:00", endTime: "08:00" }] });
     expect(r.status).toBe(200);
     expect((r.body.scheduleChange as Json).coverClosed).toEqual([{ date: NEXT_THU.toISOString(), startTime: "07:00", closedReason: "session_removed" }]);
     expect(await rowById(coverId)).toMatchObject({ status: "closed", closedReason: "session_removed", classInstanceId: null, coverUserId: null });
+    // The orphan keeps running at its old time, so its cover stays; the save message counts it.
+    expect((r.body.scheduleChange as Json).instancesKept).toEqual([ids.remKept]);
+    expect((r.body.scheduleChange as Json).coverKept).toBe(1);
+    expect(await coverRow(ids.remKept)).toMatchObject({ status: "covered", coverUserId: ids.sam });
+  }, 180_000);
+
+  it("a moved session needs its coach to reconfirm, and reconfirming re-runs the overlap check at the new time", async () => {
+    expect((await cover(ids.movS, owner(), { action: "assign", coachUserId: ids.rio })).status).toBe(200);
+    const r = await patchClass(ids.mov, { name: "Life Moved", schedules: [{ dayOfWeek: 4, startTime: "07:30", endTime: "08:30" }] });
+    expect(r.status).toBe(200);
+    expect((r.body.scheduleChange as Json).coverMoved).toBe(1);
+    const row = await withRlsBypass((tx) => tx.sessionCover.findFirst({ where: { tenantId: state.tenantId, coverUserId: ids.rio, status: "covered" }, include: { classInstance: true } }));
+    expect(row).toMatchObject({ needsReconfirm: true });
+    expect(row?.classInstance).toMatchObject({ startTime: "07:30", date: NEXT_THU });
+    expect(await labels(row!.classInstanceId!)).toEqual({ staff: "Covered by Rio Cover · Awaiting reconfirmation", member: "Coach to be confirmed" });
+    // 07:30-08:30 now runs into Rio's own 08:00 class: accepting the new time is refused by name.
+    const re = await cover(row!.classInstanceId!, { userId: ids.rio, role: "coach" }, { action: "reconfirm" });
+    expect(re).toMatchObject({ status: 409, body: { code: "OVERLAP" } });
+    expect(String(re.body.error)).toContain("already teaching Rio Own");
+    expect(await coverRow(row!.classInstanceId!)).toMatchObject({ status: "covered", needsReconfirm: true });
   }, 180_000);
 
   it("an end-time-only change keeps the session and flags its cover to reconfirm, with an Activity row", async () => {
