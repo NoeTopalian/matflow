@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -132,9 +133,7 @@ export default function ApplyPage() {
           Back
         </Link>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-black flex items-center justify-center">
-            <span className="text-white font-black text-xs">M</span>
-          </div>
+          <Image src="/icons/icon-192.png" alt="" width={32} height={32} unoptimized className="shrink-0" />
           <span className="text-gray-900 font-semibold text-sm">MatFlow</span>
         </div>
       </div>
