@@ -225,9 +225,18 @@ try {
       const c = chipOf(d.name);
       chips[d.key] = (await c.count()) ? (await c.locator('[data-chip-part="cover"]').allInnerTexts()).join(" | ") : "folded";
     }
+    // A folded class is read from the "+N more" panel's row, which carries the same cover line.
+    if (Object.values(chips).includes("folded")) {
+      await page.getByRole("button", { name: /more sessions, 22:00/ }).first().click().catch(() => {});
+      for (const d of DASH) {
+        if (chips[d.key] !== "folded") continue;
+        const row = page.getByTestId("more-row").filter({ hasText: d.name }).first();
+        await row.waitFor({ timeout: 30000 }).catch(() => {});
+        chips[d.key] = (await row.count()) ? (await row.locator('[data-chip-part="cover"]').allInnerTexts()).join(" | ") : "folded";
+      }
+    }
     const read = Object.fromEntries(((await (await page.request.get(`/api/coach/cover?from=${todayKey}&days=1`)).json()).sessions || []).filter((x) => DASH.some((d) => d.instanceId === x.id)).map((x) => [x.className, x.coachLabel]));
-    const chipOk = (key, want) => chips[key] === want || chips[key] === "folded";
-    L.check(`T@${tag}`, "timetable: Cover needed / Covered by only on the classes with cover; never on the coachless class (on screen) or the regular one", chips.nocoach === "" && chipOk("regular", "") && chipOk("covered", "Covered by Casey Cover") && chipOk("requested", "Cover needed · Alex Regular away") && (chips.covered !== "folded" || chips.requested !== "folded"), { chips, read });
+    L.check(`T@${tag}`, "timetable (chips and the +N more rows): Cover needed / Covered by only on the classes with cover; never on the coachless class or the regular one", chips.nocoach === "" && chips.regular === "" && chips.covered === "Covered by Casey Cover" && chips.requested === "Cover needed · Alex Regular away", { chips, read });
     L.check(`T@${tag}`, "timetable's cover read for the day: the coachless and regular classes carry no cover label", read["Dash No Coach"] === null && read["Dash Regular"] === "Alex Regular" && read["Dash Covered"] === "Covered by Casey Cover" && read["Dash Requested"] === "Cover needed · Alex Regular away", read);
     await shot(page, `session-cover-timetable-${tag}`);
     await ctx.close();

@@ -3146,6 +3146,7 @@ export default function TimetableManager({
                                       endTime={session.slot.endTime}
                                       color={session.cls.color ?? primaryColor}
                                       place={placeOf(session.cls)}
+                                      cover={coverOf(session.cls, session.slot, agendaDate)}
                                       canManage={canManage}
                                       onEdit={() => openEdit(session.cls)}
                                     />
