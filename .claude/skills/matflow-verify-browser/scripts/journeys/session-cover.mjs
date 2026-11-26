@@ -8,7 +8,7 @@
 // accepted. Synthetic club only.
 //   node journeys/session-cover.mjs
 import { randomUUID, randomBytes } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn, staffSignIn, memberLogin, memberSignIn, bcrypt } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, staffSignIn, memberLogin, memberSignIn, bcrypt, chooseRegisterClass } from "../lib.mjs";
 
 const club = state.club;
 if (!club?.slug?.startsWith("mfv-")) throw new Error("Create a synthetic fixture first");
@@ -28,6 +28,14 @@ const thu2 = addDays(thu1, 7);
 const dayLabel = (key) => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${key}T00:00:00Z`));
 const THU1_LABEL = dayLabel(thu1);
 const CLASSES = ["Cover Adults Gi", "Cover Kids BJJ", "Cover Late", "Cover Twice"];
+// Today, for the staff dashboard, the timetable and the register: one class per coach state and capacity state.
+const DASH = [
+  { key: "regular", name: "Dash Regular", place: "Mat 5", cap: 10, attend: 0, coach: "alex", cover: null, wantCoach: "Alex Regular", wantStatus: "Ready" },
+  { key: "nocoach", name: "Dash No Coach", place: "Mat 6", cap: 1, attend: 1, coach: null, cover: null, wantCoach: "No coach assigned", wantStatus: "Full" },
+  { key: "covered", name: "Dash Covered", place: "Mat 7", cap: 1, attend: 2, coach: "kim", cover: "covered", wantCoach: "Covered by Casey Cover", wantStatus: "Over capacity" },
+  { key: "requested", name: "Dash Requested", place: "Mat 8", cap: 10, attend: 0, coach: "alex", cover: "open", wantCoach: "Cover needed · Alex Regular away", wantStatus: "Ready" },
+];
+const ALL_CLASSES = [...CLASSES, ...DASH.map((d) => d.name)];
 
 /** A staff member of the fixture club with a password (synthetic address; coaches have no authenticator). */
 async function coach(key, name) {
@@ -43,9 +51,10 @@ async function coach(key, name) {
 }
 
 async function cleanup() {
-  const rows = await q(`select id from "Class" where "tenantId" = $1 and name = any($2)`, [t, CLASSES]);
+  const rows = await q(`select id from "Class" where "tenantId" = $1 and name = any($2)`, [t, ALL_CLASSES]);
   for (const { id } of rows) {
     await q(`delete from "SessionCover" where "tenantId" = $1 and "classInstanceId" in (select id from "ClassInstance" where "classId" = $2)`, [t, id]).catch(() => {});
+    await q(`delete from "AttendanceRecord" where "tenantId" = $1 and "classInstanceId" in (select id from "ClassInstance" where "classId" = $2)`, [t, id]).catch(() => {});
     for (const tb of ["ClassSubscription", "ClassSchedule", "ClassInstance"]) await q(`delete from "${tb}" where "classId" = $1`, [id]).catch(() => {});
     await q(`delete from "Class" where id = $1 and "tenantId" = $2`, [id, t]).catch(() => {});
   }
@@ -79,6 +88,21 @@ await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime
 /** Next Thursday's session: no cover row, and the weekly class still has Alex. Checked after every transition. */
 const nextWeekUntouched = async () => (await q(`select count(*)::int as n from "SessionCover" where "classInstanceId" = $1`, [ids.thu2]))[0].n === 0
   && (await q(`select "coachUserId" from "Class" where id = $1`, [ids.adults]))[0].coachUserId === alex.id;
+// Today's four classes at 22:00, each on its own mat; kids classes, so the member's next class stays Adults Gi.
+const todayDow = new Date(`${todayKey}T00:00:00Z`).getUTCDay();
+const members = await q(`select id from "Member" where "tenantId" = $1 and name in ('Member 1', 'Member 2') order by name`, [t]);
+for (const d of DASH) {
+  d.classId = randomUUID();
+  d.instanceId = randomUUID();
+  const coachId = d.coach === "alex" ? alex.id : d.coach === "kim" ? kim.id : null;
+  await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity", location, "coachUserId", "isKids") values ($1, $2, $3, 30, $4, $5, $6, true)`, [d.classId, t, d.name, d.cap, d.place, coachId]);
+  await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime", "startDate") values ($1, $2, $3, '22:00', '22:30', $4)`, [randomUUID(), d.classId, todayDow, new Date(`${todayKey}T00:00:00Z`)]);
+  await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, '22:00', '22:30')`, [d.instanceId, d.classId, new Date(`${todayKey}T00:00:00Z`)]);
+  for (const m of members.slice(0, d.attend)) await q(`insert into "AttendanceRecord" (id, "tenantId", "memberId", "classInstanceId", "checkInMethod") values ($1, $2, $3, $4, 'admin')`, [randomUUID(), t, m.id, d.instanceId]);
+  if (d.cover) {
+    await q(`insert into "SessionCover" (id, "tenantId", "classInstanceId", status, "coverUserId", "requestedById", "updatedAt") values ($1, $2, $3, $4, $5, $6, now())`, [randomUUID(), t, d.instanceId, d.cover, d.cover === "covered" ? casey.id : null, club.owner.id]);
+  }
+}
 const coverRow = async (instanceId) => (await q(`select status, "coverUserId", "closedReason" from "SessionCover" where "tenantId" = $1 and "classInstanceId" = $2`, [t, instanceId]))[0] ?? null;
 
 const VIEW = { "1280": { viewport: { width: 1280, height: 800 } }, "390": { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } };
@@ -134,7 +158,93 @@ const editSlots = (page, classId, name, schedules) => page.evaluate(async ({ cla
   return { status: r.status, body: await r.json().catch(() => null) };
 }, { classId, name, schedules });
 
+/** The owner signed in once; the saved state is reused by every owner context. */
+async function oc0(b) {
+  const ctx = await context(b, "10.98.7.20", VIEW["1280"]);
+  const page = await ctx.newPage();
+  await ownerSignIn(page, club);
+  const st = await ctx.storageState();
+  await ctx.close();
+  return st;
+}
+
 try {
+  // ── 0. Staff dashboard, timetable, register and cover page: the three coach states stay distinct ────────────────
+  stage = "dashboard";
+  const ownerFirst = await oc0(browser);
+  for (const [tag, lane] of [["1280", 21], ["390", 22]]) {
+    const ctx = await context(browser, `10.98.7.${lane}`, { ...VIEW[tag], storageState: ownerFirst });
+    const page = await ctx.newPage();
+    lastPage = page;
+    watch(page, `dash-${tag}`);
+    await page.goto("/dashboard");
+    for (const d of DASH) {
+      const card = page.locator(`a[href="/dashboard/checkin?class=${d.instanceId}"]`).first();
+      await card.waitFor({ timeout: 90000 });
+      const lines = await card.evaluate((el) => [...el.querySelectorAll("p, span")].map((x) => ({ text: x.textContent.trim(), color: x.getAttribute("style") || "" })));
+      const coachLine = lines.find((l) => l.text.startsWith(d.wantCoach.split(" · ")[0]) || l.text.startsWith(d.wantCoach));
+      const statusText = lines.map((l) => l.text).find((x) => ["Ready", "Full", "Over capacity"].includes(x));
+      L.check(`D@${tag}`, `Today's Classes: ${d.name} names its coach as "${d.wantCoach}"`, !!coachLine && coachLine.text.startsWith(d.wantCoach), lines.map((l) => l.text));
+      L.check(`D@${tag}`, `Today's Classes: ${d.name} status reads ${d.wantStatus}`, statusText === d.wantStatus, { statusText, lines: lines.map((l) => l.text) });
+      if (d.key === "nocoach") {
+        L.check(`D@${tag}`, "No coach assigned is quiet (muted text, no pill), and Cover needed is not shown", coachLine?.color.includes("--tx-3") && !lines.some((l) => /Cover needed|Needs coach/.test(l.text)), lines);
+      }
+    }
+    // The week calendar on the same page.
+    const week = await page.evaluate((names) => {
+      const btn = document.querySelector('[aria-label="Previous week"]');
+      let root = btn;
+      while (root && !names.every((n) => (root.innerText || "").includes(n))) root = root.parentElement;
+      if (!root) return null;
+      const out = {};
+      for (const n of names) {
+        const hit = [...root.querySelectorAll("p, span")].find((el) => el.children.length === 0 && el.textContent.includes(n) && el.offsetParent && !el.closest('a[href^="/dashboard/checkin"]'));
+        let pill = hit ? hit.parentElement : null;
+        while (pill && pill.innerText.split("\n").filter(Boolean).length < 2) pill = pill.parentElement;
+        out[n] = pill ? pill.innerText.replace(/\s+/g, " ").trim() : null;
+      }
+      return out;
+    }, DASH.map((d) => d.name));
+    if (week) {
+      for (const d of DASH) L.check(`W@${tag}`, `week calendar: ${d.name} shows "${d.wantCoach}"`, (week[d.name] || "").includes(d.wantCoach) && (d.key !== "nocoach" || !(week[d.name] || "").includes("Cover needed")), week[d.name]);
+    } else {
+      L.note(`W@${tag}`, "week calendar: not every class of today is on screen at this width", null);
+    }
+    await shot(page, `session-cover-dashboard-${tag}`);
+    // The timetable's chips for today: a cover note only where cover was asked for or accepted.
+    await page.goto("/dashboard/timetable");
+    const chip = (name) => page.getByRole("button", { name: new RegExp(name) }).first();
+    await chip(DASH[0].name).waitFor({ timeout: 90000 });
+    const chips = {};
+    for (const d of DASH) chips[d.key] = (await chip(d.name).locator('[data-chip-part="cover"]').allInnerTexts()).join(" | ");
+    L.check(`T@${tag}`, "timetable: Covered by Casey Cover and Cover needed only on the classes with cover; none on the coachless class or the regular one", chips.covered === "Covered by Casey Cover" && chips.requested === "Cover needed · Alex Regular away" && chips.nocoach === "" && chips.regular === "", chips);
+    await shot(page, `session-cover-timetable-${tag}`);
+    await ctx.close();
+  }
+  // The register (Mark attendance's list, and its Session details for the coachless class).
+  const regCtx = await context(browser, "10.98.7.23", { ...VIEW["1280"], storageState: ownerFirst });
+  const rp0 = await regCtx.newPage();
+  watch(rp0, "register");
+  await rp0.goto("/dashboard/checkin");
+  const todayList = await (await rp0.request.get("/api/coach/today")).json();
+  const byName = Object.fromEntries(todayList.map((x) => [x.name, x.coachName]));
+  L.check("G", "register list: each class's coach as the resolver says; the coachless class has none and never Cover needed", DASH.every((d) => (d.key === "nocoach" ? byName[d.name] === null : byName[d.name] === d.wantCoach)), byName);
+  await chooseRegisterClass(rp0, "22:00", DASH[1].name);
+  await rp0.getByRole("button", { name: /Session details/ }).click();
+  const coachDd = (await rp0.locator('#session-details-panel dd').first().innerText()).trim();
+  L.check("G", "register Session details: the coachless class reads No coach assigned", coachDd === "No coach assigned", coachDd);
+  await regCtx.close();
+  // The cover page row of the coachless class.
+  const cpCtx = await context(browser, "10.98.7.24", { ...VIEW["390"], storageState: ownerFirst });
+  const cp0 = await cpCtx.newPage();
+  watch(cp0, "cover-page");
+  await openBoard(cp0);
+  const ncRow = cp0.locator(`[data-testid="cover-week"] li[data-session-id="${DASH[1].instanceId}"]`);
+  await ncRow.waitFor({ timeout: 60000 });
+  const nc = await ncRow.getByTestId("cover-state").evaluate((el) => ({ text: el.textContent.trim(), muted: el.className.includes("text-tx-3") }));
+  L.check("A@390", "cover page: the coachless class with no request reads No coach assigned (muted), never Cover needed", nc.text === "No coach assigned" && nc.muted, nc);
+  await cpCtx.close();
+
   // ── 1. The owner requests cover for the first Thursday (desktop) ───────────────────────────────────────────────
   stage = "owner-request";
   const oc = await context(browser, "10.98.7.1", VIEW["1280"]);
@@ -254,6 +364,18 @@ try {
   const alexEarly = await actOn(ap, '[data-testid="cover-open"]', ids.kidsThu1, "I'll cover this class");
   L.check("W", "an open request does not release the regular coach: Alex is refused Kids BJJ, naming his own session", alexEarly === `You're already teaching ${CLASSES[0]} on ${THU1_LABEL}, 19:00–20:30, Mat 2.`, alexEarly);
 
+  // The simultaneous Mat 1 session and next Thursday's Mat 2 session, as staff, a member and the database see them.
+  const others = async () => {
+    const staff = async (day, id) => ((await (await op.request.get(`/api/coach/cover?from=${day}&days=1`)).json()).sessions || []).filter((x) => x.id === id).map((x) => ({ state: x.state, coachLabel: x.coachLabel, coverUserId: x.coverUserId }));
+    const memberView = async (day, classId) => ((await (await mp.request.get(`/api/member/schedule?date=${day}`)).json()) || []).filter((e) => e.classId === classId && e.dayOfWeek === 4).map((e) => ({ coach: e.coach, classInstanceId: e.classInstanceId }));
+    const db = async (id) => q(`select status, "coverUserId", "needsReconfirm", "closedReason" from "SessionCover" where "tenantId" = $1 and "classInstanceId" = $2`, [t, id]);
+    return {
+      mat1ThisThursday: { staff: await staff(thu1, ids.kidsThu1), member: await memberView(thu1, ids.kids), db: await db(ids.kidsThu1) },
+      mat2NextThursday: { staff: await staff(thu2, ids.thu2), member: await memberView(thu2, ids.adults), db: await db(ids.thu2) },
+    };
+  };
+  const beforeClaim = await others();
+
   // ── 4. Two coaches confirm at the same moment ────────────────────────────────────────────────────────────────────
   stage = "race";
   const cc = await context(browser, "10.98.7.4", VIEW["1280"]);
@@ -296,6 +418,8 @@ try {
   );
   const doubledOk = doubled.every((d) => d.n === 1) && !doubled.some((d) => d.coverUserId === kim.id);
   L.check("R", "nobody is double-booked that Thursday", doubledOk, doubled);
+  const afterClaim = await others();
+  L.check("I", "the claim changed only this Thursday's Mat 2 session: the Mat 1 session and next Thursday's Mat 2 session are identical before and after, for staff, members and the database", JSON.stringify(beforeClaim) === JSON.stringify(afterClaim) && afterClaim.mat2NextThursday.db.length === 0, { before: beforeClaim, after: afterClaim });
 
   // ── 4b. Alex is released once the cover is confirmed; back to back is allowed; taking the cover away is refused ──
   stage = "alex-released";
@@ -505,7 +629,7 @@ try {
   L.check("all", "no uncaught page errors", errors.length === 0, errors);
   await browser.close().catch(() => {});
   await cleanup();
-  const left = Number((await q(`select count(*)::int as n from "Class" where "tenantId" = $1 and name = any($2)`, [t, CLASSES]))[0].n);
+  const left = Number((await q(`select count(*)::int as n from "Class" where "tenantId" = $1 and name = any($2)`, [t, ALL_CLASSES]))[0].n);
   L.check("cleanup", "the two classes, their sessions and cover rows are removed", left === 0, { left });
   console.log(`\n${L.summary()}  ledger ${L.path}`);
 }
