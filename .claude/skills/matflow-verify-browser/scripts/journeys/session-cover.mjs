@@ -538,7 +538,7 @@ try {
   for (const [tag, page] of [["390", mp]]) {
     await page.goto("/member/home");
     await page.getByText(CLASSES[0]).first().waitFor({ timeout: 60000 });
-    const home = await page.locator("main").innerText();
+    const home = await page.getByText("Next class").first().locator("xpath=ancestor::*[.//p[contains(., 'Cover Adults Gi')]][1]").innerText();
     L.check(`M@${tag}`, "member home: the next class names the covering coach", !!winner && home.includes(winner.who.name) && !home.includes("Coach to be confirmed"), home.replace(/\s+/g, " ").slice(0, 400));
     await shot(page, `session-cover-member-covered-${tag}`);
   }
@@ -547,7 +547,7 @@ try {
   watch(mdp, "member-1280");
   await mdp.goto("/member/home");
   await mdp.getByText(CLASSES[0]).first().waitFor({ timeout: 60000 });
-  const homeDesk = await mdp.locator("main").innerText();
+  const homeDesk = await mdp.getByText("Next class").first().locator("xpath=ancestor::*[.//p[contains(., 'Cover Adults Gi')]][1]").innerText();
   L.check("M@1280", "member home on desktop: the next class names the covering coach", !!winner && homeDesk.includes(winner.who.name), homeDesk.replace(/\s+/g, " ").slice(0, 300));
   await shot(mdp, "session-cover-member-covered-1280");
   await mdc.close();
