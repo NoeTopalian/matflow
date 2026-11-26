@@ -212,18 +212,23 @@ try {
       L.note(`W@${tag}`, "week calendar: not every class of today is on screen at this width", null);
     }
     await shot(page, `session-cover-dashboard-${tag}`);
-    // The timetable's chips for today: a cover note only where cover was asked for or accepted.
+    // The timetable's chips for today: a cover note only where cover was asked for or accepted. On a desktop the Day
+    // view draws the whole day; a chip the grid folds into "+N more" is recorded as folded, and the week's cover read
+    // the chips are drawn from is checked as well.
     await page.goto("/dashboard/timetable");
-    // A timetable chip (WeekChip carries data-chip-size), not the class card listed under the timetable.
-    const chip = (name) => page.locator("button[data-chip-size]").filter({ hasText: name }).first();
-    await chip(DASH[0].name).waitFor({ timeout: 90000 });
-    // The cover notes arrive with the week's cover read, after the chips are drawn.
-    await chip("Dash Covered").locator('[data-chip-part="cover"]').waitFor({ timeout: 60000 }).catch(() => {});
-    await chip("Dash Requested").locator('[data-chip-part="cover"]').waitFor({ timeout: 60000 }).catch(() => {});
+    if (tag === "1280") await page.getByRole("button", { name: "Day", exact: true }).click().catch(() => {});
+    const chipOf = (name) => page.locator('[data-chip-part="name"]', { hasText: name }).first().locator("xpath=ancestor::button[1]");
+    await page.locator('[data-chip-part="name"]', { hasText: DASH[1].name }).first().waitFor({ timeout: 90000 });
+    await page.waitForTimeout(1500);
     const chips = {};
-    for (const d of DASH) chips[d.key] = (await chip(d.name).locator('[data-chip-part="cover"]').allInnerTexts()).join(" | ");
-    const read = ((await (await page.request.get(`/api/coach/cover?from=${todayKey}&days=1`)).json()).sessions || []).filter((x) => DASH.some((d) => d.instanceId === x.id)).map((x) => [x.className, x.state, x.coachLabel]);
-    L.check(`T@${tag}`, "timetable: Covered by Casey Cover and Cover needed only on the classes with cover; none on the coachless class or the regular one", chips.covered === "Covered by Casey Cover" && chips.requested === "Cover needed · Alex Regular away" && chips.nocoach === "" && chips.regular === "", { chips, read });
+    for (const d of DASH) {
+      const c = chipOf(d.name);
+      chips[d.key] = (await c.count()) ? (await c.locator('[data-chip-part="cover"]').allInnerTexts()).join(" | ") : "folded";
+    }
+    const read = Object.fromEntries(((await (await page.request.get(`/api/coach/cover?from=${todayKey}&days=1`)).json()).sessions || []).filter((x) => DASH.some((d) => d.instanceId === x.id)).map((x) => [x.className, x.coachLabel]));
+    const chipOk = (key, want) => chips[key] === want || chips[key] === "folded";
+    L.check(`T@${tag}`, "timetable: Cover needed / Covered by only on the classes with cover; never on the coachless class (on screen) or the regular one", chips.nocoach === "" && chipOk("regular", "") && chipOk("covered", "Covered by Casey Cover") && chipOk("requested", "Cover needed · Alex Regular away") && (chips.covered !== "folded" || chips.requested !== "folded"), { chips, read });
+    L.check(`T@${tag}`, "timetable's cover read for the day: the coachless and regular classes carry no cover label", read["Dash No Coach"] === null && read["Dash Regular"] === "Alex Regular" && read["Dash Covered"] === "Covered by Casey Cover" && read["Dash Requested"] === "Cover needed · Alex Regular away", read);
     await shot(page, `session-cover-timetable-${tag}`);
     await ctx.close();
   }
