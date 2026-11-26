@@ -14,8 +14,8 @@ vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.Re
 
 import WeeklyCalendar, { type DayClass } from "@/components/dashboard/WeeklyCalendar";
 
-// jsdom has no scrollIntoView; the calendar scrolls the selected day into view.
-Element.prototype.scrollIntoView = () => {};
+// jsdom has no Element.scrollTo; the calendar scrolls its own strip to centre the selected day (audit F1).
+Element.prototype.scrollTo = () => {};
 
 const ORIGINAL_TZ = process.env.TZ;
 afterEach(() => {

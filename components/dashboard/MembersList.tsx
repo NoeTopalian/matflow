@@ -1039,7 +1039,9 @@ export default function MembersList({ members: initial, primaryColor, role, guar
               placeholder="Search name, email, or phone"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-colors placeholder:text-[var(--tx-3)]"
+              // Audit F15: no `outline-none`, so keyboard focus gets the standard ring (globals.css :focus-visible)
+              // as well as the border change; an outline takes no space, so nothing moves.
+              className="w-full pl-10 pr-4 py-3 rounded-xl text-sm transition-colors placeholder:text-[var(--tx-3)]"
               style={{
                 background: "var(--sf-2)",
                 border: "1px solid var(--bd-default)",
