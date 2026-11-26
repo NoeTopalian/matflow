@@ -48,7 +48,7 @@ All SVGs have transparent backgrounds except the app icons, which include their 
 | 90 to 139 px | Short logo, small version (plain bar) |
 | Below 90 px, or square spaces | MF icon |
 
-App icon: use the STUDIO patch version at 64 px and above, plain MF below that.
+App icon: use the STUDIO patch version wherever it is shown at 72 px or more, and the plain MF tile only in browser tabs and other places too small for that. STUDIO is about 7.7% of the tile's height, so below 72 px it can't be read. MatFlow's own mark in the product (`components/brand/StudioMark.tsx`) is the STUDIO tile at 72 px, and 96 px on the sign-in screen.
 
 ## Colours
 

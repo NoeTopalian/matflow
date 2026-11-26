@@ -142,7 +142,7 @@ export function BeltTrackerMockup() {
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden" style={{ minHeight: "calc(100svh - 4rem)" }}>
+    <section className="relative overflow-hidden" style={{ minHeight: "calc(100svh - var(--land-nav-h))" }}>
       {/* Background radial glow */}
       <div
         aria-hidden

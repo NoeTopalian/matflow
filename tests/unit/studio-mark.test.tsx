@@ -23,6 +23,11 @@ describe("StudioMark", () => {
     expect(img.hasAttribute("data-studio-mark")).toBe(true);
   });
 
+  it("loads eagerly unless a placement below the fold asks for lazy", () => {
+    expect(render(<StudioMark />).container.querySelector("img")!.getAttribute("loading")).toBe("eager");
+    expect(render(<StudioMark loading="lazy" />).container.querySelector("img")!.getAttribute("loading")).toBe("lazy");
+  });
+
   it("points at the file generated from brand/app-icon-mf-studio.svg, with a version that passes the service worker cache", () => {
     expect(STUDIO_MARK_SRC).toBe("/icons/icon-512.png?v=2");
     expect(read("scripts/generate-brand-icons.mjs")).toMatch(/kit\("app-icon-mf-studio\.svg"\)[\s\S]*public\/icons\/icon-512\.png", await png\(STUDIO_ROUNDED, 512\)/);
@@ -44,6 +49,9 @@ describe("every former placement of the old mark", () => {
     // No second copy of the artwork by path, and no "Studio" drawn as page text.
     expect(src).not.toMatch(/icons\/icon-(192|512)\.png/);
     expect(src).not.toMatch(/>\s*STUDIO\s*</i);
+    // Only the footer sits below the fold; the sign-in, application and landing-bar marks are on the first screen.
+    const lazy = /loading="lazy"/.test(uses[0][1]);
+    expect(lazy).toBe(file === "components/landing/LandingFooter.tsx");
   });
 
   it("no product page or component draws a letter-M tile as MatFlow's mark", () => {
@@ -60,5 +68,15 @@ describe("every former placement of the old mark", () => {
     walk("app");
     walk("components");
     expect(hits).toEqual([]);
+  });
+});
+
+describe("the landing header's height has one source", () => {
+  it("the bar, the hero's first screen and the anchor offset all use it", () => {
+    const css = read("app/globals.css");
+    expect(css).toMatch(/--land-bar-h:\s*5rem;\s*--land-nav-h:\s*calc\(var\(--land-bar-h\) \+ 1px\);/);
+    expect(css).toMatch(/section\[id\] \{ scroll-margin-top: var\(--land-nav-h\); \}/);
+    expect(read("components/landing/LandingNav.tsx")).toMatch(/h-\[var\(--land-bar-h\)\]/);
+    expect(read("components/landing/Hero.tsx")).toMatch(/minHeight: "calc\(100svh - var\(--land-nav-h\)\)"/);
   });
 });

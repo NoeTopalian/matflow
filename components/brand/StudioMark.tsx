@@ -14,11 +14,16 @@ import Image from "next/image";
  * otherwise keep showing the previous artwork.
  *
  * Decorative (alt=""): every placement has the word MatFlow next to it.
+ *
+ * Loading: eager by default, because the sign-in screen, the application
+ * header and the landing bar show it on the first screen; next/image's own
+ * default (lazy) left it unpainted until after layout on a cold load. Only a
+ * placement below the fold (the landing footer) passes loading="lazy".
  */
 export const STUDIO_MARK_SRC = "/icons/icon-512.png?v=2";
 export const STUDIO_MARK_MIN_PX = 72;
 
-export function StudioMark({ size = STUDIO_MARK_MIN_PX, className = "" }: { size?: number; className?: string }) {
+export function StudioMark({ size = STUDIO_MARK_MIN_PX, className = "", loading = "eager" }: { size?: number; className?: string; loading?: "eager" | "lazy" }) {
   return (
     <Image
       src={STUDIO_MARK_SRC}
@@ -26,6 +31,7 @@ export function StudioMark({ size = STUDIO_MARK_MIN_PX, className = "" }: { size
       width={size}
       height={size}
       unoptimized
+      loading={loading}
       data-studio-mark=""
       className={`shrink-0 ${className}`.trim()}
     />

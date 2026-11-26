@@ -35,10 +35,10 @@ export function LandingNav() {
         WebkitBackdropFilter: scrolled || open ? "blur(20px)" : "none",
       }}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 h-20 flex items-center justify-between gap-3 sm:gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 h-[var(--land-bar-h)] flex items-center justify-between gap-3 sm:gap-4">
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <StudioMark />
-          {/* Below 360 px the word would push Sign in and the menu off the bar; it stays as the link's name. */}
+          {/* Narrower than 359 px the word would push Sign in and the menu off the bar; it stays as the link's name. */}
           <span
             className="font-semibold text-base tracking-tight max-[359px]:sr-only"
             style={{ color: "#ede8df", fontFamily: "var(--font-label)" }}
