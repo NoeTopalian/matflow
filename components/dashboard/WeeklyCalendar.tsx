@@ -10,12 +10,17 @@ export interface DayClass {
   name: string;
   time: string;       // "09:00"
   endTime?: string;   // "10:00"
-  coach: string;
+  /** The class's coach (the linked staff coach, else the typed name); null when it has none. */
+  coach: string | null;
   capacity: number | null;
   enrolled: number;
   location?: string;
   date: string;       // "2026-03-07"
 }
+
+/** What a class with no coach shows on the staff dashboard: a fact, said quietly, never a warning. */
+export const NO_COACH = "No coach assigned";
+export const coachLabel = (coach: string | null) => coach ?? NO_COACH;
 
 interface Props {
   classes: DayClass[];
@@ -338,7 +343,7 @@ function ClassPill({
         style={{ background: hexToRgba(primaryColor, 0.08) }}
       >
         <p className="font-semibold truncate" style={{ color: "var(--tx-1)" }}>{cls.time} {cls.name}</p>
-        <p className="truncate" style={{ color: "var(--tx-3)" }}>{cls.coach}</p>
+        <p className="truncate" style={{ color: "var(--tx-3)" }}>{coachLabel(cls.coach)}</p>
         {cap && (
           <p style={{ color: capColor("var(--tx-4)") }}>
             {cap.short}
@@ -383,7 +388,7 @@ function ClassPill({
             </span>
             <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
               <Users className="w-3 h-3" />
-              {cls.coach}
+              {coachLabel(cls.coach)}
             </span>
             {cls.location && (
               <span className="flex items-center gap-1 text-xs" style={{ color: "var(--tx-3)" }}>
