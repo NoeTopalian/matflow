@@ -53,6 +53,8 @@ async function deleteTenant(tx, tenantId) {
   await del("classSubscription", { classId: { in: classIds } });
   await del("classRoster", { classId: { in: classIds } });
   await tx.classSchedule.deleteMany({ where: { classId: { in: classIds } } });
+  // Session cover rows (a cover journey): every key of theirs is RESTRICT, so before the sessions, staff and club.
+  await del("sessionCover", { tenantId });
   await tx.classInstance.deleteMany({ where: { classId: { in: classIds } } });
   await tx.class.deleteMany({ where: { tenantId } });
   // Mats: the tenant link is RESTRICT, so they go before the tenant (their classes have just gone).

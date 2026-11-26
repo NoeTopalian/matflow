@@ -31,6 +31,7 @@ model Tenant {
   locations              Location[]
   mats                   Mat[]
   classCategories        ClassCategory[]
+  sessionCovers          SessionCover[]
   importedMemberships    ImportedMembership[]
   importedBookings       ImportedBooking[]
   importSourceMappings   ImportSourceMapping[]
@@ -198,6 +199,9 @@ model User {
   membersCredited    Member[]           @relation("MemberCreditedToUser")
   memberStatusEvents MemberStatusEvent[] @relation("MemberStatusEventChangedBy")
   membersArchived    Member[]           @relation("MemberArchivedBy")
+  // Session cover: the dated sessions this person covers, and the cover requests they made.
+  sessionCovers      SessionCover[]     @relation("SessionCoverCoach")
+  coverRequests      SessionCover[]     @relation("SessionCoverRequestedBy")
 
   @@unique([tenantId, email])
   @@index([lockedUntil])
@@ -723,6 +727,8 @@ model ClassInstance {
 
   attendances AttendanceRecord[]
   waitlists   ClassWaitlist[]
+  // Who covers this one session, when someone asked for cover (SessionCover).
+  cover       SessionCover?
 
   // Task 3b (migration 20260819090000_class_instance_unique_slot). Both
   // generation routes pass createMany({ skipDuplicates: true }), which only
@@ -733,6 +739,42 @@ model ClassInstance {
   @@index([sourceImportJobId])
   @@index([classId, date])
   @@index([date, isCancelled])
+}
+
+// Session cover (Noe, 26 Nov 2026; migration 20261126120000_session_cover):
+// who teaches ONE dated session when its regular coach is away or it has none.
+// One row per session. It never touches the class's own coach (Class.coachUserId,
+// Class.coachName): the weekly class keeps its regular coach.
+//  - open:      cover requested, nobody has taken it (coverUserId null)
+//  - covered:   coverUserId teaches this session
+//  - withdrawn: the owner or a manager withdrew the request
+//  - closed:    ended for a reason (closedReason): returned_to_regular,
+//               session_cancelled, session_removed
+// Every foreign key is RESTRICT: a session, a person or a club that still has a
+// cover row is never removed by the database behind the row's back. The writers
+// that remove sessions (the weekly-slot edit, import rollback, the club purge)
+// move, close or delete the row first (lib/session-cover.ts). A closed row
+// whose session was removed keeps no session link (classInstanceId null).
+model SessionCover {
+  id              String         @id @default(cuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  classInstanceId String?        @unique
+  classInstance   ClassInstance? @relation(fields: [classInstanceId], references: [id], onDelete: Restrict)
+  // open | covered | withdrawn | closed (CHECK in the migration).
+  status          String
+  coverUserId     String?
+  coverUser       User?          @relation("SessionCoverCoach", fields: [coverUserId], references: [id], onDelete: Restrict)
+  requestedById   String
+  requestedBy     User           @relation("SessionCoverRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  // The session's time changed after it was covered: the covering coach must reconfirm or give it up.
+  needsReconfirm  Boolean        @default(false)
+  closedReason    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, coverUserId])
 }
 
 // ─── Attendance ──────────────────────────────────────────────────────────────

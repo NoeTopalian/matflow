@@ -1151,6 +1151,8 @@ export async function rollbackJob(tx: Tx, tenantId: string, jobId: string) {
   );
   const drop = removable.filter((id) => !stillLinked.has(id));
   for (let i = 0; i < drop.length; i += 1000) {
+    // A session cover row on one of these sessions goes with it (its key to the session is RESTRICT).
+    await tx.sessionCover.deleteMany({ where: { tenantId, classInstanceId: { in: drop.slice(i, i + 1000) } } });
     const del = await tx.classInstance.deleteMany({ where: { id: { in: drop.slice(i, i + 1000) }, class: { tenantId }, sourceImportJobId: jobId } });
     report.sessionsRemoved += del.count;
   }
