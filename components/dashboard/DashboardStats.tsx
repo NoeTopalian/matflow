@@ -15,7 +15,7 @@ import {
   UserRoundX,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/sheet";
-import type { DayClass } from "@/components/dashboard/WeeklyCalendar";
+import { coachLabel, type DayClass } from "@/components/dashboard/WeeklyCalendar";
 import { filterTodoItems } from "@/lib/dashboard-todo";
 import {
   AT_RISK_OPEN_DETAIL,
@@ -115,8 +115,8 @@ function formatDate(dayKey: string) {
   });
 }
 
+// A class with no coach is not flagged: an open mat, or a class with no regular coach, is normal.
 function classStatus(cls: DayClass) {
-  if (!cls.coach || cls.coach === "TBC") return { label: "Needs coach", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" };
   // Capacity words come from one place (lib/capacity-label.ts): a class past
   // its capacity says "Over capacity", not merely "Full".
   const cap = capacityLabel(cls.capacity, cls.enrolled);
@@ -533,7 +533,7 @@ export default function DashboardStats({
                         {cls.time} · {cls.name}
                       </p>
                       <p className="text-xs mt-0.5 truncate" style={{ color: "var(--tx-3)" }}>
-                        {cls.coach}{cls.location ? ` · ${cls.location}` : ""}
+                        {coachLabel(cls.coach)}{cls.location ? ` · ${cls.location}` : ""}
                       </p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">

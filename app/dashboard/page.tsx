@@ -19,6 +19,7 @@ import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
+import { resolveCoachName } from "@/lib/class-coach";
 import { usableTimezone } from "@/lib/class-time";
 import { clubDayKey, clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
 
@@ -87,7 +88,8 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
       isCancelled: false,
     },
     include: {
-      class: true,
+      // The linked staff coach, for the coach's name (lib/class-coach.ts resolveCoachName).
+      class: { include: { coachUser: { select: { id: true, name: true } } } },
       _count: { select: { attendances: true } },
     },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
@@ -98,7 +100,8 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
     name: inst.class.name,
     time: inst.startTime,
     endTime: inst.endTime ?? undefined,
-    coach: inst.class.coachName ?? "TBC",
+    // The staff coach linked to the class, else the typed name; null when it has neither.
+    coach: resolveCoachName(inst.class),
     capacity: inst.class.maxCapacity ?? null,
     enrolled: inst._count.attendances,
     location: inst.class.location ?? undefined,
