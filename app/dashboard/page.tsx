@@ -19,7 +19,8 @@ import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
-import { resolveCoachName } from "@/lib/class-coach";
+import { resolveSessionTeacher, staffCoachLabel } from "@/lib/session-coach";
+import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
 import { usableTimezone } from "@/lib/class-time";
 import { clubDayKey, clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
 
@@ -95,13 +96,18 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
 
+  // Session cover: who teaches each dated session (lib/session-coach.ts, the one resolver).
+  const covers = await loadCovers(tx, tenantId, instances.map((i) => i.id));
+  const now = new Date();
+
   return instances.map((inst) => ({
     id: inst.id,
     name: inst.class.name,
     time: inst.startTime,
     endTime: inst.endTime ?? undefined,
-    // The staff coach linked to the class, else the typed name; null when it has neither.
-    coach: resolveCoachName(inst.class),
+    // The covering coach ("Covered by …"), "Cover needed" while a request is open, else the staff coach linked to
+    // the class, else the typed name; null when it has none of them.
+    coach: staffCoachLabel(resolveSessionTeacher(inst.class, covers.get(inst.id), { started: sessionHasStarted(inst, timeZone, now) })),
     capacity: inst.class.maxCapacity ?? null,
     enrolled: inst._count.attendances,
     location: inst.class.location ?? undefined,

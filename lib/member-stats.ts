@@ -10,7 +10,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { calculateStreak, getWeekKey } from "@/lib/streak";
-import { resolveCoachName } from "@/lib/class-coach";
+import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
 import { parseTime, DEFAULT_TIMEZONE, usableTimezone } from "@/lib/class-time";
 import { readAttendanceCoverage } from "@/lib/attendance-coverage";
 import { isAdultAccount } from "@/lib/account-type";
@@ -332,6 +332,16 @@ export async function computeMemberStats(
     accountType: args.accountType,
     memberTierId: self?.membershipTierId ?? null,
   });
+  // Session cover (26 Nov 2026): the next class's confirmed covering coach, or "Coach to be confirmed" while its
+  // cover is open (lib/session-coach.ts). The next class has not started, by pickNextClass's rule.
+  // Read here rather than through lib/session-cover (a server module): client components import this file's helpers.
+  const coverRow = nextInstance
+    ? await tx.sessionCover.findFirst({
+        where: { tenantId, classInstanceId: nextInstance.id, status: { in: ["open", "covered"] } },
+        select: { status: true, coverUserId: true, needsReconfirm: true, coverUser: { select: { name: true } } },
+      })
+    : null;
+  const nextCover = coverRow ? { status: coverRow.status, coverUserId: coverRow.coverUserId, coverUserName: coverRow.coverUser?.name ?? null, needsReconfirm: coverRow.needsReconfirm } : null;
 
   // Top 3 classes by attendance count over the last 90 days. Sliced in memory
   // from the full history — the window here is what keeps the UI's
@@ -390,7 +400,7 @@ export async function computeMemberStats(
           id: nextInstance.id,
           classId: nextInstance.class.id,
           name: nextInstance.class.name,
-          coach: resolveCoachName(nextInstance.class),
+          coach: memberCoachLabel(resolveSessionTeacher(nextInstance.class, nextCover)),
           location: nextInstance.class.location ?? null,
           date: nextInstance.date.toISOString(),
           startTime: nextInstance.startTime,

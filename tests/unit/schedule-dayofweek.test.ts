@@ -25,6 +25,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn() },
     classInstance: { findMany: vi.fn() },
+    sessionCover: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) }, // session cover (no rows)
     tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
     classRoster: {
       findMany: vi.fn().mockResolvedValue([]),

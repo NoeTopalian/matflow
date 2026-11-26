@@ -37,6 +37,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       tenant: { findUnique: tenantFindUniqueMock },
       class: { findMany: classFindManyMock },
       classInstance: { findMany: instanceFindManyMock, createMany: instanceCreateManyMock },
+      sessionCover: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) }, // session cover (no rows)
     }),
 }));
 

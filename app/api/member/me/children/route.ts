@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { liveClassWhere } from "@/lib/class-live";
+import { memberCoverLabels } from "@/lib/session-cover";
 
 // F4 — parent-mode timetable.
 //
@@ -157,6 +158,7 @@ export async function GET(req: Request) {
             select: {
               name: true,
               coachName: true,
+              coachUser: { select: { id: true, name: true } },
               location: true,
               tenantId: true,
             },
@@ -169,6 +171,7 @@ export async function GET(req: Request) {
       const ourInstances = instances.filter(
         (i) => i.class.tenantId === session.user.tenantId,
       );
+      const coverLabels = await memberCoverLabels(tx, session.user.tenantId, ourInstances);
       const byClassId = new Map<string, typeof ourInstances>();
       for (const inst of ourInstances) {
         const arr = byClassId.get(inst.classId) ?? [];
@@ -192,7 +195,8 @@ export async function GET(req: Request) {
           date: i.date.toISOString().slice(0, 10),
           startTime: i.startTime,
           endTime: i.endTime,
-          coach: i.class.coachName,
+          // Session cover: "Coach to be confirmed" or the confirmed covering coach; otherwise as before.
+          coach: coverLabels.has(i.id) ? (coverLabels.get(i.id) ?? null) : i.class.coachName,
           location: i.class.location,
           isCancelled: i.isCancelled,
         }));
