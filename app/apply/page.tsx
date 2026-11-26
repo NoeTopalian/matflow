@@ -1,12 +1,12 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { StudioMark } from "@/components/brand/StudioMark";
 import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shape";
 
 const SPORTS = [
@@ -124,7 +124,7 @@ export default function ApplyPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
         <Link
           href="/login"
           className="flex items-center gap-1.5 text-gray-400 hover:text-gray-700 transition-colors text-sm"
@@ -133,7 +133,7 @@ export default function ApplyPage() {
           Back
         </Link>
         <div className="flex items-center gap-2">
-          <Image src="/icons/icon-192.png" alt="" width={32} height={32} unoptimized className="shrink-0" />
+          <StudioMark />
           <span className="text-gray-900 font-semibold text-sm">MatFlow</span>
         </div>
       </div>

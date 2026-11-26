@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
 import { normaliseClubCode, clubCodeInputFilter } from "@/lib/club-code";
 import { signIn, getSession } from "next-auth/react";
@@ -14,6 +13,7 @@ import { lookupTenantWithAbort } from "@/lib/login-lookup";
 import type { GymBranding } from "@/lib/login-lookup";
 import { mergeLocalBranding } from "@/lib/login-branding";
 import { FONT_IMPORTS, extractFontName, isSafeFontFamily } from "@/lib/fonts";
+import { StudioMark } from "@/components/brand/StudioMark";
 
 const codeSchema = z.object({ code: z.string().min(1, "Enter your club code") });
 const loginSchema = z.object({
@@ -280,9 +280,9 @@ function GymCodeStep({
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#111111" }}>
       <div className="flex-1 flex flex-col items-center justify-center px-6">
-        {/* MatFlow logo */}
-        <div className="mb-12 flex flex-col items-center">
-          <Image src="/icons/icon-192.png" alt="" width={64} height={64} unoptimized className="shrink-0 mb-4" />
+        {/* MatFlow logo. The tile is 32 px larger than before so STUDIO reads; the margins give the 32 px back, so the form sits where it did. */}
+        <div className="mb-5 flex flex-col items-center">
+          <StudioMark size={96} className="mb-3" />
           <span className="text-white font-bold text-2xl tracking-tight">MatFlow</span>
           <span className="text-sm mt-1.5" style={{ color: "rgba(255,255,255,0.4)" }}>
             Martial Arts Gym Management

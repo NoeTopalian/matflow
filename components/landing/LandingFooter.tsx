@@ -1,5 +1,5 @@
-import Image from "next/image";
 import Link from "next/link";
+import { StudioMark } from "@/components/brand/StudioMark";
 
 const NAV_LINKS = [
   { href: "/legal/terms", label: "Terms", external: false },
@@ -19,7 +19,7 @@ export function LandingFooter() {
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10 flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-2.5">
-          <Image src="/icons/icon-192.png" alt="" width={32} height={32} unoptimized className="shrink-0" />
+          <StudioMark />
           <span className="text-sm" style={{ color: "rgba(237,232,223,0.35)" }}>
             © 2026 MatFlow
           </span>

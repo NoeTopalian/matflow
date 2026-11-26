@@ -5,9 +5,9 @@
 // heavier (framer-motion) was removed in the speed pass — entrance motion
 // is CSS (`land-rise` in globals.css).
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { StudioMark } from "@/components/brand/StudioMark";
 
 const SECTION_LINKS = [
   { href: "/#how-it-works", label: "How it works" },
@@ -35,11 +35,12 @@ export function LandingNav() {
         WebkitBackdropFilter: scrolled || open ? "blur(20px)" : "none",
       }}
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 h-20 flex items-center justify-between gap-3 sm:gap-4">
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <Image src="/icons/icon-192.png" alt="" width={40} height={40} unoptimized className="shrink-0" />
+          <StudioMark />
+          {/* Below 360 px the word would push Sign in and the menu off the bar; it stays as the link's name. */}
           <span
-            className="font-semibold text-base tracking-tight"
+            className="font-semibold text-base tracking-tight max-[359px]:sr-only"
             style={{ color: "#ede8df", fontFamily: "var(--font-label)" }}
           >
             MatFlow
