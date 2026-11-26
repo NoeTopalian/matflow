@@ -90,6 +90,28 @@ describe("the staff dashboard names each class's coach", () => {
     expect(within(card("Open Mat")).getByText("Ready")).toBeTruthy();
   });
 
+  it("a class with no coach still shows its capacity status: Full, Over capacity or Ready", () => {
+    const cls = (id: string, name: string, coach: string | null, capacity: number | null, enrolled: number): DayClass =>
+      ({ id, name, time: "18:00", endTime: "19:00", coach, capacity, enrolled, location: "Mat 2", date: TODAY });
+    const classes = [
+      cls("a", "Open Mat Full", null, 3, 3),
+      cls("b", "Open Mat Over", null, 3, 4),
+      cls("c", "Open Mat Room", null, 3, 1),
+      cls("d", "Open Mat Uncapped", null, null, 9),
+      cls("e", "Coached Full", "Casey Staff", 3, 3),
+    ];
+    const stats = { totalActive: 1, newThisMonth: 0, attendanceThisWeek: 0, attendanceThisMonth: 0, waiverMissing: 0, missingPhone: 0, paymentsDue: 0, atRiskMembers: 0 };
+    render(<DashboardStats todayKey={TODAY} stats={stats} classes={classes} tenantName="Club" primaryColor="#3b82f6" />);
+    const card = (name: string) => screen.getByText(`18:00 · ${name}`).closest("a") as HTMLElement;
+    const pill = (name: string) => ["Full", "Over capacity", "Ready", "Needs coach"].filter((l) => within(card(name)).queryByText(l));
+    expect(pill("Open Mat Full")).toEqual(["Full"]);
+    expect(pill("Open Mat Over")).toEqual(["Over capacity"]);
+    expect(pill("Open Mat Room")).toEqual(["Ready"]);
+    expect(pill("Open Mat Uncapped")).toEqual(["Ready"]);
+    expect(pill("Coached Full")).toEqual(["Full"]);
+    for (const n of ["Open Mat Full", "Open Mat Over", "Open Mat Room", "Open Mat Uncapped"]) expect(within(card(n)).getByText("No coach assigned · Mat 2")).toBeTruthy();
+  });
+
   it("the week calendar names the coach, or 'No coach assigned', and never 'TBC'", async () => {
     const classes = await dashboardClasses();
     vi.useRealTimers();
