@@ -723,6 +723,81 @@ try {
   await shot(op, "session-cover-archive-restored-1280");
   const trail2 = await q(`select action, metadata->>'closedReason' as reason from "AuditLog" where "tenantId" = $1 and "entityId" = $2 and action like 'class.cover_%' order by "createdAt"`, [t, ids.thu1]);
   L.check("V", "Activity holds the round-2 transitions in order", JSON.stringify(trail2.slice(7).map((r) => r.reason ? `${r.action}:${r.reason}` : r.action)) === JSON.stringify(["class.cover_requested", "class.cover_claimed", "class.cover_closed:session_cancelled", "class.cover_assigned", "class.cover_given_up", "class.cover_assigned", "class.cover_closed:class_archived"]), trail2.slice(7));
+
+  // ── 10. Round 3 (review of 7d7b17df) ────────────────────────────────────────────────────────────────────────────
+  // 10a. The archived-and-restored class, on the owner's phone: no cover came back.
+  stage = "round3-archive-restore-phone";
+  const ownerPhoneCtx = await context(browser, "10.98.7.25", { ...VIEW["390"], storageState: ownerFirst });
+  const opPhone = await ownerPhoneCtx.newPage();
+  watch(opPhone, "owner-390");
+  await openBoard(opPhone);
+  st = await stateAfter(opPhone, ids.thu1, "Alex Regular");
+  L.check("R3A@390", "after archive and restore the owner's phone shows Alex Regular, no cover, and Request cover again", st === "Alex Regular" && (await coverRow(ids.thu1))?.status === "closed" && (await (await sessionRow(opPhone, ids.thu1)).getByRole("button", { name: "Request cover" }).count()) === 1, { st, row: await coverRow(ids.thu1) });
+  L.check("R3A@390", "no sideways scroll on the owner's phone board", !Object.values(await noSideways(opPhone)).some(Boolean), await noSideways(opPhone));
+  await shot(opPhone, "session-cover-r3-archive-restored-390");
+
+  // 10b. Drew covers Alex's Adults Gi; Alex (free) takes Kids BJJ at the same time; Drew is deactivated, so Adults Gi
+  // needs cover again. Withdraw and Return would put Alex on both: refused by name, and nobody is assigned.
+  stage = "round3-deactivate-withdraw";
+  const drew = await coach("drew", "Drew Relief");
+  st = await assignVia(drew);
+  L.check("R3B", "Drew is assigned to Adults Gi", st === `Covered by ${drew.name}`, st);
+  {
+    const kidsRow = await sessionRow(op, ids.kidsThu1);
+    await kidsRow.getByRole("button", { name: "Assign" }).click();
+    const d = op.getByRole("dialog");
+    await d.getByLabel("Coach").selectOption(alex.id);
+    await d.getByRole("button", { name: "Assign" }).click();
+    await d.waitFor({ state: "detached", timeout: 60000 });
+  }
+  L.check("R3B", "Alex, free while Drew covers his class, is assigned Kids BJJ at the same time", (await coverRow(ids.kidsThu1))?.coverUserId === alex.id, await coverRow(ids.kidsThu1));
+  L.check("R3B", "deactivating Drew answered 200", (await ownerFetch(`/api/staff/${drew.id}`, "DELETE")) === 200);
+  await openBoard(op);
+  st = await stateAfter(op, ids.thu1, "Cover needed");
+  L.check("R3B@1280", "Adults Gi reads Cover needed again after the deactivation", st === "Cover needed · Alex Regular away" && (await coverRow(ids.thu1))?.status === "open", { st, row: await coverRow(ids.thu1) });
+  const conflictSentence = `would put Alex Regular back on this class while they teach ${CLASSES[1]} on ${THU1_LABEL}, 19:00–20:30, Mat 1.`;
+  for (const [label, confirm] of [["Withdraw request", "Withdraw request"], ["Return to regular coach", "Return to regular coach"]]) {
+    await openBoard(op);
+    const note = await actOn(op, '[data-testid="cover-week"]', ids.thu1, label, confirm);
+    L.check("R3B@1280", `${label}: refused, naming the session Alex is teaching`, note.includes(conflictSentence), note);
+    L.check("R3B", `${label}: nobody assigned; the request stays open; Alex still covers Kids BJJ only`, (await coverRow(ids.thu1))?.status === "open" && (await coverRow(ids.thu1))?.coverUserId === null && (await coverRow(ids.kidsThu1))?.coverUserId === alex.id, { thu1: await coverRow(ids.thu1), kids: await coverRow(ids.kidsThu1) });
+  }
+  await shot(op, "session-cover-r3-withdraw-refused-1280");
+  await openBoard(opPhone);
+  st = await stateAfter(opPhone, ids.thu1, "Cover needed");
+  L.check("R3B@390", "the owner's phone still shows Cover needed (no silent double booking)", st === "Cover needed · Alex Regular away", st);
+  await shot(opPhone, "session-cover-r3-withdraw-refused-390");
+  const mBusy = await memberCoach();
+  L.check("R3B@390", "the member reads Coach to be confirmed, not Alex", mBusy?.coach === "Coach to be confirmed", mBusy);
+  L.check("R3B", "no withdraw or return was recorded in Activity", Number((await q(`select count(*)::int as n from "AuditLog" where "tenantId" = $1 and "entityId" = $2 and action in ('class.cover_withdrawn', 'class.cover_returned_to_regular') and "createdAt" > now() - interval '10 minutes'`, [t, ids.thu1]))[0].n) === 0);
+  L.check("N", "next Thursday untouched after round 3's changes", await nextWeekUntouched());
+
+  // 10c. Making a coach the regular coach of a class that overlaps a session they cover: the class form refuses by name.
+  stage = "round3-coach-change";
+  const ellis = await coach("ellis", "Ellis Cover");
+  const reqDash = DASH.find((d) => d.key === "requested");
+  const noCoachDash = DASH.find((d) => d.key === "nocoach");
+  const assignEllis = await op.evaluate(async ({ id, coachUserId }) => (await fetch(`/api/coach/instances/${id}/cover`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "assign", coachUserId }) })).status, { id: reqDash.instanceId, coachUserId: ellis.id });
+  L.check("R3C", "Ellis is assigned to cover Dash Requested (today 22:00, Mat 8)", assignEllis === 200 && (await coverRow(reqDash.instanceId))?.coverUserId === ellis.id, assignEllis);
+  const todayLabel = dayLabel(todayKey);
+  const wantRefusal = `Ellis Cover is covering ${reqDash.name} on ${todayLabel}, 22:00–22:30, ${reqDash.place}, which overlaps this class on ${todayLabel}, 22:00–22:30, ${noCoachDash.place}. Choose another regular coach, or give up or replace that cover first.`;
+  for (const [tag, page] of [["1280", op], ["390", opPhone]]) {
+    await page.goto("/dashboard/timetable");
+    const chip = page.locator(`button[aria-label^="Edit ${noCoachDash.name}, "]:visible`).first();
+    await chip.waitFor({ timeout: 90000 });
+    await chip.click();
+    const coachSelect = page.getByRole("combobox", { name: "Coach", exact: true });
+    await coachSelect.waitFor({ timeout: 30000 });
+    await coachSelect.selectOption(ellis.id);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    const refusal = page.getByTestId("class-form-save-error");
+    await refusal.waitFor({ timeout: 60000 });
+    const text = (await refusal.innerText()).trim();
+    L.check(`R3C@${tag}`, "the class form refuses the new coach, naming the session they cover and this class's session", text === wantRefusal, text);
+    L.check(`R3C@${tag}`, "nothing saved: the class still has no linked coach", (await q(`select "coachUserId" from "Class" where id = $1`, [noCoachDash.classId]))[0].coachUserId === null);
+    await shot(page, `session-cover-r3-coach-change-refused-${tag}`);
+  }
+  await ownerPhoneCtx.close();
 } catch (e) {
   if (lastPage && !lastPage.isClosed()) await shot(lastPage, "session-cover-failure").catch(() => {});
   L.check("run", "ran to the end", false, { stage, error: String(e).split("\n")[0].slice(0, 300) });

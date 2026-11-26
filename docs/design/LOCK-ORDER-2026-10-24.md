@@ -199,12 +199,84 @@ the Member lock).
   the session `DELETE`. A re-timed session's `UPDATE` holds its row while its cover is flagged.
 - **Archive, pause, undo of a resume or restore** (class DELETE, class PATCH, `lib/undo-registry.ts`): the Class row →
   the class's upcoming sessions with an active cover, `FOR NO KEY UPDATE` in id order (`lockSessionsForCover`) →
-  their cover rows closed (`closeCoversForClass`).
+  their cover rows closed (`closeCoversForClass`). **Superseded in round 3 (below): every session of the class.**
 - **Staff deactivation** (`app/api/staff/[id]/route.ts` DELETE): that person's COVR key first → the User row →
   their covered upcoming sessions `FOR NO KEY UPDATE` in id order → the cover rows reopened
   (`reopenCoversOfDeactivatedCoach`).
 - No cover path takes a Class or Member lock after a session row, and no cover path holds a session row while asking
   for a COVR key. A class PATCH that changes `coachUserId` takes no COVR key: the regular-coach form has never had an
-  overlap rule (unchanged by cover).
+  overlap rule (unchanged by cover). **Superseded in round 3: it now takes the new coach's COVR key.**
 - Tests that force each interleaving (a parked transaction, the other side seen waiting in `pg_stat_activity`):
   `tests/integration/session-cover-races-db.test.ts`.
+
+### 8.1 Round 3 of PR #134 (26 Nov 2026): class-wide session locks
+
+Round 2 left two gaps (review of 7d7b17df): archive and pause locked only the sessions they already saw with a cover,
+so a Request or Assign on another session of the class slipped past them (should-fix 1); and three writers locked
+several session rows in different orders, so a weekly-slot edit and a deactivation could deadlock (nit 2), and the
+replacement a slot edit carries a cover to was not locked at all (nit 1). Round 3 adds ONE class-wide lock and uses
+it in every writer that touches more than one session of a class:
+
+`lockClassSessions(tx, tenantId, classId)`: every `ClassInstance` of the class dated from three days ago on, **one
+statement, `ORDER BY ci.id FOR NO KEY UPDATE`**. It is taken after the Class row and before any cover row is read.
+A check-in's attendance insert (`KEY SHARE` on the session) does not wait for it.
+
+Levels, in the order every path takes them (a path may skip levels, never go back up):
+
+| Level | Lock | Taken by |
+|---|---|---|
+| 1a | MATS advisory (club) | class create or PATCH naming a mat, mats writers, undo touching a class |
+| 1b | COVR advisory (club:coach), **at most one per transaction**, after MATS when both | cover actions, class PATCH naming a regular coach, staff deactivation |
+| 2 | `Class` row (`FOR UPDATE`, or `NO KEY UPDATE` by an `UPDATE`) | class PATCH, archive, undo, check-in, booking |
+| 2b | `User` row (`NO KEY UPDATE` by an `UPDATE`) | staff deactivation only |
+| 3 | `ClassInstance` rows: ONE row, or several in ONE statement `ORDER BY id` (a second statement may only re-lock rows already held, e.g. the slot edit's `FOR UPDATE` before its deletes) | every path below |
+| 4 | `SessionCover` rows, only of sessions this transaction holds at level 3 | every cover writer |
+| 5 | audit `INSERT` | every writer |
+
+Every path that touches cover:
+
+| Path | Order | Where |
+|---|---|---|
+| Request | session S `FOR NO KEY UPDATE` → its cover row (insert `ON CONFLICT DO NOTHING`, or a pinned update) → audit | `applyCoverAction` |
+| Claim, reconfirm | COVR(self) → S → cover row → audit | `applyCoverAction` |
+| Assign, replace | COVR(the coach named) → S → cover row → audit | `applyCoverAction` |
+| Give up, withdraw, return | COVR(regular coach, plain read) → S → (refused as CHANGED if the regular coach changed in between) → cover row → audit | `applyCoverAction` |
+| Cancel | S `UPDATE` → S re-locked (no-op) → cover row → audit. Restore: S `UPDATE` only | `instances/[instanceId]/route.ts`, `closeCoverOnCancel` |
+| Weekly-slot edit | [MATS] → [COVR(new coach) if the PATCH names one] → Class `FOR UPDATE` → **class-wide session lock** → new sessions `INSERT` (own rows) → doomed sessions `FOR UPDATE` in id order (rows already held) → cover rows moved or closed (the replacement is held: class-wide lock, or this transaction's own insert) → session `DELETE` → re-timed session `UPDATE` (held) → their cover rows flagged → audit | `classes/[id]/route.ts` `reconcileSchedules`, `moveCoversBeforeDelete`, `flagCoversForRetime` |
+| Pause (class PATCH) | Class `FOR UPDATE` → Class `UPDATE` → **class-wide session lock** → cover rows closed → audit | `closeCoversForClass` |
+| Change of regular coach (class PATCH) | [MATS] → COVR(new coach) → Class `FOR UPDATE` → (slot edit, if any, as above) → Class `UPDATE` → **class-wide session lock** → plain reads of that coach's covers; a clash throws and rolls back | `regularCoachCoverClash` |
+| Archive (class DELETE) | Class `UPDATE` → **class-wide session lock** → cover rows closed → audit | `closeCoversForClass` |
+| Undo of a resume or restore | one row: [MATS] → the Class `UPDATE` → **class-wide session lock** → cover rows closed → audit. A batch (undo to a point): MATS → Class rows (`NO KEY UPDATE`, id order) → **every session of those classes, one statement in id order** (`lockBatchRows`) → Member rows → handlers, whose class-wide locks then land on rows already held | `lib/undo-registry.ts`, `lib/undo-batch.ts` |
+| Resume, restore | Class `FOR UPDATE` → Class `UPDATE` → session `INSERT`s (own rows). No cover row is touched | `mintUpcomingSessions` |
+| Staff deactivation | COVR(person) → User `UPDATE` → that person's covered upcoming sessions, one statement in id order → cover rows reopened → audit | `staff/[id]/route.ts`, `reopenCoversOfDeactivatedCoach` |
+| Check-in, coach tick | Class `FOR UPDATE` → Member → attendance `INSERT` (`KEY SHARE` on S: compatible with every cover lock) | `lib/checkin.ts` |
+
+Why no two paths can take the same locks in opposite orders:
+
+1. **Advisory keys.** Every transaction takes at most one COVR key, before any row; the only transaction with two
+   advisory keys is a class PATCH naming both a mat and a coach (MATS then COVR), and nothing takes COVR then MATS.
+   No transaction holds a row while it waits for an advisory key.
+2. **Class before session.** Every path that holds a Class row takes it before any session row; no cover path, cancel
+   or deactivation takes a Class row at all. So nothing holds a session row and waits for a Class row.
+3. **User.** Only deactivation locks a User row, after its COVR key and before sessions. Cover inserts take `KEY SHARE`
+   on the User they name, which `NO KEY UPDATE` does not block.
+4. **Sessions.** A cover action, cancel or restore locks exactly ONE session and asks for no other. Every writer of
+   several sessions (slot edit, pause, coach change, archive, undo, deactivation) locks them in ONE statement ordered
+   by id; two ascending lock sequences cannot wait on each other in a cycle. An undo batch over several classes locks
+   all their sessions in one statement before any handler, so its per-class locks later are re-locks of held rows. The slot edit's later statements
+   (`FOR UPDATE` before the delete, the re-time `UPDATE`) touch only rows the class-wide statement already holds, so
+   they cannot wait on another session writer (nit 2 closed: before round 3 the edit locked its doomed rows, then its
+   re-timed rows in scan order, and deactivation could hold one of each).
+5. **Cover rows.** A cover row is written only by a transaction that holds its session at level 3; the unique key on
+   `classInstanceId` is therefore never contended by two writers that do not already queue on that session (nit 1
+   closed: the replacement session is held by the class-wide lock, so a same-moment Request on it waits, and the
+   edit then sees its row and does not carry the old cover onto it).
+6. **Residual waits, not cycles.** A row the slot edit means to delete that another transaction holds with `KEY SHARE`
+   (an attendance or waitlist insert) makes the edit wait, as before round 3; the check-in and coach tick hold the
+   Class row first, which the edit already holds. Every wait is bounded by the 10 s `lock_timeout`.
+
+Forced-order tests (both directions; `tests/integration/session-cover-races-db.test.ts`): archive against Request
+(K1, K2) and Assign (K3, K4); pause against Request (K5, K6) and Assign (K7, K8); change of regular coach against a
+claim (L1, L2); deactivation against a claim (L3, L4); reconfirm against a slot edit (L5, L6); a Request on the
+replacement against the slot edit that carries a cover to it (M). Each case records what the second side waited on
+(advisory key, single-session lock, or the class-wide `ORDER BY ci.id … FOR NO KEY UPDATE`).

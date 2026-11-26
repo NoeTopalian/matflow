@@ -65,3 +65,13 @@ sessions: an upcoming Thursday 19:00 on a live class, and a session created by a
 | Previous build, weekly-slot edit (same class) | HTTP 200: 1 slot removed, 1 added, 2 sessions removed, 8 created |
 | Previous build, attendance-import rollback | works: 1 session and 1 class removed |
 | Previous build, club purge | `purged` (the club whose earlier purge failed resumed its claim and finished) |
+
+Round 3 (26 Nov 2026, same local database, one synthetic club `mfv-r3-rollback-<stamp>` with one covered row on a
+session and one detached closed row):
+
+| Step | Result |
+|---|---|
+| With only the detached row left: delete the club's sessions, then its staff (the previous build's purge order) | sessions go; staff delete refused, `23001` on `SessionCover_requestedById_fkey` (rolled back) |
+| `session-cover-rollback.mjs --expect-host 127.0.0.1 --export …` | 2 rows exported (1 open or covered), nothing removed |
+| `… --export … --delete` (no production flag: not needed off production) | 2 rows exported, 2 removed |
+| `--delete` aimed at production without `--confirm-production-delete` | refused before connecting (unit test `session-cover-rollback-script.test.ts`; never run against production) |
