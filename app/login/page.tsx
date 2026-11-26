@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
 import { normaliseClubCode, clubCodeInputFilter } from "@/lib/club-code";
 import { signIn, getSession } from "next-auth/react";
@@ -281,12 +282,7 @@ function GymCodeStep({
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         {/* MatFlow logo */}
         <div className="mb-12 flex flex-col items-center">
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-            style={{ background: "#3b82f6" }}
-          >
-            <span className="text-white font-black text-3xl tracking-tighter leading-none">M</span>
-          </div>
+          <Image src="/icons/icon-192.png" alt="" width={64} height={64} unoptimized className="shrink-0 mb-4" />
           <span className="text-white font-bold text-2xl tracking-tight">MatFlow</span>
           <span className="text-sm mt-1.5" style={{ color: "rgba(255,255,255,0.4)" }}>
             Martial Arts Gym Management
