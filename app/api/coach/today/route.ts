@@ -1,14 +1,23 @@
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { NextResponse } from "next/server";
 import { requireApiStaff } from "@/lib/api-authz";
-import { classStatus, todayWindow, usableTimezone, type ClassStatusVariant } from "@/lib/class-time";
+import { isSupportSession } from "@/lib/support-session";
+import { classStatus, sessionBounds, todayWindow, usableTimezone, type ClassStatusVariant } from "@/lib/class-time";
+import { countRunning, pickRegisterSession } from "@/lib/register-default";
 import { ensureTodayInstances } from "@/lib/today-sessions";
 import { liveClassWhere } from "@/lib/class-live";
+import { clubDateKey } from "@/lib/register-day";
 
 export async function GET() {
   const gate = await requireApiStaff();
   if (!gate.ok) return gate.response;
   const { tenantId, userId } = gate;
+  // An operator viewing the club through a support session is signed in as
+  // that account but is not its coach: the register must not open on "their"
+  // class on that account's behalf.
+  const support = isSupportSession(gate.session);
+  // The one instant the day is worked out from: the list, and the date the response says it is for.
+  const listedAt = new Date();
 
   // Every staff role sees every session today. Noe, 17 Sep 2026: "coaches
   // should see all classes but theirs should be specifically highlighted."
@@ -28,7 +37,7 @@ export async function GET() {
     // offered for check-in whether or not the nightly cron ever ran (on
     // production it never has). Idempotent — see lib/today-sessions.ts.
     await ensureTodayInstances(tx, tenantId, tz);
-    const { start, end } = todayWindow(new Date(), tz);
+    const { start, end } = todayWindow(listedAt, tz);
     const rows = await tx.classInstance.findMany({
       where: {
         // Live classes only: a class an attendance-history import created to
@@ -50,6 +59,9 @@ export async function GET() {
         class: {
           select: {
             id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true,
+            // The mat it is on, and that mat's place in the club's order: the
+            // class picker lists same-time sessions in the timetable's mat order.
+            mat: { select: { name: true, sortOrder: true } },
             // T6d: a squad / comp class (it has a roster) shows "Squad only".
             _count: { select: { rosterMembers: { where: { member: { archivedAt: null } } } } },
           },
@@ -58,22 +70,24 @@ export async function GET() {
         _count: { select: { attendances: true, waitlists: { where: { member: { archivedAt: null } } } } },
       },
       // A cancelled session is still part of the day, so it keeps its place in
-      // the running order rather than being swept to the end.
-      orderBy: { startTime: "asc" },
+      // the running order rather than being swept to the end. The id settles
+      // ties, so the dedupe below keeps the same row on every request.
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
     });
     return { rows, tz };
   });
 
   // Dedupe by class+startTime so legacy pre-DST seed rows (the same class
-  // written under two spellings of the same day) don't double-count.
-  const seen = new Set<string>();
-  const todays = instances
-    .filter((inst) => {
-      const k = `${inst.class.id}|${inst.startTime}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
+  // written under two spellings of the same day) don't double-count. Of two
+  // such rows the one that is not cancelled is kept, else the lower id: the
+  // surviving id is the same on every request, so the open register keeps it.
+  const kept = new Map<string, (typeof instances)[number]>();
+  for (const inst of instances) {
+    const k = `${inst.class.id}|${inst.startTime}`;
+    const had = kept.get(k);
+    if (!had || (had.isCancelled && !inst.isCancelled)) kept.set(k, inst);
+  }
+  const todays = instances.filter((inst) => kept.get(`${inst.class.id}|${inst.startTime}`) === inst);
 
   // The session on NOW comes first and is what the client preselects; then
   // the next one; then the rest of the day; finished sessions last. Mark
@@ -94,6 +108,23 @@ export async function GET() {
         a.inst.startTime.localeCompare(b.inst.startTime),
     );
 
+  // Which session the register opens on (lib/register-default.ts), worked out
+  // here because only the server knows the club's clock.
+  const mine = (inst: (typeof todays)[number]) => inst.class.coachUserId === userId || inst.class.instructorId === userId;
+  const forPick = todays.map((inst) => {
+    const { start, end } = sessionBounds(inst, tz);
+    return {
+      id: inst.id,
+      start: start.getTime(),
+      end: end === null ? null : end.getTime(),
+      isCancelled: inst.isCancelled,
+      isMine: !support && mine(inst),
+      matOrder: inst.class.mat?.sortOrder ?? null,
+    };
+  });
+  const pick = pickRegisterSession(forPick, now.getTime());
+  const onNow = countRunning(forPick, now.getTime());
+
   // Lane 1 iter-2 L1-I2-S-02 [High]: real-time per-tenant schedule.
   return NextResponse.json(
     ordered.map(({ inst, status }) => ({
@@ -113,10 +144,28 @@ export async function GET() {
       waitlistCount: inst._count.waitlists,
       // The highlight: this staff member teaches it, by either column the
       // product has used for the coach.
-      isMine: inst.class.coachUserId === userId || inst.class.instructorId === userId,
+      isMine: mine(inst),
+      // The mat, when the class is on one, and its place in the club's order.
+      matName: inst.class.mat?.name ?? null,
+      matOrder: inst.class.mat?.sortOrder ?? null,
+      // Set on the one session the register opens on, with why; `onNowCount`
+      // rides with it so the screen can say "2 classes on now".
+      ...(pick?.id === inst.id ? { auto: pick.reason, onNowCount: onNow } : {}),
       // T6d: the class has a roster, so the desk sees "Squad only".
       rosterOnly: (inst.class._count?.rosterMembers ?? 0) > 0,
     })),
-    { headers: { "Cache-Control": "private, no-store" } },
+    {
+      headers: {
+        "Cache-Control": "private, no-store",
+        // The club's date this list is for (YYYY-MM-DD in the club's zone) and the server's clock: Mark
+        // attendance compares the club's date now against the first, reckoned from the second, so a device
+        // whose clock is wrong neither marks into yesterday's classes nor locks itself out. Headers, so every
+        // reader that takes the body as an array keeps working.
+        "X-Club-Date": clubDateKey(tz, listedAt),
+        // The club's zone now: a register open across an owner's change of zone follows it on Reload.
+        "X-Club-Zone": tz,
+        "X-Server-Time": String(Date.now()),
+      },
+    },
   );
 }

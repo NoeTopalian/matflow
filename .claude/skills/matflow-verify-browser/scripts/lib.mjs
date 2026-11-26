@@ -140,6 +140,19 @@ export async function seedStaff(club, role, { name = `Fixture ${role}` } = {}) {
   return { id: rows[0].id, email, password: staffPass, secret, role, name };
 }
 
+/**
+ * Mark attendance (the 25 Nov 2026 register): choose a session in "Change class" by its start time and class name.
+ * The page opens on the session the server chooses; a journey that needs another one picks it here.
+ */
+export async function chooseRegisterClass(page, time, name, { timeout = 90000 } = {}) {
+  const change = page.getByRole("button", { name: "Change class" });
+  await change.waitFor({ timeout });
+  await change.click();
+  const dialog = page.getByRole("dialog", { name: "Change class" });
+  await dialog.locator("[data-session-id]").filter({ hasText: name }).filter({ hasText: time }).first().click();
+  await dialog.waitFor({ state: "detached" });
+}
+
 /** Any staff account through the real /login form; the authenticator step only when the server asks for it. */
 export async function staffSignIn(page, club, user) {
   await page.goto("/login");

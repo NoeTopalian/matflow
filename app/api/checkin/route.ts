@@ -17,6 +17,7 @@ import { performCheckin, restorePackCreditsForAttendance } from "@/lib/checkin";
 import { assertSameOrigin } from "@/lib/csrf";
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import { APP_CHECKIN_OFF_MESSAGE } from "@/lib/checkin-refusal";
+import { isRegisterDay, registerDayRefusal } from "@/lib/register-day";
 
 export const checkinSchema = z.object({
   classInstanceId: z.string().min(1),
@@ -41,6 +42,9 @@ export const checkinSchema = z.object({
     (v) => (Array.isArray(v) ? v.filter((x) => x !== "tier_not_included" && x !== "allowance_reached") : v),
     z.array(z.enum(["on_hold", "waiver_unsigned", "kids_class"])).max(4).optional(),
   ),
+  // The club date the staff register was read for (lib/register-day.ts). Only Mark attendance sends it; absent,
+  // nothing changes. A malformed value is refused here (400); a passed day is refused below (409).
+  registerDay: z.string().refine(isRegisterDay, "registerDay must be a date written YYYY-MM-DD").optional(),
 });
 
 export async function POST(req: Request) {
@@ -62,7 +66,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid data", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod, acknowledged } = parsed.data;
+  const { classInstanceId, memberId, onBehalfOfMemberId, checkInMethod, acknowledged, registerDay } = parsed.data;
   const session = await auth();
 
   if (!session) {
@@ -181,6 +185,13 @@ export async function POST(req: Request) {
     // Self path: force "self" regardless of what the client sent. Otherwise a
     // member could send { checkInMethod: "admin" } and bypass enforcement.
     effectiveMethod = "self";
+  }
+
+  // A register read for a club date that has since passed writes nothing (after authorisation and tenancy above).
+  if (registerDay !== undefined) {
+    const club = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+    const stale = registerDayRefusal(registerDay, club?.timezone);
+    if (stale) return NextResponse.json(stale.body, { status: stale.status });
   }
 
   // Self-check-in: full rules. Admin / auto: bypass.
@@ -324,6 +335,15 @@ export async function DELETE(req: Request) {
 
   if (!classInstanceId || !memberId) {
     return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
+  }
+
+  // The club date the register was read for (lib/register-day.ts); absent, nothing changes.
+  const registerDay = searchParams.get("registerDay");
+  if (registerDay !== null) {
+    const tenantId = session.user.tenantId;
+    const club = await withTenantContext(tenantId, (tx) => tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }));
+    const stale = registerDayRefusal(registerDay, club?.timezone);
+    if (stale) return NextResponse.json(stale.body, { status: stale.status });
   }
 
   try {

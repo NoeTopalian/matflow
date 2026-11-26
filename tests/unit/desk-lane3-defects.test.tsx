@@ -93,8 +93,10 @@ function stubHubFetch(opts: { patchStatus?: number; patchBody?: unknown } = {}) 
 describe("D1 — cancel one session from the register", () => {
   it("cancel sends the reason to the instance route and reloads the picker", async () => {
     const calls = stubHubFetch();
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="manager" primaryColor="#3b82f6" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="manager" primaryColor="#3b82f6" timeZone="Europe/London" />);
 
+    // Cancelling is not routine check-in: it sits under Session details (25 Nov 2026).
+    fireEvent.click(await screen.findByRole("button", { name: /Session details/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel this session" }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText(/Reason/), { target: { value: "  Coach ill  " } });
@@ -103,7 +105,8 @@ describe("D1 — cancel one session from the register", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Restore session" })).toBeTruthy());
     const patch = calls.find((c) => c.init?.method === "PATCH");
     expect(patch?.url).toBe("/api/classes/cls-1/instances/inst-1");
-    expect(JSON.parse(String(patch?.init?.body))).toEqual({ isCancelled: true, cancellationReason: "Coach ill" });
+    // registerDay: the club date the list was read for (lib/register-day.ts).
+    expect(JSON.parse(String(patch?.init?.body))).toEqual({ isCancelled: true, cancellationReason: "Coach ill", registerDay: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
     // Refreshed: the day was read again after the change.
     expect(calls.filter((c) => c.url === "/api/coach/today").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Cancelled: Coach ill").some((el) => el.tagName === "P")).toBe(true);
@@ -111,7 +114,9 @@ describe("D1 — cancel one session from the register", () => {
 
   it("refuses to send without a reason", async () => {
     const calls = stubHubFetch();
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" timeZone="Europe/London" />);
+    // Cancelling is not routine check-in: it sits under Session details (25 Nov 2026).
+    fireEvent.click(await screen.findByRole("button", { name: /Session details/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel this session" }));
     const dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel this session" }));
@@ -121,7 +126,9 @@ describe("D1 — cancel one session from the register", () => {
 
   it("shows the route's refusal sentence", async () => {
     stubHubFetch({ patchStatus: 403, patchBody: { error: "Only an owner or manager can do that" } });
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="owner" primaryColor="#3b82f6" timeZone="Europe/London" />);
+    // Cancelling is not routine check-in: it sits under Session details (25 Nov 2026).
+    fireEvent.click(await screen.findByRole("button", { name: /Session details/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel this session" }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText(/Reason/), { target: { value: "Coach ill" } });
@@ -131,7 +138,7 @@ describe("D1 — cancel one session from the register", () => {
 
   it("is not offered to a coach (the route admits owner and manager only)", async () => {
     stubHubFetch();
-    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="coach" primaryColor="#3b82f6" />);
+    render(<AttendanceHub initialMode="tick" preselectClassId={null} role="coach" primaryColor="#3b82f6" timeZone="Europe/London" />);
     await screen.findByTestId("register");
     expect(screen.queryByRole("button", { name: "Cancel this session" })).toBeNull();
   });

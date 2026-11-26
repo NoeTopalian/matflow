@@ -31,7 +31,7 @@
 //   card scanner requireCoverage false app/api/checkin/card/route.ts:253; desk register (admin) requireCoverage false
 //   app/api/checkin/route.ts:170 (the register asks only about hold / waiver / kids class, RegisterPanel.tsx).
 import { randomUUID, createHmac } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn, bcrypt, sleep } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, bcrypt, sleep, chooseRegisterClass } from "../lib.mjs";
 import { testEnv } from "../../../matflow-verify-local/scripts/env.mjs";
 
 const club = state.club;
@@ -213,8 +213,8 @@ try {
 
   // Desk register (real UI).
   await page.goto("/dashboard/checkin");
-  await page.getByRole("button", { name: new RegExp(`${esc(T_DESK)} · ${esc(CLASS)}`) }).click();
-  const search = page.getByLabel("Search members");
+  await chooseRegisterClass(page, T_DESK, CLASS);
+  const search = page.getByLabel("Find a member");
   await search.waitFor();
   for (const m of [A, B, C]) {
     await search.fill("");

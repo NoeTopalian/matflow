@@ -129,21 +129,23 @@ describe("RegisterPanel — squad classes", () => {
   });
 });
 
-describe("SessionPicker — the Squad only tag", () => {
-  it("tags a squad session and says so to assistive tech", () => {
+describe("Class picker — the Squad only tag", () => {
+  it("tags a squad session in its row, as part of the row's name", () => {
     render(
       <SessionPicker
+        placement={{ kind: "sheet" }}
         sessions={[{ ...SESSION, rosterOnly: true }, { ...SESSION, id: "inst-2", classId: "c2", name: "Fundamentals", startTime: "19:00", status: "future" }]}
-        error={false}
         selectedId="inst-1"
+        dateLabel="Wednesday 25 November"
         onSelect={() => {}}
-        onRetry={() => {}}
+        onClose={() => {}}
       />,
     );
     const squad = screen.getByRole("button", { name: /Comp Squad/ });
     expect(squad.textContent).toContain(SQUAD_ONLY_LABEL);
-    expect(document.getElementById("session-inst-1-status")?.textContent).toContain("squad only");
+    expect(squad.getAttribute("aria-current")).toBe("true");
     const open = screen.getByRole("button", { name: /Fundamentals/ });
     expect(open.textContent).not.toContain(SQUAD_ONLY_LABEL);
+    expect(open.getAttribute("aria-current")).toBeNull();
   });
 });

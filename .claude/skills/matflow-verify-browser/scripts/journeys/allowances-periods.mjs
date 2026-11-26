@@ -43,7 +43,7 @@
 //  The monthly and 4-weekly sessions sit on past dates the register does not list (it shows today, /api/coach/today), so those
 //  desk check-ins go through POST /api/checkin — the request the register itself sends (RegisterPanel.tsx:322-331).
 import { randomUUID, createHmac } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn, sleep, BASE } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, sleep, BASE, chooseRegisterClass } from "../lib.mjs";
 import { testEnv } from "../../../matflow-verify-local/scripts/env.mjs";
 
 const club = state.club;
@@ -329,9 +329,9 @@ try {
 
   // ── 3. "1 each week" at the desk register (real UI) ──
   await page.goto("/dashboard/checkin");
-  const search = page.getByLabel("Search members");
+  const search = page.getByLabel("Find a member");
   const openSession = async (time, cls) => {
-    await page.getByRole("button", { name: new RegExp(`${esc(time)} · ${esc(cls)}`) }).click();
+    await chooseRegisterClass(page, time, cls);
     await search.waitFor();
   };
   const searchEnter = async (name) => {
