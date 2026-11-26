@@ -8,9 +8,9 @@
  *
  *   node scripts/generate-brand-icons.mjs
  *
- * Which drawing goes where follows the guide: the MF tile with the STUDIO
- * patch wherever it is shown at 72 px or more (STUDIO is unreadable below
- * that), the plain MF tile in browser tabs.
+ * Every surface uses the MF tile with the STUDIO patch, browser tabs included
+ * (Noe, 26 Nov 2026: the tab shows the same tile, accepting that the word
+ * STUDIO is too small to read at tab size).
  */
 import sharp from "sharp";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -22,7 +22,6 @@ const TILE = "#111111";
 const kit = (name) => readFileSync(resolve(ROOT, "brand", name));
 const STUDIO_ROUNDED = kit("app-icon-mf-studio.svg");
 const STUDIO_SQUARE = kit("app-icon-mf-studio-square.svg");
-const PLAIN = kit("app-icon-mf-plain.svg");
 
 /** The kit SVGs are 200 x 200; rasterising above the target size keeps edges sharp. */
 function png(svg, size) {
@@ -93,13 +92,13 @@ write("public/icons/icon-maskable-512.png", await maskablePng(512));
 // iOS rounds the corners itself and needs an opaque square.
 write("public/apple-touch-icon.png", await png(STUDIO_SQUARE, 180));
 // Browser tab.
-write("app/icon.png", await png(PLAIN, 512));
+write("app/icon.png", await png(STUDIO_ROUNDED, 512));
 write(
   "app/favicon.ico",
   buildIco([
-    { size: 16, data: await png(PLAIN, 16) },
-    { size: 32, data: await png(PLAIN, 32) },
-    { size: 48, data: await png(PLAIN, 48) },
+    { size: 16, data: await png(STUDIO_ROUNDED, 16) },
+    { size: 32, data: await png(STUDIO_ROUNDED, 32) },
+    { size: 48, data: await png(STUDIO_ROUNDED, 48) },
   ]),
 );
 

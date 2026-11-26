@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import sharp from "sharp";
 import manifest from "@/app/manifest";
 
 const ROOT = resolve(__dirname, "../..");
@@ -58,7 +59,7 @@ describe("icon set", () => {
     }
   });
 
-  it("the touch icon is 180 px and the tab icon is the plain MF tile only", () => {
+  it("the touch icon is 180 px and the layout lists one tab icon, /icon.png with its version", () => {
     // Read as text: app/layout.tsx loads next/font, which only the Next
     // compiler can run.
     const layout = readFileSync(resolve(ROOT, "app/layout.tsx"), "utf8");
@@ -69,12 +70,52 @@ describe("icon set", () => {
     expect(pngSize(publicFile(apple))).toEqual({ width: 180, height: 180 });
     expect(pngSize("app/icon.png").width).toBe(pngSize("app/icon.png").height);
     expect(existsSync(resolve(ROOT, "app/favicon.ico"))).toBe(true);
-    // The only tab icon the layout lists is the plain MF tile. Next adds
-    // app/icon.png by itself only when a layout sets no icons at all, and the
-    // STUDIO-patch tiles under /icons/ are unreadable at 16 px.
+    // The only tab icon the layout lists is app/icon.png. Next adds it by
+    // itself only when a layout sets no icons at all. Its address has no
+    // content hash, so it carries a version: without one a browser that kept
+    // the earlier plain MF tile would never ask for the new file.
     const listed = [...icons.matchAll(/url: "([^"]+)"/g)].map((m) => m[1]);
-    expect(listed).toEqual(["/icon.png"]);
+    expect(listed).toEqual(["/icon.png?v=3"]);
     expect(icons).not.toContain("/icons/");
+  });
+
+  it("the tab icons are the approved MF STUDIO tile at 16, 32, 48 and 512 px, not the plain MF", async () => {
+    // Noe, 26 Nov 2026: the browser tab shows the MF tile with the boxed
+    // STUDIO at every size. Each committed tab icon is compared, pixel by
+    // pixel, with brand/app-icon-mf-studio.svg drawn at that size the way
+    // scripts/generate-brand-icons.mjs draws it, and must be nearer to it than
+    // to the plain MF tile. Pixels, not bytes: PNG compression may differ
+    // between machines, the picture may not.
+    const draw = (name: string, size: number) =>
+      sharp(readFileSync(resolve(ROOT, "brand", name)), { density: Math.ceil((72 * size) / 200) * 2 })
+        .resize(size, size).ensureAlpha().raw().toBuffer();
+    const pixels = (buf: Buffer) => sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    /** Mean absolute difference per channel, 0 to 255. */
+    const distance = (a: Buffer, b: Buffer) => {
+      expect(a.length).toBe(b.length);
+      let sum = 0;
+      for (let i = 0; i < a.length; i += 1) sum += Math.abs(a[i] - b[i]);
+      return sum / a.length;
+    };
+
+    const ico = readFileSync(resolve(ROOT, "app/favicon.ico"));
+    expect([ico.readUInt16LE(0), ico.readUInt16LE(2)]).toEqual([0, 1]);
+    const entries = Array.from({ length: ico.readUInt16LE(4) }, (_, i) => {
+      const p = 6 + i * 16;
+      const start = ico.readUInt32LE(p + 12);
+      return { size: ico[p] || 256, data: ico.subarray(start, start + ico.readUInt32LE(p + 8)) };
+    });
+    expect(entries.map((e) => e.size)).toEqual([16, 32, 48]);
+
+    const tabIcons = [...entries, { size: 512, data: readFileSync(resolve(ROOT, "app/icon.png")) }];
+    for (const { size, data } of tabIcons) {
+      const got = await pixels(data);
+      expect([got.info.width, got.info.height], `${size} px`).toEqual([size, size]);
+      const toStudio = distance(got.data, await draw("app-icon-mf-studio.svg", size));
+      const toPlain = distance(got.data, await draw("app-icon-mf-plain.svg", size));
+      expect(toStudio, `${size} px is the STUDIO tile`).toBeLessThan(0.5);
+      expect(toPlain, `${size} px is not the plain MF tile`).toBeGreaterThan(toStudio + 1);
+    }
   });
 
   it("the installed app is still called MatFlow under its icon", () => {
