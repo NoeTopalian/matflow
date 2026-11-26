@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { StudioMark } from "@/components/brand/StudioMark";
 import { looksLikeSharedMailbox, SHARED_MAILBOX_WARNING } from "@/lib/email-shape";
 
 const SPORTS = [
@@ -123,7 +124,7 @@ export default function ApplyPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
         <Link
           href="/login"
           className="flex items-center gap-1.5 text-gray-400 hover:text-gray-700 transition-colors text-sm"
@@ -132,9 +133,7 @@ export default function ApplyPage() {
           Back
         </Link>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-black flex items-center justify-center">
-            <span className="text-white font-black text-xs">M</span>
-          </div>
+          <StudioMark />
           <span className="text-gray-900 font-semibold text-sm">MatFlow</span>
         </div>
       </div>
