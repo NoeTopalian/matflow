@@ -5,6 +5,7 @@
 // heavier (framer-motion) was removed in the speed pass — entrance motion
 // is CSS (`land-rise` in globals.css).
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -36,12 +37,7 @@ export function LandingNav() {
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0"
-            style={{ background: "#3d8bff", color: "#0a0908", fontFamily: "var(--font-label)" }}
-          >
-            M
-          </div>
+          <Image src="/icons/icon-192.png" alt="" width={40} height={40} unoptimized className="shrink-0" />
           <span
             className="font-semibold text-base tracking-tight"
             style={{ color: "#ede8df", fontFamily: "var(--font-label)" }}
