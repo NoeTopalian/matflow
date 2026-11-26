@@ -14,6 +14,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { minToTime } from "@/lib/schedule-state";
 import type { GridDay, GridMore, GridPlacement, TimetableGrid } from "@/lib/timetable-grid";
+import { BREAK_ROW_PX, GAP_ROW_PX } from "@/lib/timetable-grid";
 
 export const GUTTER_PX = 36;
 export const DAY_GAP_PX = 6;
@@ -24,7 +25,7 @@ export const MAT_HEAD_PX = 34;
 
 /** A row's track: as tall as its text and never under its floor; a sliver row (`fixed`) exactly its floor. */
 const rowTrack = (r: TimetableGrid["rows"][number]) =>
-  r.kind === "used" ? (r.fixed ? `${r.floorPx}px` : `minmax(${r.floorPx}px, auto)`) : r.kind === "break" ? "26px" : "10px";
+  r.kind === "used" ? (r.fixed ? `${r.floorPx}px` : `minmax(${r.floorPx}px, auto)`) : r.kind === "break" ? `${BREAK_ROW_PX}px` : `${GAP_ROW_PX}px`;
 
 const DAY_SLUG = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const vars = (v: Record<string, string | number>) => v as CSSProperties;

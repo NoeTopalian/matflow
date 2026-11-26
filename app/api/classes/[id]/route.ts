@@ -6,7 +6,8 @@ import { snapshotDiff } from "@/lib/audit-snapshot";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin } from "@/lib/csrf";
-import { scheduleSchema, allowedTierIdsSchema, matNameSchema } from "@/lib/schemas/class";
+import { scheduleSchema, allowedTierIdsSchema, matNameSchema, classColourSchema } from "@/lib/schemas/class";
+import { sameClassColour } from "@/lib/class-colours";
 import { classCategoryIdSchema, classCategorySchema } from "@/lib/class-category";
 import { CATEGORY_ERRORS, CATEGORY_REF_SELECT, ClassCategoryRefusal, categoryFields, categoryIdToWrite, classCategoryDbError } from "@/lib/class-category-store";
 import { rulesAfterEdit, type ClassAccessRules, type RestrictionPreview } from "@/lib/booking-eligibility";
@@ -81,7 +82,8 @@ const updateSchema = z.object({
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
-  color: z.string().max(20).optional().nullable(),
+  // A hex code or null (lib/schemas/class.ts classColourSchema). The same colour in other letter case is not written.
+  color: classColourSchema.optional().nullable(),
   // T6b lifecycle: `false` PAUSES the class (hidden from the timetable,
   // booking, member app and kiosk; no new sessions; history and bookings
   // kept). `true` RESUMES a paused class or RESTORES an archived one: it also
@@ -626,9 +628,9 @@ export async function PATCH(req: Request, { params }: Params) {
       // reads the tier list (lib/checkin.ts), so it is judged against whichever
       // list committed first, never a half-written one.
       const owned = await tx.$queryRaw<{
-        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null;
+        id: string; isActive?: boolean; deletedAt?: Date | null; requiredRankId?: string | null; maxRankId?: string | null; matId?: string | null; categoryId?: string | null; color?: string | null;
       }[]>`
-        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
+        SELECT "id", "isActive", "deletedAt", "requiredRankId", "maxRankId", "matId", "categoryId", "color" FROM "Class" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE
       `;
       if (owned.length === 0) return null;
       // The category, judged under the Class lock against the class's category
@@ -824,6 +826,7 @@ export async function PATCH(req: Request, { params }: Params) {
       // class.updateMany; listing the columns makes that impossible to get
       // wrong the next time a field is added to updateSchema. Every value here
       // may be `undefined`, which Prisma treats as "leave alone".
+      const colourUnchanged = parsed.data.color != null && sameClassColour(parsed.data.color, owned[0].color);
       const classFields = {
         name: parsed.data.name,
         description: parsed.data.description,
@@ -838,7 +841,8 @@ export async function PATCH(req: Request, { params }: Params) {
         // mode clears the rank columns outright.
         requiredRankId: wantsRoster ? null : parsed.data.requiredRankId,
         maxRankId: wantsRoster ? null : parsed.data.maxRankId,
-        color: parsed.data.color,
+        // The stored colour (in any letter case) is the same colour: not written, and not listed as a changed field.
+        color: colourUnchanged ? undefined : parsed.data.color,
         isActive: parsed.data.isActive,
         // T6b: resume / restore clears the archive marker too, so a restored
         // class is never "active but hidden everywhere". Pausing leaves an
@@ -901,7 +905,7 @@ export async function PATCH(req: Request, { params }: Params) {
       };
       return {
         cls, scheduleChange, before, tiersBefore, tiersAfter, keptBookings, sessionsCreatedOnResume,
-        lifecycleChange, legacyArchivedOn, locationAdded,
+        lifecycleChange, legacyArchivedOn, locationAdded, colourUnchanged,
       };
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -923,7 +927,8 @@ export async function PATCH(req: Request, { params }: Params) {
           // `baseScheduleIds`, `baseRosterIds` and `categoryBaseId` are the client's freshness checks, not fields of the class.
           // A Location by name (`matName`) is recorded as the columns it sets.
           // An old category key is recorded as the reference it was written as.
-          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "baseRosterIds" || k === "categoryBaseId" ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
+          // A colour sent as the stored colour (in any letter case) was not written, so it is not a changed field.
+          fields: [...new Set(Object.keys(parsed.data).flatMap((k) => (k === "baseScheduleIds" || k === "baseRosterIds" || k === "categoryBaseId" || (k === "color" && updated.colourUnchanged) ? [] : k === "matName" ? ["matId", "location"] : k === "category" ? ["categoryId"] : [k])))],
           // Release B's activation signal, durable (runtime logs are not kept long enough to cover the observation
           // window): this save came from a page that knows only the old category keys. This release's form sends
           // `categoryBaseId` with any key it sends on an edit, so only an old page matches.
