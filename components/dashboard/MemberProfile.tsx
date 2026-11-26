@@ -570,6 +570,10 @@ export default function MemberProfile({
   const canUnlockSignIn = ["owner", "manager"].includes(role);
   const signInLocked = isSignInLocked(member.lockedUntil);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const actionsTriggerRef = useRef<HTMLButtonElement>(null);
+  // Which edge of the button the menu hangs from: its right edge, unless the menu (w-44, 176 px) would then run
+  // past the left of the screen, as it did at 320 px where the button wraps to the left.
+  const [actionsAlignLeft, setActionsAlignLeft] = useState(false);
   // F5 deletion gateway — opens the 3-strategy modal when a parent member is
   // about to be removed. The modal handles the probe + picker + execution.
   const [showRemoveModal, setShowRemoveModal] = useState(false);
@@ -736,8 +740,22 @@ export default function MemberProfile({
         setShowActionsMenu(false);
       }
     }
+    // Escape closes the menu (one level) and hands focus back to "More actions", wherever focus was inside it.
+    function handleKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      // Only while focus is in the menu (or nowhere): Escape from a drawer opened beside it, or from the page,
+      // belongs to that, and must not close two levels or pull focus back here (review of this fix).
+      const a = document.activeElement;
+      if (a && a !== document.body && !actionsMenuRef.current?.contains(a)) return;
+      setShowActionsMenu(false);
+      actionsTriggerRef.current?.focus();
+    }
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [showActionsMenu]);
 
   // `Member.email` is NOT NULL: a member with no address of their own carries a
@@ -1265,8 +1283,15 @@ export default function MemberProfile({
           )}
           <div className="relative" ref={actionsMenuRef}>
             <Button
+              ref={actionsTriggerRef}
               variant="secondary"
-              onClick={() => setShowActionsMenu((v) => !v)}
+              onClick={() => {
+                if (!showActionsMenu) {
+                  const r = actionsTriggerRef.current?.getBoundingClientRect();
+                  setActionsAlignLeft(!!r && r.right - 176 < 8);
+                }
+                setShowActionsMenu((v) => !v);
+              }}
               // PR 3: an archived profile is read-only; Restore is in the notice above.
               disabled={!!member.archivedAt}
               className="size-9 px-0"
@@ -1277,7 +1302,7 @@ export default function MemberProfile({
             </Button>
             {showActionsMenu && (
               <div
-                className="absolute right-0 top-full mt-1 w-44 rounded-xl border py-1 z-40"
+                className={`absolute ${actionsAlignLeft ? "left-0" : "right-0"} top-full mt-1 w-44 rounded-xl border py-1 z-40`}
                 style={{ background: "var(--sf-0)", borderColor: "var(--bd-default)" }}
               >
                 {!supportEdit && <button

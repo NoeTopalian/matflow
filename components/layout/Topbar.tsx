@@ -65,6 +65,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const { ask, dialogProps } = useConfirmDialog();
   const { toast } = useToast();
   const roleLabel = getRoleLabel(user.role);
@@ -116,7 +117,15 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
       if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
+      if (e.key !== "Escape") return;
+      // Focus on one of the menu's items would fall to the page when the menu unmounts: hand it back to the button.
+      // So does focus on nothing while the menu is open: Safari does not focus a button it clicks, so a menu opened by
+      // mouse there leaves focus on the page body.
+      const a = document.activeElement;
+      const open = !!menuRef.current?.querySelector('[role="menu"]');
+      const back = open && a !== menuButtonRef.current && (!!menuRef.current?.contains(a) || a === document.body);
+      setMenuOpen(false);
+      if (back) menuButtonRef.current?.focus();
     }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -164,6 +173,7 @@ export default function Topbar({ user, logoUrl, logoSize = "md" }: TopbarProps) 
         <div className="relative" ref={menuRef}>
           {/* Single unified pill: role badge + account */}
           <button
+            ref={menuButtonRef}
             onClick={() => setMenuOpen((v) => !v)}
             className="flex items-center rounded-2xl border transition-all hover:brightness-110 overflow-hidden"
             style={{

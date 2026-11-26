@@ -1858,6 +1858,8 @@ export default function SettingsPage({ settings, staff: initialStaff, statusCoun
             const active = tab === id;
             return (
               <button key={id} onClick={() => setTab(id)}
+                // Keyboard focus on a tab half off the scrolling rail leaves it there; bring all of it into view.
+                onFocus={(e) => e.currentTarget.scrollIntoView({ inline: "nearest", block: "nearest" })}
                 className="relative flex items-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
                 style={{
                   background: active ? hex(primaryCol, 0.15) : "transparent",

@@ -57,7 +57,10 @@ export default function MobileNav({ role, primaryColor }: Props) {
         aria-labelledby={titleId}
         inert={!moreOpen}
         aria-hidden={moreOpen ? undefined : true}
-        className={`fixed bottom-0 left-0 right-0 z-50 md:hidden transition-transform duration-300 ease-out ${
+        // Never taller than the screen below the status bar: on a short phone the list scrolls inside the sheet and
+        // the header (with Close) stays on screen. Uncapped, the owner's 12 items ran 282 px above a 320 x 568
+        // screen, out of reach. The installed app draws under the status bar (viewportFit "cover"), hence the inset.
+        className={`fixed bottom-0 left-0 right-0 z-50 md:hidden flex max-h-[calc(100dvh_-_env(safe-area-inset-top))] flex-col transition-transform duration-300 ease-out ${
           moreOpen ? "translate-y-0" : "translate-y-full"
         }`}
         style={{
@@ -68,7 +71,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
         }}
       >
         <div
-          className="flex justify-between items-center px-5 py-4"
+          className="flex shrink-0 justify-between items-center px-5 py-4"
           style={{ borderBottom: "1px solid var(--bd-default)" }}
         >
           <p id={titleId} className="font-semibold text-sm" style={{ color: "var(--tx-1)" }}>More</p>
@@ -81,7 +84,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
             <X className="w-4 h-4" style={{ color: "var(--tx-2)" }} />
           </button>
         </div>
-        <div className="px-4 py-3 space-y-1 pb-safe">
+        <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-1 pb-safe">
           {visibleMore.map((item) => {
             const active = isNavActive(item.href, pathname);
             return (
@@ -155,7 +158,7 @@ export default function MobileNav({ role, primaryColor }: Props) {
           </button>
         </div>
         {/* Safe area padding */}
-        <div className="h-6" />
+        <div className="h-6 shrink-0" />
       </div>
 
       {/* Bottom tab bar */}
