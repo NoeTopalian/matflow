@@ -1,12 +1,16 @@
 "use client";
 
-// The session picker every attendance surface shares. One list, from
-// /api/coach/today, which materialises today's rows and orders them
-// ongoing → soon → future → ended. The client's only job is to show that
-// order honestly and preselect the top of it.
+// The class picker of the staff register (Mark attendance). One list, from
+// /api/coach/today, which materialises today's rows and says which session the
+// register opens on (lib/register-default.ts). The picker shows the whole day
+// in time order and lets the coach choose any session of it.
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Sheet } from "@/components/ui/sheet";
+import { Popover, placePopover, type PopoverPlacement } from "@/components/ui/popover";
+import { formatTimeRange } from "@/lib/class-time";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useToast } from "@/components/ui/Toast";
@@ -42,12 +46,23 @@ export type TodaySession = {
    * may attend. Tagged "Squad only". Absent on an older server.
    */
   rosterOnly?: boolean;
+  /** The mat the class is on, when it is on one. Absent on an older server. */
+  matName?: string | null;
+  /** That mat's place in the club's order (the timetable's), null with no mat. */
+  matOrder?: number | null;
+  /**
+   * On the ONE session the register opens on: why it was chosen. Worked out on
+   * the server from the club's clock (lib/register-default.ts).
+   */
+  auto?: "on_now" | "up_next" | "last_today";
+  /** With `auto`: how many sessions are on now. */
+  onNowCount?: number;
 };
 
 /**
- * Which session opens by default. `?class=` wins when that class has a session
- * today; otherwise the one on now, then the next, then the rest of the day —
- * never one that has ended. Mark Attendance used to open on instances[0], the
+ * Which session opens by default. `?class=` wins when that class has a live
+ * session today; otherwise the session the server chose (on now, up next, or
+ * the last class of the day). Mark Attendance used to open on instances[0], the
  * earliest class of the day, so at 12:30 it offered the 10:00 class.
  */
 export function pickDefault(sessions: TodaySession[], preselectClassId: string | null): string | null {
@@ -61,6 +76,10 @@ export function pickDefault(sessions: TodaySession[], preselectClassId: string |
     const match = live.find((s) => s.classId === preselectClassId);
     if (match) return match.id;
   }
+  // The server's choice: on now, else up next, else the last class of the day.
+  const chosen = live.find((s) => s.auto);
+  if (chosen) return chosen.id;
+  // An older server says nothing: the first on now, then the next, never one that has ended.
   for (const status of ["ongoing", "soon", "future"] as const) {
     const first = live.find((s) => s.status === status);
     if (first) return first.id;
@@ -68,36 +87,17 @@ export function pickDefault(sessions: TodaySession[], preselectClassId: string |
   return null;
 }
 
-const BADGE: Record<TodaySession["status"], string | null> = {
-  ongoing: "Now",
-  soon: "Next",
-  future: null,
-  ended: "Ended",
-};
-
-function Tag({ children }: { children: React.ReactNode }) {
-  // Inherits the button's ink so it reads on both the primary and secondary
-  // variants; the wash is the ink at low alpha. `aria-hidden`: the button's
-  // accessible NAME stays exactly "HH:MM · class · location" (what every spec
-  // and every screen reader already knows it as); the status reaches
-  // assistive tech through the button's aria-describedby instead.
+/** A small status label. Its text is part of the row's accessible name, so the state is never colour alone. */
+export function Tag({ children }: { children: React.ReactNode }) {
   return (
     <span
-      aria-hidden="true"
-      className="ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+      className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
       style={{ background: "color-mix(in srgb, currentColor 16%, transparent)" }}
     >
       {children}
     </span>
   );
 }
-
-const DESCRIPTION: Record<TodaySession["status"], string> = {
-  ongoing: "On now",
-  soon: "Next",
-  future: "Later today",
-  ended: "Ended",
-};
 
 /** The roles PATCH /api/classes/[id]/instances/[instanceId] admits. */
 export const CAN_CANCEL_SESSION_ROLES = ["owner", "manager"] as const;
@@ -110,12 +110,30 @@ export const CAN_CANCEL_SESSION_ROLES = ["owner", "manager"] as const;
  * session); restore clears it. Shown only to the roles the route admits; on
  * any refusal the route's own sentence is shown, never a silent no-op.
  */
+const STALE = Symbol("register day stale");
+
 export function SessionCancelControl({
   session,
   onChanged,
+  onOpenChange,
+  beforeWrite,
+  registerDay,
+  onDayStale,
 }: {
   session: TodaySession;
   onChanged: () => void | Promise<void>;
+  /**
+   * Told when the confirmation opens and closes (the scanner is paused while it
+   * is open). Called from the handlers themselves, in the same event as the
+   * dialog, so the pause takes effect in the same render.
+   */
+  onOpenChange?: (open: boolean) => void;
+  /** Asked just before the cancel or restore is sent; false means "send nothing" (the club's day has moved on). */
+  beforeWrite?: () => boolean;
+  /** The club date the register was read for, sent with the cancel or restore (lib/register-day.ts). */
+  registerDay?: string;
+  /** The server refused because that date has passed (409 REGISTER_DAY_STALE): the club's date now. */
+  onDayStale?: (clubDate: string | null) => void;
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -124,16 +142,27 @@ export function SessionCancelControl({
   const [restoring, setRestoring] = useState(false);
   const reasonId = useId();
   const errorId = useId();
+  const close = () => {
+    setOpen(false);
+    onOpenChange?.(false);
+  };
+  // Gone while open (another class was chosen): the confirmation went with it.
+  useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
 
-  async function patch(isCancelled: boolean, cancellationReason?: string): Promise<string | null> {
+  /** null when it was saved; a sentence when it failed; STALE when the server says the register's day has passed. */
+  async function patch(isCancelled: boolean, cancellationReason?: string): Promise<string | null | typeof STALE> {
     try {
       const res = await fetch(`/api/classes/${session.classId}/instances/${session.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isCancelled ? { isCancelled, cancellationReason } : { isCancelled }),
+        body: JSON.stringify({ ...(isCancelled ? { isCancelled, cancellationReason } : { isCancelled }), ...(registerDay ? { registerDay } : {}) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
+        if (res.status === 409 && body?.code === "REGISTER_DAY_STALE") {
+          onDayStale?.(typeof body.clubDate === "string" ? body.clubDate : null);
+          return STALE;
+        }
         return describeApiError(body);
       }
       return null;
@@ -148,12 +177,20 @@ export function SessionCancelControl({
       setError("Give a reason — members see it beside the cancelled session.");
       return;
     }
+    if (beforeWrite && !beforeWrite()) {
+      close();
+      return;
+    }
     const failure = await patch(true, trimmed);
+    if (failure === STALE) {
+      close();
+      return;
+    }
     if (failure) {
       setError(failure);
       return;
     }
-    setOpen(false);
+    close();
     setReason("");
     setError(null);
     toast(`${session.name} at ${session.startTime} cancelled`, "success");
@@ -161,9 +198,11 @@ export function SessionCancelControl({
   }
 
   async function restore() {
+    if (beforeWrite && !beforeWrite()) return;
     setRestoring(true);
     const failure = await patch(false);
     setRestoring(false);
+    if (failure === STALE) return;
     if (failure) {
       toast(failure, "error");
       return;
@@ -190,6 +229,7 @@ export function SessionCancelControl({
           onClick={() => {
             setError(null);
             setOpen(true);
+            onOpenChange?.(true);
           }}
         >
           Cancel this session
@@ -198,7 +238,7 @@ export function SessionCancelControl({
       <ConfirmDialog
         open={open}
         onClose={() => {
-          setOpen(false);
+          close();
           setError(null);
         }}
         onConfirm={confirmCancel}
@@ -237,85 +277,156 @@ export function SessionCancelControl({
   );
 }
 
-export default function SessionPicker({
+/** The mat a session is on when it has one, else the place typed on the class; null when neither is known. */
+export function matLabel(s: Pick<TodaySession, "matName" | "location">): string | null {
+  return s.matName?.trim() || s.location?.trim() || null;
+}
+
+/** What the selected-class card and the picker say about a session's place in the day. */
+export function sessionLabel(s: TodaySession): string {
+  if (s.isCancelled) return "Cancelled";
+  if (s.auto === "last_today") return "Last class today";
+  if (s.status === "ongoing") return "On now";
+  if (s.auto === "up_next") return "Up next";
+  return s.status === "ended" ? "Earlier today" : "Later today";
+}
+
+/**
+ * Every session of the day in the order the picker shows them: by start time,
+ * earliest first; sessions that start together in the club's mat order (a
+ * session with no mat after those that have one), then by name and id so two
+ * classes of the same name stay apart and in one place.
+ */
+export function groupByStart(sessions: TodaySession[]): Array<{ startTime: string; sessions: TodaySession[] }> {
+  const NO_MAT = Number.MAX_SAFE_INTEGER;
+  const sorted = sessions.slice().sort(
+    (a, b) =>
+      a.startTime.localeCompare(b.startTime) ||
+      (a.matOrder ?? NO_MAT) - (b.matOrder ?? NO_MAT) ||
+      a.name.localeCompare(b.name) ||
+      a.id.localeCompare(b.id),
+  );
+  const groups: Array<{ startTime: string; sessions: TodaySession[] }> = [];
+  for (const s of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && last.startTime === s.startTime) last.sessions.push(s);
+    else groups.push({ startTime: s.startTime, sessions: [s] });
+  }
+  return groups;
+}
+
+/** How the picker is shown: a popover hung from the button, or the sheet. */
+export type PickerPlacement = { kind: "sheet" } | ({ kind: "popover" } & PopoverPlacement);
+
+/** A popover on a wide window with room for a usable list below or above the button; otherwise the sheet. */
+export function placePicker(
+  anchor: { top: number; bottom: number; left: number },
+  viewport: { width: number; height: number },
+): PickerPlacement {
+  const popover = placePopover(anchor, viewport);
+  return popover ? { kind: "popover", ...popover } : { kind: "sheet" };
+}
+
+function SessionRows({
   sessions,
-  error,
   selectedId,
   onSelect,
-  onRetry,
+  selectedRef,
 }: {
-  sessions: TodaySession[] | null;
-  error: boolean;
+  sessions: TodaySession[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onRetry: () => void;
+  selectedRef?: RefObject<HTMLButtonElement | null>;
 }) {
-  if (error) {
-    return <ErrorState message="Couldn't load today's classes — tap to retry" onRetry={onRetry} />;
-  }
-  if (sessions === null) {
-    return <p className="text-sm text-tx-3">Loading today&rsquo;s classes…</p>;
-  }
-  if (sessions.length === 0) {
+  const groups = groupByStart(sessions);
+  return (
+    <div className="space-y-4" data-testid="class-picker-list">
+      {groups.map((g) => (
+        <section key={g.startTime} aria-label={`Starting at ${g.startTime}`}>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">{g.startTime}</h3>
+          <ul className="space-y-1.5">
+            {g.sessions.map((c) => {
+              const selected = c.id === selectedId;
+              const mat = matLabel(c);
+              return (
+                <li key={c.id}>
+                  {/* One row per SESSION (its own id), so two classes at one time, or two
+                      sessions of one class, are two rows. `aria-current` and the tick say
+                      which is selected; the row keeps its place in the order either way. */}
+                  <Button
+                    variant="secondary"
+                    ref={selected ? selectedRef : undefined}
+                    data-session-id={c.id}
+                    aria-current={selected ? "true" : undefined}
+                    onClick={() => onSelect(c.id)}
+                    className={[
+                      "h-auto min-h-14 w-full items-start justify-start gap-3 whitespace-normal px-3 py-2.5 text-left font-normal",
+                      selected ? "border-bd-active" : "bg-sf-1",
+                    ].join(" ")}
+                  >
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center" aria-hidden="true">
+                      {selected && <Check className="size-5 text-tx-1" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className={`block break-words text-sm font-medium text-tx-1 ${c.isCancelled ? "line-through" : ""}`}>{c.name}</span>
+                      <span className="block text-[13px] text-tx-3">
+                        {formatTimeRange(c.startTime, c.endTime)}
+                        {mat ? ` · ${mat}` : ""}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 flex-col items-end gap-1 text-tx-2">
+                      {selected && <span className="sr-only">Selected</span>}
+                      <Tag>{sessionLabel(c)}</Tag>
+                      {c.isMine && <Tag>Yours</Tag>}
+                      {c.rosterOnly && <Tag>{SQUAD_ONLY_LABEL}</Tag>}
+                    </span>
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * "Change class": every session of the club's day the member of staff may
+ * mark, one row each. Choosing a row switches once and closes; Close, Escape
+ * or a tap outside closes and changes nothing. A popover hung from the button
+ * on a wide window with room for it, a bottom sheet everywhere else.
+ */
+export default function ClassPicker({
+  placement,
+  sessions,
+  selectedId,
+  dateLabel,
+  onSelect,
+  onClose,
+}: {
+  /** null = closed. */
+  placement: PickerPlacement | null;
+  sessions: TodaySession[];
+  selectedId: string | null;
+  /** The club's date, in the club's zone. */
+  dateLabel: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const selectedRef = useRef<HTMLButtonElement | null>(null);
+  if (!placement) return null;
+  const rows = <SessionRows sessions={sessions} selectedId={selectedId} onSelect={onSelect} selectedRef={selectedRef} />;
+  if (placement.kind === "popover") {
     return (
-      <p className="text-sm text-tx-3">
-        Nothing scheduled today. Add a class on the timetable and it appears here straight away.
-      </p>
+      <Popover placement={placement} title="Change class" description={dateLabel} onClose={onClose} initialFocusRef={selectedRef}>
+        {rows}
+      </Popover>
     );
   }
   return (
-    <div className="space-y-2">
-      <span id="scan-session-label" className="block text-sm font-medium text-tx-2">
-        Session
-      </span>
-      {/* A horizontal chip rail on the phone (one thumb, no wrapping below the
-          fold), wrapping from lg:. Which session is selected must not be
-          conveyed by colour alone: `aria-pressed` carries it. */}
-      <div
-        role="group"
-        aria-labelledby="scan-session-label"
-        className="-mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0 lg:pb-0"
-        style={{ scrollbarWidth: "none" }}
-      >
-        {sessions.map((c) => {
-          const selected = c.id === selectedId;
-          const badge = BADGE[c.status];
-          const descriptionId = `session-${c.id}-status`;
-          // `relative`: the sr-only description below is absolutely positioned,
-          // and without a positioned wrapper it escaped the scrolling rail and
-          // sat at x≈515 on a 390 px phone — which widened the layout viewport
-          // to 516 and pushed every fixed sheet (the confirm dialog included)
-          // half off the screen. Measured, 18 Sep 2026.
-          return (
-            <span key={c.id} className="relative shrink-0 snap-start">
-              <Button
-                variant={selected ? "primary" : "secondary"}
-                aria-pressed={selected}
-                aria-describedby={descriptionId}
-                onClick={() => onSelect(c.id)}
-              >
-                {/* Struck through AND labelled: the state must not be carried
-                    by the line alone, so the tag says it and the sr-only
-                    description below says it to assistive tech. */}
-                <span className={c.isCancelled ? "line-through" : undefined}>
-                  {c.startTime} · {c.name}
-                  {c.location ? ` · ${c.location}` : ""}
-                </span>
-                {c.isCancelled ? <Tag>Cancelled</Tag> : badge && <Tag>{badge}</Tag>}
-                {c.isMine && <Tag>Yours</Tag>}
-                {c.rosterOnly && <Tag>{SQUAD_ONLY_LABEL}</Tag>}
-              </Button>
-              <span id={descriptionId} className="sr-only">
-                {c.isCancelled
-                  ? `Cancelled${c.cancellationReason ? `: ${c.cancellationReason}` : ""}`
-                  : DESCRIPTION[c.status]}
-                {c.isMine ? ", yours" : ""}
-                {c.rosterOnly ? `, ${SQUAD_ONLY_LABEL.toLowerCase()}` : ""}
-              </span>
-            </span>
-          );
-        })}
-      </div>
-    </div>
+    <Sheet open onClose={onClose} title="Change class" description={dateLabel} initialFocusRef={selectedRef}>
+      {rows}
+    </Sheet>
   );
 }

@@ -44,7 +44,7 @@
 //    after every await, so a stale closure can never submit a card, count a
 //    failure, or stop the live camera.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { nextDetectorState, pickDetectorKind } from "@/lib/scan-detector";
 import { formatTimeRange } from "@/lib/class-time";
@@ -343,7 +343,31 @@ type CameraState =
   | { kind: "denied" }
   | { kind: "failed"; message: string };
 
-export default function CardScanner({ instance }: { instance: ScannerInstance }) {
+export default function CardScanner({
+  instance,
+  paused = false,
+  onUseName,
+  beforeWrite,
+  registerDay,
+  onDayStale,
+}: {
+  instance: ScannerInstance;
+  /**
+   * The class picker (or any other question) is open over the camera. A card
+   * read meanwhile is dropped, not held back and sent later: the coach is
+   * choosing a class, and a scan must never land in whichever one that turns
+   * out to be (25 Nov 2026).
+   */
+  paused?: boolean;
+  /** Switch this screen to marking by name, keeping the class. */
+  onUseName?: () => void;
+  /** Asked just before a card is sent; false means "send nothing" (the club's day has moved on). */
+  beforeWrite?: () => boolean;
+  /** The club date the register was read for, sent with every card (lib/register-day.ts). */
+  registerDay?: string;
+  /** The server refused a card because that date has passed (409 REGISTER_DAY_STALE): the club's date now. */
+  onDayStale?: (clubDate: string | null) => void;
+}) {
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
   const [rows, setRows] = useState<ScanRow[]>([]);
   /**
@@ -380,9 +404,27 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
     selectedRef.current = instance.id;
   }, [instance.id]);
 
+  /** Mirrors `paused` for the detect loop, which closes over its first render. */
+  const pausedRef = useRef(paused);
+  // A layout effect, so the pause is in place before the frame that shows the picker or the confirmation is painted.
+  useLayoutEffect(() => {
+    // Nothing is recorded while paused (the loop returns before the hold
+    // tracker sees a read), so a card still under the lens when the picker
+    // closes is read then, as a new hold, into the class shown then.
+    pausedRef.current = paused;
+  }, [paused]);
+
+  const beforeWriteRef = useRef(beforeWrite);
+  const dayRef = useRef({ registerDay, onDayStale });
+  useEffect(() => {
+    beforeWriteRef.current = beforeWrite;
+    dayRef.current = { registerDay, onDayStale };
+  }, [beforeWrite, registerDay, onDayStale]);
+
   const submitToken = useCallback(async (token: string) => {
     const classInstanceId = selectedRef.current;
-    if (!classInstanceId) return;
+    if (!classInstanceId || pausedRef.current) return;
+    if (beforeWriteRef.current && !beforeWriteRef.current()) return;
     // Captured now: a late response must re-arm the tracker this token was
     // read into, never a later session's fresh one.
     const holds = holdsRef.current;
@@ -402,10 +444,6 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       const { reason, message } = detail;
       setRows((prev) => {
         const i = prev.findIndex((r) => r.token === token && r.at === at);
-        // No row: a session switch cleared the list while this was in flight.
-        // The scan still recorded, into the class it was sent to — Stop cannot
-        // recall a request already on the wire — so the outcome is shown,
-        // never dropped. Labelling the row with its own session is later work.
         if (i === -1) return [{ token, status, memberName, reason, message, at }, ...prev];
         const next = prev.slice();
         next[i] = { ...prev[i], status, memberName, reason, message };
@@ -427,6 +465,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         body: JSON.stringify({
           classInstanceId,
           tokens: [token],
+          ...(dayRef.current.registerDay ? { registerDay: dayRef.current.registerDay } : {}),
         }),
         // Never follow a redirect: the proxy answers an expired session with a
         // 307 to /login, and following it hands back the login PAGE as a 200,
@@ -441,6 +480,15 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
         return;
       }
       if (!res.ok) {
+        // The register's day has passed by the server's clock: nothing was recorded, and the screen says so.
+        if (res.status === 409) {
+          const refusal = await res.json().catch(() => null);
+          if (refusal?.code === "REGISTER_DAY_STALE") {
+            settle("request_failed");
+            dayRef.current.onDayStale?.(typeof refusal.clubDate === "string" ? refusal.clubDate : null);
+            return;
+          }
+        }
         settle(
           res.status === 401
             ? "signed_out"
@@ -650,10 +698,14 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
       }
       if (stale()) return;
       consecutiveFailures = 0;
+      // Paused (the class picker is open): nothing read now is sent, now or later.
+      if (pausedRef.current) return;
       const now = Date.now();
       for (const code of codes) {
         const token = code.rawValue?.trim();
         if (!token || holdsRef.current.read(token, now) !== "submit") continue;
+        // The club's day has moved on: nothing is sent, so no "read" buzz either.
+        if (beforeWriteRef.current && !beforeWriteRef.current()) return;
         // The short buzz — "read" — on the submit branch only (note 3).
         navigator.vibrate?.(30);
         void submitToken(token);
@@ -671,7 +723,7 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
   return (
     <div className="space-y-6">
       <p className="text-sm text-tx-3">
-        Hold your phone about 20 cm over each card in turn. Every scan goes into the session selected above.
+        Scan each member&rsquo;s MatFlow card: hold your phone about 20 cm over the QR code on each card in turn. Every scan goes into the class selected above.
       </p>
 
       {/* Always mounted, so the first scan of a stack is announced. A region
@@ -765,8 +817,13 @@ export default function CardScanner({ instance }: { instance: ScannerInstance })
                   "Scanning needs a phone with a camera the browser can use — Chrome on Android, or Safari on an iPhone. "}
                 {camera.kind === "denied" &&
                   "Allow the camera for this site in your browser settings — or, if the camera never appears, in Android Settings → Apps → Chrome → Permissions — then start again. "}
-                You can tick names instead — it is the other section of this screen — and nothing is lost.
+                You can mark by name instead, and nothing is lost.
               </p>
+              {onUseName && (
+                <Button variant="secondary" className="mt-3" onClick={onUseName}>
+                  Use name instead
+                </Button>
+              )}
             </div>
           )}
         </div>

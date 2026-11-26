@@ -15,6 +15,16 @@ import { classCategoryIdSchema, classCategorySchema } from "@/lib/class-category
 // are invalid — the class's own `duration` column is the canonical length.
 const clockTime = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/**
+ * A class colour as sent: a hex code ("#1a2b3c"), or null for none chosen (the class shows the club's colour).
+ * Until 25 Nov 2026 any string of up to 20 characters was accepted, so `url(…)` or a colour name could be stored and
+ * then painted as a `background`. The only sender is the class form, which sends a swatch or a custom colour (both
+ * "#rrggbb") and never re-sends a stored colour it did not change, so a class saved earlier with anything else keeps
+ * it until someone picks a new one. Three or six digits only: an opaque colour, and the forms the member schedule
+ * can paint (app/member/schedule/page.tsx normalizeHex falls back to the default blue for anything else).
+ */
+export const classColourSchema = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "Colour must be a hex code such as #1a2b3c");
+
 export const scheduleSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: z.string().regex(clockTime, "Time must be HH:MM on a 24-hour clock"),
@@ -71,7 +81,7 @@ export const classCreateSchema = z.object({
   maxCapacity: z.number().int().min(1).max(1000).optional().nullable(),
   requiredRankId: z.string().optional().nullable(),
   maxRankId: z.string().optional().nullable(),
-  color: z.string().max(20).optional().nullable(),
+  color: classColourSchema.optional().nullable(),
   // A kids class refuses adults at self and kiosk check-in (lib/checkin.ts)
   // and asks the desk first on the register. Omitted = not a kids class.
   isKids: z.boolean().optional(),

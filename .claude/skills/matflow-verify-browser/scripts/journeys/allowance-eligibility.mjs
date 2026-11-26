@@ -10,7 +10,7 @@
 // Needs `fixture.mjs create` and `server.mjs start`.
 //   node journeys/allowance-eligibility.mjs
 import { randomUUID } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, chooseRegisterClass } from "../lib.mjs";
 
 const club = state.club;
 if (!club) throw new Error("no fixture — run: node fixture.mjs create");
@@ -129,8 +129,8 @@ try {
 
   // ── Desk register: the allowance REFUSES (no Admit anyway); a class pack pays; undo gives the credit back ──
   await page.goto("/dashboard/checkin");
-  await page.getByRole("button", { name: new RegExp(`${T2} · Open Mat`) }).click();
-  const search = page.getByLabel("Search members");
+  await chooseRegisterClass(page, T2, "Open Mat");
+  const search = page.getByLabel("Find a member");
   await search.waitFor();
   const markMember1 = async () => {
     await search.fill("");
@@ -171,7 +171,7 @@ try {
     for (let i = 0; i < 30 && (await records(inst2)) === 0; i++) await page.waitForTimeout(500);
     // The register re-reads after a mark; a reload proves the walk-in row is what the server holds, not local state.
     await page.reload();
-    await page.getByRole("button", { name: new RegExp(`${T2} · Open Mat`) }).click();
+    await chooseRegisterClass(page, T2, "Open Mat");
     const absentBtn = page.getByRole("button", { name: "Mark Member 1 absent" });
     const rowShown = await absentBtn.waitFor({ timeout: 45000 }).then(() => true, () => false);
     if (!rowShown) await shot(page, "allowance-register-after-pack");

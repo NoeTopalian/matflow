@@ -10,7 +10,7 @@
 // Needs `fixture.mjs create` and `server.mjs start`.
 //   node journeys/scanner-override.mjs
 import { randomUUID, createHmac } from "node:crypto";
-import { chromium, state, q, ledger, shot, context, ownerSignIn } from "../lib.mjs";
+import { chromium, state, q, ledger, shot, context, ownerSignIn, chooseRegisterClass } from "../lib.mjs";
 import { testEnv } from "../../../matflow-verify-local/scripts/env.mjs";
 
 const club = state.club;
@@ -96,8 +96,8 @@ try {
 
   await ownerSignIn(page, club);
   await page.goto("/dashboard/checkin");
-  await page.getByRole("button", { name: new RegExp(`${T2} · Scan Mat`) }).click();
-  await page.getByRole("tab", { name: "Scan cards" }).click();
+  await chooseRegisterClass(page, T2, "Scan Mat");
+  await page.getByRole("tab", { name: "Scan QR" }).click();
   // Warm the route first: on this laptop the first request to a route of a freshly started production server can
   // exceed the scanner's own 10 s timeout (which then reads "Didn't reach MatFlow" — the real behaviour under test
   // is what happens to a card the server answers, not a cold-start timeout). A junk token is answered "invalid".

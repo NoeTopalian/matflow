@@ -23,6 +23,7 @@ vi.mock("@/components/ui/Toast", () => ({ useToast: () => ({ toast: vi.fn() }) }
 const db = vi.hoisted(() => ({
   class: { findMany: vi.fn() },
   classInstance: { findMany: vi.fn() },
+  tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
   memberRank: { findMany: vi.fn() },
   classRoster: { findMany: vi.fn(), groupBy: vi.fn() },
   member: { findFirst: vi.fn() },

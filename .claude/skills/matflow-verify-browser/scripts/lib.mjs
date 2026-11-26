@@ -140,6 +140,19 @@ export async function seedStaff(club, role, { name = `Fixture ${role}` } = {}) {
   return { id: rows[0].id, email, password: staffPass, secret, role, name };
 }
 
+/**
+ * Mark attendance (the 25 Nov 2026 register): choose a session in "Change class" by its start time and class name.
+ * The page opens on the session the server chooses; a journey that needs another one picks it here.
+ */
+export async function chooseRegisterClass(page, time, name, { timeout = 90000 } = {}) {
+  const change = page.getByRole("button", { name: "Change class" });
+  await change.waitFor({ timeout });
+  await change.click();
+  const dialog = page.getByRole("dialog", { name: "Change class" });
+  await dialog.locator("[data-session-id]").filter({ hasText: name }).filter({ hasText: time }).first().click();
+  await dialog.waitFor({ state: "detached" });
+}
+
 /** Any staff account through the real /login form; the authenticator step only when the server asks for it. */
 export async function staffSignIn(page, club, user) {
   await page.goto("/login");
@@ -251,23 +264,15 @@ export function gridInvariants(page, { sessions, grid: testId = "week-grid", wit
       }
     }
     const placed = chips.filter((c) => c.r && c.start !== null);
-    // Drawn level with an earlier class of its day: it starts on that class's line (the cell's own `data-row-start`), not its own time's.
-    const line = (c) => c.cell.getAttribute("data-row-start");
-    // The class it was levelled with may be folded behind a "+N more" that starts on the same line.
-    const pulled = (c) => placed.some((o) => o !== c && o.day === c.day && o.start < c.start && line(o) === line(c)) ||
-      [...grid.querySelectorAll("[data-cell-more]")].some((m) => m.closest("[data-day]")?.getAttribute("data-day") === c.day && m.getAttribute("data-row-start") === line(c));
+    // Every class on its own time's line (Noe, 25 Nov 2026): the same start is the same height on every day, by mat and
+    // by time, with no exception.
     for (let i = 0; i < placed.length; i++) {
       for (let j = i + 1; j < placed.length; j++) {
         const a = placed[i], b = placed[j];
         const [early, late] = a.start <= b.start ? [a, b] : [b, a];
-        // A class drawn level with an earlier one on at once (lib/timetable-grid `levelDay`) leaves its own time's
-        // line, so it is only compared with the classes of its own day.
-        if (a.day !== b.day && (pulled(a) || pulled(b))) continue;
         if (early.start === late.start && Math.abs(early.r.top - late.r.top) > 1) problems.push(`${early.label} and ${late.label}: same start, tops ${early.r.top.toFixed(1)} and ${late.r.top.toFixed(1)}`);
         if (late.start > early.start && late.r.top < early.r.top - 1) problems.push(`${late.label} starts later than ${early.label} but sits higher`);
-        // Levelling (lib/timetable-grid `levelDay`): on the same day, two classes on at once that start under half an hour apart may share a line.
-        const levelled = early.day === late.day && line(early) === line(late) && late.start - early.start < 30 && early.end !== null && late.start < early.end;
-        if (late.start - early.start > 10 && late.r.top <= early.r.top + 1 && !levelled) problems.push(`${late.label} starts over ten minutes after ${early.label} but is not lower`);
+        if (late.start - early.start > 10 && late.r.top <= early.r.top + 1) problems.push(`${late.label} starts over ten minutes after ${early.label} but is not lower`);
       }
     }
     // "+N more" buttons take a place on the grid like any chip: tall enough, inside their day, on top of nothing.
