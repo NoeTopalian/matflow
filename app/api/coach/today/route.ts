@@ -8,7 +8,7 @@ import { ensureTodayInstances } from "@/lib/today-sessions";
 import { liveClassWhere } from "@/lib/class-live";
 import { clubDateKey } from "@/lib/register-day";
 import { loadCovers } from "@/lib/session-cover";
-import { loadTeacherClashes } from "@/lib/session-clash";
+import { clashesForShown } from "@/lib/session-clash";
 import { isMySession, resolveSessionTeacher, staffCoachLine } from "@/lib/session-coach";
 
 export async function GET() {
@@ -62,6 +62,8 @@ export async function GET() {
         class: {
           select: {
             id: true, name: true, location: true, coachName: true, instructorId: true, coachUserId: true, maxCapacity: true, color: true,
+            // For the clash check (lib/session-clash.ts): on the timetable, and the length of a session with no end.
+            isActive: true, deletedAt: true, duration: true,
             // The linked staff coach, for who teaches the session (lib/session-coach.ts).
             coachUser: { select: { id: true, name: true, deactivatedAt: true } },
             // The mat it is on, and that mat's place in the club's order: the
@@ -81,8 +83,12 @@ export async function GET() {
     });
     // Session cover: who teaches each of today's sessions.
     const covers = await loadCovers(tx, tenantId, rows.map((r) => r.id));
-    // And one person shown on two overlapping sessions, one of them a cover (lib/session-clash.ts).
-    const clashes = await loadTeacherClashes(tx, tenantId, rows.map((r) => r.id), tz);
+    // And one person shown on two overlapping sessions, one of them a cover (lib/session-clash.ts): one query, the
+    // sessions and their covers being already read.
+    const clashes = await clashesForShown(tx, tenantId, rows.map((r) => {
+      const c = covers.get(r.id);
+      return { ...r, cover: c ? { status: c.status, coverUserId: c.coverUserId, coverUser: c.coverUserName ? { name: c.coverUserName } : null } : null };
+    }), tz);
     return { rows, tz, covers, clashes };
   });
 

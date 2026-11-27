@@ -71,7 +71,7 @@ const CLASH_SELECT = {
       mat: { select: { name: true } },
     },
   },
-  cover: { select: { status: true, coverUserId: true, coverUser: { select: { name: true } } } },
+  cover: { select: { status: true, coverUserId: true, needsReconfirm: true, coverUser: { select: { name: true } } } },
 } satisfies Prisma.ClassInstanceSelect;
 
 /** A session as the clash check reads it. */
@@ -133,14 +133,27 @@ export function clashesAmong(shown: ClashSession[], pool: ClashSession[], tz: st
  */
 export async function loadTeacherClashes(tx: Tx, tenantId: string, instanceIds: string[], tz?: string | null): Promise<Map<string, TeacherClash>> {
   if (instanceIds.length === 0) return new Map();
-  const live = { tenantId, isActive: true, deletedAt: null };
-  const shown = await tx.classInstance.findMany({
-    where: { id: { in: [...new Set(instanceIds)] }, isCancelled: false, class: live },
+  return clashesForShown(tx, tenantId, await loadClashSessions(tx, tenantId, instanceIds), tz);
+}
+
+/** These sessions of this club, not cancelled, of classes on the timetable, with class and cover row (one query). */
+export async function loadClashSessions(tx: Tx, tenantId: string, instanceIds: string[]) {
+  if (instanceIds.length === 0) return [];
+  return tx.classInstance.findMany({
+    where: { id: { in: [...new Set(instanceIds)] }, isCancelled: false, class: { tenantId, isActive: true, deletedAt: null } },
     select: CLASH_SELECT,
   });
+}
+
+/**
+ * The same, for a page that has already read its sessions (this club's, as ClashSession: class and cover included):
+ * one query, the pool, and only when one of them has a teacher.
+ */
+export async function clashesForShown(tx: Tx, tenantId: string, shown: ClashSession[], tz?: string | null): Promise<Map<string, TeacherClash>> {
+  const live = { tenantId, isActive: true, deletedAt: null };
   const teachers = new Set<string>();
   const coverCoaches = new Set<string>();
-  for (const s of shown) {
+  for (const s of shown.filter(onTimetable)) {
     const t = teacherOf(s);
     if (!t) continue;
     teachers.add(t.userId);

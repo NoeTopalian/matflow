@@ -18,7 +18,7 @@ import { usableTimezone } from "@/lib/class-time";
 import { liveClassWhere } from "@/lib/class-live";
 import { clubDayKey, parseDayKey, shiftDayKey } from "@/lib/club-month";
 import { clashLabel, resolveSessionTeacher, staffCoachLabel, type CoverSessionView, type CoverSnapshot, type TeacherClash } from "@/lib/session-coach";
-import { loadTeacherClashes } from "@/lib/session-clash";
+import { clashesForShown } from "@/lib/session-clash";
 import {
   COVER_SESSION_SELECT,
   COVER_STAFF_ROLES,
@@ -112,8 +112,13 @@ export async function GET(req: Request) {
       const extra = [...open, ...mine].map((r) => r.classInstance).filter((s): s is CoverSession => !!s);
       const shownIds = [...new Set([...ranged.map((s) => s.id), ...extra.map((s) => s.id)])];
       const covers = await loadCovers(tx, tenantId, shownIds);
-      // One person shown on two overlapping sessions, one of them a cover: flagged on both (lib/session-clash.ts).
-      const clashes = await loadTeacherClashes(tx, tenantId, shownIds, tz);
+      // One person shown on two overlapping sessions, one of them a cover: flagged on both (lib/session-clash.ts). One
+      // query: the sessions and their covers are already read.
+      const shown = [...new Map([...ranged, ...extra].map((s) => [s.id, s])).values()].map((s) => {
+        const c = covers.get(s.id);
+        return { ...s, cover: c ? { status: c.status, coverUserId: c.coverUserId, coverUser: c.coverUserName ? { name: c.coverUserName } : null } : null };
+      });
+      const clashes = await clashesForShown(tx, tenantId, shown, tz);
       const me = { userId, role };
       const v = (s: CoverSession) => view(s, covers.get(s.id), tz, now, me, clashes.get(s.id));
       const byTime = (a: CoverSessionView, b: CoverSessionView) => a.dayKey.localeCompare(b.dayKey) || a.startTime.localeCompare(b.startTime) || a.className.localeCompare(b.className);

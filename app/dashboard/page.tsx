@@ -19,9 +19,9 @@ import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
-import { clashLabel, resolveSessionTeacher, staffCoachLabel } from "@/lib/session-coach";
-import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
-import { loadTeacherClashes } from "@/lib/session-clash";
+import { clashLabel, resolveSessionTeacher, staffCoachLabel, type CoverSnapshot } from "@/lib/session-coach";
+import { sessionHasStarted } from "@/lib/session-cover";
+import { clashesForShown } from "@/lib/session-clash";
 import { usableTimezone } from "@/lib/class-time";
 import { clubDayKey, clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
 
@@ -93,18 +93,24 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
       // The linked staff coach, for the coach's name (lib/class-coach.ts resolveCoachName).
       class: { include: { coachUser: { select: { id: true, name: true, deactivatedAt: true } } } },
       _count: { select: { attendances: true } },
+      // Session cover: the session's cover row, read here rather than by a second query (the dashboard's one
+      // transaction has a 15 s budget, and from far away every query counts).
+      cover: { select: { status: true, coverUserId: true, needsReconfirm: true, coverUser: { select: { name: true } } } },
     },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
 
-  // Session cover: who teaches each dated session (lib/session-coach.ts, the one resolver), and one person shown on two
-  // overlapping sessions where one is a cover (lib/session-clash.ts).
-  const covers = await loadCovers(tx, tenantId, instances.map((i) => i.id));
-  const clashes = await loadTeacherClashes(tx, tenantId, instances.map((i) => i.id), timeZone);
+  // Session cover: who teaches each dated session (lib/session-coach.ts, the one resolver): an active cover row (open
+  // or covered), and one person shown on two overlapping sessions where one is a cover (lib/session-clash.ts, one query).
+  const coverOf = (inst: (typeof instances)[number]): CoverSnapshot | undefined =>
+    inst.cover && (inst.cover.status === "open" || inst.cover.status === "covered")
+      ? { status: inst.cover.status, coverUserId: inst.cover.coverUserId, coverUserName: inst.cover.coverUser?.name ?? null, needsReconfirm: inst.cover.needsReconfirm }
+      : undefined;
+  const clashes = await clashesForShown(tx, tenantId, instances, timeZone);
   const now = new Date();
 
   const teacher = (inst: (typeof instances)[number]) =>
-    resolveSessionTeacher(inst.class, covers.get(inst.id), { started: sessionHasStarted(inst, timeZone, now), clash: clashes.get(inst.id) });
+    resolveSessionTeacher(inst.class, coverOf(inst), { started: sessionHasStarted(inst, timeZone, now), clash: clashes.get(inst.id) });
 
   return instances.map((inst) => ({
     id: inst.id,
