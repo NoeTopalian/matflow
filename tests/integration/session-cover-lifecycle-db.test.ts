@@ -529,13 +529,16 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
     expect([member("R4 Created Class"), member("R4 Create Covered")]).toEqual([TBC, "Cal Create"]);
   }, 240_000);
 
-  it("round 4: back to back is not flagged, nor two classes of the same regular coach at once", async () => {
+  it("round 4: back to back (one ends as the other starts) is not flagged", async () => {
     expect((await cover(ids.bbYS, owner(), { action: "assign", coachUserId: ids.bea })).status).toBe(200);
     const b2b = await staffDay(R4(3));
     expect(b2b(ids.bbXS)).toEqual({ coach: "Bea Back", clash: null });
     expect(b2b(ids.bbYS)).toEqual({ coach: "Covered by Bea Back", clash: null });
     const b2bMember = await memberDay(R4(3));
     expect([b2bMember("R4 B2B Own"), b2bMember("R4 B2B Covered")]).toEqual(["Bea Back", "Bea Back"]);
+  }, 240_000);
+
+  it("round 4: two classes of the same regular coach at once (no cover) are not flagged", async () => {
     const twice = await staffDay(R4(4));
     expect(twice(ids.rrAS)).toEqual({ coach: "Reg Twice", clash: null });
     expect(twice(ids.rrBS)).toEqual({ coach: "Reg Twice", clash: null });
