@@ -23,7 +23,7 @@ vi.mock("@/lib/api-authz", () => {
     if (!who) throw new Error("no identity queued for this request");
     return { ok: true, tenantId: state.tenantId, userId: who.userId, role: who.role, session: { user: { id: who.userId, role: who.role, tenantId: state.tenantId } } };
   };
-  return { requireApiStaff: vi.fn(next), requireApiOwnerOrManager: vi.fn(next) };
+  return { requireApiStaff: vi.fn(next), requireApiOwnerOrManager: vi.fn(next), requireApiOwner: vi.fn(next) };
 });
 
 import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
@@ -34,10 +34,16 @@ import { DELETE as staffDELETE } from "@/app/api/staff/[id]/route";
 import { GET as memberSchedule } from "@/app/api/member/schedule/route";
 import { GET as memberHome } from "@/app/api/member/home/route";
 import { GET as memberChildren } from "@/app/api/member/me/children/route";
+import { GET as coverBoard } from "@/app/api/coach/cover/route";
+import { GET as coachToday } from "@/app/api/coach/today/route";
+import { PATCH as instancePATCH } from "@/app/api/classes/[id]/instances/[instanceId]/route";
+import { POST as classPOST } from "@/app/api/classes/route";
+import { POST as undoPOST } from "@/app/api/audit-log/[id]/undo/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const STAMP = Date.now();
 const thu = (n: number) => new Date(Date.UTC(2033, 2, 3 + 7 * n)); // Thursdays from 3 March 2033
+const R4 = (n: number) => new Date(Date.UTC(2034, 0, 5 + 7 * n)); // Thursdays from 5 January 2034 (GMT: wall clock = UTC)
 const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const TODAY = new Date(`${todayKey}T00:00:00Z`);
 const NEXT_THU = (() => { const d = new Date(TODAY); const dow = d.getUTCDay(); d.setUTCDate(d.getUTCDate() + (((4 - dow + 7) % 7) || 7)); return d; })();
@@ -74,6 +80,32 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
       const t = resolveSessionTeacher(inst!.class, covers.get(instanceId) ?? null, { started: sessionHasStarted(inst!, "Europe/London") });
       return { staff: staffCoachLabel(t), member: memberCoachLabel(t) };
     });
+
+  // Round 4: the real payloads. Staff: GET /api/coach/cover (the cover board and the staff timetable read it).
+  // Members: GET /api/member/schedule for that date.
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const dayName = (d: Date) => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(d);
+  const flag = (who: string, cls: string, d: Date, time: string, place: string) => `Clash: ${who} is also teaching ${cls} on ${dayName(d)}, ${time}, ${place}`;
+  const staffDay = async (d: Date, who: { userId: string; role: string } = owner()) => {
+    state.queue.push(who);
+    const r = await call(coverBoard(new Request(`http://test/api/coach/cover?from=${ymd(d)}&days=1`)));
+    expect(r.status).toBe(200);
+    const byId = new Map(((r.body as Json).sessions as Json[]).map((s) => [s.id as string, s]));
+    return (id: string) => {
+      const s = byId.get(id);
+      expect(s, `session ${id} on the cover board`).toBeTruthy();
+      return { coach: s!.coachLabel, clash: s!.clashLabel };
+    };
+  };
+  const memberDay = async (d: Date) => {
+    state.who = { id: `member-user-${STAMP}`, role: "member", tenantId: state.tenantId, memberId: ids.parent, name: "Parent Synthetic" };
+    const r = await call(memberSchedule(new Request(`http://test/api/member/schedule?date=${ymd(d)}`)));
+    state.who = null;
+    expect(r.status).toBe(200);
+    return (name: string) => (r.body as Json[]).find((c) => c.name === name)?.coach;
+  };
+  const sessionOf = (classId: string, d: Date) =>
+    withRlsBypass(async (tx) => (await tx.classInstance.findFirst({ where: { classId, date: d, class: { tenantId: state.tenantId } }, select: { id: true } }))?.id ?? "");
 
   beforeAll(async () => {
     await withRlsBypass(async (tx) => {
@@ -156,8 +188,57 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
       ids.otherS = (await tx.classInstance.create({ data: { classId: otherClass, date: thu(4), startTime: "19:00", endTime: "20:00" } })).id;
       await user("otherOwner", "Other Owner", "owner", ids.otherTenant);
       await tx.sessionCover.create({ data: { tenantId: ids.otherTenant, classInstanceId: ids.otherS, status: "covered", coverUserId: ids.stranger, requestedById: ids.otherOwner } });
-    }, { timeout: 150_000 }); // ~100 inserts: past the default 15 s budget at the test branch's latency from Bali
-  }, 240_000);
+
+      // Round 4 (review of 121529e4): one person shown on two overlapping sessions, one of them a cover. Each case has
+      // its own coach, so no case depends on another. Every class has its Thursday slot, so the member schedule lists it.
+      for (const [key, name] of [["ada", "Ada Regular"], ["pia", "Pia Leaving"], ["cora", "Cora Move"], ["eli", "Eli Extend"], ["rhea", "Rhea Restore"], ["remy", "Remy Resume"], ["una", "Una Undo"], ["cal", "Cal Create"], ["bea", "Bea Back"], ["reg", "Reg Twice"], ["wes", "Wes Twice"], ["wyn", "Wyn Covering"], ["otto", "Otto Clubs"]]) {
+        await user(key, name, "coach");
+      }
+      const r4 = async (key: string, name: string, location: string, coachUserId: string | null, date: Date | null, startTime: string, endTime: string, tenantId = state.tenantId, isActive = true) => {
+        ids[key] = (await tx.class.create({ data: { tenantId, name, location, coachUserId, duration: 60, isActive, schedules: { create: [{ dayOfWeek: 4, startTime, endTime }] } } })).id;
+        if (date) ids[`${key}S`] = (await tx.classInstance.create({ data: { classId: ids[key], date, startTime, endTime } })).id;
+      };
+      // Should-fix 1: Ada's Mat 1 class and the simultaneous Mat 2 session.
+      await r4("sf1Own", "R4 Ada Mat 1", "Mat 1", ids.ada, R4(0), "19:00", "20:30");
+      await r4("sf1Else", "R4 Ada Mat 2", "Mat 2", null, R4(0), "19:00", "20:30");
+      // Should-fix 2, within the rolling window (a slot edit, a resume and a new class mint there).
+      await r4("mvX", "R4 Move Own", "Mat 21", ids.cora, NEXT_THU, "19:00", "20:00");
+      await r4("mvY", "R4 Move Covered", "Mat 22", null, NEXT_THU, "20:00", "21:00");
+      await r4("exX", "R4 Extend Own", "Mat 23", ids.eli, NEXT_THU, "17:00", "18:00");
+      await r4("exY", "R4 Extend Covered", "Mat 24", null, NEXT_THU, "18:00", "19:00");
+      await r4("reX", "R4 Resume Coach Change", "Mat 27", ids.kim, null, "15:00", "16:00", state.tenantId, false);
+      await r4("reX2", "R4 Resume Same Coach", "Mat 28", ids.remy, null, "15:00", "16:00", state.tenantId, false);
+      await r4("reY", "R4 Resume Covered", "Mat 29", null, NEXT_THU, "15:30", "16:30");
+      await r4("crY", "R4 Create Covered", "Mat 32", null, NEXT_THU, "12:00", "13:00");
+      // Should-fix 2, far ahead.
+      await r4("rsX", "R4 Restore Own", "Mat 25", ids.rhea, R4(1), "19:00", "20:30");
+      await r4("rsY", "R4 Restore Covered", "Mat 26", null, R4(1), "19:00", "20:30");
+      await r4("unX", "R4 Undo Own", "Mat 30", ids.una, R4(2), "19:00", "20:30");
+      await r4("unY", "R4 Undo Covered", "Mat 31", null, R4(2), "19:00", "20:30");
+      // No flag: back to back, and two classes of the same regular coach at once.
+      await r4("bbX", "R4 B2B Own", "Mat 34", ids.bea, R4(3), "20:00", "21:00");
+      await r4("bbY", "R4 B2B Covered", "Mat 35", null, R4(3), "19:00", "20:00");
+      await r4("rrA", "R4 Twice A", "Mat 36", ids.reg, R4(4), "19:00", "20:30");
+      await r4("rrB", "R4 Twice B", "Mat 37", ids.reg, R4(4), "19:00", "20:30");
+      // Nit 1: Withdraw/Return on an open row.
+      await r4("wdA", "R4 Withdraw Kids", "Mat 38", ids.wes, R4(5), "19:00", "20:30");
+      await r4("wdB", "R4 Withdraw Adults", "Mat 39", ids.wes, R4(5), "19:00", "20:30");
+      await r4("wrX", "R4 Refuse Own", "Mat 40", ids.wyn, R4(6), "19:00", "20:30");
+      await r4("wrY", "R4 Refuse Covered", "Mat 41", null, R4(6), "19:00", "20:30");
+      // As a deactivation leaves it (the blocker-1 state): Wyn's own class has an open request, and Wyn covers the
+      // simultaneous session. Written directly: no single cover action can make it.
+      await tx.sessionCover.create({ data: { tenantId: state.tenantId, classInstanceId: ids.wrXS, status: "open", requestedById: ids.owner } });
+      await tx.sessionCover.create({ data: { tenantId: state.tenantId, classInstanceId: ids.wrYS, status: "covered", coverUserId: ids.wyn, requestedById: ids.owner } });
+      // Another club at the same times: Otto's clash here must not reach it, and its rows must not reach Otto's views.
+      await r4("ocX", "R4 Otto Own", "Mat 42", ids.otto, R4(7), "19:00", "20:30");
+      await r4("ocY", "R4 Otto Covered", "Mat 43", null, R4(7), "19:00", "20:30");
+      await tx.sessionCover.create({ data: { tenantId: state.tenantId, classInstanceId: ids.ocYS, status: "covered", coverUserId: ids.otto, requestedById: ids.owner } });
+      await r4("ocOther", "R4 Other Club Own", "Mat 1", ids.stranger, R4(7), "19:00", "20:30", ids.otherTenant);
+      // A row only an unscoped query could pick up: the other club's earlier session "covered" by Otto.
+      await r4("ocTrap", "R4 Other Club Trap", "Mat 2", null, R4(7), "18:30", "19:30", ids.otherTenant);
+      await tx.sessionCover.create({ data: { tenantId: ids.otherTenant, classInstanceId: ids.ocTrapS, status: "covered", coverUserId: ids.otto, requestedById: ids.otherOwner } });
+    }, { timeout: 240_000 }); // ~150 inserts: past the default 15 s budget at the test branch's latency from Bali
+  }, 300_000);
 
   afterAll(async () => {
     if (!state.tenantId) return;
@@ -176,6 +257,8 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
       await tx.member.deleteMany({ where: { tenantId } });
       await tx.user.deleteMany({ where: { tenantId: { in: [tenantId, ids.otherTenant] } } });
       await tx.tenant.deleteMany({ where: { id: { in: [tenantId, ids.otherTenant] } } });
+      // The undo route's rate-limit hits for this club (round 4).
+      await tx.rateLimitHit.deleteMany({ where: { bucket: `audit-undo:${tenantId}` } });
     });
   }, 120_000);
 
@@ -359,4 +442,172 @@ describe.skipIf(!HAS_DB)("session cover — class, session and coach changes; me
     expect((await patchClass(ids.cown, { coachUserId: ids.vic })).status).toBe(200);
     expect(await labels(ids.cownS)).toEqual({ staff: "Covered by Sam Cover", member: "Sam Cover" });
   }, 180_000);
+
+  // ── Round 4 (review of 121529e4) ──────────────────────────────────────────────────────────────────────────────
+  // One person shown on two overlapping sessions, one of them a cover, flagged at read time however it arose. Each
+  // case asserts the staff payload on BOTH sessions and what members read.
+  const TBC = "Coach to be confirmed";
+
+  it("round 4, should-fix 2: a weekly-slot move with the same coach onto a session they cover is flagged on both", async () => {
+    expect((await cover(ids.mvYS, owner(), { action: "assign", coachUserId: ids.cora })).status).toBe(200); // back to back: allowed
+    expect((await patchClass(ids.mvX, { name: "R4 Move Own", schedules: [{ dayOfWeek: 4, startTime: "20:00", endTime: "21:00" }] })).status).toBe(200);
+    const moved = await sessionOf(ids.mvX, NEXT_THU);
+    expect(moved).not.toBe("");
+    const staff = await staffDay(NEXT_THU);
+    expect(staff(moved)).toEqual({ coach: TBC, clash: flag("Cora Move", "R4 Move Covered", NEXT_THU, "20:00–21:00", "Mat 22") });
+    expect(staff(ids.mvYS)).toEqual({ coach: "Covered by Cora Move", clash: flag("Cora Move", "R4 Move Own", NEXT_THU, "20:00–21:00", "Mat 21") });
+    const member = await memberDay(NEXT_THU);
+    expect([member("R4 Move Own"), member("R4 Move Covered")]).toEqual([TBC, "Cora Move"]);
+  }, 240_000);
+
+  it("round 4, should-fix 2: an end-time extension into a session the coach covers is flagged on both", async () => {
+    expect((await cover(ids.exYS, owner(), { action: "assign", coachUserId: ids.eli })).status).toBe(200); // back to back: allowed
+    expect((await patchClass(ids.exX, { name: "R4 Extend Own", schedules: [{ dayOfWeek: 4, startTime: "17:00", endTime: "18:30" }] })).status).toBe(200);
+    const staff = await staffDay(NEXT_THU);
+    expect(staff(ids.exXS)).toEqual({ coach: TBC, clash: flag("Eli Extend", "R4 Extend Covered", NEXT_THU, "18:00–19:00", "Mat 24") });
+    expect(staff(ids.exYS)).toEqual({ coach: "Covered by Eli Extend", clash: flag("Eli Extend", "R4 Extend Own", NEXT_THU, "17:00–18:30", "Mat 23") });
+    const member = await memberDay(NEXT_THU);
+    expect([member("R4 Extend Own"), member("R4 Extend Covered")]).toEqual([TBC, "Eli Extend"]);
+  }, 240_000);
+
+  it("round 4, should-fix 2: restoring a cancelled session that overlaps a claimed cover is flagged on both", async () => {
+    const inst = (isCancelled: boolean) => { state.queue.push(owner()); return call(instancePATCH(new Request(`http://test/api/classes/${ids.rsX}/instances/${ids.rsXS}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ isCancelled }) }), { params: Promise.resolve({ id: ids.rsX, instanceId: ids.rsXS }) })); };
+    expect((await inst(true)).status).toBe(200);
+    expect((await cover(ids.rsYS, owner(), { action: "request" })).status).toBe(200);
+    expect((await cover(ids.rsYS, { userId: ids.rhea, role: "coach" }, { action: "claim" })).status).toBe(200); // her own session is cancelled
+    expect((await inst(false)).status).toBe(200);
+    const staff = await staffDay(R4(1));
+    expect(staff(ids.rsXS)).toEqual({ coach: TBC, clash: flag("Rhea Restore", "R4 Restore Covered", R4(1), "19:00–20:30", "Mat 26") });
+    expect(staff(ids.rsYS)).toEqual({ coach: "Covered by Rhea Restore", clash: flag("Rhea Restore", "R4 Restore Own", R4(1), "19:00–20:30", "Mat 25") });
+    const member = await memberDay(R4(1));
+    expect([member("R4 Restore Own"), member("R4 Restore Covered")]).toEqual([TBC, "Rhea Restore"]);
+  }, 240_000);
+
+  it("round 4, item 2 and should-fix 2: resume with a coach change checks the sessions the resume mints; a plain resume is flagged", async () => {
+    expect((await cover(ids.reYS, owner(), { action: "assign", coachUserId: ids.remy })).status).toBe(200);
+    // Paused beyond the window (no sessions), resumed and given Remy in one PATCH: the minted session would overlap.
+    const r = await patchClass(ids.reX, { isActive: true, coachUserId: ids.remy });
+    expect(r).toMatchObject({ status: 409, body: { reason: "coach_cover_clash", conflict: { instanceId: ids.reYS, className: "R4 Resume Covered" } } });
+    expect(await withRlsBypass((tx) => tx.class.findFirst({ where: { id: ids.reX }, select: { isActive: true, coachUserId: true } }))).toEqual({ isActive: false, coachUserId: ids.kim });
+    expect(await withRlsBypass((tx) => tx.classInstance.count({ where: { classId: ids.reX } }))).toBe(0);
+    // A class Remy already heads, resumed: allowed (the class form allows it), and flagged where it is shown.
+    expect((await patchClass(ids.reX2, { isActive: true })).status).toBe(200);
+    const minted = await sessionOf(ids.reX2, NEXT_THU);
+    expect(minted).not.toBe("");
+    const staff = await staffDay(NEXT_THU);
+    expect(staff(minted)).toEqual({ coach: TBC, clash: flag("Remy Resume", "R4 Resume Covered", NEXT_THU, "15:30–16:30", "Mat 29") });
+    expect(staff(ids.reYS)).toEqual({ coach: "Covered by Remy Resume", clash: flag("Remy Resume", "R4 Resume Same Coach", NEXT_THU, "15:00–16:00", "Mat 28") });
+    const member = await memberDay(NEXT_THU);
+    expect([member("R4 Resume Same Coach"), member("R4 Resume Covered")]).toEqual([TBC, "Remy Resume"]);
+  }, 240_000);
+
+  it("round 4, should-fix 2: an undo that puts the regular coach back while they cover an overlapping session is flagged on both", async () => {
+    expect((await patchClass(ids.unX, { coachUserId: ids.kim })).status).toBe(200);
+    expect((await cover(ids.unYS, owner(), { action: "assign", coachUserId: ids.una })).status).toBe(200); // no longer Una's class
+    const row = await withRlsBypass((tx) => tx.auditLog.findFirst({ where: { tenantId: state.tenantId, action: "class.updated", entityId: ids.unX }, orderBy: { createdAt: "desc" }, select: { id: true } }));
+    state.queue.push(owner());
+    const u = await call(undoPOST(new Request(`http://test/api/audit-log/${row!.id}/undo`, { method: "POST" }), { params: Promise.resolve({ id: row!.id }) }));
+    expect(u.status).toBe(200);
+    expect((await withRlsBypass((tx) => tx.class.findFirst({ where: { id: ids.unX }, select: { coachUserId: true } })))?.coachUserId).toBe(ids.una);
+    const staff = await staffDay(R4(2));
+    expect(staff(ids.unXS)).toEqual({ coach: TBC, clash: flag("Una Undo", "R4 Undo Covered", R4(2), "19:00–20:30", "Mat 31") });
+    expect(staff(ids.unYS)).toEqual({ coach: "Covered by Una Undo", clash: flag("Una Undo", "R4 Undo Own", R4(2), "19:00–20:30", "Mat 30") });
+    const member = await memberDay(R4(2));
+    expect([member("R4 Undo Own"), member("R4 Undo Covered")]).toEqual([TBC, "Una Undo"]);
+  }, 240_000);
+
+  it("round 4, should-fix 2: a new class whose coach covers an overlapping session is flagged on both", async () => {
+    expect((await cover(ids.crYS, owner(), { action: "assign", coachUserId: ids.cal })).status).toBe(200);
+    const created = await asOwner(() => call(classPOST(new Request("http://test/api/classes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "R4 Created Class", location: "Mat 33", duration: 60, coachUserId: ids.cal, schedules: [{ dayOfWeek: 4, startTime: "12:30", endTime: "13:30" }] }) }))));
+    expect(created.status).toBe(201);
+    const s = await sessionOf(String((created.body as Json).id), NEXT_THU);
+    expect(s).not.toBe("");
+    const staff = await staffDay(NEXT_THU);
+    expect(staff(s)).toEqual({ coach: TBC, clash: flag("Cal Create", "R4 Create Covered", NEXT_THU, "12:00–13:00", "Mat 32") });
+    expect(staff(ids.crYS)).toEqual({ coach: "Covered by Cal Create", clash: flag("Cal Create", "R4 Created Class", NEXT_THU, "12:30–13:30", "Mat 33") });
+    const member = await memberDay(NEXT_THU);
+    expect([member("R4 Created Class"), member("R4 Create Covered")]).toEqual([TBC, "Cal Create"]);
+  }, 240_000);
+
+  it("round 4: back to back is not flagged, nor two classes of the same regular coach at once", async () => {
+    expect((await cover(ids.bbYS, owner(), { action: "assign", coachUserId: ids.bea })).status).toBe(200);
+    const b2b = await staffDay(R4(3));
+    expect(b2b(ids.bbXS)).toEqual({ coach: "Bea Back", clash: null });
+    expect(b2b(ids.bbYS)).toEqual({ coach: "Covered by Bea Back", clash: null });
+    const b2bMember = await memberDay(R4(3));
+    expect([b2bMember("R4 B2B Own"), b2bMember("R4 B2B Covered")]).toEqual(["Bea Back", "Bea Back"]);
+    const twice = await staffDay(R4(4));
+    expect(twice(ids.rrAS)).toEqual({ coach: "Reg Twice", clash: null });
+    expect(twice(ids.rrBS)).toEqual({ coach: "Reg Twice", clash: null });
+    const member = await memberDay(R4(4));
+    expect([member("R4 Twice A"), member("R4 Twice B")]).toEqual(["Reg Twice", "Reg Twice"]);
+  }, 240_000);
+
+  it("round 4: another club at the same times is untouched, and its rows never reach this club's flags", async () => {
+    const ours = await staffDay(R4(7));
+    expect(ours(ids.ocXS)).toEqual({ coach: TBC, clash: flag("Otto Clubs", "R4 Otto Covered", R4(7), "19:00–20:30", "Mat 43") });
+    expect(ours(ids.ocYS)).toEqual({ coach: "Covered by Otto Clubs", clash: flag("Otto Clubs", "R4 Otto Own", R4(7), "19:00–20:30", "Mat 42") });
+    const home = state.tenantId;
+    state.tenantId = ids.otherTenant;
+    try {
+      const theirs = await staffDay(R4(7), { userId: ids.otherOwner, role: "owner" });
+      expect(theirs(ids.ocOtherS)).toEqual({ coach: "Stranger Coach", clash: null });
+      expect(theirs(ids.ocTrapS).clash).toBeNull();
+    } finally {
+      state.tenantId = home;
+    }
+  }, 240_000);
+
+  it("round 4, nit 1: Withdraw and Return of an open request are allowed when the regular coach only heads a simultaneous class, refused when they cover one", async () => {
+    // Wes heads both Kids and Adults at 19:00 (the class form allows it).
+    for (const action of ["withdraw", "return"]) {
+      expect((await cover(ids.wdAS, owner(), { action: "request" })).status, `request before ${action}`).toBe(200);
+      expect((await cover(ids.wdAS, owner(), { action })).status, action).toBe(200);
+      expect(await coverRow(ids.wdAS)).toMatchObject({ status: action === "withdraw" ? "withdrawn" : "closed", coverUserId: null });
+    }
+    // Wyn's open request while Wyn covers the simultaneous session: still refused, by name, and flagged on both.
+    for (const action of ["withdraw", "return"]) {
+      const r = await cover(ids.wrXS, owner(), { action });
+      expect(r, action).toMatchObject({ status: 409, body: { code: "REGULAR_COACH_BUSY", conflict: { instanceId: ids.wrYS, className: "R4 Refuse Covered" } } });
+    }
+    expect(await coverRow(ids.wrXS)).toMatchObject({ status: "open", coverUserId: null });
+    const staff = await staffDay(R4(6));
+    expect(staff(ids.wrXS)).toEqual({ coach: "Cover needed · Wyn Covering away", clash: flag("Wyn Covering", "R4 Refuse Covered", R4(6), "19:00–20:30", "Mat 41") });
+    expect(staff(ids.wrYS)).toEqual({ coach: "Covered by Wyn Covering", clash: flag("Wyn Covering", "R4 Refuse Own", R4(6), "19:00–20:30", "Mat 40") });
+  }, 240_000);
+
+  // Last: it moves the clock past the session's start.
+  it("round 4, should-fix 1: a request reopened by a deactivation never shows its regular coach once the session starts", async () => {
+    expect((await cover(ids.sf1OwnS, owner(), { action: "assign", coachUserId: ids.pia })).status).toBe(200);
+    // Pia covers Ada's Mat 1, so Ada is free to cover Mat 2 at the same time.
+    expect((await cover(ids.sf1ElseS, owner(), { action: "request" })).status).toBe(200);
+    expect((await cover(ids.sf1ElseS, { userId: ids.ada, role: "coach" }, { action: "claim" })).status).toBe(200);
+    expect((await deactivate(ids.pia)).status).toBe(200);
+    expect(await coverRow(ids.sf1OwnS)).toMatchObject({ status: "open", coverUserId: null });
+    const mat1 = flag("Ada Regular", "R4 Ada Mat 2", R4(0), "19:00–20:30", "Mat 2");
+    const mat2 = flag("Ada Regular", "R4 Ada Mat 1", R4(0), "19:00–20:30", "Mat 1");
+    // Before the start: Cover needed, flagged.
+    const before = await staffDay(R4(0));
+    expect(before(ids.sf1OwnS)).toEqual({ coach: "Cover needed · Ada Regular away", clash: mat1 });
+    expect(before(ids.sf1ElseS)).toEqual({ coach: "Covered by Ada Regular", clash: mat2 });
+    // Nobody acts. At 19:10 on that Thursday (GMT) both sessions are under way.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(`${ymd(R4(0))}T19:10:00Z`));
+    try {
+      const during = await staffDay(R4(0));
+      expect(during(ids.sf1OwnS)).toEqual({ coach: TBC, clash: mat1 });
+      expect(during(ids.sf1ElseS)).toEqual({ coach: "Covered by Ada Regular", clash: mat2 });
+      const member = await memberDay(R4(0));
+      expect([member("R4 Ada Mat 1"), member("R4 Ada Mat 2")]).toEqual([TBC, "Ada Regular"]);
+      // Ada's own list (Mark attendance): both are still hers, each with the flag.
+      state.queue.push({ userId: ids.ada, role: "coach" });
+      const today = await call(coachToday());
+      expect(today.status).toBe(200);
+      const row = (id: string) => (today.body as Json[]).find((s) => s.id === id);
+      expect(row(ids.sf1OwnS)).toMatchObject({ isMine: true, coachName: `${TBC} · ${mat1}` });
+      expect(row(ids.sf1ElseS)).toMatchObject({ isMine: true, coachName: `Covered by Ada Regular · ${mat2}` });
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 300_000);
 });

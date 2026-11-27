@@ -25,9 +25,12 @@
  * is shown as teaching and whose "Yours" highlight the session carries.
  */
 import { Prisma } from "@prisma/client";
-import { dayMarkerUtc, formatTimeRange, sessionBounds, usableTimezone } from "@/lib/class-time";
+import { dayMarkerUtc, sessionBounds, usableTimezone } from "@/lib/class-time";
 import { logAuditStrict } from "@/lib/audit-log";
 import { memberCoachLabel, resolveSessionTeacher, type CoverSnapshot } from "@/lib/session-coach";
+import { boundsOf, describeSession, loadTeacherClashes, sessionDayLabel, sessionPlace } from "@/lib/session-clash";
+
+export { describeSession, sessionDayLabel, sessionPlace };
 
 type Tx = Prisma.TransactionClient;
 
@@ -79,11 +82,6 @@ const SESSION_SELECT = {
 export type CoverSession = Prisma.ClassInstanceGetPayload<{ select: typeof SESSION_SELECT }>;
 export const COVER_SESSION_SELECT = SESSION_SELECT;
 
-/** "Thursday 3 December" — a session's club date (its `date` is a calendar-day marker, read in UTC). */
-export function sessionDayLabel(date: Date): string {
-  return new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(dayMarkerUtc(date));
-}
-
 /** "Thursday" — the weekday of a session's club date. */
 export function sessionWeekday(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: "UTC" }).format(dayMarkerUtc(date));
@@ -92,25 +90,6 @@ export function sessionWeekday(date: Date): string {
 /** "2026-12-03" — a session's club date as a key. */
 export function sessionDayKey(date: Date): string {
   return dayMarkerUtc(date).toISOString().slice(0, 10);
-}
-
-/** The session's place: its mat, else the typed place. */
-export function sessionPlace(s: Pick<CoverSession, "class">): string | null {
-  return s.class.mat?.name ?? (s.class.location?.trim() || null);
-}
-
-/** "Thursday 3 December, 19:00–20:30, Mat 2" — how every cover message names a session. */
-export function describeSession(s: Pick<CoverSession, "date" | "startTime" | "endTime" | "class">): string {
-  const place = sessionPlace(s);
-  return `${sessionDayLabel(s.date)}, ${formatTimeRange(s.startTime, s.endTime)}${place ? `, ${place}` : ""}`;
-}
-
-/** Start and end instants; a session with no recorded end lasts its class's duration (a moment when that is unknown too). */
-function boundsOf(s: Pick<CoverSession, "date" | "startTime" | "endTime" | "class">, tz: string): { start: number; end: number } {
-  const b = sessionBounds(s, tz);
-  const start = b.start.getTime();
-  const end = b.end?.getTime() ?? start + (s.class.duration ?? 0) * 60_000;
-  return { start, end: Math.max(end, start + 1) };
 }
 
 export function sessionHasStarted(s: Pick<CoverSession, "date" | "startTime" | "endTime">, tz: string, now: Date = new Date()): boolean {
@@ -124,6 +103,7 @@ export type CoverConflict = { instanceId: string; className: string; label: stri
  * (Class.coachUserId) or a session they cover, not cancelled, of a class on the timetable. Their own class's
  * session that someone else has accepted cover for does not count — they are not teaching it. Club-day arithmetic
  * is sessionBounds' (the club's wall clock; an end at or before the start runs into the next day).
+ * `coverOnly`: count only sessions the coach covers, not their own classes (Withdraw or Return of an open request).
  */
 export async function findCoverOverlap(
   tx: Tx,
@@ -131,10 +111,12 @@ export async function findCoverOverlap(
   tz: string,
   coachUserId: string,
   target: CoverSession,
+  opts: { coverOnly?: boolean } = {},
 ): Promise<CoverConflict | null> {
   const mine = boundsOf(target, tz);
   const marker = dayMarkerUtc(target.date).getTime();
   const DAY = 86_400_000;
+  const covering = { cover: { is: { tenantId, status: "covered", coverUserId: coachUserId } } };
   const candidates = await tx.classInstance.findMany({
     where: {
       id: { not: target.id },
@@ -142,13 +124,14 @@ export async function findCoverOverlap(
       // The day before to the day after: an overnight session can reach into the target's day.
       date: { gte: new Date(marker - DAY - DAY / 2), lt: new Date(marker + DAY + DAY / 2) },
       class: { tenantId, isActive: true, deletedAt: null },
-      OR: [{ class: { coachUserId } }, { cover: { is: { tenantId, status: "covered", coverUserId: coachUserId } } }],
+      OR: opts.coverOnly ? [covering] : [{ class: { coachUserId } }, covering],
     },
     select: { ...SESSION_SELECT, cover: { select: { status: true, coverUserId: true } } },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
   for (const c of candidates) {
     if (c.cover?.status === "covered" && c.cover.coverUserId !== coachUserId) continue;
+    if (opts.coverOnly && !(c.cover?.status === "covered" && c.cover.coverUserId === coachUserId)) continue;
     const theirs = boundsOf(c, tz);
     if (theirs.start < mine.end && mine.start < theirs.end) {
       return { instanceId: c.id, className: c.class.name, label: describeSession(c) };
@@ -174,8 +157,9 @@ export async function loadCovers(tx: Tx, tenantId: string, instanceIds: string[]
 
 /**
  * For member screens that list dated sessions: the coach label a session's ACTIVE cover gives it ("Coach to be
- * confirmed", or the confirmed covering coach), by session id. A session with no active cover is not in the map,
- * so the screen keeps the coach it already showed.
+ * confirmed", or the confirmed covering coach), or that a clash gives it (lib/session-clash.ts: "Coach to be
+ * confirmed" on the regular coach's side), by session id. A session with neither is not in the map, so the screen
+ * keeps the coach it already showed.
  */
 export async function memberCoverLabels(
   tx: Tx,
@@ -185,14 +169,16 @@ export async function memberCoverLabels(
   const out = new Map<string, string | null>();
   const live = sessions.filter((s) => !s.isCancelled);
   const covers = await loadCovers(tx, tenantId, live.map((s) => s.id));
-  if (covers.size === 0) return out;
+  const clashes = await loadTeacherClashes(tx, tenantId, live.map((s) => s.id));
+  if (covers.size === 0 && clashes.size === 0) return out;
   const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   const tz = usableTimezone(club?.timezone);
   const now = new Date();
   for (const s of live) {
     const cover = covers.get(s.id);
-    if (!cover) continue;
-    out.set(s.id, memberCoachLabel(resolveSessionTeacher(s.class, cover, { started: sessionHasStarted(s, tz, now) })));
+    const clash = clashes.get(s.id);
+    if (!cover && !clash) continue;
+    out.set(s.id, memberCoachLabel(resolveSessionTeacher(s.class, cover, { started: sessionHasStarted(s, tz, now), clash })));
   }
   return out;
 }
@@ -385,10 +371,13 @@ export async function applyCoverAction(tx: Tx, actor: CoverActor, instanceId: st
    * the row's status: an OPEN row can be one a deactivation reopened (reopenCoversOfDeactivatedCoach) after the regular
    * coach, free while someone else covered, claimed an overlapping session; withdrawing or returning it would then
    * double-book them silently (review of 7d7b17df, blocker 1). The regular coach's advisory lock was taken at level 1.
+   * For an OPEN row only the sessions the regular coach covers count (review of 121529e4, nit 1): with the request
+   * open they were already its teacher, so another class they head at the same time is the regular-versus-regular
+   * overlap the class form allows, and Withdraw or Return changes nothing about it.
    */
   const regularBusy = async (what: string): Promise<CoverOutcome | null> => {
     if (!regularId || regularId === row?.coverUserId) return null;
-    const clash = await findCoverOverlap(tx, tenantId, tz, regularId, session);
+    const clash = await findCoverOverlap(tx, tenantId, tz, regularId, session, { coverOnly: row?.status === "open" });
     if (!clash) return null;
     const regularName = session.class.coachUser?.name ?? "The regular coach";
     return refuse(409, "REGULAR_COACH_BUSY", `${what} would put ${regularName} back on this class while they teach ${clash.className} on ${clash.label}. Choose another coach with Replace, or change that session first.`, clash);

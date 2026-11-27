@@ -24,6 +24,7 @@ import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
 import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
 import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import type { ScheduleEligibility } from "@/lib/member-home";
@@ -143,13 +144,16 @@ export async function GET(req: Request) {
           coverDay = startOfDay.getUTCDay();
           const live = instances.filter((i) => !i.isCancelled);
           const covers = await loadCovers(tx, session.user.tenantId, live.map((i) => i.id));
+          // One person is never shown on two overlapping sessions (lib/session-clash.ts).
+          const clashes = await loadTeacherClashes(tx, session.user.tenantId, live.map((i) => i.id), zone);
           const byId = new Map(cls.map((c) => [c.id, c]));
           const now = new Date();
           for (const inst of live) {
             const cover = covers.get(inst.id);
+            const clash = clashes.get(inst.id);
             const c = byId.get(inst.classId);
-            if (!cover || !c) continue;
-            coverCoach.set(`${inst.classId}-${inst.startTime}`, memberCoachLabel(resolveSessionTeacher(c, cover, { started: sessionHasStarted(inst, zone, now) })));
+            if ((!cover && !clash) || !c) continue;
+            coverCoach.set(`${inst.classId}-${inst.startTime}`, memberCoachLabel(resolveSessionTeacher(c, cover, { started: sessionHasStarted(inst, zone, now), clash })));
           }
         }
 

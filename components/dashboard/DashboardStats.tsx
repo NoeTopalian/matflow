@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Sheet } from "@/components/ui/sheet";
 import { coachLabel, type DayClass } from "@/components/dashboard/WeeklyCalendar";
+import { ClashFlag } from "@/components/dashboard/ClashFlag";
 import { filterTodoItems } from "@/lib/dashboard-todo";
 import {
   AT_RISK_OPEN_DETAIL,
@@ -535,6 +536,7 @@ export default function DashboardStats({
                       <p className="text-xs mt-0.5 truncate" style={{ color: "var(--tx-3)" }}>
                         {coachLabel(cls.coach)}{cls.location ? ` · ${cls.location}` : ""}
                       </p>
+                      {cls.clash && <ClashFlag text={cls.clash} className="mt-1" focusable={false} />}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs tabular-nums" style={{ color: "var(--tx-2)" }}>

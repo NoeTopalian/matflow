@@ -5,8 +5,9 @@ import { requireApiStaff } from "@/lib/api-authz";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { MEMBER_DOORS_ONLY, accessRefusalSentence, accessRefusals, highestRankOrder } from "@/lib/booking-eligibility";
 import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import { usableTimezone } from "@/lib/class-time";
-import { resolveSessionTeacher, staffCoachLabel } from "@/lib/session-coach";
+import { resolveSessionTeacher, staffCoachLine } from "@/lib/session-coach";
 
 function latest(a: Date | null, b: Date | null): Date | null {
   if (!a) return b;
@@ -54,6 +55,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const started = cover?.status === "open"
       ? sessionHasStarted(instance, usableTimezone((await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone))
       : false;
+    // The same person also teaching an overlapping session, one of the two a cover (lib/session-clash.ts).
+    const clash = (await loadTeacherClashes(tx, tenantId, [instance.id])).get(instance.id);
     const [bookings, attendances, waitlist] = await Promise.all([
       tx.classSubscription.findMany({
         // An archived member's standing booking is kept but not listed (PR 3).
@@ -156,10 +159,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           select: { attendanceRecordId: true },
         })
       : [];
-    return { instance, cover, started, roster, attendances, waitlist, lastVisits, redemptions };
+    return { instance, cover, started, clash, roster, attendances, waitlist, lastVisits, redemptions };
   });
   if (!data) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-  const { instance, cover, started, roster, attendances, waitlist, lastVisits, redemptions } = data;
+  const { instance, cover, started, clash, roster, attendances, waitlist, lastVisits, redemptions } = data;
   const redeemedAttendanceIds = new Set(redemptions.map((r) => r.attendanceRecordId));
   const attendedById = new Map(attendances.map((a) => [a.memberId, a]));
   const lastVisitById = new Map(lastVisits.map((lv) => [lv.memberId, lv._max.checkInTime]));
@@ -209,8 +212,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       name: instance.class.name,
       location: instance.class.location,
       // Who teaches it, as staff read it: the covering coach, "Cover needed" while a request is open and the
-      // session has not started, else the class's coach (lib/session-coach.ts).
-      coachName: staffCoachLabel(resolveSessionTeacher(instance.class, cover, { started })),
+      // session has not started, else the class's coach (lib/session-coach.ts); then the clash flag, if any.
+      coachName: staffCoachLine(resolveSessionTeacher(instance.class, cover, { started, clash })),
       color: instance.class.color,
       maxCapacity: instance.class.maxCapacity,
       // The register asks before marking an adult into a kids class.

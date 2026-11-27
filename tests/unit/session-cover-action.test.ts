@@ -472,6 +472,28 @@ describe("review of 7d7b17df (round 3)", () => {
     }
   });
 
+  it("round 4, nit 1: withdraw and return of an OPEN request are allowed when the regular coach only heads another class at the same time", async () => {
+    // Alex's own Kids class at the same time: the regular-versus-regular overlap the class form allows.
+    const ownKids = { ...session({ id: "s-kids", classOver: { id: "c-kids", name: "Kids BJJ" } }), cover: null };
+    for (const action of ["withdraw", "return"] as const) {
+      const f = fakeTx({ row: openRow(), candidates: [ownKids] });
+      expect(await applyCoverAction(f.tx, as("u-owner"), "s-thu", { action }, NOW), action).toMatchObject({ ok: true, cover: null });
+    }
+    // The query asks only for sessions Alex covers.
+    const g = fakeTx({ row: openRow(), candidates: [ownKids] });
+    await applyCoverAction(g.tx, as("u-owner"), "s-thu", { action: "withdraw" }, NOW);
+    expect(g.raw.classInstance.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ OR: [{ cover: { is: { tenantId: T, status: "covered", coverUserId: "u-alex" } } }] }) }));
+  });
+
+  it("round 4, nit 1: a COVERED row keeps the round-3 rule: Alex's own simultaneous class still refuses withdraw and return", async () => {
+    const ownKids = { ...session({ id: "s-kids", classOver: { id: "c-kids", name: "Kids BJJ" } }), cover: null };
+    for (const action of ["withdraw", "return"] as const) {
+      const f = fakeTx({ row: coveredRow("u-sam"), candidates: [ownKids] });
+      expect(await applyCoverAction(f.tx, as("u-owner"), "s-thu", { action }, NOW), action).toMatchObject({ ok: false, code: "REGULAR_COACH_BUSY", conflict: { instanceId: "s-kids" } });
+      expect(f.state.row).toMatchObject({ status: "covered", coverUserId: "u-sam" });
+    }
+  });
+
   it("withdraw and return of an open request still work when the regular coach is free", async () => {
     const w = fakeTx({ row: openRow() });
     expect(await applyCoverAction(w.tx, as("u-owner"), "s-thu", { action: "withdraw" }, NOW)).toMatchObject({ ok: true, cover: null });

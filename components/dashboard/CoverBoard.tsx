@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { formatTimeRange } from "@/lib/class-time";
 import type { CoverSessionView } from "@/lib/session-coach";
+import { ClashFlag } from "@/components/dashboard/ClashFlag";
 
 type StaffOption = { id: string; name: string; role: string };
 type Board = {
@@ -273,7 +274,8 @@ function StateLine({ s, meId }: { s: CoverSessionView; meId: string }) {
   }
   return (
     <p className="text-[13px] text-tx-3" data-testid="cover-state">
-      {s.isCancelled ? "Cancelled" : s.regularCoachName ?? "No coach assigned"}
+      {/* A clash on the regular coach's side: not shown as theirs (the flag below names the other session). */}
+      {s.isCancelled ? "Cancelled" : s.clashLabel ? s.coachLabel : s.regularCoachName ?? "No coach assigned"}
     </p>
   );
 }
@@ -325,6 +327,7 @@ function SessionCard({ session: s, meId, note, onAction }: { session: CoverSessi
         {whenWhere(s)}
       </p>
       <StateLine s={s} meId={meId} />
+      {s.clashLabel ? <ClashFlag text={s.clashLabel} /> : null}
       <Actions s={s} onAction={onAction} />
       <Note note={note} />
     </article>
@@ -340,6 +343,7 @@ function SessionRow({ session: s, meId, note, onAction }: { session: CoverSessio
           {s.place ? <span className="font-normal text-tx-3"> · {s.place}</span> : null}
         </p>
         <StateLine s={s} meId={meId} />
+        {s.clashLabel ? <ClashFlag text={s.clashLabel} className="mt-1" /> : null}
         <Note note={note} />
       </div>
       <Actions s={s} onAction={onAction} />

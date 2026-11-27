@@ -11,6 +11,7 @@
 import type { Prisma } from "@prisma/client";
 import { calculateStreak, getWeekKey } from "@/lib/streak";
 import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import { parseTime, DEFAULT_TIMEZONE, usableTimezone } from "@/lib/class-time";
 import { readAttendanceCoverage } from "@/lib/attendance-coverage";
 import { isAdultAccount } from "@/lib/account-type";
@@ -342,6 +343,8 @@ export async function computeMemberStats(
       })
     : null;
   const nextCover = coverRow ? { status: coverRow.status, coverUserId: coverRow.coverUserId, coverUserName: coverRow.coverUser?.name ?? null, needsReconfirm: coverRow.needsReconfirm } : null;
+  // One person is never shown on two overlapping sessions (lib/session-clash.ts, which imports nothing server-only).
+  const nextClash = nextInstance ? (await loadTeacherClashes(tx, tenantId, [nextInstance.id], zone)).get(nextInstance.id) : undefined;
 
   // Top 3 classes by attendance count over the last 90 days. Sliced in memory
   // from the full history — the window here is what keeps the UI's
@@ -400,7 +403,7 @@ export async function computeMemberStats(
           id: nextInstance.id,
           classId: nextInstance.class.id,
           name: nextInstance.class.name,
-          coach: memberCoachLabel(resolveSessionTeacher(nextInstance.class, nextCover)),
+          coach: memberCoachLabel(resolveSessionTeacher(nextInstance.class, nextCover, { clash: nextClash })),
           location: nextInstance.class.location ?? null,
           date: nextInstance.date.toISOString(),
           startTime: nextInstance.startTime,

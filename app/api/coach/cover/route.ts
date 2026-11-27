@@ -17,7 +17,8 @@ import { apiError } from "@/lib/api-error";
 import { usableTimezone } from "@/lib/class-time";
 import { liveClassWhere } from "@/lib/class-live";
 import { clubDayKey, parseDayKey, shiftDayKey } from "@/lib/club-month";
-import { resolveSessionTeacher, staffCoachLabel, type CoverSessionView, type CoverSnapshot } from "@/lib/session-coach";
+import { clashLabel, resolveSessionTeacher, staffCoachLabel, type CoverSessionView, type CoverSnapshot, type TeacherClash } from "@/lib/session-coach";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import {
   COVER_SESSION_SELECT,
   COVER_STAFF_ROLES,
@@ -33,9 +34,9 @@ import {
 const HALF_DAY = 12 * 60 * 60 * 1000;
 const keyMidnight = (key: string) => Date.parse(`${key}T00:00:00Z`);
 
-function view(s: CoverSession, cover: CoverSnapshot | undefined, tz: string, now: Date, me: { userId: string; role: string }): CoverSessionView {
+function view(s: CoverSession, cover: CoverSnapshot | undefined, tz: string, now: Date, me: { userId: string; role: string }, clash?: TeacherClash): CoverSessionView {
   const started = sessionHasStarted(s, tz, now);
-  const t = resolveSessionTeacher(s.class, cover, { started });
+  const t = resolveSessionTeacher(s.class, cover, { started, clash });
   const om = me.role === "owner" || me.role === "manager";
   const live = !started && !s.isCancelled;
   const active = !started && (t.state === "cover_needed" || t.state === "covered");
@@ -60,6 +61,7 @@ function view(s: CoverSession, cover: CoverSnapshot | undefined, tz: string, now
     coverUserName: t.state === "covered" ? t.teacherName : null,
     needsReconfirm: t.needsReconfirm,
     coachLabel: staffCoachLabel(t),
+    clashLabel: clashLabel(t),
     can: {
       request: live && t.state === "regular" && (om || regularIsMe),
       claim: live && t.state === "cover_needed",
@@ -108,11 +110,15 @@ export async function GET(req: Request) {
         }),
       ]);
       const extra = [...open, ...mine].map((r) => r.classInstance).filter((s): s is CoverSession => !!s);
-      const covers = await loadCovers(tx, tenantId, [...new Set([...ranged.map((s) => s.id), ...extra.map((s) => s.id)])]);
+      const shownIds = [...new Set([...ranged.map((s) => s.id), ...extra.map((s) => s.id)])];
+      const covers = await loadCovers(tx, tenantId, shownIds);
+      // One person shown on two overlapping sessions, one of them a cover: flagged on both (lib/session-clash.ts).
+      const clashes = await loadTeacherClashes(tx, tenantId, shownIds, tz);
       const me = { userId, role };
+      const v = (s: CoverSession) => view(s, covers.get(s.id), tz, now, me, clashes.get(s.id));
       const byTime = (a: CoverSessionView, b: CoverSessionView) => a.dayKey.localeCompare(b.dayKey) || a.startTime.localeCompare(b.startTime) || a.className.localeCompare(b.className);
-      const openViews = open.flatMap((r) => (r.classInstance ? [view(r.classInstance, covers.get(r.classInstance.id), tz, now, me)] : [])).filter((v) => v.state === "cover_needed").sort(byTime);
-      const mineViews = mine.flatMap((r) => (r.classInstance ? [view(r.classInstance, covers.get(r.classInstance.id), tz, now, me)] : [])).filter((v) => !v.started).sort(byTime);
+      const openViews = open.flatMap((r) => (r.classInstance ? [v(r.classInstance)] : [])).filter((x) => x.state === "cover_needed").sort(byTime);
+      const mineViews = mine.flatMap((r) => (r.classInstance ? [v(r.classInstance)] : [])).filter((x) => !x.started).sort(byTime);
       const staff =
         role === "owner" || role === "manager"
           ? await tx.user.findMany({
@@ -127,7 +133,7 @@ export async function GET(req: Request) {
         days,
         timeZone: tz,
         me: { id: userId, role },
-        sessions: ranged.map((s) => view(s, covers.get(s.id), tz, now, me)),
+        sessions: ranged.map(v),
         openRequests: openViews,
         mine: mineViews,
         staff,

@@ -2341,10 +2341,14 @@ export default function TimetableManager({
       try {
         const r = await fetch(`/api/coach/cover?from=${coverWeekFrom}&days=7`);
         if (!r.ok) return;
-        const d = (await r.json()) as { sessions?: { classId: string; dayKey: string; startTime: string; state: string; coachLabel: string | null }[] };
+        const d = (await r.json()) as { sessions?: { classId: string; dayKey: string; startTime: string; state: string; coachLabel: string | null; clashLabel?: string | null }[] };
         if (!Array.isArray(d.sessions)) return;
         const notes = new Map<string, string>();
-        for (const s of d.sessions) if (s.state !== "regular" && s.coachLabel) notes.set(`${s.classId}|${s.dayKey}|${s.startTime}`, s.coachLabel);
+        for (const s of d.sessions) {
+          // A clash (one person on two overlapping sessions, one a cover) is noted with the label even on a regular session.
+          const note = s.state !== "regular" || s.clashLabel ? [s.coachLabel, s.clashLabel].filter(Boolean).join(" · ") : "";
+          if (note) notes.set(`${s.classId}|${s.dayKey}|${s.startTime}`, note);
+        }
         if (alive) setCoverNotes(notes);
       } catch {}
     })();

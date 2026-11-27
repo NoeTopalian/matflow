@@ -19,8 +19,9 @@ import DeniedNotice from "@/components/dashboard/DeniedNotice";
 import { birthdayCandidateWhere, buildActionItems, readAtRisk, type ActionItem, type AtRiskRead } from "@/lib/dashboard-action-items";
 import { ACTIVE_MEMBER, CAN_TRAIN_MEMBER, TRAINING_MEMBER } from "@/lib/member-population";
 import { liveClassWhere } from "@/lib/class-live";
-import { resolveSessionTeacher, staffCoachLabel } from "@/lib/session-coach";
+import { clashLabel, resolveSessionTeacher, staffCoachLabel } from "@/lib/session-coach";
 import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import { usableTimezone } from "@/lib/class-time";
 import { clubDayKey, clubMonthWindow, clubWeekStart, clubWeekStartKey, shiftDayKey } from "@/lib/club-month";
 
@@ -96,9 +97,14 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
 
-  // Session cover: who teaches each dated session (lib/session-coach.ts, the one resolver).
+  // Session cover: who teaches each dated session (lib/session-coach.ts, the one resolver), and one person shown on two
+  // overlapping sessions where one is a cover (lib/session-clash.ts).
   const covers = await loadCovers(tx, tenantId, instances.map((i) => i.id));
+  const clashes = await loadTeacherClashes(tx, tenantId, instances.map((i) => i.id), timeZone);
   const now = new Date();
+
+  const teacher = (inst: (typeof instances)[number]) =>
+    resolveSessionTeacher(inst.class, covers.get(inst.id), { started: sessionHasStarted(inst, timeZone, now), clash: clashes.get(inst.id) });
 
   return instances.map((inst) => ({
     id: inst.id,
@@ -107,7 +113,9 @@ async function getWeekClasses(tx: TxClient, tenantId: string, timeZone: string):
     endTime: inst.endTime ?? undefined,
     // The covering coach ("Covered by …"), "Cover needed" while a request is open, else the staff coach linked to
     // the class, else the typed name; null when it has none of them.
-    coach: staffCoachLabel(resolveSessionTeacher(inst.class, covers.get(inst.id), { started: sessionHasStarted(inst, timeZone, now) })),
+    coach: staffCoachLabel(teacher(inst)),
+    // The flag naming the other session the same person teaches at the same time (one of the two a cover).
+    clash: clashLabel(teacher(inst)),
     capacity: inst.class.maxCapacity ?? null,
     enrolled: inst._count.attendances,
     location: inst.class.location ?? undefined,

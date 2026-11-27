@@ -18,6 +18,7 @@ import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
 import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
 import { loadCovers, memberCoverLabels, sessionHasStarted } from "@/lib/session-cover";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import { usableTimezone } from "@/lib/class-time";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { liveClassWhere } from "@/lib/class-live";
@@ -350,16 +351,19 @@ export async function buildMemberSchedule(
     // The confirmed covering coach, or "Coach to be confirmed" while cover is open (lib/session-coach.ts). Only a
     // display string reaches the member.
     const covers = await loadCovers(tx, tenantId, instances.map((i) => i.id));
-    if (covers.size > 0) {
+    // One person is never shown on two overlapping sessions (lib/session-clash.ts).
+    const clashes = await loadTeacherClashes(tx, tenantId, instances.map((i) => i.id));
+    if (covers.size > 0 || clashes.size > 0) {
       const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
       const zone = usableTimezone(club?.timezone);
       const byId = new Map(cls.map((c) => [c.id, c]));
       const now = new Date();
       for (const inst of instances) {
         const cover = covers.get(inst.id);
+        const clash = clashes.get(inst.id);
         const c = byId.get(inst.classId);
-        if (!cover || !c) continue;
-        coverCoach.set(`${inst.classId}-${inst.startTime}`, memberCoachLabel(resolveSessionTeacher(c, cover, { started: sessionHasStarted(inst, zone, now) })));
+        if ((!cover && !clash) || !c) continue;
+        coverCoach.set(`${inst.classId}-${inst.startTime}`, memberCoachLabel(resolveSessionTeacher(c, cover, { started: sessionHasStarted(inst, zone, now), clash })));
       }
     }
   }

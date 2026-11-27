@@ -911,14 +911,6 @@ export async function PATCH(req: Request, { params }: Params) {
         data: classFields,
       });
       if (r.count === 0) return null;
-      // Session cover: a NEW regular coach must not be put on an upcoming session of this class that overlaps a session
-      // they have accepted to cover. Checked after the write (in this transaction, so a refusal rolls all of it back)
-      // so the sessions are this edit's and the place named is the class's new one. Their COVR lock is held (above).
-      if (parsed.data.coachUserId && parsed.data.coachUserId !== (owned[0].coachUserId ?? null) && liveAfterEdit) {
-        const club = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } });
-        const clash = await regularCoachCoverClash(tx, tenantId, id, parsed.data.coachUserId, usableTimezone(club?.timezone));
-        if (clash) throw new CoachCoverClashError(clash.message, clash.instanceId, clash.conflict);
-      }
       // Session cover: pausing the class ends the active cover on its upcoming sessions, with an Activity row each,
       // in this transaction, so resuming it never brings a previous cover back (lib/session-cover.ts).
       if (before && classLifecycle(before) === "active" && liveAfterEdit === false) {
@@ -929,6 +921,15 @@ export async function PATCH(req: Request, { params }: Params) {
       // while it was off the timetable; mint the rolling window now.
       const cameBack = parsed.data.isActive === true && !!before && classLifecycle(before) !== "active";
       const sessionsCreatedOnResume = cameBack ? await mintUpcomingSessions(tx, tenantId, id) : 0;
+      // Session cover: a NEW regular coach must not be put on an upcoming session of this class that overlaps a session
+      // they have accepted to cover. Checked after the write (in this transaction, so a refusal rolls all of it back)
+      // so the sessions are this edit's and the place named is the class's new one — and after the mint, so the
+      // sessions a resume in this same PATCH creates are checked too (review of 121529e4). Their COVR lock is held (above).
+      if (parsed.data.coachUserId && parsed.data.coachUserId !== (owned[0].coachUserId ?? null) && liveAfterEdit) {
+        const club = await tx.tenant.findFirst({ where: { id: tenantId }, select: { timezone: true } });
+        const clash = await regularCoachCoverClash(tx, tenantId, id, parsed.data.coachUserId, usableTimezone(club?.timezone));
+        if (clash) throw new CoachCoverClashError(clash.message, clash.instanceId, clash.conflict);
+      }
       // T6b: what this edit did to the class's lifecycle, so Activity and Undo
       // can say "Paused" / "Resumed" / "Restored" rather than a column name.
       // A class archived before T6b (isActive false, deletedAt null, latest

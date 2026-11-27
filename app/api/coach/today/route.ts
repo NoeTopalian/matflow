@@ -8,7 +8,8 @@ import { ensureTodayInstances } from "@/lib/today-sessions";
 import { liveClassWhere } from "@/lib/class-live";
 import { clubDateKey } from "@/lib/register-day";
 import { loadCovers } from "@/lib/session-cover";
-import { isMySession, resolveSessionTeacher, staffCoachLabel } from "@/lib/session-coach";
+import { loadTeacherClashes } from "@/lib/session-clash";
+import { isMySession, resolveSessionTeacher, staffCoachLine } from "@/lib/session-coach";
 
 export async function GET() {
   const gate = await requireApiStaff();
@@ -26,7 +27,7 @@ export async function GET() {
   // The old `instructorId: userId` narrowing hid EVERY class from EVERY coach,
   // because nothing in the product ever wrote Class.instructorId — the
   // timetable writes coachUserId. `isMine` below is the highlight.
-  const { rows: instances, tz, covers } = await withTenantContext(tenantId, async (tx) => {
+  const { rows: instances, tz, covers, clashes } = await withTenantContext(tenantId, async (tx) => {
     // "Today" is the CLUB's day, not the process's. This used to be
     // `setHours(0,0,0,0)` plus a `toDateString()` comparison, both in the zone
     // the server happened to run in — UTC on Vercel — so a London club's
@@ -80,7 +81,9 @@ export async function GET() {
     });
     // Session cover: who teaches each of today's sessions.
     const covers = await loadCovers(tx, tenantId, rows.map((r) => r.id));
-    return { rows, tz, covers };
+    // And one person shown on two overlapping sessions, one of them a cover (lib/session-clash.ts).
+    const clashes = await loadTeacherClashes(tx, tenantId, rows.map((r) => r.id), tz);
+    return { rows, tz, covers, clashes };
   });
 
   // Dedupe by class+startTime so legacy pre-DST seed rows (the same class
@@ -119,7 +122,7 @@ export async function GET() {
   // Who teaches each session (lib/session-coach.ts). Session cover moves the highlight: the covering coach's session
   // is "Yours", and the regular coach's is not while someone else covers it. Attendance stays open to every staff role.
   const teacher = (inst: (typeof todays)[number]) =>
-    resolveSessionTeacher(inst.class, covers.get(inst.id), { started: sessionBounds(inst, tz).start.getTime() <= now.getTime() });
+    resolveSessionTeacher(inst.class, covers.get(inst.id), { started: sessionBounds(inst, tz).start.getTime() <= now.getTime(), clash: clashes.get(inst.id) });
   const mine = (inst: (typeof todays)[number]) => isMySession(userId, inst.class, covers.get(inst.id));
   const forPick = todays.map((inst) => {
     const { start, end } = sessionBounds(inst, tz);
@@ -142,8 +145,9 @@ export async function GET() {
       status,
       classId: inst.class.id,
       name: inst.class.name,
-      // Who teaches it, as staff read it: "Covered by …", "Cover needed · … away", else the class's coach.
-      coachName: staffCoachLabel(teacher(inst)),
+      // Who teaches it, as staff read it: "Covered by …", "Cover needed · … away", else the class's coach; then the
+      // clash flag when the same person also teaches an overlapping session (one of the two a cover).
+      coachName: staffCoachLine(teacher(inst)),
       location: inst.class.location,
       color: inst.class.color,
       startTime: inst.startTime,

@@ -244,10 +244,10 @@ Every path that touches cover:
 | Cancel | S `UPDATE` → S re-locked (no-op) → cover row → audit. Restore: S `UPDATE` only | `instances/[instanceId]/route.ts`, `closeCoverOnCancel` |
 | Weekly-slot edit | [MATS] → [COVR(new coach) if the PATCH names one] → Class `FOR UPDATE` → **class-wide session lock** → new sessions `INSERT` (own rows) → doomed sessions `FOR UPDATE` in id order (rows already held) → cover rows moved or closed (the replacement is held: class-wide lock, or this transaction's own insert) → session `DELETE` → re-timed session `UPDATE` (held) → their cover rows flagged → audit | `classes/[id]/route.ts` `reconcileSchedules`, `moveCoversBeforeDelete`, `flagCoversForRetime` |
 | Pause (class PATCH) | Class `FOR UPDATE` → Class `UPDATE` → **class-wide session lock** → cover rows closed → audit | `closeCoversForClass` |
-| Change of regular coach (class PATCH) | [MATS] → COVR(new coach) → Class `FOR UPDATE` → (slot edit, if any, as above) → Class `UPDATE` → **class-wide session lock** → plain reads of that coach's covers; a clash throws and rolls back | `regularCoachCoverClash` |
+| Change of regular coach (class PATCH) | [MATS] → COVR(new coach) → Class `FOR UPDATE` → (slot edit, if any, as above) → Class `UPDATE` → (resume or restore in the same PATCH: session `INSERT`s, own rows) → **class-wide session lock** → plain reads of that coach's covers; a clash throws and rolls back. Round 4: the check runs after the resume's inserts, so the sessions it mints are checked too; the class-wide statement re-locks those rows (already held) with the rest in id order | `regularCoachCoverClash` |
 | Archive (class DELETE) | Class `UPDATE` → **class-wide session lock** → cover rows closed → audit | `closeCoversForClass` |
 | Undo of a resume or restore | one row: [MATS] → the Class `UPDATE` → **class-wide session lock** → cover rows closed → audit. A batch (undo to a point): MATS → Class rows (`NO KEY UPDATE`, id order) → **every session of those classes, one statement in id order** (`lockBatchRows`) → Member rows → handlers, whose class-wide locks then land on rows already held | `lib/undo-registry.ts`, `lib/undo-batch.ts` |
-| Resume, restore | Class `FOR UPDATE` → Class `UPDATE` → session `INSERT`s (own rows). No cover row is touched | `mintUpcomingSessions` |
+| Resume, restore | Class `FOR UPDATE` → Class `UPDATE` → session `INSERT`s (own rows). No cover row is touched. With a change of regular coach: then the class-wide session lock and the clash check (row above) | `mintUpcomingSessions` |
 | Staff deactivation | COVR(person) → User `UPDATE` → that person's covered upcoming sessions, one statement in id order → cover rows reopened → audit | `staff/[id]/route.ts`, `reopenCoversOfDeactivatedCoach` |
 | Check-in, coach tick | Class `FOR UPDATE` → Member → attendance `INSERT` (`KEY SHARE` on S: compatible with every cover lock) | `lib/checkin.ts` |
 
@@ -280,3 +280,11 @@ Forced-order tests (both directions; `tests/integration/session-cover-races-db.t
 claim (L1, L2); deactivation against a claim (L3, L4); reconfirm against a slot edit (L5, L6); a Request on the
 replacement against the slot edit that carries a cover to it (M). Each case records what the second side waited on
 (advisory key, single-session lock, or the class-wide `ORDER BY ci.id … FOR NO KEY UPDATE`).
+
+### 8.2 Round 4 of PR #134 (27 Nov 2026)
+
+- The clash flag (one person shown on two overlapping sessions, one a cover) is worked out at read time by
+  `lib/session-clash.ts` `loadTeacherClashes`: two plain `SELECT`s, no lock, no write, so it adds nothing to the
+  orders above.
+- The change-of-regular-coach check now runs after a same-PATCH resume's session `INSERT`s (row above). Withdraw and
+  Return of an OPEN request count only the sessions the regular coach covers; the locks they take are unchanged.
