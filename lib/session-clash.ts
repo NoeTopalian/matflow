@@ -167,29 +167,24 @@ async function clubPool(tx: Tx, tenantId: string, dates: Date[]): Promise<ClashS
 }
 
 /**
- * The clashes of these sessions (this club's; cancelled ones and other clubs' are ignored), by session id. One query
- * (clubPool, shared by the transaction) when no session near them is covered; otherwise one more for the sessions'
- * own rows. The club's zone is read only when it is not given and something could clash.
+ * The clashes of these sessions (this club's; cancelled ones and other clubs' are ignored), by session id: clubPool's
+ * one query, shared by the transaction. A session that can clash is always in the pool itself (it is covered, or its
+ * regular coach covers a session in the window), so the sessions need no read of their own.
+ * The club's zone is read only when it is not given and something could clash.
  */
 export async function loadTeacherClashes(tx: Tx, tenantId: string, sessions: Array<{ id: string; date: Date }>, tz?: string | null): Promise<Map<string, TeacherClash>> {
   if (sessions.length === 0) return new Map();
   const pool = await clubPool(tx, tenantId, sessions.map((s) => s.date));
-  if (pool.length === 0) return new Map();
-  return clashesForShown(tx, tenantId, await loadClashSessions(tx, tenantId, sessions.map((s) => s.id)), tz);
-}
-
-/** These sessions of this club, not cancelled, of classes on the timetable, with class and cover row (one query). */
-export async function loadClashSessions(tx: Tx, tenantId: string, instanceIds: string[]) {
-  if (instanceIds.length === 0) return [];
-  return tx.classInstance.findMany({
-    where: { id: { in: [...new Set(instanceIds)] }, isCancelled: false, class: { tenantId, isActive: true, deletedAt: null } },
-    select: CLASH_SELECT,
-  });
+  const ids = new Set(sessions.map((s) => s.id));
+  const shown = pool.filter((s) => ids.has(s.id));
+  if (shown.length === 0) return new Map();
+  const zone = tz ?? usableTimezone((await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone);
+  return clashesAmong(shown, pool, zone);
 }
 
 /**
  * The same, for a page that has already read its sessions (this club's, as ClashSession: class and cover included):
- * only clubPool's query (two when a session near them is covered), and none when nobody teaches them.
+ * only clubPool's query, and none when nobody teaches them.
  */
 export async function clashesForShown(tx: Tx, tenantId: string, shown: ClashSession[], tz?: string | null): Promise<Map<string, TeacherClash>> {
   const live = shown.filter(onTimetable);

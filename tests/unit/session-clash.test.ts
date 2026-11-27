@@ -84,15 +84,14 @@ describe("clashesAmong", () => {
 });
 
 describe("loadTeacherClashes", () => {
-  // Answers each query by its shape: the sessions on screen (by id), or the club's pool (covered sessions in the
-  // window and the regular sessions of whoever covers one there).
-  function fakeTx(rows: { covered: ClashSession[]; own?: ClashSession[]; shown?: ClashSession[] }) {
+  // The club's pool: covered sessions in the window and the regular sessions of whoever covers one there.
+  function fakeTx(rows: { covered: ClashSession[]; own?: ClashSession[] }) {
     const calls: Array<Record<string, unknown>> = [];
     const tx = {
       classInstance: {
         findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
           calls.push(where);
-          return "id" in where ? (rows.shown ?? []) : [...rows.covered, ...(rows.own ?? [])];
+          return [...rows.covered, ...(rows.own ?? [])];
         }),
       },
       tenant: { findUnique: vi.fn(async () => ({ timezone: TZ })) },
@@ -114,13 +113,12 @@ describe("loadTeacherClashes", () => {
     expect(f.raw.tenant.findUnique).not.toHaveBeenCalled();
   });
 
-  it("with a covered session nearby: one more query, for the sessions on screen, scoped to the club", async () => {
+  it("with a covered session nearby: still one query; the session on screen comes back in the pool (its coach covers one)", async () => {
     const own = s("own", "19:00", "20:30");
-    const f = fakeTx({ covered: [elsewhere()], own: [own], shown: [own] });
+    const f = fakeTx({ covered: [elsewhere()], own: [own] });
     const out = await loadTeacherClashes(f.tx, "tenant-1", [at("own")], TZ);
     expect(out.get("own")).toMatchObject({ instanceId: "else" });
-    expect(f.calls).toHaveLength(2);
-    expect(f.calls[1]).toMatchObject({ id: { in: ["own"] }, isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null } });
+    expect(f.calls).toHaveLength(1);
   });
 
   it("the window is read once per transaction: a second list near today reuses it", async () => {
@@ -140,7 +138,7 @@ describe("loadTeacherClashes", () => {
     expect((await clashesForShown(g.tx, "tenant-1", [s("nobody", "19:00", "20:00", { coach: null })])).size).toBe(0);
     expect(g.calls).toHaveLength(0);
     const own = s("own", "19:00", "20:30");
-    const h = fakeTx({ covered: [elsewhere()], shown: [own] });
+    const h = fakeTx({ covered: [elsewhere()], own: [own] });
     await loadTeacherClashes(h.tx, "tenant-1", [at("own")]);
     expect(h.raw.tenant.findUnique).toHaveBeenCalledWith({ where: { id: "tenant-1" }, select: { timezone: true } });
   });
