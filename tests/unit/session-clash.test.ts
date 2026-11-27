@@ -84,15 +84,15 @@ describe("clashesAmong", () => {
 });
 
 describe("loadTeacherClashes", () => {
-  // Answers each query by its shape: the covered sessions in the window, the cover coaches' own sessions, or the
-  // sessions on screen.
+  // Answers each query by its shape: the sessions on screen (by id), or the club's pool (covered sessions in the
+  // window and the regular sessions of whoever covers one there).
   function fakeTx(rows: { covered: ClashSession[]; own?: ClashSession[]; shown?: ClashSession[] }) {
     const calls: Array<Record<string, unknown>> = [];
     const tx = {
       classInstance: {
         findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
           calls.push(where);
-          return "cover" in where ? rows.covered : "id" in where ? (rows.shown ?? []) : (rows.own ?? []);
+          return "id" in where ? (rows.shown ?? []) : [...rows.covered, ...(rows.own ?? [])];
         }),
       },
       tenant: { findUnique: vi.fn(async () => ({ timezone: TZ })) },
@@ -101,23 +101,26 @@ describe("loadTeacherClashes", () => {
   }
   const elsewhere = () => s("else", "19:30", "21:00", { coach: null, cover: coveredBy("u-alex", "Alex Regular") });
   const at = (id: string) => ({ id, date: THU });
+  const POOL_OR = [
+    { cover: { is: { tenantId: "tenant-1", status: "covered" } } },
+    { class: { coachUser: { sessionCovers: { some: { tenantId: "tenant-1", status: "covered", classInstance: { is: expect.objectContaining({ isCancelled: false }) } } } } } },
+  ];
 
-  it("one query when no session near the screen is covered (the usual case)", async () => {
+  it("one query when no session near the screen is covered (the usual case), scoped to the club", async () => {
     const f = fakeTx({ covered: [] });
     expect((await loadTeacherClashes(f.tx, "tenant-1", [at("own")], TZ)).size).toBe(0);
     expect(f.calls).toHaveLength(1);
-    expect(f.calls[0]).toMatchObject({ isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null }, cover: { is: { tenantId: "tenant-1", status: "covered" } } });
+    expect(f.calls[0]).toMatchObject({ isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null }, OR: POOL_OR });
     expect(f.raw.tenant.findUnique).not.toHaveBeenCalled();
   });
 
-  it("with a covered session nearby: the cover coaches' own sessions and the sessions on screen, every query scoped to the club", async () => {
+  it("with a covered session nearby: one more query, for the sessions on screen, scoped to the club", async () => {
     const own = s("own", "19:00", "20:30");
     const f = fakeTx({ covered: [elsewhere()], own: [own], shown: [own] });
     const out = await loadTeacherClashes(f.tx, "tenant-1", [at("own")], TZ);
     expect(out.get("own")).toMatchObject({ instanceId: "else" });
-    expect(f.calls).toHaveLength(3);
-    expect(f.calls[1]).toMatchObject({ isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null, coachUserId: { in: ["u-alex"] } } });
-    expect(f.calls[2]).toMatchObject({ id: { in: ["own"] }, isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null } });
+    expect(f.calls).toHaveLength(2);
+    expect(f.calls[1]).toMatchObject({ id: { in: ["own"] }, isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null } });
   });
 
   it("the window is read once per transaction: a second list near today reuses it", async () => {

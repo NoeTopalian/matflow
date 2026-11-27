@@ -149,25 +149,27 @@ async function clubPool(tx: Tx, tenantId: string, dates: Date[]): Promise<ClashS
   }
   const hit = poolCache.get(tx);
   if (hit && hit.tenantId === tenantId && hit.from <= from && hit.to >= to) return hit.rows;
-  const live = { tenantId, isActive: true, deletedAt: null };
   const window = { isCancelled: false, date: { gte: new Date(from), lt: new Date(to) } };
-  const covered = await tx.classInstance.findMany({
-    where: { ...window, class: live, cover: { is: { tenantId, status: "covered" } } },
+  // One query: the covered sessions in the window, and the sessions whose regular coach covers a session in it.
+  const rows = await tx.classInstance.findMany({
+    where: {
+      ...window,
+      class: { tenantId, isActive: true, deletedAt: null },
+      OR: [
+        { cover: { is: { tenantId, status: "covered" } } },
+        { class: { coachUser: { sessionCovers: { some: { tenantId, status: "covered", classInstance: { is: window } } } } } },
+      ],
+    },
     select: CLASH_SELECT,
   });
-  const coaches = [...new Set(covered.flatMap((s) => (s.cover?.coverUserId ? [s.cover.coverUserId] : [])))];
-  const own = coaches.length > 0
-    ? await tx.classInstance.findMany({ where: { ...window, class: { ...live, coachUserId: { in: coaches } } }, select: CLASH_SELECT })
-    : [];
-  const rows = [...new Map([...covered, ...own].map((s) => [s.id, s])).values()];
   poolCache.set(tx, { tenantId, from, to, rows });
   return rows;
 }
 
 /**
  * The clashes of these sessions (this club's; cancelled ones and other clubs' are ignored), by session id. One query
- * when no session near them is covered (clubPool); otherwise also the sessions' own rows and the cover coaches'
- * regular sessions. The club's zone is read only when it is not given and something could clash.
+ * (clubPool, shared by the transaction) when no session near them is covered; otherwise one more for the sessions'
+ * own rows. The club's zone is read only when it is not given and something could clash.
  */
 export async function loadTeacherClashes(tx: Tx, tenantId: string, sessions: Array<{ id: string; date: Date }>, tz?: string | null): Promise<Map<string, TeacherClash>> {
   if (sessions.length === 0) return new Map();
