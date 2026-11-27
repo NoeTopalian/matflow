@@ -145,7 +145,7 @@ export async function GET(req: Request) {
           const live = instances.filter((i) => !i.isCancelled);
           const covers = await loadCovers(tx, session.user.tenantId, live.map((i) => i.id));
           // One person is never shown on two overlapping sessions (lib/session-clash.ts).
-          const clashes = await loadTeacherClashes(tx, session.user.tenantId, live.map((i) => i.id), zone);
+          const clashes = await loadTeacherClashes(tx, session.user.tenantId, live, zone);
           const byId = new Map(cls.map((c) => [c.id, c]));
           const now = new Date();
           for (const inst of live) {

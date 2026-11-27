@@ -125,15 +125,55 @@ export function clashesAmong(shown: ClashSession[], pool: ClashSession[], tz: st
   return out;
 }
 
+const DAY = 86_400_000;
+
 /**
- * The clashes of these sessions (this club's; cancelled ones and other clubs' are ignored), by session id. Two
- * queries: the sessions themselves, then — only when one of them has a teacher — the club's other sessions within a
- * day and a half that could clash: those covered by one of their teachers, and those whose regular coach is the cover
- * coach of one of them. The club's zone is read only when it is not given and something could clash.
+ * Every session of the club that could be one side of a clash in a date window: those an accepted cover is on, and
+ * the regular sessions of the people covering them. A clash needs a cover, so a window with no covered session (the
+ * usual case) costs ONE query and needs nothing else. Kept for the rest of the transaction (keyed by the transaction
+ * object), so a page that asks for several lists of sessions near today — member home: the day, the children's
+ * timetable, the next class — reads it once.
  */
-export async function loadTeacherClashes(tx: Tx, tenantId: string, instanceIds: string[], tz?: string | null): Promise<Map<string, TeacherClash>> {
-  if (instanceIds.length === 0) return new Map();
-  return clashesForShown(tx, tenantId, await loadClashSessions(tx, tenantId, instanceIds), tz);
+const poolCache = new WeakMap<object, { tenantId: string; from: number; to: number; rows: ClashSession[] }>();
+
+async function clubPool(tx: Tx, tenantId: string, dates: Date[]): Promise<ClashSession[]> {
+  const markers = dates.map((d) => dayMarkerUtc(d).getTime());
+  // The day before to the day after: an overnight session can reach into the next day.
+  let from = Math.min(...markers) - DAY - DAY / 2;
+  let to = Math.max(...markers) + DAY + DAY / 2;
+  // Near today, one window serves every list the page shows.
+  const today = dayMarkerUtc(new Date()).getTime();
+  if (from >= today - 4 * DAY && to <= today + 18 * DAY) {
+    from = today - 4 * DAY;
+    to = today + 18 * DAY;
+  }
+  const hit = poolCache.get(tx);
+  if (hit && hit.tenantId === tenantId && hit.from <= from && hit.to >= to) return hit.rows;
+  const live = { tenantId, isActive: true, deletedAt: null };
+  const window = { isCancelled: false, date: { gte: new Date(from), lt: new Date(to) } };
+  const covered = await tx.classInstance.findMany({
+    where: { ...window, class: live, cover: { is: { tenantId, status: "covered" } } },
+    select: CLASH_SELECT,
+  });
+  const coaches = [...new Set(covered.flatMap((s) => (s.cover?.coverUserId ? [s.cover.coverUserId] : [])))];
+  const own = coaches.length > 0
+    ? await tx.classInstance.findMany({ where: { ...window, class: { ...live, coachUserId: { in: coaches } } }, select: CLASH_SELECT })
+    : [];
+  const rows = [...new Map([...covered, ...own].map((s) => [s.id, s])).values()];
+  poolCache.set(tx, { tenantId, from, to, rows });
+  return rows;
+}
+
+/**
+ * The clashes of these sessions (this club's; cancelled ones and other clubs' are ignored), by session id. One query
+ * when no session near them is covered (clubPool); otherwise also the sessions' own rows and the cover coaches'
+ * regular sessions. The club's zone is read only when it is not given and something could clash.
+ */
+export async function loadTeacherClashes(tx: Tx, tenantId: string, sessions: Array<{ id: string; date: Date }>, tz?: string | null): Promise<Map<string, TeacherClash>> {
+  if (sessions.length === 0) return new Map();
+  const pool = await clubPool(tx, tenantId, sessions.map((s) => s.date));
+  if (pool.length === 0) return new Map();
+  return clashesForShown(tx, tenantId, await loadClashSessions(tx, tenantId, sessions.map((s) => s.id)), tz);
 }
 
 /** These sessions of this club, not cancelled, of classes on the timetable, with class and cover row (one query). */
@@ -147,34 +187,12 @@ export async function loadClashSessions(tx: Tx, tenantId: string, instanceIds: s
 
 /**
  * The same, for a page that has already read its sessions (this club's, as ClashSession: class and cover included):
- * one query, the pool, and only when one of them has a teacher.
+ * only clubPool's query (two when a session near them is covered), and none when nobody teaches them.
  */
 export async function clashesForShown(tx: Tx, tenantId: string, shown: ClashSession[], tz?: string | null): Promise<Map<string, TeacherClash>> {
-  const live = { tenantId, isActive: true, deletedAt: null };
-  const teachers = new Set<string>();
-  const coverCoaches = new Set<string>();
-  for (const s of shown.filter(onTimetable)) {
-    const t = teacherOf(s);
-    if (!t) continue;
-    teachers.add(t.userId);
-    if (t.isCover) coverCoaches.add(t.userId);
-  }
-  if (teachers.size === 0) return new Map();
-  const markers = shown.map((s) => dayMarkerUtc(s.date).getTime());
-  const DAY = 86_400_000;
-  const pool = await tx.classInstance.findMany({
-    where: {
-      isCancelled: false,
-      // The day before to the day after: an overnight session can reach into the next day.
-      date: { gte: new Date(Math.min(...markers) - DAY - DAY / 2), lt: new Date(Math.max(...markers) + DAY + DAY / 2) },
-      class: live,
-      OR: [
-        { cover: { is: { tenantId, status: "covered", coverUserId: { in: [...teachers] } } } },
-        ...(coverCoaches.size > 0 ? [{ class: { coachUserId: { in: [...coverCoaches] } } }] : []),
-      ],
-    },
-    select: CLASH_SELECT,
-  });
+  const live = shown.filter(onTimetable);
+  if (!live.some((s) => teacherOf(s))) return new Map();
+  const pool = await clubPool(tx, tenantId, live.map((s) => s.date));
   if (pool.length === 0) return new Map();
   const zone = tz ?? usableTimezone((await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone);
   return clashesAmong(shown, pool, zone);

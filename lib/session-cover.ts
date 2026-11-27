@@ -169,7 +169,7 @@ export async function memberCoverLabels(
   const out = new Map<string, string | null>();
   const live = sessions.filter((s) => !s.isCancelled);
   const covers = await loadCovers(tx, tenantId, live.map((s) => s.id));
-  const clashes = await loadTeacherClashes(tx, tenantId, live.map((s) => s.id));
+  const clashes = await loadTeacherClashes(tx, tenantId, live);
   if (covers.size === 0 && clashes.size === 0) return out;
   const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
   const tz = usableTimezone(club?.timezone);

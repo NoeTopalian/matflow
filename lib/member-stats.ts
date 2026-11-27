@@ -344,7 +344,7 @@ export async function computeMemberStats(
     : null;
   const nextCover = coverRow ? { status: coverRow.status, coverUserId: coverRow.coverUserId, coverUserName: coverRow.coverUser?.name ?? null, needsReconfirm: coverRow.needsReconfirm } : null;
   // One person is never shown on two overlapping sessions (lib/session-clash.ts, which imports nothing server-only).
-  const nextClash = nextInstance ? (await loadTeacherClashes(tx, tenantId, [nextInstance.id], zone)).get(nextInstance.id) : undefined;
+  const nextClash = nextInstance ? (await loadTeacherClashes(tx, tenantId, [nextInstance], zone)).get(nextInstance.id) : undefined;
 
   // Top 3 classes by attendance count over the last 90 days. Sliced in memory
   // from the full history — the window here is what keeps the UI's

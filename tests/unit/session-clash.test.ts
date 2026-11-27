@@ -1,7 +1,7 @@
 // Session cover, round 4 (review of 121529e4, should-fix 1 and 2): the read-time check that flags one person shown
 // teaching two overlapping sessions where at least one of the two is a cover (lib/session-clash.ts).
 import { describe, it, expect, vi } from "vitest";
-import { clashesAmong, loadTeacherClashes, type ClashSession } from "@/lib/session-clash";
+import { clashesAmong, clashesForShown, loadTeacherClashes, type ClashSession } from "@/lib/session-clash";
 
 const TZ = "Europe/London";
 const THU = new Date("2034-01-05T00:00:00Z");
@@ -84,54 +84,61 @@ describe("clashesAmong", () => {
 });
 
 describe("loadTeacherClashes", () => {
-  function fakeTx(shown: ClashSession[], pool: ClashSession[]) {
+  // Answers each query by its shape: the covered sessions in the window, the cover coaches' own sessions, or the
+  // sessions on screen.
+  function fakeTx(rows: { covered: ClashSession[]; own?: ClashSession[]; shown?: ClashSession[] }) {
     const calls: Array<Record<string, unknown>> = [];
     const tx = {
       classInstance: {
         findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
           calls.push(where);
-          return calls.length === 1 ? shown : pool;
+          return "cover" in where ? rows.covered : "id" in where ? (rows.shown ?? []) : (rows.own ?? []);
         }),
       },
       tenant: { findUnique: vi.fn(async () => ({ timezone: TZ })) },
     };
     return { tx: tx as never, calls, raw: tx };
   }
+  const elsewhere = () => s("else", "19:30", "21:00", { coach: null, cover: coveredBy("u-alex", "Alex Regular") });
+  const at = (id: string) => ({ id, date: THU });
 
-  it("two queries for every session on screen, both scoped to the club; the second asks only for what could clash", async () => {
-    const own = s("own", "19:00", "20:30");
-    const elsewhere = s("else", "19:30", "21:00", { coach: null, cover: coveredBy("u-alex", "Alex Regular") });
-    const f = fakeTx([own], [elsewhere]);
-    const out = await loadTeacherClashes(f.tx, "tenant-1", ["own"], TZ);
-    expect(out.get("own")).toMatchObject({ instanceId: "else" });
-    expect(f.calls).toHaveLength(2);
-    expect(f.calls[0]).toMatchObject({ id: { in: ["own"] }, isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null } });
-    expect(f.calls[1]).toMatchObject({ isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null } });
-    // No session on screen is a cover, so only sessions covered by its teacher are asked for (tenant-scoped).
-    expect(f.calls[1].OR).toEqual([{ cover: { is: { tenantId: "tenant-1", status: "covered", coverUserId: { in: ["u-alex"] } } } }]);
+  it("one query when no session near the screen is covered (the usual case)", async () => {
+    const f = fakeTx({ covered: [] });
+    expect((await loadTeacherClashes(f.tx, "tenant-1", [at("own")], TZ)).size).toBe(0);
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0]).toMatchObject({ isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null }, cover: { is: { tenantId: "tenant-1", status: "covered" } } });
     expect(f.raw.tenant.findUnique).not.toHaveBeenCalled();
   });
 
-  it("a session on screen that is a cover also asks for its coach's own classes", async () => {
-    const elsewhere = s("else", "19:30", "21:00", { coach: null, cover: coveredBy("u-alex", "Alex Regular") });
-    const f = fakeTx([elsewhere], []);
-    await loadTeacherClashes(f.tx, "tenant-1", ["else"], TZ);
-    expect(f.calls[1].OR).toEqual([
-      { cover: { is: { tenantId: "tenant-1", status: "covered", coverUserId: { in: ["u-alex"] } } } },
-      { class: { coachUserId: { in: ["u-alex"] } } },
-    ]);
+  it("with a covered session nearby: the cover coaches' own sessions and the sessions on screen, every query scoped to the club", async () => {
+    const own = s("own", "19:00", "20:30");
+    const f = fakeTx({ covered: [elsewhere()], own: [own], shown: [own] });
+    const out = await loadTeacherClashes(f.tx, "tenant-1", [at("own")], TZ);
+    expect(out.get("own")).toMatchObject({ instanceId: "else" });
+    expect(f.calls).toHaveLength(3);
+    expect(f.calls[1]).toMatchObject({ isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null, coachUserId: { in: ["u-alex"] } } });
+    expect(f.calls[2]).toMatchObject({ id: { in: ["own"] }, isCancelled: false, class: { tenantId: "tenant-1", isActive: true, deletedAt: null } });
   });
 
-  it("one query when nobody teaches the sessions on screen, none for an empty screen; the zone is read only when needed", async () => {
-    const f = fakeTx([s("nobody", "19:00", "20:00", { coach: null })], []);
-    expect((await loadTeacherClashes(f.tx, "tenant-1", ["nobody"])).size).toBe(0);
+  it("the window is read once per transaction: a second list near today reuses it", async () => {
+    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    const f = fakeTx({ covered: [] });
+    await loadTeacherClashes(f.tx, "tenant-1", [{ id: "a", date: today }], TZ);
+    await loadTeacherClashes(f.tx, "tenant-1", [{ id: "b", date: new Date(today.getTime() + 6 * 86_400_000) }], TZ);
     expect(f.calls).toHaveLength(1);
-    const g = fakeTx([], []);
+    // Another club in the same transaction never reuses it.
+    await loadTeacherClashes(f.tx, "tenant-2", [{ id: "c", date: today }], TZ);
+    expect(f.calls).toHaveLength(2);
+  });
+
+  it("none for an empty screen, or for sessions nobody teaches; the zone is read only when needed", async () => {
+    const g = fakeTx({ covered: [] });
     expect((await loadTeacherClashes(g.tx, "tenant-1", [])).size).toBe(0);
+    expect((await clashesForShown(g.tx, "tenant-1", [s("nobody", "19:00", "20:00", { coach: null })])).size).toBe(0);
     expect(g.calls).toHaveLength(0);
     const own = s("own", "19:00", "20:30");
-    const h = fakeTx([own], [s("else", "19:30", "21:00", { coach: null, cover: coveredBy("u-alex", "Alex Regular") })]);
-    await loadTeacherClashes(h.tx, "tenant-1", ["own"]);
+    const h = fakeTx({ covered: [elsewhere()], shown: [own] });
+    await loadTeacherClashes(h.tx, "tenant-1", [at("own")]);
     expect(h.raw.tenant.findUnique).toHaveBeenCalledWith({ where: { id: "tenant-1" }, select: { timezone: true } });
   });
 });

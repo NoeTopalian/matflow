@@ -56,7 +56,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ? sessionHasStarted(instance, usableTimezone((await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone))
       : false;
     // The same person also teaching an overlapping session, one of the two a cover (lib/session-clash.ts).
-    const clash = (await loadTeacherClashes(tx, tenantId, [instance.id])).get(instance.id);
+    const clash = (await loadTeacherClashes(tx, tenantId, [instance])).get(instance.id);
     const [bookings, attendances, waitlist] = await Promise.all([
       tx.classSubscription.findMany({
         // An archived member's standing booking is kept but not listed (PR 3).

@@ -352,7 +352,7 @@ export async function buildMemberSchedule(
     // display string reaches the member.
     const covers = await loadCovers(tx, tenantId, instances.map((i) => i.id));
     // One person is never shown on two overlapping sessions (lib/session-clash.ts).
-    const clashes = await loadTeacherClashes(tx, tenantId, instances.map((i) => i.id));
+    const clashes = await loadTeacherClashes(tx, tenantId, instances);
     if (covers.size > 0 || clashes.size > 0) {
       const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
       const zone = usableTimezone(club?.timezone);
