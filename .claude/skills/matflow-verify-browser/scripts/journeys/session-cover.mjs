@@ -9,6 +9,9 @@
 // covering coach makes the session read Cover needed to staff and Coach to be confirmed to a member; archiving and
 // restoring the class ends the cover for good. Synthetic club only.
 //   node journeys/session-cover.mjs
+//   MF_COVER_R4_ONLY=1: only the round-4 checks (section 11), after the owner and member sign in. A diagnostic for a
+//   day when an earlier section cannot pass for a reason this round did not cause (27 Nov 2026: member home past its
+//   15 s budget from Bali on 121529e4 too); the ledger says so with a NOTE.
 import { randomUUID, randomBytes } from "node:crypto";
 import { chromium, state, q, ledger, shot, context, ownerSignIn, staffSignIn, memberLogin, memberSignIn, bcrypt, chooseRegisterClass } from "../lib.mjs";
 
@@ -172,7 +175,98 @@ async function oc0(b) {
   return st;
 }
 
+// ── 11. Round 4 (review of 121529e4), as a function: run at the end of the full journey, or on its own with
+// MF_COVER_R4_ONLY=1 (only the owner and member sign-ins before it).
+async function round4({ op, opPhone, mp, ownerFetch }) {
+  // 11a. Fern covers Cover R4 Covered (19:00–20:00, Mat 10) right after Fern's own Cover R4 Own (18:00–19:00, Mat 9):
+  // back to back, allowed. The owner moves Cover R4 Own's weekly slot to 19:00 with the same coach: one person on two
+  // overlapping sessions, one a cover. Staff see a flag naming the other session on both; members never see Fern twice.
+  stage = "round4-slot-move";
+  const fern = await coach("fern", "Fern Flag");
+  const r4own = { classId: randomUUID(), instanceId: randomUUID() };
+  const r4cov = { classId: randomUUID(), instanceId: randomUUID() };
+  for (const [c, name, place, coachId, start, end] of [[r4own, R4_CLASSES[0], "Mat 9", fern.id, "18:00", "19:00"], [r4cov, R4_CLASSES[1], "Mat 10", null, "19:00", "20:00"]]) {
+    await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity", location, "coachUserId", "isKids") values ($1, $2, $3, 60, 20, $4, $5, true)`, [c.classId, t, name, place, coachId]);
+    await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime", "startDate") values ($1, $2, 4, $3, $4, $5)`, [randomUUID(), c.classId, start, end, new Date(`${thu1}T00:00:00Z`)]);
+    await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, $4, $5)`, [c.instanceId, c.classId, new Date(`${thu1}T00:00:00Z`), start, end]);
+  }
+  L.check("R4A", "Fern is assigned to Cover R4 Covered, straight after Fern's own class (back to back)", (await ownerFetch(`/api/coach/instances/${r4cov.instanceId}/cover`, "POST", { action: "assign", coachUserId: fern.id })) === 200);
+  const r4move = await editSlots(op, r4own.classId, R4_CLASSES[0], [{ dayOfWeek: 4, startTime: "19:00", endTime: "20:00" }]);
+  L.check("R4A", "the owner moves Cover R4 Own to 19:00–20:00 with the same coach (saved: the class form allows it)", r4move.status === 200, r4move.status);
+  const movedId = (await q(`select id from "ClassInstance" where "classId" = $1 and date = $2 and "startTime" = '19:00'`, [r4own.classId, new Date(`${thu1}T00:00:00Z`)]))[0]?.id;
+  const flagOwn = `Clash: ${fern.name} is also teaching ${R4_CLASSES[1]} on ${THU1_LABEL}, 19:00–20:00, Mat 10`;
+  const flagCov = `Clash: ${fern.name} is also teaching ${R4_CLASSES[0]} on ${THU1_LABEL}, 19:00–20:00, Mat 9`;
+  for (const [tag, page] of [["1280", op], ["390", opPhone]]) {
+    await openBoard(page);
+    const ownRow = await sessionRow(page, movedId);
+    const covRow = await sessionRow(page, r4cov.instanceId);
+    const ownFlag = ownRow.getByTestId("clash-flag");
+    const covFlag = covRow.getByTestId("clash-flag");
+    await ownFlag.waitFor({ timeout: 60000 }).catch(() => {});
+    const seen = { own: (await ownFlag.isVisible()) ? (await ownFlag.innerText()).trim() : null, cov: (await covFlag.isVisible()) ? (await covFlag.innerText()).trim() : null };
+    L.check(`R4A@${tag}`, "the clash flag is visible on both sessions, each naming the other session (class, day, time, mat)", seen.own === flagOwn && seen.cov === flagCov, seen);
+    const states = { own: (await ownRow.getByTestId("cover-state").innerText()).trim(), cov: (await covRow.getByTestId("cover-state").innerText()).trim() };
+    L.check(`R4A@${tag}`, "the regular side reads Coach to be confirmed (not Fern); the cover side still reads Covered by Fern Flag", states.own === "Coach to be confirmed" && states.cov === `Covered by ${fern.name}`, states);
+    // Keyboard: from the session's time line, Tab reaches the flag itself, and its text is what is read.
+    await ownRow.locator("p").first().click();
+    let reached = null;
+    for (let i = 0; i < 8 && !reached; i++) {
+      await page.keyboard.press("Tab");
+      reached = await page.evaluate((id) => {
+        const a = document.activeElement;
+        return a?.getAttribute("data-testid") === "clash-flag" && a.closest("[data-session-id]")?.getAttribute("data-session-id") === id ? a.textContent.trim() : null;
+      }, movedId);
+    }
+    L.check(`R4A@${tag}`, "the flag is reached with Tab and its text is the clash sentence", reached === flagOwn, reached);
+    L.check(`R4A@${tag}`, "no sideways scroll on the board with the flag", !Object.values(await noSideways(page)).some(Boolean), await noSideways(page));
+    await shot(page, `session-cover-r4-clash-${tag}`);
+  }
+  const r4sched = await (await mp.request.get(`/api/member/schedule?date=${thu1}`)).json();
+  const mOwn = r4sched.find((e) => e.classId === r4own.classId && e.dayOfWeek === 4);
+  const mCov = r4sched.find((e) => e.classId === r4cov.classId && e.dayOfWeek === 4);
+  L.check("R4A@390", "the member reads Coach to be confirmed on the regular side and Fern Flag on the cover; no flag or clash text reaches them", mOwn?.coach === "Coach to be confirmed" && mCov?.coach === fern.name && !JSON.stringify(r4sched).includes("Clash"), { own: mOwn?.coach, cov: mCov?.coach });
+  L.check("N", "next Thursday untouched after round 4's slot move", await nextWeekUntouched());
+
+  // 11b. Gus heads Cover R4 Kids and Cover R4 Adults at 17:00 on two mats (the class form allows it). A request on Kids
+  // can be withdrawn (1280) and returned to Gus (390): the regular-versus-regular overlap no longer blocks them.
+  stage = "round4-withdraw-open";
+  const gus = await coach("gus", "Gus Twice");
+  const r4kids = { classId: randomUUID(), instanceId: randomUUID() };
+  for (const [c, name, place] of [[r4kids, R4_CLASSES[2], "Mat 11"], [{ classId: randomUUID(), instanceId: randomUUID() }, R4_CLASSES[3], "Mat 12"]]) {
+    await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity", location, "coachUserId", "isKids") values ($1, $2, $3, 60, 20, $4, $5, true)`, [c.classId, t, name, place, gus.id]);
+    await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, '17:00', '18:00')`, [c.instanceId, c.classId, new Date(`${thu1}T00:00:00Z`)]);
+  }
+  for (const [tag, page, label, confirm, okNote, endStatus] of [["1280", op, "Withdraw request", "Withdraw request", "Cover request withdrawn.", "withdrawn"], ["390", opPhone, "Return to regular coach", "Return to regular coach", "Back to its regular coach.", "closed"]]) {
+    await openBoard(page);
+    await requestVia(page, r4kids.instanceId);
+    const note = await actOn(page, '[data-testid="cover-week"]', r4kids.instanceId, label, confirm);
+    const st = await stateAfter(page, r4kids.instanceId, gus.name);
+    L.check(`R4B@${tag}`, `${label} on an open request is allowed while Gus heads another class at the same time`, note === okNote && st === gus.name && (await coverRow(r4kids.instanceId))?.status === endStatus, { note, st, row: await coverRow(r4kids.instanceId) });
+    await shot(page, `session-cover-r4-${endStatus}-${tag}`);
+  }
+}
+
 try {
+  main: {
+  if (process.env.MF_COVER_R4_ONLY === "1") {
+    stage = "round4-sign-in";
+    L.note("R4", "round-4-only run (MF_COVER_R4_ONLY=1): sections 0 to 10 not run", "");
+    const ownerFirst = await oc0(browser);
+    const op = await (await context(browser, "10.98.7.31", { ...VIEW["1280"], storageState: ownerFirst })).newPage();
+    lastPage = op;
+    watch(op, "owner-r4");
+    const opPhone = await (await context(browser, "10.98.7.32", { ...VIEW["390"], storageState: ownerFirst })).newPage();
+    watch(opPhone, "owner-390-r4");
+    const member = await memberLogin(club, "Member 1");
+    await q(`update "Member" set "onboardingCompleted" = true where id = $1 and "tenantId" = $2`, [member.id, t]);
+    const mp = await (await context(browser, "10.98.7.33", VIEW["390"])).newPage();
+    watch(mp, "member-r4");
+    await memberSignIn(mp, club, member);
+    await op.goto("/dashboard/cover");
+    const ownerFetch = (url, method, body) => op.evaluate(async ({ url, method, body }) => (await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })).status, { url, method, body });
+    await round4({ op, opPhone, mp, ownerFetch });
+    break main;
+  }
   // ── 0. Staff dashboard, timetable, register and cover page: the three coach states stay distinct ────────────────
   stage = "dashboard";
   const ownerFirst = await oc0(browser);
@@ -800,74 +894,9 @@ try {
     await shot(page, `session-cover-r3-coach-change-refused-${tag}`);
   }
 
-  // ── 11. Round 4 (review of 121529e4) ────────────────────────────────────────────────────────────────────────────
-  // 11a. Fern covers Cover R4 Covered (19:00–20:00, Mat 10) right after Fern's own Cover R4 Own (18:00–19:00, Mat 9):
-  // back to back, allowed. The owner moves Cover R4 Own's weekly slot to 19:00 with the same coach: one person on two
-  // overlapping sessions, one a cover. Staff see a flag naming the other session on both; members never see Fern twice.
-  stage = "round4-slot-move";
-  const fern = await coach("fern", "Fern Flag");
-  const r4own = { classId: randomUUID(), instanceId: randomUUID() };
-  const r4cov = { classId: randomUUID(), instanceId: randomUUID() };
-  for (const [c, name, place, coachId, start, end] of [[r4own, R4_CLASSES[0], "Mat 9", fern.id, "18:00", "19:00"], [r4cov, R4_CLASSES[1], "Mat 10", null, "19:00", "20:00"]]) {
-    await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity", location, "coachUserId", "isKids") values ($1, $2, $3, 60, 20, $4, $5, true)`, [c.classId, t, name, place, coachId]);
-    await q(`insert into "ClassSchedule" (id, "classId", "dayOfWeek", "startTime", "endTime", "startDate") values ($1, $2, 4, $3, $4, $5)`, [randomUUID(), c.classId, start, end, new Date(`${thu1}T00:00:00Z`)]);
-    await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, $4, $5)`, [c.instanceId, c.classId, new Date(`${thu1}T00:00:00Z`), start, end]);
-  }
-  L.check("R4A", "Fern is assigned to Cover R4 Covered, straight after Fern's own class (back to back)", (await ownerFetch(`/api/coach/instances/${r4cov.instanceId}/cover`, "POST", { action: "assign", coachUserId: fern.id })) === 200);
-  const r4move = await editSlots(op, r4own.classId, R4_CLASSES[0], [{ dayOfWeek: 4, startTime: "19:00", endTime: "20:00" }]);
-  L.check("R4A", "the owner moves Cover R4 Own to 19:00–20:00 with the same coach (saved: the class form allows it)", r4move.status === 200, r4move.status);
-  const movedId = (await q(`select id from "ClassInstance" where "classId" = $1 and date = $2 and "startTime" = '19:00'`, [r4own.classId, new Date(`${thu1}T00:00:00Z`)]))[0]?.id;
-  const flagOwn = `Clash: ${fern.name} is also teaching ${R4_CLASSES[1]} on ${THU1_LABEL}, 19:00–20:00, Mat 10`;
-  const flagCov = `Clash: ${fern.name} is also teaching ${R4_CLASSES[0]} on ${THU1_LABEL}, 19:00–20:00, Mat 9`;
-  for (const [tag, page] of [["1280", op], ["390", opPhone]]) {
-    await openBoard(page);
-    const ownRow = await sessionRow(page, movedId);
-    const covRow = await sessionRow(page, r4cov.instanceId);
-    const ownFlag = ownRow.getByTestId("clash-flag");
-    const covFlag = covRow.getByTestId("clash-flag");
-    await ownFlag.waitFor({ timeout: 60000 }).catch(() => {});
-    const seen = { own: (await ownFlag.isVisible()) ? (await ownFlag.innerText()).trim() : null, cov: (await covFlag.isVisible()) ? (await covFlag.innerText()).trim() : null };
-    L.check(`R4A@${tag}`, "the clash flag is visible on both sessions, each naming the other session (class, day, time, mat)", seen.own === flagOwn && seen.cov === flagCov, seen);
-    const states = { own: (await ownRow.getByTestId("cover-state").innerText()).trim(), cov: (await covRow.getByTestId("cover-state").innerText()).trim() };
-    L.check(`R4A@${tag}`, "the regular side reads Coach to be confirmed (not Fern); the cover side still reads Covered by Fern Flag", states.own === "Coach to be confirmed" && states.cov === `Covered by ${fern.name}`, states);
-    // Keyboard: from the session's time line, Tab reaches the flag itself, and its text is what is read.
-    await ownRow.locator("p").first().click();
-    let reached = null;
-    for (let i = 0; i < 8 && !reached; i++) {
-      await page.keyboard.press("Tab");
-      reached = await page.evaluate((id) => {
-        const a = document.activeElement;
-        return a?.getAttribute("data-testid") === "clash-flag" && a.closest("[data-session-id]")?.getAttribute("data-session-id") === id ? a.textContent.trim() : null;
-      }, movedId);
-    }
-    L.check(`R4A@${tag}`, "the flag is reached with Tab and its text is the clash sentence", reached === flagOwn, reached);
-    L.check(`R4A@${tag}`, "no sideways scroll on the board with the flag", !Object.values(await noSideways(page)).some(Boolean), await noSideways(page));
-    await shot(page, `session-cover-r4-clash-${tag}`);
-  }
-  const r4sched = await (await mp.request.get(`/api/member/schedule?date=${thu1}`)).json();
-  const mOwn = r4sched.find((e) => e.classId === r4own.classId && e.dayOfWeek === 4);
-  const mCov = r4sched.find((e) => e.classId === r4cov.classId && e.dayOfWeek === 4);
-  L.check("R4A@390", "the member reads Coach to be confirmed on the regular side and Fern Flag on the cover; no flag or clash text reaches them", mOwn?.coach === "Coach to be confirmed" && mCov?.coach === fern.name && !JSON.stringify(r4sched).includes("Clash"), { own: mOwn?.coach, cov: mCov?.coach });
-  L.check("N", "next Thursday untouched after round 4's slot move", await nextWeekUntouched());
-
-  // 11b. Gus heads Cover R4 Kids and Cover R4 Adults at 17:00 on two mats (the class form allows it). A request on Kids
-  // can be withdrawn (1280) and returned to Gus (390): the regular-versus-regular overlap no longer blocks them.
-  stage = "round4-withdraw-open";
-  const gus = await coach("gus", "Gus Twice");
-  const r4kids = { classId: randomUUID(), instanceId: randomUUID() };
-  for (const [c, name, place] of [[r4kids, R4_CLASSES[2], "Mat 11"], [{ classId: randomUUID(), instanceId: randomUUID() }, R4_CLASSES[3], "Mat 12"]]) {
-    await q(`insert into "Class" (id, "tenantId", name, duration, "maxCapacity", location, "coachUserId", "isKids") values ($1, $2, $3, 60, 20, $4, $5, true)`, [c.classId, t, name, place, gus.id]);
-    await q(`insert into "ClassInstance" (id, "classId", date, "startTime", "endTime") values ($1, $2, $3, '17:00', '18:00')`, [c.instanceId, c.classId, new Date(`${thu1}T00:00:00Z`)]);
-  }
-  for (const [tag, page, label, confirm, okNote, endStatus] of [["1280", op, "Withdraw request", "Withdraw request", "Cover request withdrawn.", "withdrawn"], ["390", opPhone, "Return to regular coach", "Return to regular coach", "Back to its regular coach.", "closed"]]) {
-    await openBoard(page);
-    await requestVia(page, r4kids.instanceId);
-    const note = await actOn(page, '[data-testid="cover-week"]', r4kids.instanceId, label, confirm);
-    st = await stateAfter(page, r4kids.instanceId, gus.name);
-    L.check(`R4B@${tag}`, `${label} on an open request is allowed while Gus heads another class at the same time`, note === okNote && st === gus.name && (await coverRow(r4kids.instanceId))?.status === endStatus, { note, st, row: await coverRow(r4kids.instanceId) });
-    await shot(page, `session-cover-r4-${endStatus}-${tag}`);
-  }
+  await round4({ op, opPhone, mp, ownerFetch });
   await ownerPhoneCtx.close();
+  }
 } catch (e) {
   if (lastPage && !lastPage.isClosed()) await shot(lastPage, "session-cover-failure").catch(() => {});
   L.check("run", "ran to the end", false, { stage, error: String(e).split("\n")[0].slice(0, 300) });
