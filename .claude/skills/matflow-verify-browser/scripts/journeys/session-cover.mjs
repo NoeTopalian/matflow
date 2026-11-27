@@ -153,10 +153,13 @@ async function actOn(page, scope, instanceId, label, confirmLabel = label) {
   await note.waitFor({ timeout: 60000 });
   return (await note.innerText()).trim();
 }
-/** The session row's state, after waiting (up to a minute) for the board's re-read to show `expected`. */
+/** The session row's state, after waiting (up to a minute) for the board's re-read to show `expected`. The state must
+ * START with it: a coach's name alone is also inside the stale "Cover needed · <name> away", so a plain substring wait
+ * returns before the re-read lands. */
 async function stateAfter(page, instanceId, expected) {
   const r = await sessionRow(page, instanceId);
-  await r.getByTestId("cover-state").filter({ hasText: expected }).waitFor({ timeout: 60000 }).catch(() => {});
+  const starts = new RegExp(`^\\s*${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+  await r.getByTestId("cover-state").filter({ hasText: starts }).waitFor({ timeout: 60000 }).catch(() => {});
   return (await (await sessionRow(page, instanceId)).getByTestId("cover-state").innerText()).trim();
 }
 /** PATCH the class's weekly slots from the owner's own page (the timetable form's route), as the owner. */
