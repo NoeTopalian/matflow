@@ -82,6 +82,7 @@ beforeEach(() => {
   m.attendanceFindMany.mockResolvedValue([]);
   m.memberFindMany.mockResolvedValue([]);
   m.subscriptionFindMany.mockResolvedValue([]);
+  m.instanceFindMany.mockResolvedValue([]); // the register's clash check pool (lib/session-clash.ts): no covered session
 });
 
 describe("register — a squad class", () => {
