@@ -58,6 +58,11 @@ vi.mock("@/lib/prisma-tenant", () => ({
       attendanceRecord: { count: mockAttendanceCount },
       classRoster: { count: mockRosterCount },
       classSubscription: { count: mockBookingCount },
+      // Session cover: archiving closes the covers of upcoming sessions (none here).
+      tenant: { findFirst: async () => ({ timezone: "Europe/London" }) },
+      sessionCover: { findMany: async () => [] },
+      // ...after locking every session of the class (round 3).
+      $queryRaw: async () => [],
     }),
 }));
 

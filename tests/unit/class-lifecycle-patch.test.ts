@@ -28,6 +28,9 @@ const mockPrisma = {
   classSubscription: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() },
   rankSystem: { findFirst: vi.fn() },
   $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  // Session cover: pausing closes the covers of upcoming sessions (none here).
+  tenant: { findFirst: async () => ({ timezone: "Europe/London" }) },
+  sessionCover: { findMany: async () => [] },
 };
 
 vi.mock("@/lib/prisma-tenant", () => ({

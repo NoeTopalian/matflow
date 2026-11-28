@@ -22,7 +22,9 @@ import { auth } from "@/auth";
 import { withTenantContext } from "@/lib/prisma-tenant";
 import { ensureClassHorizon } from "@/lib/class-horizon";
 import { NextResponse } from "next/server";
-import { resolveCoachName } from "@/lib/class-coach";
+import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
+import { loadCovers, sessionHasStarted } from "@/lib/session-cover";
+import { loadTeacherClashes } from "@/lib/session-clash";
 import { isAdultAccount } from "@/lib/account-type";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import type { ScheduleEligibility } from "@/lib/member-home";
@@ -68,7 +70,7 @@ export async function GET(req: Request) {
   await ensureClassHorizon(session.user.tenantId);
 
   try {
-    const { classes, instanceMap, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds, clubZone } = await withTenantContext(
+    const { classes, instanceMap, coverCoach, coverDay, cancelledSlots, memberRanks, rosterClassIds, rosterCounts, viewerIsAdult, viewerTierId, viewerTierName, bookedClassIds, clubZone } = await withTenantContext(
       session.user.tenantId,
       async (tx) => {
         const cls = await tx.class.findMany({
@@ -84,7 +86,7 @@ export async function GET(req: Request) {
             name: true,
             color: true,
             coachName: true,
-            coachUser: { select: { id: true, name: true } },
+            coachUser: { select: { id: true, name: true, deactivatedAt: true } },
             location: true,
             // The mat the class runs on (null = none); the member's day draws a column per mat.
             matId: true,
@@ -106,6 +108,9 @@ export async function GET(req: Request) {
         });
 
         const map = new Map<string, string>();
+        // The coach a session's cover gives it, by `${classId}-${startTime}` on the requested day.
+        const coverCoach = new Map<string, string | null>();
+        let coverDay = -1;
         // A cancelled session on the requested day is reported as such so the
         // timetable can say "Cancelled" instead of drawing it like any other
         // class. It still carries NO classInstanceId: nothing may book or
@@ -127,12 +132,28 @@ export async function GET(req: Request) {
               class: { tenantId: session.user.tenantId },
               date: { gte: startOfDay, lte: endOfDay },
             },
-            select: { id: true, classId: true, startTime: true, isCancelled: true },
+            select: { id: true, classId: true, date: true, startTime: true, endTime: true, isCancelled: true },
           });
           for (const inst of instances) {
             const key = `${inst.classId}-${inst.startTime}`;
             if (inst.isCancelled) cancelledSlots.add(key);
             else map.set(key, inst.id);
+          }
+          // Session cover on this day's sessions: the confirmed covering coach, or "Coach to be confirmed" while
+          // cover is open (lib/session-coach.ts). Only a display string reaches the member: no ids, no request.
+          coverDay = startOfDay.getUTCDay();
+          const live = instances.filter((i) => !i.isCancelled);
+          const covers = await loadCovers(tx, session.user.tenantId, live.map((i) => i.id));
+          // One person is never shown on two overlapping sessions (lib/session-clash.ts).
+          const clashes = await loadTeacherClashes(tx, session.user.tenantId, live, zone);
+          const byId = new Map(cls.map((c) => [c.id, c]));
+          const now = new Date();
+          for (const inst of live) {
+            const cover = covers.get(inst.id);
+            const clash = clashes.get(inst.id);
+            const c = byId.get(inst.classId);
+            if ((!cover && !clash) || !c) continue;
+            coverCoach.set(`${inst.classId}-${inst.startTime}`, memberCoachLabel(resolveSessionTeacher(c, cover, { started: sessionHasStarted(inst, zone, now), clash })));
           }
         }
 
@@ -177,6 +198,8 @@ export async function GET(req: Request) {
         return {
           classes: cls,
           instanceMap: map,
+          coverCoach,
+          coverDay,
           cancelledSlots,
           memberRanks: ranks,
           rosterClassIds: rosterIds,
@@ -263,7 +286,8 @@ export async function GET(req: Request) {
           color: cls.color,
           startTime: sched.startTime,
           endTime: sched.endTime,
-          coach: resolveCoachName(cls) ?? "TBC",
+          // The requested day's own session only (its weekday): another day's row of the same class keeps its coach.
+          coach: (sched.dayOfWeek === coverDay && coverCoach.has(`${cls.id}-${sched.startTime}`) ? coverCoach.get(`${cls.id}-${sched.startTime}`) : memberCoachLabel(resolveSessionTeacher(cls, null))) ?? "TBC",
           location: cls.location ?? "",
           matId: cls.matId ?? null,
           capacity: cls.maxCapacity,

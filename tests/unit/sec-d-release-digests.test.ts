@@ -16,7 +16,7 @@ const audit = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }))
 vi.mock("@/lib/audit-log", () => ({ logAudit: vi.fn(async (a: Record<string, unknown>) => { audit.rows.push(a); }) }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>) =>
-    fn({ $queryRaw: async () => [{ email: "secd-coach@example.test" }], user: { updateMany: async () => ({ count: 1 }), findFirst: async () => ({ name: "Coach", role: "coach" }) } }),
+    fn({ $queryRaw: async () => [{ email: "secd-coach@example.test" }], $executeRaw: async () => 1, tenant: { findFirst: async () => ({ timezone: "Europe/London" }) }, sessionCover: { findMany: async () => [] }, user: { updateMany: async () => ({ count: 1 }), findFirst: async () => ({ name: "Coach", role: "coach" }) } }),
 }));
 
 import { DELETE as deleteStaff } from "@/app/api/staff/[id]/route";

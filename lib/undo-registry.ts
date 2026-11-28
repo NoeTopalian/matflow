@@ -23,6 +23,8 @@ import { revalidateTagLogged } from "@/lib/revalidate-tag-logged";
 import { restorePackCreditsForAttendance } from "@/lib/checkin";
 import { CONFIRMED_BY } from "@/lib/guardianship";
 import { mintUpcomingSessions } from "@/lib/class-lifecycle";
+import { closeCoversForClass } from "@/lib/session-cover";
+import { usableTimezone } from "@/lib/class-time";
 import { IMPORTED_CLASS_REACTIVATE_REFUSAL } from "@/lib/class-live";
 import { BILLING_BASIS_AVAILABLE } from "@/lib/class-allowance";
 import { recordStatusEvent } from "@/lib/member-status";
@@ -207,7 +209,7 @@ type SnapshotOptions = {
   /** Extra data to write alongside the restore (e.g. a session bump). */
   extra?: (restore: Record<string, unknown>) => Record<string, unknown>;
   /** Follow-up writes in the same transaction, after the restore (e.g. minting sessions). */
-  afterApply?: (tx: TxLike, row: AuditRowLike, restore: Record<string, unknown>) => Promise<void>;
+  afterApply?: (tx: TxLike, row: AuditRowLike, restore: Record<string, unknown>, actorUserId: string | null) => Promise<void>;
 };
 
 /** What a snapshot row would restore, as field names, from metadata alone. */
@@ -293,7 +295,7 @@ function snapshotHandler(entityType: string, opts: SnapshotOptions = {}): UndoHa
           changedById: actor?.userId ?? null,
         });
       }
-      await opts.afterApply?.(tx, row, restore);
+      await opts.afterApply?.(tx, row, restore, actor?.userId ?? null);
       opts.after?.(row);
     },
   };
@@ -466,13 +468,19 @@ export const UNDO_HANDLERS: Record<string, UndoHandler> = {
         throw new UndoStale(REASON.archivedSince);
       }
     },
-    async afterApply(tx, row, restore) {
+    async afterApply(tx, row, restore, actorUserId) {
       // Undoing a pause or an archive brings the class back on the timetable:
       // mint the sessions no generator made while it was off. Only when the
       // class ends up live (the guard has refused active-but-archived).
       const endsArchived = "deletedAt" in restore && restore.deletedAt != null;
       if (restore.isActive === true && !endsArchived && row.tenantId) {
         await mintUpcomingSessions(tx, row.tenantId, row.entityId);
+      }
+      // Undoing a resume or a restore takes the class off the timetable again: its upcoming sessions' active cover
+      // ends, as a pause or an archive would end it (lib/session-cover.ts).
+      if (restore.isActive === false && row.tenantId) {
+        const club = await tx.tenant.findFirst({ where: { id: row.tenantId }, select: { timezone: true } });
+        await closeCoversForClass(tx, row.tenantId, actorUserId, row.entityId, endsArchived ? "class_archived" : "class_paused", usableTimezone(club?.timezone));
       }
     },
   }),

@@ -39,6 +39,7 @@ vi.mock("@/lib/prisma-tenant", () => ({
       tenant: { findUnique: m.tenantFindUnique },
       class: { findMany: m.classFindMany },
       classInstance: { findFirst: m.instanceFindFirst, findMany: m.instanceFindMany, createMany: m.instanceCreateMany },
+      sessionCover: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) }, // session cover (no rows)
       classSubscription: { findMany: m.subscriptionFindMany },
       attendanceRecord: { findMany: m.attendanceFindMany, groupBy: m.attendanceGroupBy },
       classWaitlist: { findMany: m.waitlistFindMany },
@@ -81,6 +82,7 @@ beforeEach(() => {
   m.attendanceFindMany.mockResolvedValue([]);
   m.memberFindMany.mockResolvedValue([]);
   m.subscriptionFindMany.mockResolvedValue([]);
+  m.instanceFindMany.mockResolvedValue([]); // the register's clash check pool (lib/session-clash.ts): no covered session
 });
 
 describe("register — a squad class", () => {

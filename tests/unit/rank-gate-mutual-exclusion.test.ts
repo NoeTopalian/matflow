@@ -30,6 +30,9 @@ const mockPrisma = {
   member: { findMany: vi.fn().mockResolvedValue([]) },
   // T6a: the PATCH write transaction opens with a Class row lock.
   $queryRaw: vi.fn().mockResolvedValue([{ id: "c1" }]),
+  // Session cover: archiving closes the covers of upcoming sessions (none here).
+  tenant: { findFirst: async () => ({ timezone: "Europe/London" }) },
+  sessionCover: { findMany: async () => [] },
 };
 
 beforeEach(() => {

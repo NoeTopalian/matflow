@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Users, Clock, MapPin, QrCode } from "lucide-react";
 import Link from "next/link";
 import { capacityLabel } from "@/lib/capacity-label";
+import { ClashFlag } from "@/components/dashboard/ClashFlag";
 
 export interface DayClass {
   id: string;
@@ -12,6 +13,8 @@ export interface DayClass {
   endTime?: string;   // "10:00"
   /** The class's coach (the linked staff coach, else the typed name); null when it has none. */
   coach: string | null;
+  /** The same person also teaches an overlapping session, one of the two a cover: the flag naming it (session cover). */
+  clash?: string | null;
   capacity: number | null;
   enrolled: number;
   location?: string;
@@ -344,6 +347,7 @@ function ClassPill({
       >
         <p className="font-semibold truncate" style={{ color: "var(--tx-1)" }}>{cls.time} {cls.name}</p>
         <p className="truncate" style={{ color: "var(--tx-3)" }}>{coachLabel(cls.coach)}</p>
+        {cls.clash && <ClashFlag text={cls.clash} className="my-0.5" />}
         {cap && (
           <p style={{ color: capColor("var(--tx-4)") }}>
             {cap.short}
@@ -397,6 +401,7 @@ function ClassPill({
               </span>
             )}
           </div>
+          {cls.clash && <ClashFlag text={cls.clash} className="mt-1.5" />}
         </div>
       </div>
 

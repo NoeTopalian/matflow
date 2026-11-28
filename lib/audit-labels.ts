@@ -85,6 +85,18 @@ export const AUDIT_LABELS: Record<string, string> = {
   "class.instances_generated": "Generated timetable sessions",
   "class.instance_cancelled": "Cancelled a session",
   "class.instance_restored": "Restored a cancelled session",
+  // Session cover (26 Nov 2026): who teaches one dated session (lib/session-cover.ts).
+  "class.cover_requested": "Asked for cover for a session",
+  "class.cover_claimed": "Took a session that needed cover",
+  "class.cover_assigned": "Assigned a coach to cover a session",
+  "class.cover_replaced": "Replaced the coach covering a session",
+  "class.cover_given_up": "Gave up covering a session",
+  "class.cover_withdrawn": "Withdrew a cover request",
+  "class.cover_returned_to_regular": "Returned a session to its regular coach",
+  "class.cover_closed": "Closed a cover request",
+  "class.cover_reconfirm_flagged": "A covered session's time changed",
+  "class.cover_moved": "Moved a cover request to a session's new time",
+  "class.cover_reconfirmed": "Reconfirmed covering a session",
   "class.roster.add": "Added a member to a class roster",
   "class.roster.remove": "Removed a member from a class roster",
   // D2 (24 Oct 2026): a rule change kept bookings whose members it now turns away.

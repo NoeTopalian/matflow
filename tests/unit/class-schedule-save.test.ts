@@ -39,6 +39,7 @@ const mockPrisma = {
   tenant: { findFirst: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
   classSchedule: { findMany: vi.fn(), updateMany: vi.fn(), createMany: vi.fn() },
   classInstance: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
+  sessionCover: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) }, // session cover (no rows)
   classRoster: { deleteMany: vi.fn(), createMany: vi.fn(), count: vi.fn() },
   classSubscription: { findMany: vi.fn(), deleteMany: vi.fn() },
   rankSystem: { findFirst: vi.fn() },

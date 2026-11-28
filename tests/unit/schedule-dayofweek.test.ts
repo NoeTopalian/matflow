@@ -25,6 +25,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     class: { findMany: vi.fn() },
     classInstance: { findMany: vi.fn() },
+    sessionCover: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) }, // session cover (no rows)
     tenant: { findUnique: vi.fn().mockResolvedValue({ timezone: "Europe/London" }) },
     classRoster: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -86,8 +87,10 @@ describe("GET /api/member/schedule — dayOfWeek convention", () => {
   });
 
   it("populates classInstanceId when ?date matches a ClassInstance", async () => {
-    mockInstanceFindMany.mockResolvedValue([
-      { id: "inst-42", classId: "class-1", startTime: "18:00" },
+    // Once: the day's own read (with its date, which the route selects); the clash check's pool (lib/session-clash.ts)
+    // then gets the default (no covered session).
+    mockInstanceFindMany.mockResolvedValueOnce([
+      { id: "inst-42", classId: "class-1", date: new Date("2026-04-20T00:00:00Z"), startTime: "18:00" },
     ] as never);
     const res = await GET(new Request("http://localhost/api/member/schedule?date=2026-04-20"));
     const data = await res.json();
@@ -96,8 +99,8 @@ describe("GET /api/member/schedule — dayOfWeek convention", () => {
   });
 
   it("leaves classInstanceId null for classes without a matching instance", async () => {
-    mockInstanceFindMany.mockResolvedValue([
-      { id: "inst-42", classId: "class-1", startTime: "18:00" },
+    mockInstanceFindMany.mockResolvedValueOnce([ // once, and with its date, as above
+      { id: "inst-42", classId: "class-1", date: new Date("2026-04-20T00:00:00Z"), startTime: "18:00" },
     ] as never);
     const res = await GET(new Request("http://localhost/api/member/schedule?date=2026-04-20"));
     const data = await res.json();

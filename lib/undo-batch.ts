@@ -93,6 +93,18 @@ export async function lockBatchRows(tx: TxLike, tenantId: string, items: PlanIte
        WHERE "tenantId" = ${tenantId} AND "id" = ANY(${classIds}::text[])
        ORDER BY "id" FOR NO KEY UPDATE
     `;
+    // Session cover (PR #134, round 3): undoing a resume or restore closes the cover on that class's sessions, after
+    // locking them (lib/session-cover.ts lockClassSessions). A batch touching several classes would lock each class's
+    // sessions in handler order; a staff deactivation locks its sessions in id order across classes. So every session
+    // of the batch's classes (same window as lockClassSessions) is locked HERE, in one statement in id order, and the
+    // handlers' later class-wide locks land on rows already held (docs/design/LOCK-ORDER-2026-10-24.md §8.1).
+    await tx.$queryRaw`
+      SELECT ci."id" FROM "ClassInstance" ci
+       WHERE ci."classId" = ANY(${classIds}::text[])
+         AND ci."date" >= ${new Date(Date.now() - 3 * 86_400_000)}
+         AND EXISTS (SELECT 1 FROM "Class" c WHERE c."id" = ci."classId" AND c."tenantId" = ${tenantId})
+       ORDER BY ci."id" FOR NO KEY UPDATE OF ci
+    `;
   }
   if (memberIds.length > 0 || recordIds.length > 0) {
     await tx.$queryRaw`

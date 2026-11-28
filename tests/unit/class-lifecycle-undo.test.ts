@@ -32,6 +32,11 @@ const row = (action: string, metadata: unknown): AuditRowLike => ({
 
 const fake = {
   class: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+  // Session cover: an undo that pauses or archives closes the covers of upcoming sessions (none here).
+  tenant: { findFirst: async () => ({ timezone: "Europe/London" }) },
+  sessionCover: { findMany: async () => [] },
+  // ...after locking every session of the class (round 3).
+  $queryRaw: async () => [],
 };
 const tx = fake as unknown as TxLike;
 

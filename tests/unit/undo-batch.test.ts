@@ -58,7 +58,11 @@ describe("executeUndo", () => {
     queryRaw.mockReset();
     queryRaw.mockImplementation(async (strings: string[], ...values: unknown[]) => {
       const text = strings.join("?");
-      order.push(text.includes('FROM "Class"') ? `lock-class:${JSON.stringify(values[1])}` : `lock-member:${JSON.stringify(values[1])}`);
+      order.push(
+        text.includes('FROM "ClassInstance"') ? `lock-sessions:${JSON.stringify(values[0])}`
+          : text.includes('FROM "Class"') ? `lock-class:${JSON.stringify(values[1])}`
+            : `lock-member:${JSON.stringify(values[1])}`,
+      );
       return [];
     });
     fake.member.findFirst.mockReset();
@@ -102,10 +106,12 @@ describe("executeUndo", () => {
     const plan = planUndoTo(ROWS, "a1", new Set());
     await executeUndo(tx, plan.reversible, { tenantId: "t1", userId: "u-owner" });
     // (the mats lock comes first, since the batch touches a class: see the mats case below)
-    expect(order.slice(0, 3)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-member:["m1"]']);
-    expect(order.slice(3).every((o) => o === "handler")).toBe(true);
-    const [classSql, memberSql] = queryRaw.mock.calls.map((c) => (c[0] as string[]).join("?"));
+    // Session cover (round 3): the classes' sessions, in id order, between the Class and Member locks.
+    expect(order.slice(0, 4)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-sessions:["c1"]', 'lock-member:["m1"]']);
+    expect(order.slice(4).every((o) => o === "handler")).toBe(true);
+    const [classSql, sessionSql, memberSql] = queryRaw.mock.calls.map((c) => (c[0] as string[]).join("?"));
     expect(classSql).toMatch(/ORDER BY "id" FOR NO KEY UPDATE/);
+    expect(sessionSql).toMatch(/ORDER BY ci\."id" FOR NO KEY UPDATE OF ci/);
     expect(memberSql).toMatch(/ORDER BY "id" FOR NO KEY UPDATE/);
     expect(memberSql).toContain('"AttendanceRecord"');
   });
@@ -137,8 +143,8 @@ describe("executeUndo", () => {
       r("c1", "member.update", "2026-10-01T11:00:00Z", { changes: { phone: { from: "1", to: "2" } } }),
     ].map((row) => ({ row, decision: { ok: true as const } }));
     await executeUndo(withClass, items, { tenantId: "t1", userId: "u-owner" });
-    expect(order.slice(0, 3)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-member:["m1"]']);
-    expect(order.slice(3).every((o) => o === "handler")).toBe(true);
+    expect(order.slice(0, 4)).toEqual(["mats-lock:t1", 'lock-class:["c1"]', 'lock-sessions:["c1"]', 'lock-member:["m1"]']);
+    expect(order.slice(4).every((o) => o === "handler")).toBe(true);
 
     // A single class edit takes it too (there is no batch lock for one row, but the handler may read a mat).
     order.length = 0;

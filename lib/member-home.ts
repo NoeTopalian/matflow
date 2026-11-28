@@ -16,7 +16,10 @@
 import { CONFIRMED_GUARDIAN } from "@/lib/guardianship";
 import type { Prisma } from "@prisma/client";
 import { computeMemberStats } from "@/lib/member-stats";
-import { resolveCoachName } from "@/lib/class-coach";
+import { memberCoachLabel, resolveSessionTeacher } from "@/lib/session-coach";
+import { loadCovers, memberCoverLabels, sessionHasStarted } from "@/lib/session-cover";
+import { loadTeacherClashes } from "@/lib/session-clash";
+import { usableTimezone } from "@/lib/class-time";
 import { classTierCovers } from "@/lib/class-tier-gate";
 import { liveClassWhere } from "@/lib/class-live";
 
@@ -307,7 +310,7 @@ export async function buildMemberSchedule(
       name: true,
       color: true,
       coachName: true,
-      coachUser: { select: { id: true, name: true } },
+      coachUser: { select: { id: true, name: true, deactivatedAt: true } },
       location: true,
       // The mat the class runs on: the same field /api/member/schedule returns.
       matId: true,
@@ -328,6 +331,9 @@ export async function buildMemberSchedule(
   });
 
   const instanceMap = new Map<string, string>();
+  // The coach a session's cover gives it, by `${classId}-${startTime}` on the day (session cover, 26 Nov 2026).
+  const coverCoach = new Map<string, string | null>();
+  const coverDay = dateParam ? new Date(`${dateParam}T00:00:00.000Z`).getUTCDay() : -1;
   if (dateParam) {
     const startOfDay = new Date(`${dateParam}T00:00:00.000Z`);
     const endOfDay = new Date(`${dateParam}T23:59:59.999Z`);
@@ -337,10 +343,28 @@ export async function buildMemberSchedule(
         date: { gte: startOfDay, lte: endOfDay },
         isCancelled: false,
       },
-      select: { id: true, classId: true, startTime: true },
+      select: { id: true, classId: true, date: true, startTime: true, endTime: true },
     });
     for (const inst of instances) {
       instanceMap.set(`${inst.classId}-${inst.startTime}`, inst.id);
+    }
+    // The confirmed covering coach, or "Coach to be confirmed" while cover is open (lib/session-coach.ts). Only a
+    // display string reaches the member.
+    const covers = await loadCovers(tx, tenantId, instances.map((i) => i.id));
+    // One person is never shown on two overlapping sessions (lib/session-clash.ts).
+    const clashes = await loadTeacherClashes(tx, tenantId, instances);
+    if (covers.size > 0 || clashes.size > 0) {
+      const club = await tx.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+      const zone = usableTimezone(club?.timezone);
+      const byId = new Map(cls.map((c) => [c.id, c]));
+      const now = new Date();
+      for (const inst of instances) {
+        const cover = covers.get(inst.id);
+        const clash = clashes.get(inst.id);
+        const c = byId.get(inst.classId);
+        if ((!cover && !clash) || !c) continue;
+        coverCoach.set(`${inst.classId}-${inst.startTime}`, memberCoachLabel(resolveSessionTeacher(c, cover, { started: sessionHasStarted(inst, zone, now), clash })));
+      }
     }
   }
 
@@ -409,7 +433,8 @@ export async function buildMemberSchedule(
       color: cls.color,
       startTime: sched.startTime,
       endTime: sched.endTime,
-      coach: resolveCoachName(cls) ?? "TBC",
+      // The day's own session only (its weekday): another day's row of the same class keeps its coach.
+      coach: (sched.dayOfWeek === coverDay && coverCoach.has(`${cls.id}-${sched.startTime}`) ? coverCoach.get(`${cls.id}-${sched.startTime}`) : memberCoachLabel(resolveSessionTeacher(cls, null))) ?? "TBC",
       location: cls.location ?? "",
       matId: cls.matId ?? null,
       capacity: cls.maxCapacity,
@@ -551,6 +576,7 @@ export async function buildMemberChildren(
         select: {
           name: true,
           coachName: true,
+          coachUser: { select: { id: true, name: true, deactivatedAt: true } },
           location: true,
           tenantId: true,
         },
@@ -560,6 +586,7 @@ export async function buildMemberChildren(
   });
 
   const ourInstances = instances.filter((i) => i.class.tenantId === tenantId);
+  const coverLabels = await memberCoverLabels(tx, tenantId, ourInstances);
   const byClassId = new Map<string, typeof ourInstances>();
   for (const inst of ourInstances) {
     const arr = byClassId.get(inst.classId) ?? [];
@@ -581,7 +608,8 @@ export async function buildMemberChildren(
       date: i.date.toISOString().slice(0, 10),
       startTime: i.startTime,
       endTime: i.endTime,
-      coach: i.class.coachName,
+      // Session cover: "Coach to be confirmed" or the confirmed covering coach; otherwise as before.
+      coach: coverLabels.has(i.id) ? (coverLabels.get(i.id) ?? null) : i.class.coachName,
       location: i.class.location,
       isCancelled: i.isCancelled,
     }));

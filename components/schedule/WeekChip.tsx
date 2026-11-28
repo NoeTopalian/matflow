@@ -58,6 +58,7 @@ export function WeekChip({
   duplicate = false,
   kids = false,
   category = null,
+  cover = null,
   canManage,
   onEdit,
   size = "week",
@@ -81,6 +82,8 @@ export function WeekChip({
   duplicate?: boolean;
   kids?: boolean;
   category?: string | null;
+  /** Session cover on this dated session ("Cover needed", "Covered by …"); null when its coach is the regular one. */
+  cover?: string | null;
   canManage: boolean;
   onEdit: () => void;
 }) {
@@ -88,7 +91,7 @@ export function WeekChip({
   const dim = state === "ended" || state === "cancelled";
   const label =
     `${canManage ? "Edit " : ""}${name}, ${dayName} ${startTime} to ${endTime}${place ? `, ${place}` : noPlaceLabel ? `, ${noPlaceLabel}` : ""}` +
-    `${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}`;
+    `${showState ? ` (${sessionStateLabel(state).toLowerCase()})` : ""}${duplicate ? " (possible duplicate)" : ""}${cover ? `, ${cover}` : ""}`;
   const phone = size === "phone";
   return (
     <Button
@@ -124,6 +127,11 @@ export function WeekChip({
       {showPlace && place ? (
         <span className="line-clamp-2 text-[11px] leading-[14px] text-tx-2 [overflow-wrap:anywhere]" data-chip-part="place">
           {place}
+        </span>
+      ) : null}
+      {cover ? (
+        <span className="text-[11px] font-medium leading-[14px] text-tx-1 [overflow-wrap:anywhere]" data-chip-part="cover">
+          {cover}
         </span>
       ) : null}
       {showState || duplicate || kids || category ? (
@@ -190,6 +198,7 @@ export function MoreRow({
   endTime,
   color,
   place,
+  cover = null,
   canManage,
   onEdit,
 }: {
@@ -200,6 +209,8 @@ export function MoreRow({
   endTime: string;
   color: string;
   place: string | null;
+  /** Session cover on this dated session, as on the chip ("Cover needed", "Covered by …"); null when none. */
+  cover?: string | null;
   canManage: boolean;
   onEdit: () => void;
 }) {
@@ -208,7 +219,7 @@ export function MoreRow({
       variant="ghost"
       disabled={!canManage}
       onClick={onEdit}
-      aria-label={label}
+      aria-label={cover ? `${label}, ${cover}` : label}
       data-testid="more-row"
       className="h-auto min-h-11 w-full flex-wrap items-center justify-start gap-x-2 gap-y-0 whitespace-normal rounded-[var(--r-sm)] border-bd-hover px-2 py-1.5 text-left font-normal text-tx-1 hover:bg-transparent hover:text-tx-1 enabled:hover:brightness-[0.97] disabled:cursor-default disabled:opacity-100"
       style={{ background: hex(color, 0.12) }}
@@ -219,6 +230,11 @@ export function MoreRow({
       </span>
       <span className="min-w-0 flex-1 text-[13px] font-semibold leading-[17px] [overflow-wrap:anywhere]">{name}</span>
       {place ? <span className="text-[11px] leading-[14px] text-tx-2 [overflow-wrap:anywhere]">{place}</span> : null}
+      {cover ? (
+        <span className="basis-full text-[11px] font-medium leading-[14px] text-tx-1 [overflow-wrap:anywhere]" data-chip-part="cover">
+          {cover}
+        </span>
+      ) : null}
     </Button>
   );
 }

@@ -70,6 +70,7 @@ describe("types are well formed and their keys are permanent", () => {
       "payment_reminder",
       "billing_details",
       "session_cancelled",
+      "session_cover",
       "class_changed",
       "announcement",
       "task",

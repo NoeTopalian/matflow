@@ -369,6 +369,9 @@ export const RESOLVED_ID_KEYS: Record<string, RefKind> = {
   targetMemberId: "member",
   childId: "member",
   assignedToId: "staff",
+  // Session cover: the coach who covers, and the one they replaced or who gave it up.
+  coverUserId: "staff",
+  previousCoverUserId: "staff",
   classId: "class",
   classInstanceId: "session",
   paymentId: "payment",
@@ -1084,6 +1087,71 @@ function template(row: FeedRow, r: Reader, ctx: FeedContext): Part[] | null {
       return who ? sentence(who, ` ${verb} `, where) : sentence(where, ` was ${verb}`);
     }
 
+    // Session cover (26 Nov 2026). The session, the coach and the coach it replaced are all ids on the row.
+    case "class.cover_requested": {
+      const where = r.session(row.entityId);
+      return who && where ? sentence(who, " asked for cover for ", where) : null;
+    }
+    case "class.cover_claimed": {
+      const where = r.session(row.entityId);
+      return who && where ? sentence(who, " is covering ", where) : null;
+    }
+    case "class.cover_assigned": {
+      const where = r.session(row.entityId);
+      const coach = r.staff(m.coverUserId);
+      return who && where && coach ? sentence(who, " assigned ", coach, " to cover ", where) : null;
+    }
+    case "class.cover_replaced": {
+      const where = r.session(row.entityId);
+      const coach = r.staff(m.coverUserId);
+      const before = r.staff(m.previousCoverUserId);
+      return who && where && coach && before ? sentence(who, " replaced ", before, " with ", coach, " to cover ", where) : null;
+    }
+    case "class.cover_given_up": {
+      const where = r.session(row.entityId);
+      if (!who || !where) return null;
+      const before = idOf(m.previousCoverUserId) && m.previousCoverUserId !== row.userId ? r.staff(m.previousCoverUserId) : null;
+      if (before && m.reason === "coach_deactivated") return sentence(who, " deactivated ", before, ", so ", where, " needs cover again");
+      return before
+        ? sentence(who, " took ", before, " off ", where, ", which needs cover again")
+        : sentence(who, " gave up covering ", where, ", which needs cover again");
+    }
+    case "class.cover_withdrawn": {
+      const where = r.session(row.entityId);
+      return who && where ? sentence(who, " withdrew the cover request for ", where) : null;
+    }
+    case "class.cover_returned_to_regular": {
+      const where = r.session(row.entityId);
+      return who && where ? sentence(who, " returned ", where, " to its regular coach") : null;
+    }
+    case "class.cover_closed": {
+      const where = r.session(row.entityId);
+      if (!where) return null;
+      const why =
+        m.closedReason === "session_cancelled" ? "the session was cancelled"
+        : m.closedReason === "session_removed" ? "the class's weekly time changed and the session was removed"
+        : m.closedReason === "replacement_ambiguous" ? "the class's weekly times changed and its new session is not clear; request cover on the intended session"
+        : m.closedReason === "replacement_started" ? "the class's new time that day had already started; request cover on the intended session"
+        : m.closedReason === "class_archived" ? "the class was archived"
+        : m.closedReason === "class_paused" ? "the class was paused"
+        : null;
+      return why ? sentence("The cover request for ", where, ` closed: ${why}`) : null;
+    }
+    case "class.cover_reconfirm_flagged": {
+      const where = r.session(row.entityId);
+      const coach = r.staff(m.coverUserId);
+      return where && coach ? sentence(where, " changed time after ", coach, " took the cover; they need to reconfirm") : null;
+    }
+    case "class.cover_moved": {
+      const where = r.session(row.entityId);
+      const was = str(m.previousStartTime);
+      return where && was ? sentence("The cover request moved with the class's new time to ", where, ` (it was at ${was})`) : null;
+    }
+    case "class.cover_reconfirmed": {
+      const where = r.session(row.entityId);
+      return who && where ? sentence(who, " reconfirmed covering ", where) : null;
+    }
+
     // Mats and the split (RULES §5b). A mat has no page of its own: its name, as the row recorded it, is plain text.
     case "mat.create": {
       const name = str(m.name);
@@ -1405,6 +1473,8 @@ const STAFF_ONLY_ACTIONS = new Set([
   "member.guardian.confirmed", "member.guardian.rejected",
   "payment.manual", "payment.adhoc.charge", "payment.chase", "order.mark_paid",
   "class.created", "class.updated", "class.deleted", "class.roster.add", "class.roster.remove", "class.instance_cancelled", "class.instance_restored",
+  "class.cover_requested", "class.cover_claimed", "class.cover_assigned", "class.cover_replaced", "class.cover_given_up", "class.cover_withdrawn",
+  "class.cover_returned_to_regular", "class.cover_reconfirmed", "class.cover_closed", "class.cover_reconfirm_flagged", "class.cover_moved",
   "mat.create", "mat.update", "mat.delete", "mat.reorder", "mat.adopt", "timetable.layout.update",
   "class_category.create", "class_category.rename", "class_category.archive", "class_category.restore", "class_category.reorder",
   "waiver.sign.supervised", "task.member_note.create", "task.staff_task.create",

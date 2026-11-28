@@ -200,6 +200,8 @@ async function walkTenant(
         const instanceIds = instances.map((i) => i.id);
         await tx.attendanceRecord.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
         await tx.classWaitlist.deleteMany({ where: { classInstanceId: { in: instanceIds } } });
+        // Session cover rows go with their sessions (RESTRICT keys); the club's other cover rows go in step 5.
+        await tx.sessionCover.deleteMany({ where: { tenantId, classInstanceId: { in: instanceIds } } });
         await tx.classInstance.deleteMany({ where: { id: { in: instanceIds } } });
         return instances.length;
       });
@@ -222,6 +224,8 @@ async function walkTenant(
 
   // 5. Everything else keyed by tenantId (order matters where one RESTRICTs another).
   const tenantScoped: Array<[string, PickModel]> = [
+    // Session cover rows whose session had already gone (withdrawn or closed); they name staff users, so before step 7.
+    ["sessionCover", (tx) => tx.sessionCover as unknown as BatchDeletable],
     ["importedMembership", (tx) => tx.importedMembership as unknown as BatchDeletable],
     ["importedBooking", (tx) => tx.importedBooking as unknown as BatchDeletable],
     ["importSourceMapping", (tx) => tx.importSourceMapping as unknown as BatchDeletable],

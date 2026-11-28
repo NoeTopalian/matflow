@@ -61,6 +61,7 @@ vi.mock("@/lib/prisma", () => {
   prisma: {
     auditLog: { ...emptyModel(), create: vi.fn().mockResolvedValue({}) },
     emailLog: emptyModel(),
+    sessionCover: emptyModel(), // session cover rows go with the club
     magicLinkToken: emptyModel(),
     passwordResetToken: emptyModel(),
     rateLimitHit: emptyModel(),

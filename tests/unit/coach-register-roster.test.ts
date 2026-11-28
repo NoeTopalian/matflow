@@ -44,7 +44,8 @@ vi.mock("@/lib/api-authz", () => ({ requireApiStaff: requireApiStaffMock }));
 vi.mock("@/lib/prisma-tenant", () => ({
   withTenantContext: async <T,>(_t: string, fn: (tx: unknown) => Promise<T>): Promise<T> =>
     fn({
-      classInstance: { findFirst: instanceFindFirstMock },
+      classInstance: { findFirst: instanceFindFirstMock, findMany: vi.fn().mockResolvedValue([]) }, // findMany: the clash check's pool (lib/session-clash.ts), no covered session
+      sessionCover: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) }, // session cover (no rows)
       classSubscription: { findMany: subscriptionFindManyMock },
       attendanceRecord: { findMany: attendanceFindManyMock, groupBy: attendanceGroupByMock },
       classWaitlist: { findMany: waitlistFindManyMock },
